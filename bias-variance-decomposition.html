@@ -290,8 +290,8 @@
     React.useEffect(() => {
       _ensureHljsCss();
       let cancelled = false;
-      _loadScript("https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js")
-        .then(() => _loadScript(`https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/languages/${lang}.min.js`).catch(() => {}))
+      _loadScript("https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js")
+        .then(() => _loadScript(`https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/${lang}.min.js`).catch(() => {}))
         .then(() => {
           if (cancelled || !ref.current) return;
           // Reset so hljs re-highlights when `children` or `lang` change
@@ -386,15 +386,68 @@
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
 // GOLD-STANDARD EXAMPLE for /visualize.
-// Demonstrates the four-beat pattern:
-//   1. Concrete thought experiment FIRST
-//   2. Name + formal definition SECOND
-//   3. Math THIRD
-//   4. Practical implication LAST
-// Audience: smart but new-to-ML. Generous prose. Every jargon term has a VIS.Term gloss.
+// Demonstrates the four-beat pattern with a visual element at EVERY beat:
+//   1. Thought experiment + scenario chart (Vega-Lite — 100 fits overlaid)
+//   2. Name + formal def + archery-target SVG comparison
+//   3. Math + decomposition Mermaid diagram
+//   4. Practical + decision-tree Mermaid
+// Plus mandatory "Further reading" with curated external links.
 
+// --- Vega-Lite for Beat 1: 30 polynomial fits per scenario, overlaid ---
+function makeFitData(degree, n_runs=30, seed=42) {
+  // Pseudo-random fits: each "run" gets a slightly different sine + noise.
+  const out = [];
+  for (let r = 0; r < n_runs; r++) {
+    for (let i = 0; i <= 30; i++) {
+      const x = i / 30;
+      let y;
+      if (degree === 1) {
+        // Flat-ish line: high bias, low variance
+        y = 0.5 + 0.05 * Math.sin(r * 0.7);
+      } else {
+        // Wiggly: low bias, high variance
+        const phase = r * 0.5;
+        y = 0.5 + 0.4 * Math.sin(2 * Math.PI * x + phase) +
+            0.2 * Math.sin(8 * Math.PI * x + phase * 1.3) * 0.5;
+      }
+      out.push({ x, y, run: r, degree: degree === 1 ? "Too simple" : "Too flexible" });
+    }
+  }
+  // Add "truth" line
+  for (let i = 0; i <= 30; i++) {
+    const x = i / 30;
+    out.push({ x, y: 0.5 + 0.4 * Math.sin(2 * Math.PI * x), run: -1, degree: "Truth" });
+  }
+  return out;
+}
+const FITS_DATA = [...makeFitData(1), ...makeFitData(15)];
+const FITS_SPEC = {
+  width: 360, height: 240,
+  facet: { field: "degree", type: "nominal", title: null,
+           sort: ["Too simple", "Too flexible"] },
+  columns: 2,
+  spec: {
+    layer: [
+      { transform: [{ filter: "datum.run >= 0" }],
+        mark: { type: "line", opacity: 0.18, color: "#2563eb", strokeWidth: 1 },
+        encoding: {
+          x: { field: "x", type: "quantitative", axis: { title: "input" } },
+          y: { field: "y", type: "quantitative", axis: { title: "prediction" } },
+          detail: { field: "run", type: "nominal" }
+        } },
+      { transform: [{ filter: "datum.run === -1" }],
+        mark: { type: "line", color: "#dc2626", strokeWidth: 3 },
+        encoding: {
+          x: { field: "x", type: "quantitative" },
+          y: { field: "y", type: "quantitative" }
+        } }
+    ]
+  }
+};
+
+// --- Vega-Lite for the classic tradeoff curve ---
 const TRADEOFF_SPEC = {
-  width: 600, height: 300,
+  width: 600, height: 280,
   encoding: {
     x: { field: "capacity", type: "quantitative", title: "Model capacity (e.g. polynomial degree) →" },
     y: { field: "error", type: "quantitative", title: "Expected error" },
@@ -418,6 +471,25 @@ const TRADEOFF_DATA = Array.from({length:30}, (_,i) => {
   ];
 }).flat();
 
+// --- Archery target SVG: bias = darts all in wrong place; variance = darts spread out ---
+const ArcheryTarget = ({ darts, label, sub }) => (
+  <div style={{ textAlign: "center" }}>
+    <svg viewBox="-110 -110 220 220" width="200" height="200" style={{ display: "block", margin: "0 auto" }}>
+      {[80, 60, 40, 20].map((r, i) => (
+        <circle key={r} r={r} fill={["#fee2e2","#fde68a","#dcfce7","#bbf7d0"][i]} stroke="#94a3b8" strokeWidth="1" />
+      ))}
+      <circle r="6" fill="#0f172a" />
+      {darts.map(([dx, dy], i) => (
+        <g key={i} transform={`translate(${dx},${dy})`}>
+          <circle r="5" fill="#2563eb" stroke="#fff" strokeWidth="1.5" />
+        </g>
+      ))}
+    </svg>
+    <div style={{ marginTop: 8, fontWeight: 600, color: "#0f172a" }}>{label}</div>
+    <div style={{ fontSize: 13, color: "#475569" }}>{sub}</div>
+  </div>
+);
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
@@ -437,135 +509,142 @@ const App = () => (
       You can shrink the first two by changing model capacity. You cannot shrink the third.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-experiment" title="Beat 1 — A thought experiment">
+    <VIS.Section id="sec-experiment" title="Beat 1 — A thought experiment, watched 60 times">
       <p>
-        Imagine the same prediction problem (say, "given a house's square-footage, predict its price")
-        is handed to <strong>100 data scientists</strong>. Each one independently collects their own random sample of
-        houses from the same city — same housing market, same underlying patterns — call this their{" "}
+        Imagine the same prediction problem (say, "given a house's square-footage, predict its price") is handed to <strong>30 data scientists</strong>. Each one independently collects their own random sample of houses from the same city — same housing market, same underlying patterns — call this their{" "}
         <VIS.Term def="The pool of all possible (features, label) pairs your problem could draw from. We never see all of it; we see samples drawn from it. 'Training set' = one such sample.">data-generating distribution</VIS.Term>.
-        Now we run two experiments.
+        We run the experiment twice: once where they all fit a too-simple model, once where they all fit a too-flexible one. Each thin blue line below is one scientist's fit; the red line is the true relationship.
       </p>
 
-      <p>
-        <strong>Experiment A — every scientist uses a too-simple model.</strong> They all fit a flat line: "price = constant".
-        When we show the 100 fitted lines on the same chart, they're all roughly the same flat line. None of them
-        captures that bigger houses cost more — that pattern is in the data, but their model class can't represent it.
-        Every one of them is wrong in the same direction. That systematic gap between the average fit and the truth is{" "}
-        <VIS.Term def="The systematic error of a learning procedure — what's left after averaging out the noise from any one particular training sample. A too-simple model has high bias; a sufficiently flexible model has low bias.">bias</VIS.Term>. High bias.
-      </p>
+      <VIS.VegaLite spec={FITS_SPEC} data={FITS_DATA} />
 
       <p>
-        <strong>Experiment B — every scientist uses a very flexible model.</strong> They all fit a 15th-degree polynomial.
-        Each polynomial wriggles through the specific points the scientist happened to sample. When we overlay the 100
-        curves, they look wildly different from each other — at the same input square-footage, one scientist's curve
-        predicts $400k and another's predicts $900k. On average, across the 100 fits, the predictions are about right;
-        but at any one input, the fits disagree by a huge amount. That disagreement-across-fits is{" "}
-        <VIS.Term def="The spread of a learning procedure's predictions when re-trained on different samples drawn from the same population. Flexible procedures fit each sample's quirks tightly and wobble more from sample to sample.">variance</VIS.Term>. High variance.
+        Left panel: 30 fits, all <em>too simple</em> (basically flat). They cluster tightly together (low variance) but every one of them misses the actual ups-and-downs of the truth (high bias). <strong>Bias is the gap between the average fit and the truth.</strong>
       </p>
-
       <p>
-        The lesson is in the contrast. <strong>Bias is "wrong on average."</strong> <strong>Variance is "different
-        every time."</strong> They are not the same thing, and they trade off as you change how flexible the model
-        class is.
+        Right panel: 30 fits, all <em>too flexible</em> (high-degree polynomial). They go wildly different places — the same input gets predictions all over the map. On average they're closer to the truth, but at any one input, the disagreement across scientists is huge. <strong>Variance is the spread of fits around their own average.</strong>
+      </p>
+      <p>
+        The lesson is in the contrast. <strong>Bias is "wrong on average."</strong> <strong>Variance is "different every time."</strong> They are not the same thing, and they trade off as you change how flexible the model class is.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-name" title="Beat 2 — Naming the pieces">
+    <VIS.Section id="sec-name" title="Beat 2 — Naming the pieces (archery target analogy)">
       <p>
-        We now name what we just observed. Given a learning procedure (a fixed model class plus how you train it), and
-        a specific input <code>x</code> we want to predict for:
+        A target analogy makes the distinction crisp. Each blue dot below is one scientist's prediction at the same input <code>x</code>. The black dot at the center is the truth.
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 24, margin: "20px 0" }}>
+        <ArcheryTarget
+          darts={[[55,-30],[60,-25],[58,-20],[62,-35],[55,-25],[63,-22],[57,-18],[60,-30]]}
+          label="High bias, low variance"
+          sub='"Wrong on average" — darts tightly clustered, but in the wrong spot.'
+        />
+        <ArcheryTarget
+          darts={[[-50,40],[55,-30],[-30,-50],[40,55],[-55,-20],[20,-50],[-10,60],[50,30]]}
+          label="Low bias, high variance"
+          sub='"Different every time" — darts spread out, but centered on the truth.'
+        />
+      </div>
+
+      <p>
+        Now we can name what we observe. Given a learning procedure (a fixed model class plus how you train it) and a specific input <code>x</code> we want to predict for:
       </p>
       <ul>
-        <li>
-          <strong>Bias² at x</strong> = the squared difference between (the average prediction across all training
-          sets the 100 scientists could have drawn) and (the true value at <code>x</code>).
-        </li>
-        <li>
-          <strong>Variance at x</strong> = the spread of predictions at <code>x</code> across those 100 training sets,
-          measured as the average squared deviation from their own average.
-        </li>
-        <li>
-          <strong>Irreducible noise σ²</strong> = the part of the label that's random even given perfect knowledge of <code>x</code>.
-          Two houses with identical features and identical neighborhoods can still sell for different prices —
-          that's σ².
-        </li>
+        <li><strong>Bias² at x</strong> = how far the AVERAGE prediction (across all training sets) is from the truth, squared. <em>(Center of the dart cluster ↔ bullseye.)</em></li>
+        <li><strong>Variance at x</strong> = the SPREAD of predictions across training sets, measured as the average squared deviation from the cluster center. <em>(How wide the cluster is.)</em></li>
+        <li><strong>Irreducible noise σ²</strong> = the part of the label that's random even given perfect knowledge of <code>x</code>. Two identical houses can sell for different prices.</li>
       </ul>
-      <p>
-        Total expected squared error at <code>x</code> is the sum of these three. The astonishing fact is that this sum
-        decomposition is exact — there are no other terms hiding.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-math" title="Beat 3 — The math (one equation)">
+    <VIS.Section id="sec-math" title="Beat 3 — The math (one equation, one decomposition)">
       <VIS.Equation display
         tex="\mathbb{E}_{\mathcal{D},\,\varepsilon}\!\big[(y - \hat{f}_{\mathcal{D}}(x))^2\big] \;=\; \underbrace{\big(\mathbb{E}_{\mathcal{D}}[\hat{f}_{\mathcal{D}}(x)] - f(x)\big)^{\!2}}_{\text{bias}^2} \;+\; \underbrace{\mathbb{E}_{\mathcal{D}}\!\big[(\hat{f}_{\mathcal{D}}(x) - \mathbb{E}_{\mathcal{D}}[\hat{f}_{\mathcal{D}}(x)])^2\big]}_{\text{variance}} \;+\; \sigma^2" />
 
+      <VIS.Mermaid chart={`
+flowchart TB
+  TOTAL["Total expected error<br/>E[(y - f̂(x))²]"]
+  TOTAL --> B["<b>Bias²</b><br/>(E[f̂] - f)²<br/><i>how far the dart-cluster center<br/>is from the bullseye</i>"]
+  TOTAL --> V["<b>Variance</b><br/>E[(f̂ - E[f̂])²]<br/><i>how wide the dart-cluster is</i>"]
+  TOTAL --> N["<b>Irreducible noise σ²</b><br/><i>randomness baked into the labels;<br/>no model can predict it</i>"]
+  style B fill:#fee2e2,stroke:#dc2626,stroke-width:2px
+  style V fill:#fef3c7,stroke:#d97706,stroke-width:2px
+  style N fill:#e0e7ff,stroke:#6366f1,stroke-width:2px
+      `} />
+
       <p>Mapping the symbols back to the thought experiment:</p>
       <ul>
-        <li>
-          <VIS.Term def="A mathematical operator that averages a quantity over a probability distribution. 'E[X over D]' means: imagine drawing many samples from D and computing X each time — the long-run average is E[X].">𝔼<sub>𝒟</sub>[·]</VIS.Term>{" "}
-          = average over training sets drawn from the same data-generating distribution.
-          Concretely: the average over those 100 scientists' fits.
-        </li>
-        <li>
-          <strong>f(x)</strong> = the true (unknown) value at input <code>x</code>.
-          <strong> f̂<sub>𝒟</sub>(x)</strong> = what a model fitted on training set 𝒟 predicts at <code>x</code>.
-        </li>
-        <li>
-          <strong>𝔼<sub>𝒟</sub>[f̂<sub>𝒟</sub>(x)]</strong> = the average prediction at <code>x</code>, averaged across the 100 scientists. Used in BOTH the bias term and the variance term.
-        </li>
-        <li>
-          <strong>σ²</strong> = noise variance. Doesn't depend on the model at all — it's a property of the data.
-        </li>
+        <li><VIS.Term def="A mathematical operator that averages a quantity over a probability distribution. 'E[X over D]' means: imagine drawing many samples from D and computing X each time — the long-run average is E[X].">𝔼<sub>𝒟</sub>[·]</VIS.Term>{" "}= average over training sets drawn from the same data-generating distribution. Concretely: the average over those 30 scientists' fits.</li>
+        <li><strong>f(x)</strong> = the true (unknown) value at input <code>x</code> (the bullseye).</li>
+        <li><strong>f̂<sub>𝒟</sub>(x)</strong> = what a model fitted on training set 𝒟 predicts at <code>x</code> (one dart).</li>
+        <li><strong>σ²</strong> = noise variance. Doesn't depend on the model — it's a property of the data.</li>
       </ul>
-      <VIS.Callout kind="info" title="Why this decomposition is useful">
-        The three terms are independent knobs. Reducing one doesn't automatically affect the others. That's what
-        makes the framework prescriptive: you can diagnose which term dominates and act on the right one.
-      </VIS.Callout>
+      <p>The astonishing fact: the decomposition is <em>exact</em>. No other terms hide in there.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-curve" title="The classic tradeoff curve">
+    <VIS.Section id="sec-curve" title="The classic tradeoff curve (capacity ↔ error)">
       <VIS.VegaLite spec={TRADEOFF_SPEC} data={TRADEOFF_DATA} />
       <p>
-        Red = bias² (falls as capacity grows). Amber = variance (rises). Dashed black = their sum + noise floor.
-        The minimum of the dashed line is the sweet spot — that's the capacity at which adding more flexibility
-        hurts more than it helps.
+        Red = bias² (falls as capacity grows). Amber = variance (rises). Dashed black = their sum + noise floor. The minimum of the dashed line is the sweet spot — the capacity at which adding more flexibility hurts more than it helps.
       </p>
     </VIS.Section>
 
     <VIS.Section id="sec-practical" title="Beat 4 — What to do about it in practice">
-      <VIS.Callout kind="info" title="How to diagnose which term dominates">
-        <strong>Train error ≪ test error</strong> → variance problem. Model is fitting training-set quirks. Reach for{" "}
-        <VIS.Term def="Penalties on weight size (L1 or L2), dropout, early stopping, data augmentation. Any technique that constrains how tightly the model can fit one specific training sample.">regularization</VIS.Term>,
-        more data, or an ensemble (averaging across multiple fits cancels variance but not bias).{" "}
-        <strong>Train error ≈ test error and both are high</strong> → bias problem. Model class is too simple to
-        represent the truth. Reach for a bigger model, richer features, or a different model family.
-      </VIS.Callout>
+      <VIS.Mermaid chart={`
+flowchart TB
+  D["Compare train vs test error"]
+  D --> Q1{"Is train ≪ test?"}
+  Q1 -->|Yes — big gap| V["<b>Variance problem</b><br/>Model is fitting training quirks"]
+  V --> VA["Try: regularization (L1/L2/dropout),<br/>more data, ensembling,<br/>simpler model"]
+  Q1 -->|No — train ≈ test| Q2{"Is the joint error high?"}
+  Q2 -->|Yes — both high| B["<b>Bias problem</b><br/>Model too simple to represent truth"]
+  B --> BA["Try: bigger model, richer features,<br/>different model family"]
+  Q2 -->|No — both low| OK["<b>Healthy</b> — you're at or near the sweet spot"]
+  style V fill:#fef3c7,stroke:#d97706
+  style B fill:#fee2e2,stroke:#dc2626
+  style OK fill:#dcfce7,stroke:#16a34a
+      `} />
 
       <VIS.Callout kind="gotcha" title="What the framework does NOT say">
-        Bias and variance are properties of the <em>learning algorithm</em> averaged over training sets, not of
-        a single fitted model. One ResNet on one CIFAR-10 split has one error number — not a bias and a variance
-        separately. Use the framework to reason about choices (capacity, regularization, data size, ensembling),
-        not to label an existing model.
+        Bias and variance are properties of the <em>learning algorithm averaged over training sets</em>, not of a single fitted model. One ResNet on one CIFAR-10 split has one error number — not a bias and a variance separately. Use the framework to reason about <em>choices</em> (capacity, regularization, data size, ensembling), not to label an existing model.
       </VIS.Callout>
 
       <VIS.Callout kind="warn" title="Modern caveat: double descent">
-        For very over-parameterized models (large neural nets, LLMs), the test-error curve can dip <em>again</em>{" "}
-        past the interpolation threshold —{" "}
+        For very over-parameterized models (large neural nets, LLMs), the test-error curve can dip <em>again</em> past the interpolation threshold —{" "}
         <VIS.Term def="A 2019 finding (Belkin et al.) showing test error has a second dip when models become massively over-parameterized — challenged the classical U-curve intuition.">double descent</VIS.Term>.
-        The classical U-curve still holds for moderately-sized models on moderately-sized data — which is most of
-        practical ML.
+        The classical U-curve still holds for moderately-sized models on moderately-sized data — which is most practical ML.
       </VIS.Callout>
     </VIS.Section>
 
     <VIS.Section id="sec-summary" title="The 30-second summary">
       <p>
-        Imagine the same prediction problem solved 100 times by 100 different data scientists, each with their own
-        random training sample. <strong>Bias</strong> is how wrong they all are on average. <strong>Variance</strong>{" "}
-        is how much they disagree with each other. <strong>Noise</strong> is the part neither they nor any future
-        scientist could ever predict. Total error is the sum. Capacity trades off bias for variance, regularization
-        trades off variance for bias, and noise sits there waiting for better labels.
+        Imagine the same prediction problem solved by 30 different data scientists, each with their own random training sample. <strong>Bias</strong> is how wrong they all are on average. <strong>Variance</strong> is how much they disagree with each other. <strong>Noise</strong> is the part nobody could ever predict. Total error is the sum. Capacity trades off bias for variance; regularization trades off variance for bias; noise sits there waiting for better labels.
       </p>
+    </VIS.Section>
+
+    <VIS.Section id="sec-further" title="Further reading">
+      <ul>
+        <li>
+          <a href="https://www.dam.brown.edu/people/geman/Homepage/Essays%20and%20ephemera/biasvariance.pdf" target="_blank" rel="noopener">
+            Geman, Bienenstock, Doursat — <em>Neural Networks and the Bias/Variance Dilemma</em> (1992)
+          </a> — the original paper introducing the decomposition for neural nets. Math-heavy; skim §1 for intuition.
+        </li>
+        <li>
+          <a href="https://www.youtube.com/watch?v=EuBBz3bI-aA" target="_blank" rel="noopener">
+            StatQuest — Bias and variance, simply explained (~6 min)
+          </a> — Josh Starmer's whiteboard walkthrough. Best 6 minutes if you have only 6 minutes.
+        </li>
+        <li>
+          <a href="https://hastie.su.domains/ElemStatLearn/" target="_blank" rel="noopener">
+            Hastie, Tibshirani, Friedman — <em>Elements of Statistical Learning</em>, Ch. 7
+          </a> — the textbook treatment. Free PDF. Pair this with the equation above.
+        </li>
+        <li>
+          <a href="https://www.pnas.org/doi/10.1073/pnas.1903070116" target="_blank" rel="noopener">
+            Belkin, Hsu, Ma, Mandal — <em>Reconciling modern ML practice with the classical bias-variance trade-off</em> (PNAS 2019)
+          </a> — the double-descent paper. Read if you care why ResNets and LLMs don't follow the classical U-curve.
+        </li>
+      </ul>
     </VIS.Section>
   </main>
 );
