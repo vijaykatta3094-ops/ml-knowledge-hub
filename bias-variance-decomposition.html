@@ -200,6 +200,9 @@
       .vis-trap-option.is-wrong-selected {
         border-color: #dc2626; background: #fee2e2;
       }
+      .vis-trap-option.is-correct-wrong-pos {
+        border-color: #d97706; background: #fef3c7;
+      }
       .vis-trap-option.is-disabled {
         opacity: 0.6;
       }
@@ -567,23 +570,54 @@
   // Trap problem from the Idea Engine /learn template. MCQ with click-to-pick,
   // then click-to-reveal model answer. Each problem owns its own state.
   //
-  // Supports BOTH single-correct ("which is right?") and multi-correct
-  // ("select all that apply") problems via the `multiSelect` prop. When
-  // multiSelect=true, options can have multiple `correct: true` entries;
-  // the user picks any subset; reveal scores each selection independently.
+  // Three modes, chosen per-problem based on what the concept needs:
+  //   mode="single"  (default): one option is correct (radio-style)
+  //   mode="multi":  multiple options correct, user picks any subset
+  //                  (set `multiSelect={true}` OR `mode="multi"`)
+  //   mode="ordered": real-world priority test — options have an `order` field
+  //                  (1, 2, 3 …) saying their correct rank. Wrong-move options
+  //                  have `order: null` and should NOT be picked at all.
+  //                  User clicks in order; each pick gets a position badge.
+  //                  Reveal shows correct rank, marks wrong-position picks and
+  //                  wrong-move picks differently.
   function TrapProblem(props) {
     const { id, difficulty = "hard", title, scenario, diagram,
-            options = [], trap, lens, stretch, multiSelect = false } = props;
-    // single mode: selected is a string key (or null). multi mode: selected is a Set of keys.
-    const [selected, setSelected] = React.useState(multiSelect ? new Set() : null);
+            options = [], trap, lens, stretch,
+            multiSelect = false, mode } = props;
+    const effectiveMode = mode || (multiSelect ? "multi" : "single");
+    const isOrdered = effectiveMode === "ordered";
+    const isMulti = effectiveMode === "multi";
+
+    // Selection state shape varies by mode:
+    //   single  → string | null
+    //   multi   → Set<string>
+    //   ordered → string[]  (in pick order)
+    const [selected, setSelected] = React.useState(
+      isOrdered ? [] : (isMulti ? new Set() : null)
+    );
     const [revealed, setRevealed] = React.useState(false);
 
     function isSelected(key) {
-      return multiSelect ? selected.has(key) : selected === key;
+      if (isOrdered) return selected.includes(key);
+      if (isMulti) return selected.has(key);
+      return selected === key;
+    }
+    function pickOrder(key) {
+      if (isOrdered) {
+        const idx = selected.indexOf(key);
+        return idx >= 0 ? idx + 1 : null;
+      }
+      return null;
     }
     function pick(key) {
       if (revealed) return;
-      if (multiSelect) {
+      if (isOrdered) {
+        setSelected(
+          selected.includes(key)
+            ? selected.filter((k) => k !== key)
+            : [...selected, key]
+        );
+      } else if (isMulti) {
         const next = new Set(selected);
         if (next.has(key)) next.delete(key); else next.add(key);
         setSelected(next);
@@ -591,49 +625,91 @@
         setSelected(key);
       }
     }
-    function reveal() {
-      setRevealed(true);
-    }
+    function reveal() { setRevealed(true); }
     function reset() {
-      setSelected(multiSelect ? new Set() : null);
+      setSelected(isOrdered ? [] : (isMulti ? new Set() : null));
       setRevealed(false);
     }
     function optionClass(o) {
       if (!revealed) return "vis-trap-option" + (isSelected(o.key) ? " is-selected" : "");
+      if (isOrdered) {
+        // Right move at right rank → fully correct
+        const userPos = pickOrder(o.key);
+        const correctPos = o.order; // null = wrong move
+        if (correctPos != null && userPos === correctPos) return "vis-trap-option is-correct";
+        // Right move at wrong rank → partial credit (yellow)
+        if (correctPos != null && userPos != null && userPos !== correctPos)
+          return "vis-trap-option is-correct-wrong-pos";
+        // Right move not picked → "you missed this"
+        if (correctPos != null && userPos == null) return "vis-trap-option is-correct";
+        // Wrong move picked → red
+        if (correctPos == null && userPos != null) return "vis-trap-option is-wrong-selected";
+        // Wrong move not picked → faded
+        return "vis-trap-option is-disabled";
+      }
       if (o.correct) return "vis-trap-option is-correct";
       if (isSelected(o.key)) return "vis-trap-option is-wrong-selected";
       return "vis-trap-option is-disabled";
     }
-    const anyPicked = multiSelect ? selected.size > 0 : selected !== null;
-    const correctCount = options.filter((o) => o.correct).length;
+    const anyPicked = isOrdered ? selected.length > 0
+                                : (isMulti ? selected.size > 0 : selected !== null);
+    const correctCount = isOrdered
+      ? options.filter((o) => o.order != null).length
+      : options.filter((o) => o.correct).length;
+    const modeBadge = isOrdered ? "Pick in correct ORDER"
+                                : (isMulti ? "Select all that apply" : null);
+
+    function optionPrefix(o) {
+      if (isOrdered) {
+        const pos = pickOrder(o.key);
+        if (revealed) {
+          // After reveal: show user pos vs correct pos
+          if (o.order != null && pos != null)
+            return pos === o.order ? `#${pos} ✓` : `you:#${pos} → correct:#${o.order}`;
+          if (o.order != null) return `correct:#${o.order}`;
+          if (pos != null) return `you:#${pos}`;
+          return "—";
+        }
+        return pos != null ? `#${pos}` : "○";
+      }
+      if (isMulti) return isSelected(o.key) ? "☑" : "☐";
+      return "○";
+    }
+
+    function pickSummary() {
+      if (!anyPicked) return null;
+      if (isOrdered) return `Your order: ${selected.map((k) => "(" + k + ")").join(" → ")}`;
+      if (isMulti) return "You picked " + selected.size + " of " + correctCount + " correct option" + (correctCount === 1 ? "" : "s");
+      return "You picked (" + selected + ")";
+    }
 
     return h("section", { id, className: "vis-trap" },
       h("div", { className: "vis-trap-header" },
         h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
           difficulty.toUpperCase()),
         h("strong", { className: "vis-trap-title" }, title),
-        multiSelect ? h("span", { className: "vis-trap-multi-badge" },
-          "Select all that apply") : null
+        modeBadge ? h("span", { className: "vis-trap-multi-badge" }, modeBadge) : null
       ),
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       diagram ? h("div", { className: "vis-trap-diagram" }, diagram) : null,
-      h("div", { className: "vis-trap-options", role: multiSelect ? "group" : "radiogroup" },
+      h("div", { className: "vis-trap-options",
+                 role: (isMulti || isOrdered) ? "group" : "radiogroup" },
         options.map((o) => h("button", {
           key: o.key,
           type: "button",
           className: optionClass(o),
           onClick: () => pick(o.key),
-          disabled: revealed && !o.correct && !isSelected(o.key),
+          disabled: revealed && (
+            isOrdered
+              ? (o.order == null && !isSelected(o.key))
+              : (!o.correct && !isSelected(o.key))
+          ),
           "aria-pressed": isSelected(o.key)
         },
           h("span", { className: "vis-trap-key" },
-            multiSelect ? (isSelected(o.key) ? "☑" : "☐") + " (" + o.key + ")"
-                        : "(" + o.key + ")"),
+            optionPrefix(o) + " (" + o.key + ")"),
           " ",
-          o.text,
-          revealed && o.correct ? h("span", { className: "vis-trap-tick" }, " ✓") : null,
-          revealed && isSelected(o.key) && !o.correct
-            ? h("span", { className: "vis-trap-x" }, " ✗") : null
+          o.text
         ))
       ),
       !revealed ? h("div", { className: "vis-trap-actions" },
@@ -642,11 +718,7 @@
           className: "vis-trap-reveal-btn",
           onClick: reveal
         }, anyPicked ? "Reveal model answer" : "Skip & reveal"),
-        anyPicked ? h("span", { className: "vis-trap-hint" },
-          multiSelect
-            ? "You picked " + selected.size + " of " + correctCount + " correct option" + (correctCount === 1 ? "" : "s")
-            : "You picked (" + selected + ")"
-        ) : null
+        anyPicked ? h("span", { className: "vis-trap-hint" }, pickSummary()) : null
       ) : null,
       revealed ? h("div", { className: "vis-trap-reveal-block" },
         trap ? h("div", { className: "vis-trap-trap" },
