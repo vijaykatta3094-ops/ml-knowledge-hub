@@ -149,6 +149,88 @@
         pointer-events: none; white-space: pre-wrap;
       }
 
+      /* Trap problem (MCQ with click-to-reveal). One block per problem. */
+      .vis-trap {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px 22px;
+        margin: 24px 0;
+        background: #fafbfc;
+      }
+      .vis-trap-header {
+        display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      .vis-trap-difficulty {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+        padding: 3px 10px; border-radius: 999px; text-transform: uppercase;
+      }
+      .vis-trap-diff-easy   { background: #dcfce7; color: #166534; }
+      .vis-trap-diff-medium { background: #fef9c3; color: #854d0e; }
+      .vis-trap-diff-hard   { background: #fee2e2; color: #991b1b; }
+      .vis-trap-title { font-size: 17px; color: #0f172a; }
+      .vis-trap-scenario { margin: 0 0 12px; line-height: 1.65; }
+      .vis-trap-diagram  { margin: 12px 0; }
+      .vis-trap-options  { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+      .vis-trap-option {
+        text-align: left;
+        padding: 11px 14px;
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        font: inherit; color: #0f172a;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .vis-trap-option:hover:not(:disabled) {
+        border-color: #2563eb; background: #f1f5f9;
+      }
+      .vis-trap-option.is-selected {
+        border-color: #2563eb; background: #dbeafe;
+      }
+      .vis-trap-option.is-correct {
+        border-color: #16a34a; background: #dcfce7;
+      }
+      .vis-trap-option.is-wrong-selected {
+        border-color: #dc2626; background: #fee2e2;
+      }
+      .vis-trap-option.is-disabled {
+        opacity: 0.6;
+      }
+      .vis-trap-key { font-weight: 700; margin-right: 4px; color: #475569; }
+      .vis-trap-tick { color: #16a34a; font-weight: 700; margin-left: 6px; }
+      .vis-trap-x    { color: #dc2626; font-weight: 700; margin-left: 6px; }
+      .vis-trap-actions {
+        display: flex; align-items: center; gap: 12px;
+        margin-top: 8px;
+      }
+      .vis-trap-reveal-btn, .vis-trap-reset-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 10px 18px; border-radius: 8px;
+        font: inherit; font-weight: 600;
+        cursor: pointer;
+      }
+      .vis-trap-reveal-btn:hover, .vis-trap-reset-btn:hover { background: #1d4ed8; }
+      .vis-trap-reset-btn {
+        background: #64748b; margin-top: 12px;
+        font-size: 13px; padding: 8px 14px;
+      }
+      .vis-trap-reset-btn:hover { background: #475569; }
+      .vis-trap-hint { color: #64748b; font-size: 14px; }
+      .vis-trap-reveal-block {
+        margin-top: 18px; padding-top: 16px; border-top: 1px solid #e2e8f0;
+      }
+      .vis-trap-trap, .vis-trap-lens, .vis-trap-stretch {
+        margin: 10px 0; padding: 12px 16px; border-radius: 8px;
+      }
+      .vis-trap-trap    { background: #fef3c7; border-left: 4px solid #d97706; color: #78350f; }
+      .vis-trap-lens    { background: #dcfce7; border-left: 4px solid #16a34a; color: #14532d; }
+      .vis-trap-stretch { background: #e0e7ff; border-left: 4px solid #6366f1; color: #312e81; }
+      .vis-trap-trap strong, .vis-trap-lens strong, .vis-trap-stretch strong {
+        display: block; margin-bottom: 4px;
+      }
+      .vis-trap-trap p, .vis-trap-lens p, .vis-trap-stretch p { margin: 0; line-height: 1.55; }
+
       /* Responsive SVG wrappers — diagrams shrink to fit narrow containers
          instead of overflowing the parent. Without these, Mermaid/Vega SVGs
          render at their intrinsic width and get clipped on the left/right
@@ -458,8 +540,106 @@
     document.addEventListener("scroll", hide, true);
   })();
 
+  // <VIS.TrapProblem
+  //   id="bv-q1"
+  //   difficulty="hard"
+  //   title="..."
+  //   scenario={<>...JSX...</>}
+  //   diagram={<VIS.Mermaid chart={...} />}
+  //   options={[
+  //     {key:"a", text:"...", correct:false},
+  //     {key:"b", text:"...", correct:true},
+  //     ...
+  //   ]}
+  //   trap={<>The most tempting wrong is X because...</>}
+  //   lens={<>The right answer + reasoning</>}
+  //   stretch="optional follow-up question"
+  // />
+  //
+  // Trap problem from the Idea Engine /learn template. MCQ with click-to-pick,
+  // then click-to-reveal model answer. Each problem owns its own state.
+  function TrapProblem(props) {
+    const { id, difficulty = "hard", title, scenario, diagram,
+            options = [], trap, lens, stretch } = props;
+    const [selected, setSelected] = React.useState(null);
+    const [revealed, setRevealed] = React.useState(false);
+    const correctKey = options.find((o) => o.correct)?.key;
+
+    function pick(key) {
+      if (revealed) return;
+      setSelected(key);
+    }
+    function reveal() {
+      setRevealed(true);
+    }
+    function reset() {
+      setSelected(null);
+      setRevealed(false);
+    }
+    function optionClass(o) {
+      if (!revealed) return "vis-trap-option" + (selected === o.key ? " is-selected" : "");
+      if (o.correct) return "vis-trap-option is-correct";
+      if (selected === o.key) return "vis-trap-option is-wrong-selected";
+      return "vis-trap-option is-disabled";
+    }
+
+    return h("section", { id, className: "vis-trap" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title)
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      diagram ? h("div", { className: "vis-trap-diagram" }, diagram) : null,
+      h("div", { className: "vis-trap-options" },
+        options.map((o) => h("button", {
+          key: o.key,
+          type: "button",
+          className: optionClass(o),
+          onClick: () => pick(o.key),
+          disabled: revealed && !o.correct && selected !== o.key
+        },
+          h("span", { className: "vis-trap-key" }, "(" + o.key + ")"),
+          " ",
+          o.text,
+          revealed && o.correct ? h("span", { className: "vis-trap-tick" }, " ✓") : null,
+          revealed && selected === o.key && !o.correct
+            ? h("span", { className: "vis-trap-x" }, " ✗") : null
+        ))
+      ),
+      !revealed ? h("div", { className: "vis-trap-actions" },
+        h("button", {
+          type: "button",
+          className: "vis-trap-reveal-btn",
+          onClick: reveal
+        }, selected ? "Reveal model answer" : "Skip & reveal"),
+        selected ? h("span", { className: "vis-trap-hint" },
+          "You picked (" + selected + ")") : null
+      ) : null,
+      revealed ? h("div", { className: "vis-trap-reveal-block" },
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"),
+          h("div", null, trap)
+        ) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The lens (model answer)"),
+          h("div", null, lens)
+        ) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"),
+          h("div", null, stretch)
+        ) : null,
+        h("button", {
+          type: "button",
+          className: "vis-trap-reset-btn",
+          onClick: reset
+        }, "↺ Try again")
+      ) : null
+    );
+  }
+
   window.VIS = { Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle,
-                 Mermaid, VegaLite, Equation, CodeBlock, Callout, Term };
+                 Mermaid, VegaLite, Equation, CodeBlock, Callout, Term, TrapProblem };
   // Back-compat: report-viewer downstream uses window.RV. Keep both bindings.
   window.RV = window.VIS;
   console.log("[vis-components] ready: window.VIS =", Object.keys(window.VIS));
@@ -728,6 +908,92 @@ flowchart TB
       <p>
         Imagine the same prediction problem solved by 30 different data scientists, each with their own random training sample. <strong>Bias</strong> is how wrong they all are on average. <strong>Variance</strong> is how much they disagree with each other. <strong>Noise</strong> is the part nobody could ever predict. Total error is the sum. Capacity trades off bias for variance; regularization trades off variance for bias; noise sits there waiting for better labels.
       </p>
+    </VIS.Section>
+
+    <VIS.Section id="sec-problems" title="Hard problems — diagnose the lens">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        Five interview-grade trap problems. In each, more than one lens could plausibly apply — the right answer is the one a senior MLE would land on first. Pick an option, then reveal the model answer + why the most tempting wrong is wrong.
+      </p>
+
+      <VIS.TrapProblem
+        id="bv-p1"
+        difficulty="hard"
+        title="P1 — ResNet-50 on CIFAR: $2.5k of MTurk data, or regularization?"
+        scenario={<>You train ResNet-50 (~25M params) on CIFAR-10 with 50k training images. Train accuracy 99.8%, test accuracy 75%. Your tech lead suggests collecting 200k additional images via Mechanical Turk — total cost ~$2,500, ~2 weeks of labeling. What should you do FIRST?</>}
+        options={[
+          {key:"a", text:"Order the MTurk data — more data is the textbook fix for overfitting."},
+          {key:"b", text:"Drop to ResNet-18 — fewer parameters mean less variance."},
+          {key:"c", text:"Apply dropout 0.5 + weight decay 5e-4 + RandAugment, then re-evaluate.", correct:true},
+          {key:"d", text:"Lower learning rate from 0.1 to 0.001 to stabilize training."},
+        ]}
+        trap={<>(a) is the textbook reflex — "more data fixes overfitting." But 200k MTurk images cost real money, take weeks, and introduce labeling noise. (b) is also tempting because smaller capacity does reduce variance — but you'd lose representational power on the harder classes (cats vs dogs, deer vs horse). (d) is a guess masquerading as caution.</>}
+        lens={<>Variance problem (train ≫ test by 24 points). The cheap-fast-first lever is <strong>regularization</strong>: data augmentation gives you "more effective data" for free; dropout + weight decay constrain the model directly. Closes most variance gaps in hours, not weeks. Order: regularize → augment → smaller architecture → more data. Always cheapest first.</>}
+        stretch={<>When WOULD ordering the MTurk data first beat regularization? (Hint: think about what regularization can't fix.)</>}
+      />
+
+      <VIS.TrapProblem
+        id="bv-p2"
+        difficulty="hard"
+        title="P2 — Both train and test stuck: bias problem, or noise floor?"
+        scenario={<>Credit-card fraud detection. Logistic regression with 200 features: train AUC = 0.62, val AUC = 0.61. Tech lead says "bias problem — train an XGBoost." Product manager says "the labels are noisy — fix the data first." Both errors are high and close together. Who's right?</>}
+        options={[
+          {key:"a", text:"Tech lead — train a 1000-tree XGBoost; the gap-to-perfect is bias."},
+          {key:"b", text:"PM — re-label a sample via expert reviewers and retrain logistic regression."},
+          {key:"c", text:"Estimate the Bayes error σ² first via inter-rater agreement on a labeled subset, then decide.", correct:true},
+          {key:"d", text:"Both are wrong — switch to a different metric (PR-AUC) since AUC is misleading on imbalanced data."},
+        ]}
+        trap={<>(a) is the textbook reading of "train ≈ test, both high → bias problem." It's right IF σ² is small. But fraud labels are genuinely ambiguous — two expert reviewers often disagree on the same transaction. If σ² ≈ 0.35 AUC (which is realistic for fraud), no model can do better than ~0.65. Switching to XGBoost would burn weeks and yield AUC 0.63 — slightly above LR but BELOW the σ² floor. (b) is partially right but treats relabeling as a hammer without measuring whether labels are actually the bottleneck.</>}
+        lens={<>The bias-variance decomposition assumes σ² is KNOWN. In real ML you have to MEASURE σ² before declaring a bias problem. The cheap measurement: have 2-3 experts independently label ~500 transactions; the inter-rater AUC (or Cohen's κ) is a lower bound on σ²-driven error. If σ² is high, the next move is BETTER FEATURES or different labels, not bigger models.</>}
+        stretch={<>If inter-rater agreement gives κ = 0.4 (moderate), what's the rough upper bound on achievable AUC?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bv-p3"
+        difficulty="hard"
+        title="P3 — You 10× the training data and val loss barely moves"
+        scenario={<>You're training a two-tower recommendation model. You scale training interactions from 10M to 100M (10× more data). Val NDCG@10 moves from 0.41 to 0.43. Train NDCG@10 moves from 0.42 to 0.44. Both moved together — barely. What does this tell you?</>}
+        options={[
+          {key:"a", text:"Variance problem — keep scaling; go to 1B interactions."},
+          {key:"b", text:"Bias problem — model is too simple; double the embedding dimension."},
+          {key:"c", text:"You're at the irreducible noise floor — neither more data nor more capacity will help much.", correct:true},
+          {key:"d", text:"Distribution shift between train and val — investigate the temporal split."},
+        ]}
+        trap={<>(a) leans on scaling laws — "more data always helps." But scaling laws apply when you're NOT yet at the noise floor. When val AND train both refuse to move together as you add data, you're already at the σ² floor. (b) is tempting because "bias problem → bigger model" feels textbook. But if it were bias-limited, train would have ROOM TO MOVE with capacity. Here both metrics are stuck. (d) is a sanity-check candidate but doesn't explain why TRAIN also stopped improving.</>}
+        lens={<>This is the irreducible noise floor σ². When you scale data and both train AND val plateau together, the labels themselves have inherent noise (recommender interactions are notoriously noisy — clicks ≠ true preference). The fix is BETTER LABELS (e.g., dwell-time-weighted clicks instead of raw clicks), NEW FEATURES, or shifting the loss to focus on cleaner signal. Not scale.</>}
+        stretch={<>How would you discriminate this from distribution shift (option d)? What's the specific experiment?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bv-p4"
+        difficulty="hard"
+        title="P4 — k-NN bias-variance arithmetic"
+        scenario={<>k-NN on a noisy 2D regression task. At k=1: bias² = 0.01, variance = 0.85. At k=100: bias² = 0.42, variance = 0.02. Irreducible noise σ² = 0.05. Test error = bias² + variance + σ². Which k minimizes test error?</>}
+        options={[
+          {key:"a", text:"k=1 — bias is lowest, that's what matters most."},
+          {key:"b", text:"k=100 — variance is lowest, production needs stability."},
+          {key:"c", text:"Around k ≈ 15, near the interior minimum where bias and variance are balanced.", correct:true},
+          {key:"d", text:"Depends on the loss function — no single k is optimal without specifying loss."},
+        ]}
+        trap={<>(a) and (b) both pick extremes — the most common k-NN trap. At k=1: total = 0.01 + 0.85 + 0.05 = 0.91. At k=100: total = 0.42 + 0.02 + 0.05 = 0.49. (a) is much worse than (b), but neither is the minimum. The classic U-curve has its minimum in the INTERIOR. (d) is a clever-sounding non-answer; squared error is the standard regression loss and the question already specifies it via bias²+variance.</>}
+        lens={<>Interpolating: at moderate k (around 15), bias² ≈ 0.10 and variance ≈ 0.18 — total ≈ 0.33. The minimum is where ∂(bias² + variance)/∂k = 0, which lies in the interior of the capacity space. Extremes are almost never optimal. This IS the bias-variance U-curve — k acts as inverse capacity (higher k = simpler model).</>}
+        stretch={<>If σ² jumped from 0.05 to 0.50, would the optimal k shift, and which way?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bv-p5"
+        difficulty="hard"
+        title="P5 — Random forest: 100 → 1000 trees, variance barely drops"
+        scenario={<>You train a random forest with 100 trees on a fixed dataset. Empirical prediction variance ≈ 0.12. You scale to 1000 trees (10×). Variance now ≈ 0.108 — a 10% drop. Why such a small improvement?</>}
+        options={[
+          {key:"a", text:"Bug — more trees should always cut variance proportionally (variance / n)."},
+          {key:"b", text:"Trees are highly correlated (ρ ≈ 0.9) because they share the same training data; ensemble variance asymptotes at σ²·ρ.", correct:true},
+          {key:"c", text:"Bias dominates — adding trees can't fix bias."},
+          {key:"d", text:"Feature subsampling is too aggressive — mtry is too low."},
+        ]}
+        trap={<>(a) is the textbook ensemble-variance reading — "n trees give σ²/n." That's true ONLY when trees are uncorrelated. (c) is half-right that more trees don't help bias but the question is about variance changes, not test-error changes. (d) is plausible-sounding noise — mtry too low gives more diverse trees, lower ρ, MORE variance reduction; mtry too high gives higher ρ. The math would tell you mtry is too HIGH, not too low, if anything.</>}
+        lens={<>Ensemble variance: Var(avg of n correlated predictions) = σ²·(1-ρ)/n + σ²·ρ. As n → ∞, variance → σ²·ρ, not 0. With ρ ≈ 0.9 (typical for RF on small data because trees share most of the bootstrap samples), the floor is ~0.9·σ². Going 100 → 1000 trees moves you from σ²·(0.1/100 + 0.9) ≈ 0.901·σ² to σ²·(0.1/1000 + 0.9) ≈ 0.9001·σ² — practically nothing. The fix to actually reduce variance: lower ρ (decorrelate trees) by reducing mtry, deepening boostrap, or using extra-trees.</>}
+        stretch={<>What's the lowest variance you can achieve with this ensemble if ρ = 0.9 is fixed by the data?</>}
+      />
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
