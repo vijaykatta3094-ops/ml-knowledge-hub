@@ -1,0 +1,1706 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>visualize</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+  <style>
+    body { font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+           margin: 0; background: #ffffff; color: #0f172a; }
+  </style>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/@lottiefiles/lottie-player@2.0.8/dist/lottie-player.js" async></script>
+  <script>
+// vis-components.js — design-system JSX components for the /visualize skill.
+// Exposed as window.VIS.{Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle}.
+// window.RV is aliased to window.VIS for report-viewer back-compat.
+// Available globally to any visual.jsx without imports.
+// (CSS class prefix kept as "rv-" — internal namespace; preserves report-viewer interop.)
+
+(function () {
+  "use strict";
+
+  if (!window.React) {
+    console.warn("[vis-components] React not loaded yet; skipping setup");
+    return;
+  }
+  const h = React.createElement;
+
+  // Lazy-load a CDN script; cache the load Promise so repeats are cheap.
+  const _scriptCache = new Map();
+  function _loadScript(src) {
+    if (_scriptCache.has(src)) return _scriptCache.get(src);
+    const p = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[data-vis-cdn="${src}"]`);
+      if (existing) return existing.addEventListener("load", resolve);
+      const s = document.createElement("script");
+      s.src = src; s.async = false; s.dataset.visCdn = src;
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    _scriptCache.set(src, p);
+    return p;
+  }
+
+  let _katexCssInjected = false;
+  function _ensureKatexCss() {
+    if (_katexCssInjected) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+    document.head.appendChild(link);
+    _katexCssInjected = true;
+  }
+
+  let _hljsCssInjected = false;
+  function _ensureHljsCss() {
+    if (_hljsCssInjected) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css";
+    document.head.appendChild(link);
+    _hljsCssInjected = true;
+  }
+
+  // ----- Styles, injected once ----- //
+  (function injectStyles() {
+    if (document.getElementById("rv-components-styles")) return;
+    const css = `
+      .rv-hero {
+        background: radial-gradient(120% 90% at 20% 0%, #dbeafe 0%, #ffffff 60%);
+        padding: 28px 28px 22px; border-radius: 16px; margin-bottom: 20px;
+        border: 1px solid #e2e8f0;
+      }
+      .rv-hero h1 {
+        font-size: 38px; line-height: 1.1; letter-spacing: -0.02em;
+        font-weight: 700; margin: 10px 0 6px; color: #0f172a;
+      }
+      .rv-hero .rv-sub {
+        font-size: 16px; color: #475569; margin: 0; max-width: 60ch;
+      }
+      .rv-hero .rv-byline {
+        font-size: 12px; color: #64748b; margin-top: 14px;
+        display: flex; gap: 14px; flex-wrap: wrap;
+      }
+      .rv-hero .rv-byline span strong { color: #1e293b; font-weight: 600; }
+
+      .rv-pill {
+        display: inline-block; padding: 2px 10px; border-radius: 999px;
+        background: #2563eb; color: #fff; font-size: 11px; font-weight: 600;
+        letter-spacing: 0.6px; text-transform: uppercase;
+      }
+
+      .rv-tag {
+        display: inline-block; padding: 1px 8px; border-radius: 999px;
+        font-size: 11px; font-weight: 600; vertical-align: middle;
+      }
+      .rv-tag-green  { background: #dcfce7; color: #166534; }
+      .rv-tag-yellow { background: #fef9c3; color: #854d0e; }
+      .rv-tag-red    { background: #fee2e2; color: #991b1b; }
+      .rv-tag-blue   { background: #dbeafe; color: #1e40af; }
+      .rv-tag-gray   { background: #e4e4e7; color: #3f3f46; }
+
+      .rv-card {
+        border: 1px solid #e4e4e7; border-radius: 10px;
+        padding: 14px 16px; margin: 12px 0;
+        background: linear-gradient(180deg, #fafafa, #fff);
+      }
+
+      .rv-tldr {
+        background: #f1f5f9;
+        border-left: 4px solid #2563eb;
+        border-radius: 0 10px 10px 0;
+        padding: 14px 18px; margin: 0 0 24px;
+        font-size: 15px; line-height: 1.55; color: #0f172a;
+      }
+      .rv-tldr .rv-tldr-label {
+        display: inline-block; margin-right: 8px;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+        color: #2563eb; text-transform: uppercase;
+        vertical-align: 1px;
+      }
+      .vis-callout {
+        border-left: 4px solid; border-radius: 0 8px 8px 0;
+        padding: 12px 16px; margin: 14px 0;
+      }
+      .vis-callout-title { display: block; margin-bottom: 4px; }
+      .vis-callout-info   { background: #dbeafe; border-color: #2563eb; color: #1e3a8a; }
+      .vis-callout-warn   { background: #fef3c7; border-color: #d97706; color: #78350f; }
+      .vis-callout-gotcha { background: #fee2e2; border-color: #dc2626; color: #7f1d1d; }
+      .vis-callout-ok     { background: #dcfce7; border-color: #16a34a; color: #14532d; }
+
+      .vis-term {
+        text-decoration: underline dotted;
+        text-decoration-color: #94a3b8;
+        text-underline-offset: 3px;
+        cursor: help;
+      }
+      .vis-term:focus { outline: 2px solid #2563eb; outline-offset: 2px; }
+      .vis-term-tip {
+        position: fixed; z-index: 10001; max-width: 340px;
+        background: #0f172a; color: #f8fafc; font-size: 13px; line-height: 1.45;
+        padding: 8px 10px; border-radius: 6px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.22);
+        pointer-events: none; white-space: pre-wrap;
+      }
+
+      /* Trap problem (MCQ with click-to-reveal). One block per problem. */
+      .vis-trap {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px 22px;
+        margin: 24px 0;
+        background: #fafbfc;
+      }
+      .vis-trap-header {
+        display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      .vis-trap-difficulty {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+        padding: 3px 10px; border-radius: 999px; text-transform: uppercase;
+      }
+      .vis-trap-diff-easy   { background: #dcfce7; color: #166534; }
+      .vis-trap-diff-medium { background: #fef9c3; color: #854d0e; }
+      .vis-trap-diff-hard   { background: #fee2e2; color: #991b1b; }
+      .vis-trap-title { font-size: 17px; color: #0f172a; }
+      .vis-trap-multi-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #e0e7ff; color: #3730a3;
+        text-transform: uppercase;
+      }
+      .vis-trap-scenario { margin: 0 0 12px; line-height: 1.65; }
+      .vis-trap-diagram  { margin: 12px 0; }
+      .vis-trap-options  { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+      .vis-trap-option {
+        text-align: left;
+        padding: 11px 14px;
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        font: inherit; color: #0f172a;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .vis-trap-option:hover:not(:disabled) {
+        border-color: #2563eb; background: #f1f5f9;
+      }
+      .vis-trap-option.is-selected {
+        border-color: #2563eb; background: #dbeafe;
+      }
+      .vis-trap-option.is-correct {
+        border-color: #16a34a; background: #dcfce7;
+      }
+      .vis-trap-option.is-wrong-selected {
+        border-color: #dc2626; background: #fee2e2;
+      }
+      .vis-trap-option.is-correct-wrong-pos {
+        border-color: #d97706; background: #fef3c7;
+      }
+      .vis-trap-option.is-disabled {
+        opacity: 0.6;
+      }
+      .vis-trap-key { font-weight: 700; margin-right: 4px; color: #475569; }
+      .vis-trap-tick { color: #16a34a; font-weight: 700; margin-left: 6px; }
+      .vis-trap-x    { color: #dc2626; font-weight: 700; margin-left: 6px; }
+      .vis-trap-actions {
+        display: flex; align-items: center; gap: 12px;
+        margin-top: 8px;
+      }
+      .vis-trap-reveal-btn, .vis-trap-reset-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 10px 18px; border-radius: 8px;
+        font: inherit; font-weight: 600;
+        cursor: pointer;
+      }
+      .vis-trap-reveal-btn:hover, .vis-trap-reset-btn:hover { background: #1d4ed8; }
+      .vis-trap-reset-btn {
+        background: #64748b; margin-top: 12px;
+        font-size: 13px; padding: 8px 14px;
+      }
+      .vis-trap-reset-btn:hover { background: #475569; }
+      .vis-trap-hint { color: #64748b; font-size: 14px; }
+      .vis-trap-reveal-block {
+        margin-top: 18px; padding-top: 16px; border-top: 1px solid #e2e8f0;
+      }
+      .vis-trap-trap, .vis-trap-lens, .vis-trap-stretch {
+        margin: 10px 0; padding: 12px 16px; border-radius: 8px;
+      }
+      .vis-trap-trap    { background: #fef3c7; border-left: 4px solid #d97706; color: #78350f; }
+      .vis-trap-lens    { background: #dcfce7; border-left: 4px solid #16a34a; color: #14532d; }
+      .vis-trap-stretch { background: #e0e7ff; border-left: 4px solid #6366f1; color: #312e81; }
+      .vis-trap-trap strong, .vis-trap-lens strong, .vis-trap-stretch strong {
+        display: block; margin-bottom: 4px;
+      }
+      .vis-trap-trap p, .vis-trap-lens p, .vis-trap-stretch p { margin: 0; line-height: 1.55; }
+
+      /* System Design — pick-and-connect block diagram */
+      .vis-sd {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px 22px;
+        margin: 24px 0;
+        background: #fafbfc;
+      }
+      .vis-sd-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+      .vis-sd-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #fef3c7; color: #78350f; text-transform: uppercase;
+      }
+      .vis-sd-scenario { margin: 0 0 14px; line-height: 1.65; }
+      .vis-sd-label { font-size: 13px; font-weight: 600; color: #475569; margin: 14px 0 6px; }
+      .vis-sd-palette { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px;
+                        background: #ffffff; border: 1px dashed #cbd5e1; border-radius: 8px; }
+      .vis-sd-piece {
+        padding: 8px 12px;
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+        font: inherit; font-size: 13px; cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+        white-space: nowrap;
+      }
+      .vis-sd-piece:hover:not(:disabled) { border-color: #2563eb; background: #f1f5f9; }
+      .vis-sd-piece.is-placed { opacity: 0.4; cursor: default; }
+      .vis-sd-piece.cat-data    { border-left: 4px solid #0ea5e9; }
+      .vis-sd-piece.cat-model   { border-left: 4px solid #8b5cf6; }
+      .vis-sd-piece.cat-infra   { border-left: 4px solid #f59e0b; }
+      .vis-sd-piece.cat-monitor { border-left: 4px solid #10b981; }
+
+      .vis-sd-canvas {
+        display: flex; flex-wrap: wrap; gap: 10px;
+        min-height: 80px;
+        padding: 14px;
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+      }
+      .vis-sd-canvas-empty { color: #94a3b8; font-style: italic; font-size: 14px; }
+      .vis-sd-placed {
+        padding: 9px 13px;
+        background: #ffffff; border: 1.5px solid #2563eb; border-radius: 8px;
+        font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+        position: relative;
+        transition: all 0.15s;
+      }
+      .vis-sd-placed:hover { background: #eff6ff; }
+      .vis-sd-placed.is-connect-source {
+        background: #dbeafe; border-color: #1d4ed8; border-width: 2.5px;
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+      }
+      .vis-sd-placed.is-correct  { background: #dcfce7; border-color: #16a34a; }
+      .vis-sd-placed.is-wrong    { background: #fee2e2; border-color: #dc2626; }
+      .vis-sd-remove {
+        margin-left: 8px; color: #94a3b8; font-weight: 700;
+        cursor: pointer; padding: 0 4px;
+      }
+      .vis-sd-remove:hover { color: #dc2626; }
+
+      .vis-sd-actions { display: flex; align-items: center; gap: 12px; margin: 12px 0 8px; }
+      .vis-sd-connect-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 8px 14px; border-radius: 6px;
+        font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+      }
+      .vis-sd-connect-btn:hover { background: #1d4ed8; }
+      .vis-sd-connect-status { color: #475569; font-size: 14px; font-style: italic; }
+      .vis-sd-connect-cancel {
+        background: transparent; color: #dc2626; border: 1px solid #fca5a5;
+        padding: 4px 10px; border-radius: 6px;
+        font: inherit; font-size: 12px; cursor: pointer;
+      }
+
+      .vis-sd-edges { background: #ffffff; border: 1px solid #e2e8f0;
+                      border-radius: 8px; padding: 10px 14px; }
+      .vis-sd-edges ul { list-style: none; padding: 0; margin: 6px 0 0; }
+      .vis-sd-edges li {
+        padding: 6px 10px; margin: 4px 0; border-radius: 6px;
+        display: flex; align-items: center; gap: 8px;
+        background: #f8fafc; font-size: 14px;
+      }
+      .vis-sd-edges li.is-correct { background: #dcfce7; }
+      .vis-sd-edges li.is-wrong   { background: #fee2e2; }
+      .vis-sd-edge-x {
+        background: transparent; color: #94a3b8; border: none;
+        cursor: pointer; padding: 0 4px; margin-left: auto;
+      }
+      .vis-sd-edge-x:hover { color: #dc2626; }
+      .vis-sd-reveal-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 10px 18px; border-radius: 8px;
+        font: inherit; font-weight: 600; cursor: pointer;
+        margin-top: 12px;
+      }
+      .vis-sd-reveal-btn:hover { background: #1d4ed8; }
+      .vis-sd-score {
+        background: #eff6ff; border: 1px solid #93c5fd;
+        padding: 10px 14px; border-radius: 8px;
+        margin: 12px 0;
+        font-size: 14px; color: #1e3a8a;
+      }
+      .vis-sd-missing-block {
+        background: #fef3c7; border-left: 4px solid #d97706;
+        padding: 10px 14px; border-radius: 8px;
+        margin: 10px 0;
+        font-size: 14px; color: #78350f;
+      }
+      .vis-sd-missing-block strong { display: block; margin-bottom: 4px; }
+
+      /* CodeFillin — fill-in-the-blank code exercise */
+      .vis-cf-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #dcfce7; color: #14532d; text-transform: uppercase;
+      }
+      .vis-cf-code-wrap {
+        position: relative;
+        background: #0f172a; color: #e2e8f0;
+        padding: 16px 18px 14px;
+        border-radius: 8px;
+        margin: 12px 0;
+        font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+        font-size: 14px; line-height: 1.65;
+        overflow-x: auto;
+      }
+      .vis-cf-code-lang {
+        position: absolute; top: 6px; right: 12px;
+        font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;
+      }
+      .vis-cf-code { background: transparent !important; color: inherit; margin: 0; }
+      .vis-cf-line { white-space: pre; }
+      .vis-cf-blank {
+        background: #1e293b; color: #fbbf24; border: 1px dashed #475569;
+        padding: 1px 8px; border-radius: 4px;
+        font-family: inherit; font-size: 13.5px; cursor: pointer;
+        margin: 0 1px;
+        transition: all 0.12s;
+      }
+      .vis-cf-blank:hover:not(:disabled) { background: #334155; border-color: #94a3b8; }
+      .vis-cf-blank.is-filled {
+        background: #1e3a8a; color: #ffffff; border-style: solid; border-color: #3b82f6;
+      }
+      .vis-cf-blank.is-correct { background: #14532d; color: #bbf7d0; border-color: #16a34a; }
+      .vis-cf-blank.is-wrong   { background: #7f1d1d; color: #fecaca; border-color: #dc2626; }
+      .vis-cf-options {
+        display: flex; flex-wrap: wrap; gap: 8px;
+        margin: 8px 0 12px;
+      }
+      .vis-cf-option {
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+        padding: 8px 12px; font: inherit; cursor: pointer;
+        transition: all 0.12s;
+      }
+      .vis-cf-option:hover:not(:disabled) { border-color: #2563eb; background: #f1f5f9; }
+      .vis-cf-option.is-picked { border-color: #2563eb; background: #dbeafe; border-width: 2px; }
+      .vis-cf-option.is-used { opacity: 0.5; }
+      .vis-cf-option.is-correct-option { background: #f0fdf4; border-color: #16a34a; }
+      .vis-cf-option code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 13.5px; }
+      .vis-cf-correct-mark { color: #16a34a; font-size: 12px; margin-left: 6px; }
+
+      /* MathDerivation — step-by-step proof */
+      .vis-md-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #e0e7ff; color: #312e81; text-transform: uppercase;
+      }
+      .vis-md-steps { padding: 0; list-style: none; counter-reset: vmds; }
+      .vis-md-step {
+        background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;
+        padding: 14px 16px; margin: 10px 0;
+      }
+      .vis-md-step-label { margin-bottom: 8px; }
+      .vis-md-show-btn {
+        background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1;
+        padding: 6px 12px; border-radius: 6px; font: inherit; font-size: 13px;
+        cursor: pointer;
+      }
+      .vis-md-show-btn:hover { background: #e2e8f0; }
+      .vis-md-mcq { display: flex; flex-direction: column; gap: 8px; }
+      .vis-md-step-option {
+        background: #ffffff; border: 1.5px solid #cbd5e1; border-radius: 8px;
+        padding: 14px 16px; cursor: pointer;
+        transition: border-color 0.12s, background 0.12s;
+        text-align: left; font: inherit;
+      }
+      .vis-md-step-option:hover { border-color: #2563eb; background: #f1f5f9; }
+      .vis-md-pick-feedback {
+        padding: 6px 12px; border-radius: 6px; margin-bottom: 8px;
+        font-size: 13px; font-weight: 600;
+      }
+      .vis-md-pick-feedback.is-correct { background: #dcfce7; color: #14532d; }
+      .vis-md-pick-feedback.is-wrong   { background: #fee2e2; color: #7f1d1d; }
+      .vis-md-step-body { margin-top: 10px; }
+      .vis-md-explain { margin: 8px 0 0; color: #475569; line-height: 1.6; }
+
+      /* Responsive SVG wrappers — diagrams shrink to fit narrow containers
+         instead of overflowing the parent. Without these, Mermaid/Vega SVGs
+         render at their intrinsic width and get clipped on the left/right
+         when viewport is narrower than ~900px. */
+      .vis-mermaid svg, .vis-vega svg {
+        max-width: 100%;
+        height: auto;
+        display: inline-block;
+      }
+      .vis-mermaid, .vis-vega { overflow-x: auto; }
+
+      /* Mermaid text rendering fixes for Mermaid 10. By default the auto-sized
+         node fill rect and the edge-label background rect are both tight to the
+         text, which clips descenders (g/p/y/j/q) at the bottom of nodes AND
+         the right edge of edge labels ("Yes" → "Ye"). Force overflow:visible
+         everywhere and give the labels generous padding. */
+      .vis-mermaid svg,
+      .vis-mermaid foreignObject,
+      .vis-mermaid .node foreignObject,
+      .vis-mermaid .edgeLabel,
+      .vis-mermaid .edgeLabel foreignObject,
+      .vis-mermaid .label,
+      .vis-mermaid .label foreignObject {
+        overflow: visible !important;
+      }
+      .vis-mermaid .node .nodeLabel,
+      .vis-mermaid .node .label,
+      .vis-mermaid .label foreignObject div {
+        line-height: 1.5;
+        padding: 2px 4px;
+      }
+      .vis-mermaid .edgeLabel {
+        padding: 2px 8px;
+        background: #ffffff;
+        border-radius: 3px;
+        line-height: 1.4;
+      }
+      .vis-mermaid .edgeLabel foreignObject div,
+      .vis-mermaid .edgeLabel span,
+      .vis-mermaid .edgeLabel .labelBkg {
+        padding: 0 4px !important;
+        background: transparent !important;
+      }
+    `;
+    const tag = document.createElement("style");
+    tag.id = "rv-components-styles";
+    tag.textContent = css;
+    document.head.appendChild(tag);
+  })();
+
+  // ----- Components ----- //
+
+  // <RV.Pill>v0.2</RV.Pill>  →  small uppercase pill
+  function Pill({ children, color }) {
+    const style = color ? { background: color } : null;
+    return h("span", { className: "rv-pill", style }, children);
+  }
+
+  // <RV.Tag color="green">ok</RV.Tag>  →  status pill
+  function Tag({ children, color = "gray" }) {
+    return h("span", { className: "rv-tag rv-tag-" + color }, children);
+  }
+
+  // <RV.ByLine items={[{label:"Build",value:"2026-05-15"}, ...]} />
+  function ByLine({ items = [] }) {
+    return h("div", { className: "rv-byline" },
+      items.map((it, i) =>
+        h("span", { key: i },
+          h("strong", null, it.label), " ", it.value
+        )
+      )
+    );
+  }
+
+  // Set the browser tab title. Auto-called by RV.Hero; reports without a
+  // Hero can call this directly: RV.setTitle("...").
+  function setTitle(str) {
+    if (typeof str === "string" && str.trim()) document.title = str.trim();
+  }
+
+  // <RV.Hero title="..." subtitle="..." pill="v0.2" byline={[...]}>
+  //   children (optional, rendered below subtitle)
+  // </RV.Hero>
+  function Hero({ title, subtitle, pill, byline, accent, children }) {
+    React.useEffect(() => { setTitle(title); }, [title]);
+    return h("section", { className: "rv-hero" },
+      pill ? h(Pill, null, pill) : null,
+      h("h1", null,
+        accent ? h("span", { className: accent }) : null,
+        accent ? " " : null,
+        title
+      ),
+      subtitle ? h("p", { className: "rv-sub" }, subtitle) : null,
+      byline && byline.length ? h(ByLine, { items: byline }) : null,
+      children
+    );
+  }
+
+  // <RV.Card><strong>title</strong><p>body</p></RV.Card>
+  function Card({ children, className }) {
+    return h("div", {
+      className: "rv-card" + (className ? " " + className : "")
+    }, children);
+  }
+
+  // <RV.Section id="sec-foo" title="Foo">...</RV.Section>
+  //   — renders <h2 id={id}>{title}</h2> + body. The id is picked up by
+  //   the auto-TOC sidebar.
+  function Section({ id, title, children }) {
+    return h(React.Fragment, null,
+      h("h2", { id }, title),
+      children
+    );
+  }
+
+  // <RV.TLDR>One-paragraph headline answer.</RV.TLDR>
+  // ALWAYS render this immediately after <RV.Hero>, before any sections.
+  // Reader should be able to leave after reading it.
+  function TLDR({ children }) {
+    return h("aside", { className: "rv-tldr", role: "note" },
+      h("span", { className: "rv-tldr-label" }, "TL;DR"),
+      children
+    );
+  }
+
+  function Mermaid({ chart, id }) {
+    const ref = React.useRef(null);
+    const autoId = React.useId();
+    React.useEffect(() => {
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js")
+        .then(() => {
+          if (!window.mermaid._inited) {
+            window.mermaid._inited = true;
+            // trusted-author content; "loose" enables click handlers + HTML labels in mermaid
+            // trusted-author content; "loose" enables click handlers + HTML labels in mermaid.
+            // flowchart.padding + nodePadding give descenders (g, p, y, j, q) room to render
+            // inside diamond/rectangle nodes — without this Mermaid 10 clips them at the bottom edge.
+            window.mermaid.initialize({
+              startOnLoad: false,
+              theme: "default",
+              securityLevel: "loose",
+              flowchart: { padding: 18, nodeSpacing: 50, rankSpacing: 60, useMaxWidth: true, htmlLabels: true },
+              themeVariables: { fontSize: "14px" }
+            });
+          }
+          return window.mermaid.render((id || "mmd") + "-" + autoId.replace(/:/g, ""), chart);
+        })
+        .then(({ svg }) => {
+          if (cancelled || !ref.current) return;
+          ref.current.innerHTML = svg;
+          // POST-PROCESS to fix Mermaid 10 descender clipping (g, p, y, j, q).
+          // Mermaid sizes foreignObjects to the font em-box, which does NOT include
+          // descender depth. Grow each foreignObject by 12px (6 top + 6 bottom) so
+          // descenders render fully. Also grow rectangle node fills to match so the
+          // colored box doesn't show a thin sliver above/below the text.
+          const svgEl = ref.current.querySelector("svg");
+          if (!svgEl) return;
+          svgEl.querySelectorAll("foreignObject").forEach((fo) => {
+            const h = parseFloat(fo.getAttribute("height") || "0");
+            const y = parseFloat(fo.getAttribute("y") || "0");
+            fo.setAttribute("height", String(h + 12));
+            fo.setAttribute("y", String(y - 6));
+          });
+          svgEl.querySelectorAll("g.node > rect").forEach((rect) => {
+            const h = parseFloat(rect.getAttribute("height") || "0");
+            const y = parseFloat(rect.getAttribute("y") || "0");
+            rect.setAttribute("height", String(h + 12));
+            rect.setAttribute("y", String(y - 6));
+          });
+          // Diamonds use <polygon points="..."/>. Expand vertically by translating
+          // top and bottom vertices outward from the centroid by 6px each.
+          svgEl.querySelectorAll("g.node > polygon").forEach((poly) => {
+            const pts = (poly.getAttribute("points") || "").trim().split(/\s+/)
+              .map((p) => p.split(",").map(parseFloat));
+            if (pts.length < 3 || pts.some((p) => p.length < 2 || p.some(isNaN))) return;
+            const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+            const grown = pts.map(([x, py]) => [x, py + (py < cy ? -6 : 6)]);
+            poly.setAttribute("points", grown.map((p) => p.join(",")).join(" "));
+          });
+        })
+        .catch((e) => { if (ref.current) ref.current.textContent = "[mermaid error] " + e; });
+      return () => { cancelled = true; };
+    }, [chart, id, autoId]);
+    return h("div", { ref, className: "vis-mermaid", style: { margin: "16px 0", textAlign: "center" } });
+  }
+
+  function VegaLite({ spec, data }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      let cancelled = false;
+      Promise.all([
+        _loadScript("https://cdn.jsdelivr.net/npm/vega@5"),
+        _loadScript("https://cdn.jsdelivr.net/npm/vega-lite@5"),
+        _loadScript("https://cdn.jsdelivr.net/npm/vega-embed@6"),
+      ]).then(() => {
+        if (cancelled || !ref.current) return;
+        const full = data ? { ...spec, data: { values: data } } : spec;
+        window.vegaEmbed(ref.current, full, { actions: false, renderer: "svg" });
+      }).catch((e) => { if (ref.current) ref.current.textContent = "[vega error] " + e; });
+      return () => { cancelled = true; };
+    }, [spec, data]);
+    return h("div", { ref, className: "vis-vega", style: { margin: "16px 0" } });
+  }
+
+  function Equation({ tex, display = false }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      _ensureKatexCss();
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js")
+        .then(() => {
+          if (cancelled || !ref.current) return;
+          window.katex.render(tex, ref.current, { displayMode: display, throwOnError: false });
+        });
+      return () => { cancelled = true; };
+    }, [tex, display]);
+    const Tag = display ? "div" : "span";
+    return h(Tag, { ref, className: "vis-eq" });
+  }
+
+  function CodeBlock({ lang = "plaintext", children }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      _ensureHljsCss();
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js")
+        .then(() => _loadScript(`https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/${lang}.min.js`).catch(() => {}))
+        .then(() => {
+          if (cancelled || !ref.current) return;
+          // Reset so hljs re-highlights when `children` or `lang` change
+          ref.current.removeAttribute("data-highlighted");
+          ref.current.className = "language-" + lang;
+          ref.current.textContent = String(Array.isArray(children) ? children.join("") : children);
+          window.hljs.highlightElement(ref.current);
+        });
+      return () => { cancelled = true; };
+    }, [lang, children]);
+    return h("pre", { style: { margin: "12px 0", borderRadius: 8, overflow: "auto" } },
+      h("code", { ref, className: `language-${lang}` }, children));
+  }
+
+  function Callout({ kind = "info", title, children }) {
+    return h("aside", { className: `vis-callout vis-callout-${kind}`, role: "note" },
+      title ? h("strong", { className: "vis-callout-title" }, title) : null,
+      children);
+  }
+
+  // <VIS.Term def="1-2 sentence plain-English explanation">jargon</VIS.Term>
+  //
+  // Wraps any technical term so a non-technical reader can hover for an
+  // immediate definition. The explanation should:
+  //   - assume the reader knows English but not software/your domain
+  //   - fit in 1-2 short sentences (a tooltip, not a paragraph)
+  //   - avoid further jargon (or wrap that too)
+  //
+  // The element exposes `data-rv-info` so the report-viewer overlay reuses
+  // its own tooltip + double-click "explain this" feedback flow. In
+  // standalone /visualize mode (no overlay), the lightweight hover handler
+  // below renders the tooltip directly.
+  function Term({ def, children }) {
+    if (!def) return h(React.Fragment, null, children);
+    return h("span", {
+      className: "vis-term",
+      "data-rv-info": def,
+      "aria-label": def,
+      tabIndex: 0,
+    }, children);
+  }
+
+  // Standalone hover tooltip for <VIS.Term>. If the report-viewer overlay
+  // is loaded it already shows tooltips for any [data-rv-info] element, so
+  // we short-circuit here to avoid double-rendering.
+  (function installTermTooltip() {
+    let tip = null;
+    function show(el) {
+      if (window.__rvReady) return;  // overlay.js owns the tooltip in report-viewer mode
+      const text = el.getAttribute("data-rv-info");
+      if (!text) return;
+      if (!tip) {
+        tip = document.createElement("div");
+        tip.className = "vis-term-tip";
+        document.body.appendChild(tip);
+      }
+      tip.textContent = text;
+      const r = el.getBoundingClientRect();
+      const tr = tip.getBoundingClientRect();
+      const pad = 8;
+      let left = Math.max(pad,
+        Math.min(r.left, window.innerWidth - tr.width - pad));
+      const above = r.top - tr.height - pad;
+      const below = r.bottom + pad;
+      tip.style.left = left + "px";
+      tip.style.top  = (above >= pad ? above : below) + "px";
+      tip.style.display = "block";
+    }
+    function hide() { if (tip) tip.style.display = "none"; }
+    document.addEventListener("mouseover", (e) => {
+      const el = e.target.closest && e.target.closest(".vis-term");
+      if (el) show(el); else hide();
+    });
+    document.addEventListener("focusin", (e) => {
+      const el = e.target.closest && e.target.closest(".vis-term");
+      if (el) show(el);
+    });
+    document.addEventListener("focusout", hide);
+    document.addEventListener("scroll", hide, true);
+  })();
+
+  // <VIS.TrapProblem
+  //   id="bv-q1"
+  //   difficulty="hard"
+  //   title="..."
+  //   scenario={<>...JSX...</>}
+  //   diagram={<VIS.Mermaid chart={...} />}
+  //   options={[
+  //     {key:"a", text:"...", correct:false},
+  //     {key:"b", text:"...", correct:true},
+  //     ...
+  //   ]}
+  //   trap={<>The most tempting wrong is X because...</>}
+  //   lens={<>The right answer + reasoning</>}
+  //   stretch="optional follow-up question"
+  // />
+  //
+  // Trap problem from the Idea Engine /learn template. MCQ with click-to-pick,
+  // then click-to-reveal model answer. Each problem owns its own state.
+  // Trap problem from the Idea Engine /learn template. MCQ with click-to-pick,
+  // then click-to-reveal model answer. Each problem owns its own state.
+  //
+  // Three modes, chosen per-problem based on what the concept needs:
+  //   mode="single"  (default): one option is correct (radio-style)
+  //   mode="multi":  multiple options correct, user picks any subset
+  //                  (set `multiSelect={true}` OR `mode="multi"`)
+  //   mode="ordered": real-world priority test — options have an `order` field
+  //                  (1, 2, 3 …) saying their correct rank. Wrong-move options
+  //                  have `order: null` and should NOT be picked at all.
+  //                  User clicks in order; each pick gets a position badge.
+  //                  Reveal shows correct rank, marks wrong-position picks and
+  //                  wrong-move picks differently.
+  function TrapProblem(props) {
+    const { id, difficulty = "hard", title, scenario, diagram,
+            options = [], trap, lens, stretch,
+            multiSelect = false, mode } = props;
+    const effectiveMode = mode || (multiSelect ? "multi" : "single");
+    const isOrdered = effectiveMode === "ordered";
+    const isMulti = effectiveMode === "multi";
+
+    // Selection state shape varies by mode:
+    //   single  → string | null
+    //   multi   → Set<string>
+    //   ordered → string[]  (in pick order)
+    const [selected, setSelected] = React.useState(
+      isOrdered ? [] : (isMulti ? new Set() : null)
+    );
+    const [revealed, setRevealed] = React.useState(false);
+
+    function isSelected(key) {
+      if (isOrdered) return selected.includes(key);
+      if (isMulti) return selected.has(key);
+      return selected === key;
+    }
+    function pickOrder(key) {
+      if (isOrdered) {
+        const idx = selected.indexOf(key);
+        return idx >= 0 ? idx + 1 : null;
+      }
+      return null;
+    }
+    function pick(key) {
+      if (revealed) return;
+      if (isOrdered) {
+        setSelected(
+          selected.includes(key)
+            ? selected.filter((k) => k !== key)
+            : [...selected, key]
+        );
+      } else if (isMulti) {
+        const next = new Set(selected);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        setSelected(next);
+      } else {
+        setSelected(key);
+      }
+    }
+    function reveal() { setRevealed(true); }
+    function reset() {
+      setSelected(isOrdered ? [] : (isMulti ? new Set() : null));
+      setRevealed(false);
+    }
+    function optionClass(o) {
+      if (!revealed) return "vis-trap-option" + (isSelected(o.key) ? " is-selected" : "");
+      if (isOrdered) {
+        // Right move at right rank → fully correct
+        const userPos = pickOrder(o.key);
+        const correctPos = o.order; // null = wrong move
+        if (correctPos != null && userPos === correctPos) return "vis-trap-option is-correct";
+        // Right move at wrong rank → partial credit (yellow)
+        if (correctPos != null && userPos != null && userPos !== correctPos)
+          return "vis-trap-option is-correct-wrong-pos";
+        // Right move not picked → "you missed this"
+        if (correctPos != null && userPos == null) return "vis-trap-option is-correct";
+        // Wrong move picked → red
+        if (correctPos == null && userPos != null) return "vis-trap-option is-wrong-selected";
+        // Wrong move not picked → faded
+        return "vis-trap-option is-disabled";
+      }
+      if (o.correct) return "vis-trap-option is-correct";
+      if (isSelected(o.key)) return "vis-trap-option is-wrong-selected";
+      return "vis-trap-option is-disabled";
+    }
+    const anyPicked = isOrdered ? selected.length > 0
+                                : (isMulti ? selected.size > 0 : selected !== null);
+    const correctCount = isOrdered
+      ? options.filter((o) => o.order != null).length
+      : options.filter((o) => o.correct).length;
+    const modeBadge = isOrdered ? "Pick in correct ORDER"
+                                : (isMulti ? "Select all that apply" : null);
+
+    function optionPrefix(o) {
+      if (isOrdered) {
+        const pos = pickOrder(o.key);
+        if (revealed) {
+          // After reveal: show user pos vs correct pos
+          if (o.order != null && pos != null)
+            return pos === o.order ? `#${pos} ✓` : `you:#${pos} → correct:#${o.order}`;
+          if (o.order != null) return `correct:#${o.order}`;
+          if (pos != null) return `you:#${pos}`;
+          return "—";
+        }
+        return pos != null ? `#${pos}` : "○";
+      }
+      if (isMulti) return isSelected(o.key) ? "☑" : "☐";
+      return "○";
+    }
+
+    function pickSummary() {
+      if (!anyPicked) return null;
+      if (isOrdered) return `Your order: ${selected.map((k) => "(" + k + ")").join(" → ")}`;
+      if (isMulti) return "You picked " + selected.size + " of " + correctCount + " correct option" + (correctCount === 1 ? "" : "s");
+      return "You picked (" + selected + ")";
+    }
+
+    return h("section", { id, className: "vis-trap" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        modeBadge ? h("span", { className: "vis-trap-multi-badge" }, modeBadge) : null
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      diagram ? h("div", { className: "vis-trap-diagram" }, diagram) : null,
+      h("div", { className: "vis-trap-options",
+                 role: (isMulti || isOrdered) ? "group" : "radiogroup" },
+        options.map((o) => h("button", {
+          key: o.key,
+          type: "button",
+          className: optionClass(o),
+          onClick: () => pick(o.key),
+          disabled: revealed && (
+            isOrdered
+              ? (o.order == null && !isSelected(o.key))
+              : (!o.correct && !isSelected(o.key))
+          ),
+          "aria-pressed": isSelected(o.key)
+        },
+          h("span", { className: "vis-trap-key" },
+            optionPrefix(o) + " (" + o.key + ")"),
+          " ",
+          o.text
+        ))
+      ),
+      !revealed ? h("div", { className: "vis-trap-actions" },
+        h("button", {
+          type: "button",
+          className: "vis-trap-reveal-btn",
+          onClick: reveal
+        }, anyPicked ? "Reveal model answer" : "Skip & reveal"),
+        anyPicked ? h("span", { className: "vis-trap-hint" }, pickSummary()) : null
+      ) : null,
+      revealed ? h("div", { className: "vis-trap-reveal-block" },
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"),
+          h("div", null, trap)
+        ) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The lens (model answer)"),
+          h("div", null, lens)
+        ) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"),
+          h("div", null, stretch)
+        ) : null,
+        h("button", {
+          type: "button",
+          className: "vis-trap-reset-btn",
+          onClick: reset
+        }, "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.SystemDesign> — pick-and-connect block-diagram problem for system
+  // design questions. Palette of N pieces (some are distractors), user clicks
+  // to add to canvas, then clicks pairs of placed pieces to draw directed
+  // edges. Reveal compares both the picked SET and the edge TOPOLOGY against
+  // expected. Pieces have categories that drive color coding.
+  function SystemDesign(props) {
+    const { id, difficulty = "hard", title, scenario,
+            pieces = [], expectedPieces = [], expectedEdges = [],
+            trap, lens, stretch } = props;
+    const [placed, setPlaced] = React.useState([]);     // [pieceId]
+    const [edges, setEdges] = React.useState([]);       // [[src, tgt]]
+    const [connectMode, setConnectMode] = React.useState(null); // null | "waiting" | {src}
+    const [revealed, setRevealed] = React.useState(false);
+
+    const pieceById = Object.fromEntries(pieces.map((p) => [p.id, p]));
+    function pieceLabel(id) { return pieceById[id]?.label || id; }
+
+    function addPiece(pieceId) {
+      if (revealed || placed.includes(pieceId)) return;
+      setPlaced([...placed, pieceId]);
+    }
+    function removePiece(pieceId) {
+      if (revealed) return;
+      setPlaced(placed.filter((p) => p !== pieceId));
+      setEdges(edges.filter(([s, t]) => s !== pieceId && t !== pieceId));
+    }
+    function startConnect() {
+      if (revealed || placed.length < 2) return;
+      setConnectMode("waiting");
+    }
+    function clickPlacedPiece(pieceId) {
+      if (revealed) return;
+      if (connectMode === "waiting") {
+        setConnectMode({ src: pieceId });
+      } else if (connectMode && connectMode.src) {
+        if (connectMode.src === pieceId) {
+          setConnectMode(null);
+        } else {
+          const edge = [connectMode.src, pieceId];
+          if (!edges.some(([s, t]) => s === edge[0] && t === edge[1])) {
+            setEdges([...edges, edge]);
+          }
+          setConnectMode(null);
+        }
+      }
+    }
+    function removeEdge(idx) {
+      if (revealed) return;
+      setEdges(edges.filter((_, i) => i !== idx));
+    }
+    function reveal() { setRevealed(true); setConnectMode(null); }
+    function reset() {
+      setPlaced([]); setEdges([]); setConnectMode(null); setRevealed(false);
+    }
+
+    function paletteClass(p) {
+      const base = "vis-sd-piece" + (p.category ? " cat-" + p.category : "");
+      return placed.includes(p.id) ? base + " is-placed" : base;
+    }
+    function placedClass(pieceId) {
+      let cls = "vis-sd-placed";
+      if (connectMode && connectMode.src === pieceId) cls += " is-connect-source";
+      if (revealed) {
+        cls += expectedPieces.includes(pieceId) ? " is-correct" : " is-wrong";
+      }
+      return cls;
+    }
+    function edgeIsExpected(edge) {
+      return expectedEdges.some(([s, t]) => s === edge[0] && t === edge[1]);
+    }
+
+    const correctPicks = placed.filter((id) => expectedPieces.includes(id)).length;
+    const correctEdges = edges.filter((e) => edgeIsExpected(e)).length;
+    const missingPieces = expectedPieces.filter((id) => !placed.includes(id));
+    const missingEdges = expectedEdges.filter(([s, t]) =>
+      !edges.some(([es, et]) => es === s && et === t)
+    );
+    const distractorPicks = placed.filter((id) => !expectedPieces.includes(id));
+    const wrongEdges = edges.filter((e) => !edgeIsExpected(e));
+
+    return h("section", { id, className: "vis-sd" },
+      h("div", { className: "vis-sd-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-sd-mode-badge" }, "Pick & connect")
+      ),
+      scenario ? h("div", { className: "vis-sd-scenario" }, scenario) : null,
+      h("div", { className: "vis-sd-label" },
+        "Palette — click a piece to add it to your design"),
+      h("div", { className: "vis-sd-palette" },
+        pieces.map((p) => h("button", {
+          key: p.id, type: "button",
+          className: paletteClass(p),
+          onClick: () => addPiece(p.id),
+          disabled: revealed || placed.includes(p.id),
+          title: p.description || p.label,
+        }, p.label))
+      ),
+      h("div", { className: "vis-sd-label" },
+        "Your design (" + placed.length + " piece" + (placed.length === 1 ? "" : "s") + ")"),
+      h("div", { className: "vis-sd-canvas" },
+        placed.length === 0
+          ? h("div", { className: "vis-sd-canvas-empty" },
+              "Click pieces above to start building your design.")
+          : placed.map((pieceId) => h("button", {
+              key: pieceId, type: "button",
+              className: placedClass(pieceId),
+              onClick: () => clickPlacedPiece(pieceId),
+            },
+              pieceLabel(pieceId),
+              !revealed ? h("span", {
+                className: "vis-sd-remove",
+                onClick: (e) => { e.stopPropagation(); removePiece(pieceId); },
+                role: "button", "aria-label": "Remove"
+              }, " ✕") : null
+            ))
+      ),
+      !revealed && placed.length >= 2 ? h("div", { className: "vis-sd-actions" },
+        connectMode === null ? h("button", {
+          type: "button", className: "vis-sd-connect-btn", onClick: startConnect,
+        }, "+ Add connection") : null,
+        connectMode === "waiting" ? h("span", { className: "vis-sd-connect-status" },
+          "Click the SOURCE piece on the canvas...") : null,
+        connectMode && connectMode.src ? h("span", { className: "vis-sd-connect-status" },
+          "Source: " + pieceLabel(connectMode.src) + ". Click the TARGET piece.") : null,
+        connectMode ? h("button", {
+          type: "button", className: "vis-sd-connect-cancel",
+          onClick: () => setConnectMode(null),
+        }, "cancel") : null
+      ) : null,
+      edges.length > 0 ? h("div", { className: "vis-sd-edges" },
+        h("div", { className: "vis-sd-label", style: { margin: "0 0 4px" } },
+          "Connections (" + edges.length + ")"),
+        h("ul", null,
+          edges.map((edge, idx) => h("li", {
+            key: idx, className: revealed ? (edgeIsExpected(edge) ? "is-correct" : "is-wrong") : ""
+          },
+            pieceLabel(edge[0]) + " → " + pieceLabel(edge[1]),
+            revealed && edgeIsExpected(edge) ? h("span", null, " ✓") : null,
+            revealed && !edgeIsExpected(edge) ? h("span", null, " ✗") : null,
+            !revealed ? h("button", {
+              type: "button", className: "vis-sd-edge-x",
+              onClick: () => removeEdge(idx)
+            }, "✕") : null
+          ))
+        )
+      ) : null,
+      !revealed ? h("button", {
+        type: "button", className: "vis-sd-reveal-btn", onClick: reveal,
+      }, "Reveal model design") : null,
+      revealed ? h("div", null,
+        h("div", { className: "vis-sd-score" },
+          "Pieces correct: " + correctPicks + " / " + expectedPieces.length + ".  ",
+          "Connections correct: " + correctEdges + " / " + expectedEdges.length + "."
+        ),
+        distractorPicks.length > 0 ? h("div", { className: "vis-sd-missing-block",
+          style: { background: "#fee2e2", borderLeftColor: "#dc2626", color: "#7f1d1d" } },
+          h("strong", null, "✗ You picked pieces that don't belong"),
+          distractorPicks.map(pieceLabel).join(", ")
+        ) : null,
+        missingPieces.length > 0 ? h("div", { className: "vis-sd-missing-block" },
+          h("strong", null, "⚠ You missed these pieces"),
+          missingPieces.map(pieceLabel).join(", ")
+        ) : null,
+        missingEdges.length > 0 ? h("div", { className: "vis-sd-missing-block" },
+          h("strong", null, "⚠ Missing connections"),
+          missingEdges.map(([s, t]) => pieceLabel(s) + " → " + pieceLabel(t)).join("; ")
+        ) : null,
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"), h("div", null, trap)
+        ) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The model design"), h("div", null, lens)
+        ) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"), h("div", null, stretch)
+        ) : null,
+        h("button", {
+          type: "button", className: "vis-trap-reset-btn", onClick: reset,
+        }, "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.CodeFillin> — fill-in-the-blank code exercise.
+  //   code: array of lines. Blanks are written as __N__ (e.g., __1__, __2__).
+  //   options: pool of pickable answers. Each {key, text, fills: [blankN, ...]}
+  //            where `fills` is the set of blanks this option is correct for.
+  //            Options without `fills` (or with empty fills) are pure decoys.
+  // Workflow: click option → it highlights. Click blank → it gets filled with
+  //           the picked option's text. Click a filled blank → clears it.
+  function CodeFillin(props) {
+    const { id, difficulty = "hard", title, scenario,
+            language = "python", code = [], options = [],
+            trap, lens, stretch } = props;
+    const [fills, setFills] = React.useState({}); // {blankN: optionKey}
+    const [picked, setPicked] = React.useState(null);
+    const [revealed, setRevealed] = React.useState(false);
+
+    const optionByKey = Object.fromEntries(options.map((o) => [o.key, o]));
+    function correctOptionsFor(blank) {
+      return options.filter((o) => Array.isArray(o.fills) && o.fills.includes(blank));
+    }
+    function isOptionCorrectForBlank(optionKey, blank) {
+      const o = optionByKey[optionKey];
+      return o && Array.isArray(o.fills) && o.fills.includes(blank);
+    }
+    function clickOption(key) {
+      if (revealed) return;
+      setPicked(picked === key ? null : key);
+    }
+    function clickBlank(blank) {
+      if (revealed) return;
+      if (fills[blank]) {
+        const next = { ...fills }; delete next[blank]; setFills(next);
+        return;
+      }
+      if (!picked) return;
+      setFills({ ...fills, [blank]: picked });
+      setPicked(null);
+    }
+    function reveal() { setRevealed(true); setPicked(null); }
+    function reset() { setFills({}); setPicked(null); setRevealed(false); }
+
+    function blankClass(blank) {
+      let cls = "vis-cf-blank";
+      if (fills[blank]) cls += " is-filled";
+      if (revealed) {
+        cls += isOptionCorrectForBlank(fills[blank], blank) ? " is-correct" : " is-wrong";
+      }
+      return cls;
+    }
+    function optionClass(o) {
+      let cls = "vis-cf-option";
+      if (!revealed && picked === o.key) cls += " is-picked";
+      const usedInBlank = Object.entries(fills).find(([, v]) => v === o.key);
+      if (usedInBlank) cls += " is-used";
+      if (revealed) {
+        const correctSlots = Array.isArray(o.fills) ? o.fills : [];
+        if (correctSlots.length > 0) cls += " is-correct-option";
+      }
+      return cls;
+    }
+
+    function renderLine(line, lineIdx) {
+      const parts = []; let last = 0;
+      const re = /__(\d+)__/g; let m;
+      while ((m = re.exec(line)) !== null) {
+        if (m.index > last)
+          parts.push(h("span", { key: "t" + parts.length }, line.slice(last, m.index)));
+        const n = parseInt(m[1], 10);
+        const filled = fills[n];
+        parts.push(h("button", {
+          key: "b" + n,
+          type: "button",
+          className: blankClass(n),
+          onClick: () => clickBlank(n),
+          title: filled ? "Click to clear" : "Pick an option first, then click here",
+          disabled: revealed,
+        }, filled ? optionByKey[filled]?.text || filled : `␣${n}`));
+        last = m.index + m[0].length;
+      }
+      if (last < line.length)
+        parts.push(h("span", { key: "tail" }, line.slice(last)));
+      return h("div", { key: lineIdx, className: "vis-cf-line" }, parts);
+    }
+
+    const blanksInCode = new Set();
+    code.forEach((line) => {
+      let m; const re = /__(\d+)__/g;
+      while ((m = re.exec(line)) !== null) blanksInCode.add(parseInt(m[1], 10));
+    });
+    const totalBlanks = blanksInCode.size;
+    const correctFills = Object.entries(fills).filter(([b, k]) =>
+      isOptionCorrectForBlank(k, parseInt(b, 10))).length;
+
+    return h("section", { id, className: "vis-trap vis-cf" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-cf-mode-badge" }, "Fill in the code")
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      h("div", { className: "vis-cf-code-wrap" },
+        h("div", { className: "vis-cf-code-lang" }, language),
+        h("pre", { className: "vis-cf-code" },
+          code.map((line, idx) => renderLine(line, idx))
+        )
+      ),
+      h("div", { className: "vis-trap-scenario", style: { fontSize: 14, color: "#475569", margin: "12px 0 6px" } },
+        "Pick an option below (it highlights), then click a blank in the code to fill it. Click a filled blank to clear it."),
+      h("div", { className: "vis-cf-options" },
+        options.map((o) => h("button", {
+          key: o.key, type: "button",
+          className: optionClass(o),
+          onClick: () => clickOption(o.key),
+          disabled: revealed,
+        },
+          h("code", null, o.text),
+          revealed && Array.isArray(o.fills) && o.fills.length > 0
+            ? h("span", { className: "vis-cf-correct-mark" }, " ✓ (fills " + o.fills.map((b) => "␣" + b).join(", ") + ")") : null
+        ))
+      ),
+      !revealed ? h("div", { className: "vis-trap-actions" },
+        h("button", { type: "button", className: "vis-trap-reveal-btn", onClick: reveal },
+          Object.keys(fills).length > 0 ? "Reveal answer" : "Skip & reveal"),
+        Object.keys(fills).length > 0 ? h("span", { className: "vis-trap-hint" },
+          "Filled " + Object.keys(fills).length + " of " + totalBlanks + " blanks") : null
+      ) : null,
+      revealed ? h("div", { className: "vis-trap-reveal-block" },
+        h("div", { className: "vis-sd-score" },
+          "Correct blanks: " + correctFills + " / " + totalBlanks),
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"), h("div", null, trap)) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The reference implementation"), h("div", null, lens)) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"), h("div", null, stretch)) : null,
+        h("button", { type: "button", className: "vis-trap-reset-btn", onClick: reset },
+          "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.MathDerivation> — step-by-step proof with click-to-reveal per step.
+  //   steps: [{label, tex, decoyTex?, explain}]
+  // Each step starts collapsed; "Show step N" reveals the equation + explanation.
+  // If decoyTex is provided, the step becomes a 2-option MCQ first (right vs decoy).
+  function MathDerivation(props) {
+    const { id, difficulty = "hard", title, scenario, steps = [],
+            trap, lens, stretch } = props;
+    const [stepState, setStepState] = React.useState(
+      steps.map(() => ({ shown: false, picked: null }))
+    );
+    const [revealedAll, setRevealedAll] = React.useState(false);
+
+    function showStep(idx) {
+      const next = stepState.map((s, i) => i === idx ? { ...s, shown: true } : s);
+      setStepState(next);
+    }
+    function pickStep(idx, which) {
+      const next = stepState.map((s, i) =>
+        i === idx ? { ...s, shown: true, picked: which } : s);
+      setStepState(next);
+    }
+    function revealAll() {
+      setStepState(stepState.map((s) => ({ ...s, shown: true })));
+      setRevealedAll(true);
+    }
+    function reset() {
+      setStepState(steps.map(() => ({ shown: false, picked: null })));
+      setRevealedAll(false);
+    }
+
+    return h("section", { id, className: "vis-trap vis-md" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-md-mode-badge" }, "Step-by-step proof")
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      h("ol", { className: "vis-md-steps" },
+        steps.map((step, idx) => {
+          const st = stepState[idx];
+          const hasDecoy = !!step.decoyTex;
+          return h("li", { key: idx, className: "vis-md-step" },
+            h("div", { className: "vis-md-step-label" },
+              h("strong", null, "Step " + (idx + 1) + " — " + step.label)),
+            !st.shown && hasDecoy ? h("div", { className: "vis-md-mcq" },
+              h("p", { style: { margin: "4px 0", fontSize: 14, color: "#475569" } },
+                "Which is correct for this step?"),
+              h("button", {
+                type: "button", className: "vis-md-step-option",
+                onClick: () => pickStep(idx, "right"),
+              }, h(Equation, { tex: step.tex, display: true })),
+              h("button", {
+                type: "button", className: "vis-md-step-option",
+                onClick: () => pickStep(idx, "decoy"),
+              }, h(Equation, { tex: step.decoyTex, display: true }))
+            ) : null,
+            !st.shown && !hasDecoy ? h("button", {
+              type: "button", className: "vis-md-show-btn",
+              onClick: () => showStep(idx),
+            }, "Show step " + (idx + 1)) : null,
+            st.shown ? h("div", { className: "vis-md-step-body" },
+              hasDecoy && st.picked ? h("div", {
+                className: "vis-md-pick-feedback " +
+                  (st.picked === "right" ? "is-correct" : "is-wrong")
+              }, st.picked === "right" ? "✓ You picked correctly" : "✗ The other option is correct") : null,
+              h(Equation, { tex: step.tex, display: true }),
+              step.explain ? h("p", { className: "vis-md-explain" }, step.explain) : null
+            ) : null
+          );
+        })
+      ),
+      !revealedAll ? h("button", {
+        type: "button", className: "vis-trap-reveal-btn",
+        onClick: revealAll,
+        style: { marginTop: 12 },
+      }, "Reveal full proof") : null,
+      revealedAll ? h("div", { className: "vis-trap-reveal-block" },
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The common mistake"),
+          h("div", null, trap)) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The intuition"),
+          h("div", null, lens)) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"),
+          h("div", null, stretch)) : null,
+        h("button", { type: "button", className: "vis-trap-reset-btn", onClick: reset },
+          "↺ Try again")
+      ) : null
+    );
+  }
+
+  window.VIS = { Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle,
+                 Mermaid, VegaLite, Equation, CodeBlock, Callout, Term,
+                 TrapProblem, SystemDesign, CodeFillin, MathDerivation };
+  // Back-compat: report-viewer downstream uses window.RV. Keep both bindings.
+  window.RV = window.VIS;
+  console.log("[vis-components] ready: window.VIS =", Object.keys(window.VIS));
+})();
+
+</script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+// Cross-modal contrastive for KYC face-vs-doc — Fraud SOTA · Multimodal fraud
+// Contrastive joint embedding of selfie and ID-document face under spoofing-aware augmentations.
+
+const App = () => (
+  <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
+    <VIS.Hero
+      pill="Fraud SOTA · Multimodal fraud"
+      title="Cross-modal contrastive for KYC face-vs-doc"
+      subtitle="One joint embedding space for selfie face and ID-document face — trained with spoofing-aware augmentations to defeat morphing attacks."
+      byline={[
+        {label: "Source", value: "Cross-modal KYC (CVPR 2025)"},
+        {label: "Year", value: "2025"},
+        {label: "L3", value: "Contrastive face-vs-doc"},
+      ]}/>
+
+    <VIS.TLDR>
+      Independent face-match scores (FaceNet on selfie, FaceNet on ID, cosine compare) miss{" "}
+      <VIS.Term def="A spoofing attack where two source faces are blended into a single image that triggers high similarity to both identities. A morphed ID can be matched by either source person's selfie.">morphing attacks</VIS.Term>{" "}
+      because the score is computed in a feature space that never saw morphs. A{" "}
+      <VIS.Term def="A representation-learning objective that pulls together embeddings of matched (positive) pairs and pushes apart embeddings of unmatched (negative) pairs, typically using InfoNCE loss. Used in SimCLR, CLIP and the KYC model here.">contrastive objective</VIS.Term>{" "}
+      trained on (selfie, doc-face) positive pairs and spoof-augmented negatives carves out a joint space where morphs separate from genuine matches.
+    </VIS.TLDR>
+
+    <VIS.Section id="sec-what" title="What it is">
+      <p>
+        At onboarding, a user submits a selfie video and a photo of a government-issued ID. The pipeline detects the face in each, crops, and feeds both into a single shared encoder. The encoder is trained with two losses: (1) an InfoNCE loss that pulls (selfie, doc-face) pairs of the SAME person together and pushes pairs of DIFFERENT people apart, and (2) a spoofing-augmentation term that synthesises morphs, deepfakes and replay artifacts on the fly and labels them as negatives. At inference, the cosine similarity between selfie and doc-face embeddings IS the KYC score.
+      </p>
+      <VIS.Mermaid chart={`
+flowchart TB
+  SELFIE["Selfie image"] --> ENC1["Shared encoder"]
+  DOC["ID document face"] --> ENC1
+  ENC1 --> E1["Selfie embedding"]
+  ENC1 --> E2["Doc embedding"]
+  E1 --> SIM["Cosine similarity"]
+  E2 --> SIM
+  SIM --> SCORE["KYC score"]
+  AUG["Spoof augmenter"] --> ENC1
+  style ENC1 fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px
+  style AUG fill:#fef3c7,stroke:#b45309,stroke-width:2px
+      `} />
+      <p>The shared encoder is the key idea — selfie and doc images live in the SAME space and can be compared directly. The spoof augmenter synthesises adversarial examples during training so the model never has to face a morph at inference for the first time.</p>
+    </VIS.Section>
+
+    <VIS.Section id="sec-diff" title="How it differs from independent face matching">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
+        <thead>
+          <tr style={{background:"#1f3a5f", color:"#fff"}}>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Independent face match</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Cross-modal contrastive</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style={{background:"#e8f0fa"}}>
+            <td style={{padding:"8px 10px"}}>Encoders</td>
+            <td style={{padding:"8px 10px"}}>One per modality, frozen</td>
+            <td style={{padding:"8px 10px"}}>Shared, jointly trained</td>
+          </tr>
+          <tr>
+            <td style={{padding:"8px 10px"}}>Sees morphs at train time?</td>
+            <td style={{padding:"8px 10px"}}>No</td>
+            <td style={{padding:"8px 10px"}}>Yes, via augmenter</td>
+          </tr>
+          <tr style={{background:"#e8f0fa"}}>
+            <td style={{padding:"8px 10px"}}>Modality gap</td>
+            <td style={{padding:"8px 10px"}}>Compensated via projection</td>
+            <td style={{padding:"8px 10px"}}>Learned end-to-end</td>
+          </tr>
+          <tr>
+            <td style={{padding:"8px 10px"}}>Morphing-attack TPR</td>
+            <td style={{padding:"8px 10px"}}>~65 percent</td>
+            <td style={{padding:"8px 10px"}}>~92 percent (paper)</td>
+          </tr>
+        </tbody>
+      </table>
+    </VIS.Section>
+
+    <VIS.Section id="sec-when" title="When to pick">
+      <ul>
+        <li><strong>High-volume KYC at scale</strong> — Onfido, Jumio, Persona-scale flows where adversarial morphing attacks are a measured threat.</li>
+        <li><strong>You have paired training data</strong> — (selfie, doc-face) labelled pairs are needed. ID issuance partners or historical onboarding data with adjudicated outcomes both work.</li>
+        <li><strong>Regulatory pressure on bias</strong> — joint training lets you control fairness across skin tone with one model rather than two.</li>
+      </ul>
+    </VIS.Section>
+
+    <VIS.Section id="sec-limits" title="Limitations &amp; gotchas">
+      <VIS.Callout kind="gotcha" title="Skin-tone and age bias">
+        Face datasets remain biased toward light-skinned, middle-aged adults. A contrastive model trained on the standard mix will under-perform on darker skin tones and the very young / old. Audit equal-opportunity AND equalised-odds across at least 6 demographic strata before shipping. Re-sample or re-weight the training set if gaps exceed 3 percent.
+      </VIS.Callout>
+      <VIS.Callout kind="warn" title="Deepfake video attacks beat single-frame detection">
+        A motion-aware attacker presents a deepfake selfie video that matches the doc face in still frames but has temporally inconsistent lighting / micro-expressions. Single-frame contrastive scoring will miss this. Pair with a liveness model that consumes frames and assesses motion coherence.
+      </VIS.Callout>
+      <VIS.Callout kind="warn" title="Document-side spoofs (printed ID held up to camera)">
+        The doc-face embedding can be from a printed forgery. Add a document-genuineness detector (hologram check, micro-print OCR) upstream of the contrastive scorer; otherwise the joint embedding compares forgery-to-selfie.
+      </VIS.Callout>
+    </VIS.Section>
+
+    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        Ten interview traps on contrastive KYC training, fairness audits, and the morphing-attack threat model.
+      </p>
+
+      <VIS.TrapProblem
+        id="kyc-p1"
+        difficulty="hard"
+        multiSelect
+        title="P1 — Designing fairness audits for cross-modal KYC under morphing attacks"
+        scenario={<>You ship a cross-modal contrastive KYC model. The pre-launch audit must establish: (a) the model is fair across skin tone / age / gender, and (b) the unfairness story does not flip under morphing attacks (a model that is fair on genuine pairs but UNFAIR on morphs is worse than one fair on both). Which audit elements belong in the launch checklist? Select all that apply.</>}
+        options={[
+          {key:"a", text:"Equalised-odds metric (TPR and FPR parity) across at least 6 strata: 3 skin-tone bins x 2 age bins.", correct:true},
+          {key:"b", text:"Run the SAME audit on morphed pairs synthesised from each stratum — confirm parity holds under attack.", correct:true},
+          {key:"c", text:"Per-stratum operating-threshold report (does threshold 0.7 produce the same TPR for every group?).", correct:true},
+          {key:"d", text:"Demographic parity (P(approved) equal across groups) as the primary metric."},
+          {key:"e", text:"Report only aggregate AUC — fine-grained metrics confuse the executive readout."},
+          {key:"f", text:"Disable the model on under-represented strata until more training data is collected."},
+        ]}
+        trap={<>(d) demographic parity is the WRONG metric for KYC — different base rates of genuine identity make it inappropriate. (e) hides exactly the disparities the audit must surface. (f) is the over-correction trap: disabling for under-represented users is itself discriminatory.</>}
+        lens={<>(a), (b), (c). Equalised odds is the right fairness lens for an authentication task; running it on attacks AS WELL AS genuine traffic prevents the "fair on average, unfair under stress" failure; per-stratum thresholds catch the single-threshold trap (one threshold rarely fits all groups equally).</>}
+        stretch={<>If (a), (b) and (c) all pass but a 3 percent TPR gap remains for elderly users, what is the right ship/no-ship call?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-p2"
+        difficulty="hard"
+        title="P2 — InfoNCE temperature: smaller or larger?"
+        scenario={<>Your InfoNCE loss uses temperature tau = 0.07 (CLIP default). On morphing-attack negatives the loss is very small and gradients are noisy. The team proposes tau = 0.5. What do you predict happens?</>}
+        options={[
+          {key:"a", text:"Larger tau softens the softmax, weakens the gradient on hard negatives (exactly the morphs you care about), and KYC accuracy drops.", correct:true},
+          {key:"b", text:"Larger tau focuses gradient on hard negatives — morphing recall improves."},
+          {key:"c", text:"tau has no effect on hard-negative behaviour."},
+          {key:"d", text:"tau only affects training-set memorisation; both values converge."},
+        ]}
+        trap={<>(b) inverts the relationship. (c) and (d) handwave. The intuition is that small tau makes the softmax sharper, so probability mass concentrates on the closest negative — exactly the hard one.</>}
+        lens={<>(a). Smaller tau = sharper softmax = stronger gradient on the hardest negative. CLIP uses 0.07; many morphing-defence papers find even smaller (0.05) works better at the cost of training instability. tau = 0.5 is the wrong direction.</>}
+        stretch={<>How would you stabilise training at tau = 0.05 without diverging?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-p3"
+        difficulty="hard"
+        multiSelect
+        title="P3 — Generating spoof augmentations on the fly: which methods belong?"
+        scenario={<>You are designing the spoof augmenter that synthesises adversarial negatives during training. Which augmentations are aligned with the realistic morphing threat model? Select all that apply.</>}
+        options={[
+          {key:"a", text:"Face-blending of two real identities (50-50 alpha) — classic morphing attack.", correct:true},
+          {key:"b", text:"Diffusion-based face swap (e.g. SimSwap, InsightFace swapper) onto the ID-side image.", correct:true},
+          {key:"c", text:"Print-then-photograph artifact simulation (moire, gloss, edge crop).", correct:true},
+          {key:"d", text:"Replay-attack simulation (camera-on-screen reflections, moire patterns).", correct:true},
+          {key:"e", text:"Random horizontal flip and 90-degree rotation."},
+          {key:"f", text:"Add Gaussian noise to both modalities."},
+        ]}
+        trap={<>(e) and (f) are standard SimCLR augmentations but unrelated to the morphing / spoofing threat model — a fraudster never flips their selfie 90 degrees. Generic augmentation is fine for accuracy but does not defeat morphs.</>}
+        lens={<>(a), (b), (c), (d). The augmenter must mirror REAL attacks. Morphing, face-swap, print attack, replay attack are the four canonical KYC-spoofing classes. Generic image augmentations help with accuracy on natural variation but do nothing against adversarial spoofs.</>}
+        stretch={<>If you can only afford 2 of (a)(b)(c)(d), which two give the best morphing-attack TPR?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-p4"
+        difficulty="hard"
+        title="P4 — Why a shared encoder beats two separate ones"
+        scenario={<>A junior engineer asks: "Why not just train two separate face encoders — one on selfies, one on doc photos — and compare cosines? It's simpler." What is the strongest single argument for the shared encoder?</>}
+        options={[
+          {key:"a", text:"Two encoders cost more to train."},
+          {key:"b", text:"Two encoders produce embeddings in DIFFERENT spaces; a cosine comparison across spaces is geometrically meaningless without an alignment step. The shared encoder forces a single space by construction.", correct:true},
+          {key:"c", text:"Shared encoders are simpler to deploy."},
+          {key:"d", text:"Two encoders cannot be trained with InfoNCE at all."},
+        ]}
+        trap={<>(a) is a minor practical point. (c) is the opposite of true — separate encoders can be smaller. (d) is false — CLIP famously uses two encoders, but with a projection head that aligns them.</>}
+        lens={<>(b). Two un-aligned encoders learn arbitrary rotations of feature space; their cosines correlate weakly with semantic identity. CLIP-style designs use two encoders but bolt on a projection MLP precisely to recover a shared space — at that point the shared-encoder design wins on parameter efficiency.</>}
+        stretch={<>If you DID use two encoders with a projection MLP, what would you regularise during joint training?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-p5"
+        difficulty="medium"
+        title="P5 — Production threshold: TPR-at-FPR or FPR-at-TPR?"
+        scenario={<>You operate at scale: 5M KYC checks per month, 0.05 percent positive (fraud) rate. The compliance team asks "what threshold should we set?" Which framing leads to the right answer?</>}
+        options={[
+          {key:"a", text:"Pick the threshold at the elbow of the ROC curve."},
+          {key:"b", text:"Pick the threshold that maximises F1."},
+          {key:"c", text:"Pick FPR first (e.g. 0.5 percent — driven by manual-review capacity), then report the resulting TPR.", correct:true},
+          {key:"d", text:"Pick TPR first (e.g. 95 percent — driven by compliance recall), then report the resulting FPR."},
+        ]}
+        trap={<>(a) and (b) are metric-driven and ignore the business constraint. (d) is defensible but at 0.05 percent positive rate, a 95 percent TPR target with any reasonable FPR drowns the queue.</>}
+        lens={<>(c). The binding constraint is manual-review capacity. Pick FPR to fit the queue, then size the TPR by the model curve. This is the FPR-first framing used in most KYC ops; (d) makes sense only when capacity is unconstrained.</>}
+        stretch={<>If review capacity doubles next year, which way does the threshold move?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-p6"
+        difficulty="hard"
+        multiSelect
+        title="P6 — Liveness vs morphing detection: which problem does which model solve?"
+        scenario={<>Your KYC stack has three model components: (1) a liveness detector on the selfie video, (2) a doc-genuineness detector on the ID, (3) the cross-modal contrastive scorer. Which threat does each component primarily address? Select all true statements.</>}
+        options={[
+          {key:"a", text:"Liveness defeats presentation attacks (photo-of-photo, mask) on the selfie side.", correct:true},
+          {key:"b", text:"Doc-genuineness defeats printed-ID and template-forgery attacks.", correct:true},
+          {key:"c", text:"Contrastive scorer defeats identity-mismatch attacks (different person, real selfie, real doc).", correct:true},
+          {key:"d", text:"Contrastive scorer defeats morphing attacks via the spoof augmenter.", correct:true},
+          {key:"e", text:"Liveness defeats morphing attacks."},
+          {key:"f", text:"Doc-genuineness defeats deepfake selfies."},
+        ]}
+        trap={<>(e) liveness checks if the selfie is a live human — a deepfake VIDEO can satisfy liveness. (f) doc-genuineness inspects the document only.</>}
+        lens={<>(a), (b), (c), (d). Each component addresses a distinct threat class; together they form a defence-in-depth stack. The lesson is that ONE model does not solve all spoofing — orthogonal models for orthogonal threats.</>}
+        stretch={<>Which threat does this three-model stack NOT cover, and what would you add?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-p7"
+        difficulty="hard"
+        title="P7 — Embedding similarity at production: cosine, dot, or L2?"
+        scenario={<>The model emits L2-normalised embeddings. At inference, which similarity metric should you use?</>}
+        options={[
+          {key:"a", text:"Cosine similarity — natural choice for normalised embeddings, equivalent to dot product when norms are 1.", correct:true},
+          {key:"b", text:"L2 distance — more interpretable."},
+          {key:"c", text:"Mahalanobis distance with a covariance estimated from training embeddings."},
+          {key:"d", text:"KL divergence between the embedding distributions."},
+        ]}
+        trap={<>(b) L2 on normalised vectors is monotonically related to cosine but has different numerical stability. (c) over-engineers — covariance estimation adds drift risk. (d) is a category error: KL is for distributions, not vectors.</>}
+        lens={<>(a). For L2-normalised embeddings, cosine = dot product. Use whichever is faster in your serving stack (dot product is one instruction). Don't reach for fancier metrics unless your embeddings are NOT normalised or you have a measurable miscalibration.</>}
+        stretch={<>If you forgot to L2-normalise during training, what happens to cosine at inference?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-p8"
+        difficulty="hard"
+        multiSelect
+        title="P8 — A morphing attack defeats your model. What changes?"
+        scenario={<>Six months post-launch, a coordinated morphing attack drops your morphing-attack TPR from 92 percent to 71 percent. Which responses address the root cause? Select all that apply.</>}
+        options={[
+          {key:"a", text:"Add the new morphing technique to the spoof augmenter and retrain.", correct:true},
+          {key:"b", text:"Collect adjudicated examples of the new attack and add as labelled hard negatives.", correct:true},
+          {key:"c", text:"Lower the cosine-similarity threshold to flag more applicants for manual review.", correct:true},
+          {key:"d", text:"Switch model architecture from ResNet to Vision Transformer."},
+          {key:"e", text:"Disable cross-modal KYC entirely until the attack is understood."},
+          {key:"f", text:"Add a CAPTCHA before submission."},
+        ]}
+        trap={<>(d) architecture change without diagnostic data is cargo-culting. (e) shuts down a working system. (f) addresses bot traffic, not morphing.</>}
+        lens={<>(a), (b), (c). The augmenter must learn the new attack (a); adjudicated examples make the loss exactly target the new MO (b); a threshold drop buys time while retraining happens (c). All three move the needle on this specific threat.</>}
+        stretch={<>What single metric tells you when (c) is no longer needed because (a) + (b) restored performance?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-p9"
+        difficulty="hard"
+        title="P9 — Few-shot personalisation for high-value users"
+        scenario={<>A tier-1 enterprise customer (private bank, ~50k users) asks for higher KYC accuracy on their cohort. You have ~5k labelled (selfie, doc) pairs from this customer. What is the cleanest approach?</>}
+        options={[
+          {key:"a", text:"Fully retrain the model on the 5k cohort pairs — they best represent the customer's distribution."},
+          {key:"b", text:"Freeze the shared encoder and train a small projection head per-customer on their labelled pairs.", correct:true},
+          {key:"c", text:"Train a per-customer model from scratch with the same architecture."},
+          {key:"d", text:"Skip personalisation — global model is enough."},
+        ]}
+        trap={<>(a) catastrophically forgets the global distribution. (c) is the right idea but data-inefficient at 5k pairs. (d) ignores the business ask.</>}
+        lens={<>(b). Adapter / projection-head fine-tuning is the standard pattern for per-customer personalisation in shared-encoder systems. Tiny parameter count, fast training, no catastrophic forgetting, no global regression.</>}
+        stretch={<>How small can the projection head be before the cohort gain disappears?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-p10"
+        difficulty="medium"
+        multiSelect
+        title="P10 — Observability for a contrastive KYC system"
+        scenario={<>What dashboards / signals belong in the day-2 ops view of a contrastive KYC system? Select all that apply.</>}
+        options={[
+          {key:"a", text:"Per-stratum TPR / FPR (skin tone, age, gender).", correct:true},
+          {key:"b", text:"Per-attack-type TPR (morphing, face-swap, print attack, replay).", correct:true},
+          {key:"c", text:"Distribution of cosine-similarity scores split by approve / decline / manual-review outcome.", correct:true},
+          {key:"d", text:"Per-region distribution drift on input image stats (resolution, lighting, face-size).", correct:true},
+          {key:"e", text:"Average inference latency only — fairness metrics belong in the quarterly audit."},
+          {key:"f", text:"Aggregate accuracy only."},
+        ]}
+        trap={<>(e) is the dangerous one — burying fairness in a quarterly audit means three months of unfair decisions before anyone notices. (f) hides everything that matters.</>}
+        lens={<>(a), (b), (c), (d). Fairness in the daily dashboard catches drift fast; per-attack-type tracking spots adversarial adaptation; score distributions reveal calibration drift; input drift catches camera / lighting changes. All four belong on the ops view.</>}
+        stretch={<>What ALERT (not just a dashboard) would you set on (a)?</>}
+      />
+    </VIS.Section>
+
+    <VIS.Section id="sec-further" title="Further reading">
+      <ul>
+        <li>
+          <a href="https://openaccess.thecvf.com/content/CVPR2025" target="_blank" rel="noopener">
+            <strong>Cross-modal KYC: Selfie-Document Consistency via Contrastive Learning</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper, CVPR 2025)</span>
+          <br/>The shared-encoder + spoof-aug paper. Read sections 3-4 for loss design and section 5 for the ablation on augmentation classes.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2103.00020" target="_blank" rel="noopener">
+            <strong>Radford et al. — Learning Transferable Visual Models From Natural Language Supervision (CLIP)</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper, ICML 2021)</span>
+          <br/>The foundational dual-encoder InfoNCE design. Read for the contrastive-objective intuition that the KYC paper inherits.
+        </li>
+        <li>
+          <a href="https://gombru.github.io/2019/04/03/ranking_loss/" target="_blank" rel="noopener">
+            <strong>Raul Gombru — Understanding Ranking Loss, Contrastive Loss and Triplet Loss</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
+          <br/>The cleanest intuition-first walkthrough of contrastive and triplet losses. Read before tweaking your loss landscape.
+        </li>
+        <li>
+          <a href="https://onfido.com/blog/biometric-fairness/" target="_blank" rel="noopener">
+            <strong>Onfido — Biometric Fairness Reports</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(industry report)</span>
+          <br/>Industry-standard fairness audit format for KYC face matching. Useful as a template for your own pre-launch audit.
+        </li>
+        <li>
+          <a href="https://www.nist.gov/programs-projects/face-recognition-vendor-test-frvt" target="_blank" rel="noopener">
+            <strong>NIST FRVT — Face Recognition Vendor Test (ongoing)</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(government benchmark)</span>
+          <br/>The most cited public benchmark for face matching, including morphing-attack detection. Useful for grounding your model's claimed numbers.
+        </li>
+      </ul>
+    </VIS.Section>
+  </main>
+);
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+</script>
+  <script>
+    window.addEventListener("error", function (e) {
+      const pre = document.createElement("pre");
+      pre.style.cssText = "position:fixed;top:0;left:0;right:0;max-height:35vh;"
+        + "overflow:auto;background:#fee2e2;color:#7f1d1d;padding:8px;"
+        + "margin:0;font:12px/1.4 monospace;z-index:10002;";
+      pre.textContent = "[visualize] " + (e.error?.stack || e.message || e);
+      document.body.appendChild(pre);
+    }, true);
+  </script>
+</body>
+</html>

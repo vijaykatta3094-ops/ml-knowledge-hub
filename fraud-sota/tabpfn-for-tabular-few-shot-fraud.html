@@ -1,0 +1,1711 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>visualize</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+  <style>
+    body { font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+           margin: 0; background: #ffffff; color: #0f172a; }
+  </style>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/@lottiefiles/lottie-player@2.0.8/dist/lottie-player.js" async></script>
+  <script>
+// vis-components.js — design-system JSX components for the /visualize skill.
+// Exposed as window.VIS.{Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle}.
+// window.RV is aliased to window.VIS for report-viewer back-compat.
+// Available globally to any visual.jsx without imports.
+// (CSS class prefix kept as "rv-" — internal namespace; preserves report-viewer interop.)
+
+(function () {
+  "use strict";
+
+  if (!window.React) {
+    console.warn("[vis-components] React not loaded yet; skipping setup");
+    return;
+  }
+  const h = React.createElement;
+
+  // Lazy-load a CDN script; cache the load Promise so repeats are cheap.
+  const _scriptCache = new Map();
+  function _loadScript(src) {
+    if (_scriptCache.has(src)) return _scriptCache.get(src);
+    const p = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[data-vis-cdn="${src}"]`);
+      if (existing) return existing.addEventListener("load", resolve);
+      const s = document.createElement("script");
+      s.src = src; s.async = false; s.dataset.visCdn = src;
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    _scriptCache.set(src, p);
+    return p;
+  }
+
+  let _katexCssInjected = false;
+  function _ensureKatexCss() {
+    if (_katexCssInjected) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+    document.head.appendChild(link);
+    _katexCssInjected = true;
+  }
+
+  let _hljsCssInjected = false;
+  function _ensureHljsCss() {
+    if (_hljsCssInjected) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css";
+    document.head.appendChild(link);
+    _hljsCssInjected = true;
+  }
+
+  // ----- Styles, injected once ----- //
+  (function injectStyles() {
+    if (document.getElementById("rv-components-styles")) return;
+    const css = `
+      .rv-hero {
+        background: radial-gradient(120% 90% at 20% 0%, #dbeafe 0%, #ffffff 60%);
+        padding: 28px 28px 22px; border-radius: 16px; margin-bottom: 20px;
+        border: 1px solid #e2e8f0;
+      }
+      .rv-hero h1 {
+        font-size: 38px; line-height: 1.1; letter-spacing: -0.02em;
+        font-weight: 700; margin: 10px 0 6px; color: #0f172a;
+      }
+      .rv-hero .rv-sub {
+        font-size: 16px; color: #475569; margin: 0; max-width: 60ch;
+      }
+      .rv-hero .rv-byline {
+        font-size: 12px; color: #64748b; margin-top: 14px;
+        display: flex; gap: 14px; flex-wrap: wrap;
+      }
+      .rv-hero .rv-byline span strong { color: #1e293b; font-weight: 600; }
+
+      .rv-pill {
+        display: inline-block; padding: 2px 10px; border-radius: 999px;
+        background: #2563eb; color: #fff; font-size: 11px; font-weight: 600;
+        letter-spacing: 0.6px; text-transform: uppercase;
+      }
+
+      .rv-tag {
+        display: inline-block; padding: 1px 8px; border-radius: 999px;
+        font-size: 11px; font-weight: 600; vertical-align: middle;
+      }
+      .rv-tag-green  { background: #dcfce7; color: #166534; }
+      .rv-tag-yellow { background: #fef9c3; color: #854d0e; }
+      .rv-tag-red    { background: #fee2e2; color: #991b1b; }
+      .rv-tag-blue   { background: #dbeafe; color: #1e40af; }
+      .rv-tag-gray   { background: #e4e4e7; color: #3f3f46; }
+
+      .rv-card {
+        border: 1px solid #e4e4e7; border-radius: 10px;
+        padding: 14px 16px; margin: 12px 0;
+        background: linear-gradient(180deg, #fafafa, #fff);
+      }
+
+      .rv-tldr {
+        background: #f1f5f9;
+        border-left: 4px solid #2563eb;
+        border-radius: 0 10px 10px 0;
+        padding: 14px 18px; margin: 0 0 24px;
+        font-size: 15px; line-height: 1.55; color: #0f172a;
+      }
+      .rv-tldr .rv-tldr-label {
+        display: inline-block; margin-right: 8px;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+        color: #2563eb; text-transform: uppercase;
+        vertical-align: 1px;
+      }
+      .vis-callout {
+        border-left: 4px solid; border-radius: 0 8px 8px 0;
+        padding: 12px 16px; margin: 14px 0;
+      }
+      .vis-callout-title { display: block; margin-bottom: 4px; }
+      .vis-callout-info   { background: #dbeafe; border-color: #2563eb; color: #1e3a8a; }
+      .vis-callout-warn   { background: #fef3c7; border-color: #d97706; color: #78350f; }
+      .vis-callout-gotcha { background: #fee2e2; border-color: #dc2626; color: #7f1d1d; }
+      .vis-callout-ok     { background: #dcfce7; border-color: #16a34a; color: #14532d; }
+
+      .vis-term {
+        text-decoration: underline dotted;
+        text-decoration-color: #94a3b8;
+        text-underline-offset: 3px;
+        cursor: help;
+      }
+      .vis-term:focus { outline: 2px solid #2563eb; outline-offset: 2px; }
+      .vis-term-tip {
+        position: fixed; z-index: 10001; max-width: 340px;
+        background: #0f172a; color: #f8fafc; font-size: 13px; line-height: 1.45;
+        padding: 8px 10px; border-radius: 6px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.22);
+        pointer-events: none; white-space: pre-wrap;
+      }
+
+      /* Trap problem (MCQ with click-to-reveal). One block per problem. */
+      .vis-trap {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px 22px;
+        margin: 24px 0;
+        background: #fafbfc;
+      }
+      .vis-trap-header {
+        display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      .vis-trap-difficulty {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+        padding: 3px 10px; border-radius: 999px; text-transform: uppercase;
+      }
+      .vis-trap-diff-easy   { background: #dcfce7; color: #166534; }
+      .vis-trap-diff-medium { background: #fef9c3; color: #854d0e; }
+      .vis-trap-diff-hard   { background: #fee2e2; color: #991b1b; }
+      .vis-trap-title { font-size: 17px; color: #0f172a; }
+      .vis-trap-multi-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #e0e7ff; color: #3730a3;
+        text-transform: uppercase;
+      }
+      .vis-trap-scenario { margin: 0 0 12px; line-height: 1.65; }
+      .vis-trap-diagram  { margin: 12px 0; }
+      .vis-trap-options  { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+      .vis-trap-option {
+        text-align: left;
+        padding: 11px 14px;
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        font: inherit; color: #0f172a;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .vis-trap-option:hover:not(:disabled) {
+        border-color: #2563eb; background: #f1f5f9;
+      }
+      .vis-trap-option.is-selected {
+        border-color: #2563eb; background: #dbeafe;
+      }
+      .vis-trap-option.is-correct {
+        border-color: #16a34a; background: #dcfce7;
+      }
+      .vis-trap-option.is-wrong-selected {
+        border-color: #dc2626; background: #fee2e2;
+      }
+      .vis-trap-option.is-correct-wrong-pos {
+        border-color: #d97706; background: #fef3c7;
+      }
+      .vis-trap-option.is-disabled {
+        opacity: 0.6;
+      }
+      .vis-trap-key { font-weight: 700; margin-right: 4px; color: #475569; }
+      .vis-trap-tick { color: #16a34a; font-weight: 700; margin-left: 6px; }
+      .vis-trap-x    { color: #dc2626; font-weight: 700; margin-left: 6px; }
+      .vis-trap-actions {
+        display: flex; align-items: center; gap: 12px;
+        margin-top: 8px;
+      }
+      .vis-trap-reveal-btn, .vis-trap-reset-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 10px 18px; border-radius: 8px;
+        font: inherit; font-weight: 600;
+        cursor: pointer;
+      }
+      .vis-trap-reveal-btn:hover, .vis-trap-reset-btn:hover { background: #1d4ed8; }
+      .vis-trap-reset-btn {
+        background: #64748b; margin-top: 12px;
+        font-size: 13px; padding: 8px 14px;
+      }
+      .vis-trap-reset-btn:hover { background: #475569; }
+      .vis-trap-hint { color: #64748b; font-size: 14px; }
+      .vis-trap-reveal-block {
+        margin-top: 18px; padding-top: 16px; border-top: 1px solid #e2e8f0;
+      }
+      .vis-trap-trap, .vis-trap-lens, .vis-trap-stretch {
+        margin: 10px 0; padding: 12px 16px; border-radius: 8px;
+      }
+      .vis-trap-trap    { background: #fef3c7; border-left: 4px solid #d97706; color: #78350f; }
+      .vis-trap-lens    { background: #dcfce7; border-left: 4px solid #16a34a; color: #14532d; }
+      .vis-trap-stretch { background: #e0e7ff; border-left: 4px solid #6366f1; color: #312e81; }
+      .vis-trap-trap strong, .vis-trap-lens strong, .vis-trap-stretch strong {
+        display: block; margin-bottom: 4px;
+      }
+      .vis-trap-trap p, .vis-trap-lens p, .vis-trap-stretch p { margin: 0; line-height: 1.55; }
+
+      /* System Design — pick-and-connect block diagram */
+      .vis-sd {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px 22px;
+        margin: 24px 0;
+        background: #fafbfc;
+      }
+      .vis-sd-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+      .vis-sd-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #fef3c7; color: #78350f; text-transform: uppercase;
+      }
+      .vis-sd-scenario { margin: 0 0 14px; line-height: 1.65; }
+      .vis-sd-label { font-size: 13px; font-weight: 600; color: #475569; margin: 14px 0 6px; }
+      .vis-sd-palette { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px;
+                        background: #ffffff; border: 1px dashed #cbd5e1; border-radius: 8px; }
+      .vis-sd-piece {
+        padding: 8px 12px;
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+        font: inherit; font-size: 13px; cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+        white-space: nowrap;
+      }
+      .vis-sd-piece:hover:not(:disabled) { border-color: #2563eb; background: #f1f5f9; }
+      .vis-sd-piece.is-placed { opacity: 0.4; cursor: default; }
+      .vis-sd-piece.cat-data    { border-left: 4px solid #0ea5e9; }
+      .vis-sd-piece.cat-model   { border-left: 4px solid #8b5cf6; }
+      .vis-sd-piece.cat-infra   { border-left: 4px solid #f59e0b; }
+      .vis-sd-piece.cat-monitor { border-left: 4px solid #10b981; }
+
+      .vis-sd-canvas {
+        display: flex; flex-wrap: wrap; gap: 10px;
+        min-height: 80px;
+        padding: 14px;
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+      }
+      .vis-sd-canvas-empty { color: #94a3b8; font-style: italic; font-size: 14px; }
+      .vis-sd-placed {
+        padding: 9px 13px;
+        background: #ffffff; border: 1.5px solid #2563eb; border-radius: 8px;
+        font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+        position: relative;
+        transition: all 0.15s;
+      }
+      .vis-sd-placed:hover { background: #eff6ff; }
+      .vis-sd-placed.is-connect-source {
+        background: #dbeafe; border-color: #1d4ed8; border-width: 2.5px;
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+      }
+      .vis-sd-placed.is-correct  { background: #dcfce7; border-color: #16a34a; }
+      .vis-sd-placed.is-wrong    { background: #fee2e2; border-color: #dc2626; }
+      .vis-sd-remove {
+        margin-left: 8px; color: #94a3b8; font-weight: 700;
+        cursor: pointer; padding: 0 4px;
+      }
+      .vis-sd-remove:hover { color: #dc2626; }
+
+      .vis-sd-actions { display: flex; align-items: center; gap: 12px; margin: 12px 0 8px; }
+      .vis-sd-connect-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 8px 14px; border-radius: 6px;
+        font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+      }
+      .vis-sd-connect-btn:hover { background: #1d4ed8; }
+      .vis-sd-connect-status { color: #475569; font-size: 14px; font-style: italic; }
+      .vis-sd-connect-cancel {
+        background: transparent; color: #dc2626; border: 1px solid #fca5a5;
+        padding: 4px 10px; border-radius: 6px;
+        font: inherit; font-size: 12px; cursor: pointer;
+      }
+
+      .vis-sd-edges { background: #ffffff; border: 1px solid #e2e8f0;
+                      border-radius: 8px; padding: 10px 14px; }
+      .vis-sd-edges ul { list-style: none; padding: 0; margin: 6px 0 0; }
+      .vis-sd-edges li {
+        padding: 6px 10px; margin: 4px 0; border-radius: 6px;
+        display: flex; align-items: center; gap: 8px;
+        background: #f8fafc; font-size: 14px;
+      }
+      .vis-sd-edges li.is-correct { background: #dcfce7; }
+      .vis-sd-edges li.is-wrong   { background: #fee2e2; }
+      .vis-sd-edge-x {
+        background: transparent; color: #94a3b8; border: none;
+        cursor: pointer; padding: 0 4px; margin-left: auto;
+      }
+      .vis-sd-edge-x:hover { color: #dc2626; }
+      .vis-sd-reveal-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 10px 18px; border-radius: 8px;
+        font: inherit; font-weight: 600; cursor: pointer;
+        margin-top: 12px;
+      }
+      .vis-sd-reveal-btn:hover { background: #1d4ed8; }
+      .vis-sd-score {
+        background: #eff6ff; border: 1px solid #93c5fd;
+        padding: 10px 14px; border-radius: 8px;
+        margin: 12px 0;
+        font-size: 14px; color: #1e3a8a;
+      }
+      .vis-sd-missing-block {
+        background: #fef3c7; border-left: 4px solid #d97706;
+        padding: 10px 14px; border-radius: 8px;
+        margin: 10px 0;
+        font-size: 14px; color: #78350f;
+      }
+      .vis-sd-missing-block strong { display: block; margin-bottom: 4px; }
+
+      /* CodeFillin — fill-in-the-blank code exercise */
+      .vis-cf-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #dcfce7; color: #14532d; text-transform: uppercase;
+      }
+      .vis-cf-code-wrap {
+        position: relative;
+        background: #0f172a; color: #e2e8f0;
+        padding: 16px 18px 14px;
+        border-radius: 8px;
+        margin: 12px 0;
+        font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+        font-size: 14px; line-height: 1.65;
+        overflow-x: auto;
+      }
+      .vis-cf-code-lang {
+        position: absolute; top: 6px; right: 12px;
+        font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;
+      }
+      .vis-cf-code { background: transparent !important; color: inherit; margin: 0; }
+      .vis-cf-line { white-space: pre; }
+      .vis-cf-blank {
+        background: #1e293b; color: #fbbf24; border: 1px dashed #475569;
+        padding: 1px 8px; border-radius: 4px;
+        font-family: inherit; font-size: 13.5px; cursor: pointer;
+        margin: 0 1px;
+        transition: all 0.12s;
+      }
+      .vis-cf-blank:hover:not(:disabled) { background: #334155; border-color: #94a3b8; }
+      .vis-cf-blank.is-filled {
+        background: #1e3a8a; color: #ffffff; border-style: solid; border-color: #3b82f6;
+      }
+      .vis-cf-blank.is-correct { background: #14532d; color: #bbf7d0; border-color: #16a34a; }
+      .vis-cf-blank.is-wrong   { background: #7f1d1d; color: #fecaca; border-color: #dc2626; }
+      .vis-cf-options {
+        display: flex; flex-wrap: wrap; gap: 8px;
+        margin: 8px 0 12px;
+      }
+      .vis-cf-option {
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+        padding: 8px 12px; font: inherit; cursor: pointer;
+        transition: all 0.12s;
+      }
+      .vis-cf-option:hover:not(:disabled) { border-color: #2563eb; background: #f1f5f9; }
+      .vis-cf-option.is-picked { border-color: #2563eb; background: #dbeafe; border-width: 2px; }
+      .vis-cf-option.is-used { opacity: 0.5; }
+      .vis-cf-option.is-correct-option { background: #f0fdf4; border-color: #16a34a; }
+      .vis-cf-option code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 13.5px; }
+      .vis-cf-correct-mark { color: #16a34a; font-size: 12px; margin-left: 6px; }
+
+      /* MathDerivation — step-by-step proof */
+      .vis-md-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #e0e7ff; color: #312e81; text-transform: uppercase;
+      }
+      .vis-md-steps { padding: 0; list-style: none; counter-reset: vmds; }
+      .vis-md-step {
+        background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;
+        padding: 14px 16px; margin: 10px 0;
+      }
+      .vis-md-step-label { margin-bottom: 8px; }
+      .vis-md-show-btn {
+        background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1;
+        padding: 6px 12px; border-radius: 6px; font: inherit; font-size: 13px;
+        cursor: pointer;
+      }
+      .vis-md-show-btn:hover { background: #e2e8f0; }
+      .vis-md-mcq { display: flex; flex-direction: column; gap: 8px; }
+      .vis-md-step-option {
+        background: #ffffff; border: 1.5px solid #cbd5e1; border-radius: 8px;
+        padding: 14px 16px; cursor: pointer;
+        transition: border-color 0.12s, background 0.12s;
+        text-align: left; font: inherit;
+      }
+      .vis-md-step-option:hover { border-color: #2563eb; background: #f1f5f9; }
+      .vis-md-pick-feedback {
+        padding: 6px 12px; border-radius: 6px; margin-bottom: 8px;
+        font-size: 13px; font-weight: 600;
+      }
+      .vis-md-pick-feedback.is-correct { background: #dcfce7; color: #14532d; }
+      .vis-md-pick-feedback.is-wrong   { background: #fee2e2; color: #7f1d1d; }
+      .vis-md-step-body { margin-top: 10px; }
+      .vis-md-explain { margin: 8px 0 0; color: #475569; line-height: 1.6; }
+
+      /* Responsive SVG wrappers — diagrams shrink to fit narrow containers
+         instead of overflowing the parent. Without these, Mermaid/Vega SVGs
+         render at their intrinsic width and get clipped on the left/right
+         when viewport is narrower than ~900px. */
+      .vis-mermaid svg, .vis-vega svg {
+        max-width: 100%;
+        height: auto;
+        display: inline-block;
+      }
+      .vis-mermaid, .vis-vega { overflow-x: auto; }
+
+      /* Mermaid text rendering fixes for Mermaid 10. By default the auto-sized
+         node fill rect and the edge-label background rect are both tight to the
+         text, which clips descenders (g/p/y/j/q) at the bottom of nodes AND
+         the right edge of edge labels ("Yes" → "Ye"). Force overflow:visible
+         everywhere and give the labels generous padding. */
+      .vis-mermaid svg,
+      .vis-mermaid foreignObject,
+      .vis-mermaid .node foreignObject,
+      .vis-mermaid .edgeLabel,
+      .vis-mermaid .edgeLabel foreignObject,
+      .vis-mermaid .label,
+      .vis-mermaid .label foreignObject {
+        overflow: visible !important;
+      }
+      .vis-mermaid .node .nodeLabel,
+      .vis-mermaid .node .label,
+      .vis-mermaid .label foreignObject div {
+        line-height: 1.5;
+        padding: 2px 4px;
+      }
+      .vis-mermaid .edgeLabel {
+        padding: 2px 8px;
+        background: #ffffff;
+        border-radius: 3px;
+        line-height: 1.4;
+      }
+      .vis-mermaid .edgeLabel foreignObject div,
+      .vis-mermaid .edgeLabel span,
+      .vis-mermaid .edgeLabel .labelBkg {
+        padding: 0 4px !important;
+        background: transparent !important;
+      }
+    `;
+    const tag = document.createElement("style");
+    tag.id = "rv-components-styles";
+    tag.textContent = css;
+    document.head.appendChild(tag);
+  })();
+
+  // ----- Components ----- //
+
+  // <RV.Pill>v0.2</RV.Pill>  →  small uppercase pill
+  function Pill({ children, color }) {
+    const style = color ? { background: color } : null;
+    return h("span", { className: "rv-pill", style }, children);
+  }
+
+  // <RV.Tag color="green">ok</RV.Tag>  →  status pill
+  function Tag({ children, color = "gray" }) {
+    return h("span", { className: "rv-tag rv-tag-" + color }, children);
+  }
+
+  // <RV.ByLine items={[{label:"Build",value:"2026-05-15"}, ...]} />
+  function ByLine({ items = [] }) {
+    return h("div", { className: "rv-byline" },
+      items.map((it, i) =>
+        h("span", { key: i },
+          h("strong", null, it.label), " ", it.value
+        )
+      )
+    );
+  }
+
+  // Set the browser tab title. Auto-called by RV.Hero; reports without a
+  // Hero can call this directly: RV.setTitle("...").
+  function setTitle(str) {
+    if (typeof str === "string" && str.trim()) document.title = str.trim();
+  }
+
+  // <RV.Hero title="..." subtitle="..." pill="v0.2" byline={[...]}>
+  //   children (optional, rendered below subtitle)
+  // </RV.Hero>
+  function Hero({ title, subtitle, pill, byline, accent, children }) {
+    React.useEffect(() => { setTitle(title); }, [title]);
+    return h("section", { className: "rv-hero" },
+      pill ? h(Pill, null, pill) : null,
+      h("h1", null,
+        accent ? h("span", { className: accent }) : null,
+        accent ? " " : null,
+        title
+      ),
+      subtitle ? h("p", { className: "rv-sub" }, subtitle) : null,
+      byline && byline.length ? h(ByLine, { items: byline }) : null,
+      children
+    );
+  }
+
+  // <RV.Card><strong>title</strong><p>body</p></RV.Card>
+  function Card({ children, className }) {
+    return h("div", {
+      className: "rv-card" + (className ? " " + className : "")
+    }, children);
+  }
+
+  // <RV.Section id="sec-foo" title="Foo">...</RV.Section>
+  //   — renders <h2 id={id}>{title}</h2> + body. The id is picked up by
+  //   the auto-TOC sidebar.
+  function Section({ id, title, children }) {
+    return h(React.Fragment, null,
+      h("h2", { id }, title),
+      children
+    );
+  }
+
+  // <RV.TLDR>One-paragraph headline answer.</RV.TLDR>
+  // ALWAYS render this immediately after <RV.Hero>, before any sections.
+  // Reader should be able to leave after reading it.
+  function TLDR({ children }) {
+    return h("aside", { className: "rv-tldr", role: "note" },
+      h("span", { className: "rv-tldr-label" }, "TL;DR"),
+      children
+    );
+  }
+
+  function Mermaid({ chart, id }) {
+    const ref = React.useRef(null);
+    const autoId = React.useId();
+    React.useEffect(() => {
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js")
+        .then(() => {
+          if (!window.mermaid._inited) {
+            window.mermaid._inited = true;
+            // trusted-author content; "loose" enables click handlers + HTML labels in mermaid
+            // trusted-author content; "loose" enables click handlers + HTML labels in mermaid.
+            // flowchart.padding + nodePadding give descenders (g, p, y, j, q) room to render
+            // inside diamond/rectangle nodes — without this Mermaid 10 clips them at the bottom edge.
+            window.mermaid.initialize({
+              startOnLoad: false,
+              theme: "default",
+              securityLevel: "loose",
+              flowchart: { padding: 18, nodeSpacing: 50, rankSpacing: 60, useMaxWidth: true, htmlLabels: true },
+              themeVariables: { fontSize: "14px" }
+            });
+          }
+          return window.mermaid.render((id || "mmd") + "-" + autoId.replace(/:/g, ""), chart);
+        })
+        .then(({ svg }) => {
+          if (cancelled || !ref.current) return;
+          ref.current.innerHTML = svg;
+          // POST-PROCESS to fix Mermaid 10 descender clipping (g, p, y, j, q).
+          // Mermaid sizes foreignObjects to the font em-box, which does NOT include
+          // descender depth. Grow each foreignObject by 12px (6 top + 6 bottom) so
+          // descenders render fully. Also grow rectangle node fills to match so the
+          // colored box doesn't show a thin sliver above/below the text.
+          const svgEl = ref.current.querySelector("svg");
+          if (!svgEl) return;
+          svgEl.querySelectorAll("foreignObject").forEach((fo) => {
+            const h = parseFloat(fo.getAttribute("height") || "0");
+            const y = parseFloat(fo.getAttribute("y") || "0");
+            fo.setAttribute("height", String(h + 12));
+            fo.setAttribute("y", String(y - 6));
+          });
+          svgEl.querySelectorAll("g.node > rect").forEach((rect) => {
+            const h = parseFloat(rect.getAttribute("height") || "0");
+            const y = parseFloat(rect.getAttribute("y") || "0");
+            rect.setAttribute("height", String(h + 12));
+            rect.setAttribute("y", String(y - 6));
+          });
+          // Diamonds use <polygon points="..."/>. Expand vertically by translating
+          // top and bottom vertices outward from the centroid by 6px each.
+          svgEl.querySelectorAll("g.node > polygon").forEach((poly) => {
+            const pts = (poly.getAttribute("points") || "").trim().split(/\s+/)
+              .map((p) => p.split(",").map(parseFloat));
+            if (pts.length < 3 || pts.some((p) => p.length < 2 || p.some(isNaN))) return;
+            const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+            const grown = pts.map(([x, py]) => [x, py + (py < cy ? -6 : 6)]);
+            poly.setAttribute("points", grown.map((p) => p.join(",")).join(" "));
+          });
+        })
+        .catch((e) => { if (ref.current) ref.current.textContent = "[mermaid error] " + e; });
+      return () => { cancelled = true; };
+    }, [chart, id, autoId]);
+    return h("div", { ref, className: "vis-mermaid", style: { margin: "16px 0", textAlign: "center" } });
+  }
+
+  function VegaLite({ spec, data }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      let cancelled = false;
+      Promise.all([
+        _loadScript("https://cdn.jsdelivr.net/npm/vega@5"),
+        _loadScript("https://cdn.jsdelivr.net/npm/vega-lite@5"),
+        _loadScript("https://cdn.jsdelivr.net/npm/vega-embed@6"),
+      ]).then(() => {
+        if (cancelled || !ref.current) return;
+        const full = data ? { ...spec, data: { values: data } } : spec;
+        window.vegaEmbed(ref.current, full, { actions: false, renderer: "svg" });
+      }).catch((e) => { if (ref.current) ref.current.textContent = "[vega error] " + e; });
+      return () => { cancelled = true; };
+    }, [spec, data]);
+    return h("div", { ref, className: "vis-vega", style: { margin: "16px 0" } });
+  }
+
+  function Equation({ tex, display = false }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      _ensureKatexCss();
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js")
+        .then(() => {
+          if (cancelled || !ref.current) return;
+          window.katex.render(tex, ref.current, { displayMode: display, throwOnError: false });
+        });
+      return () => { cancelled = true; };
+    }, [tex, display]);
+    const Tag = display ? "div" : "span";
+    return h(Tag, { ref, className: "vis-eq" });
+  }
+
+  function CodeBlock({ lang = "plaintext", children }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      _ensureHljsCss();
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js")
+        .then(() => _loadScript(`https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/${lang}.min.js`).catch(() => {}))
+        .then(() => {
+          if (cancelled || !ref.current) return;
+          // Reset so hljs re-highlights when `children` or `lang` change
+          ref.current.removeAttribute("data-highlighted");
+          ref.current.className = "language-" + lang;
+          ref.current.textContent = String(Array.isArray(children) ? children.join("") : children);
+          window.hljs.highlightElement(ref.current);
+        });
+      return () => { cancelled = true; };
+    }, [lang, children]);
+    return h("pre", { style: { margin: "12px 0", borderRadius: 8, overflow: "auto" } },
+      h("code", { ref, className: `language-${lang}` }, children));
+  }
+
+  function Callout({ kind = "info", title, children }) {
+    return h("aside", { className: `vis-callout vis-callout-${kind}`, role: "note" },
+      title ? h("strong", { className: "vis-callout-title" }, title) : null,
+      children);
+  }
+
+  // <VIS.Term def="1-2 sentence plain-English explanation">jargon</VIS.Term>
+  //
+  // Wraps any technical term so a non-technical reader can hover for an
+  // immediate definition. The explanation should:
+  //   - assume the reader knows English but not software/your domain
+  //   - fit in 1-2 short sentences (a tooltip, not a paragraph)
+  //   - avoid further jargon (or wrap that too)
+  //
+  // The element exposes `data-rv-info` so the report-viewer overlay reuses
+  // its own tooltip + double-click "explain this" feedback flow. In
+  // standalone /visualize mode (no overlay), the lightweight hover handler
+  // below renders the tooltip directly.
+  function Term({ def, children }) {
+    if (!def) return h(React.Fragment, null, children);
+    return h("span", {
+      className: "vis-term",
+      "data-rv-info": def,
+      "aria-label": def,
+      tabIndex: 0,
+    }, children);
+  }
+
+  // Standalone hover tooltip for <VIS.Term>. If the report-viewer overlay
+  // is loaded it already shows tooltips for any [data-rv-info] element, so
+  // we short-circuit here to avoid double-rendering.
+  (function installTermTooltip() {
+    let tip = null;
+    function show(el) {
+      if (window.__rvReady) return;  // overlay.js owns the tooltip in report-viewer mode
+      const text = el.getAttribute("data-rv-info");
+      if (!text) return;
+      if (!tip) {
+        tip = document.createElement("div");
+        tip.className = "vis-term-tip";
+        document.body.appendChild(tip);
+      }
+      tip.textContent = text;
+      const r = el.getBoundingClientRect();
+      const tr = tip.getBoundingClientRect();
+      const pad = 8;
+      let left = Math.max(pad,
+        Math.min(r.left, window.innerWidth - tr.width - pad));
+      const above = r.top - tr.height - pad;
+      const below = r.bottom + pad;
+      tip.style.left = left + "px";
+      tip.style.top  = (above >= pad ? above : below) + "px";
+      tip.style.display = "block";
+    }
+    function hide() { if (tip) tip.style.display = "none"; }
+    document.addEventListener("mouseover", (e) => {
+      const el = e.target.closest && e.target.closest(".vis-term");
+      if (el) show(el); else hide();
+    });
+    document.addEventListener("focusin", (e) => {
+      const el = e.target.closest && e.target.closest(".vis-term");
+      if (el) show(el);
+    });
+    document.addEventListener("focusout", hide);
+    document.addEventListener("scroll", hide, true);
+  })();
+
+  // <VIS.TrapProblem
+  //   id="bv-q1"
+  //   difficulty="hard"
+  //   title="..."
+  //   scenario={<>...JSX...</>}
+  //   diagram={<VIS.Mermaid chart={...} />}
+  //   options={[
+  //     {key:"a", text:"...", correct:false},
+  //     {key:"b", text:"...", correct:true},
+  //     ...
+  //   ]}
+  //   trap={<>The most tempting wrong is X because...</>}
+  //   lens={<>The right answer + reasoning</>}
+  //   stretch="optional follow-up question"
+  // />
+  //
+  // Trap problem from the Idea Engine /learn template. MCQ with click-to-pick,
+  // then click-to-reveal model answer. Each problem owns its own state.
+  // Trap problem from the Idea Engine /learn template. MCQ with click-to-pick,
+  // then click-to-reveal model answer. Each problem owns its own state.
+  //
+  // Three modes, chosen per-problem based on what the concept needs:
+  //   mode="single"  (default): one option is correct (radio-style)
+  //   mode="multi":  multiple options correct, user picks any subset
+  //                  (set `multiSelect={true}` OR `mode="multi"`)
+  //   mode="ordered": real-world priority test — options have an `order` field
+  //                  (1, 2, 3 …) saying their correct rank. Wrong-move options
+  //                  have `order: null` and should NOT be picked at all.
+  //                  User clicks in order; each pick gets a position badge.
+  //                  Reveal shows correct rank, marks wrong-position picks and
+  //                  wrong-move picks differently.
+  function TrapProblem(props) {
+    const { id, difficulty = "hard", title, scenario, diagram,
+            options = [], trap, lens, stretch,
+            multiSelect = false, mode } = props;
+    const effectiveMode = mode || (multiSelect ? "multi" : "single");
+    const isOrdered = effectiveMode === "ordered";
+    const isMulti = effectiveMode === "multi";
+
+    // Selection state shape varies by mode:
+    //   single  → string | null
+    //   multi   → Set<string>
+    //   ordered → string[]  (in pick order)
+    const [selected, setSelected] = React.useState(
+      isOrdered ? [] : (isMulti ? new Set() : null)
+    );
+    const [revealed, setRevealed] = React.useState(false);
+
+    function isSelected(key) {
+      if (isOrdered) return selected.includes(key);
+      if (isMulti) return selected.has(key);
+      return selected === key;
+    }
+    function pickOrder(key) {
+      if (isOrdered) {
+        const idx = selected.indexOf(key);
+        return idx >= 0 ? idx + 1 : null;
+      }
+      return null;
+    }
+    function pick(key) {
+      if (revealed) return;
+      if (isOrdered) {
+        setSelected(
+          selected.includes(key)
+            ? selected.filter((k) => k !== key)
+            : [...selected, key]
+        );
+      } else if (isMulti) {
+        const next = new Set(selected);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        setSelected(next);
+      } else {
+        setSelected(key);
+      }
+    }
+    function reveal() { setRevealed(true); }
+    function reset() {
+      setSelected(isOrdered ? [] : (isMulti ? new Set() : null));
+      setRevealed(false);
+    }
+    function optionClass(o) {
+      if (!revealed) return "vis-trap-option" + (isSelected(o.key) ? " is-selected" : "");
+      if (isOrdered) {
+        // Right move at right rank → fully correct
+        const userPos = pickOrder(o.key);
+        const correctPos = o.order; // null = wrong move
+        if (correctPos != null && userPos === correctPos) return "vis-trap-option is-correct";
+        // Right move at wrong rank → partial credit (yellow)
+        if (correctPos != null && userPos != null && userPos !== correctPos)
+          return "vis-trap-option is-correct-wrong-pos";
+        // Right move not picked → "you missed this"
+        if (correctPos != null && userPos == null) return "vis-trap-option is-correct";
+        // Wrong move picked → red
+        if (correctPos == null && userPos != null) return "vis-trap-option is-wrong-selected";
+        // Wrong move not picked → faded
+        return "vis-trap-option is-disabled";
+      }
+      if (o.correct) return "vis-trap-option is-correct";
+      if (isSelected(o.key)) return "vis-trap-option is-wrong-selected";
+      return "vis-trap-option is-disabled";
+    }
+    const anyPicked = isOrdered ? selected.length > 0
+                                : (isMulti ? selected.size > 0 : selected !== null);
+    const correctCount = isOrdered
+      ? options.filter((o) => o.order != null).length
+      : options.filter((o) => o.correct).length;
+    const modeBadge = isOrdered ? "Pick in correct ORDER"
+                                : (isMulti ? "Select all that apply" : null);
+
+    function optionPrefix(o) {
+      if (isOrdered) {
+        const pos = pickOrder(o.key);
+        if (revealed) {
+          // After reveal: show user pos vs correct pos
+          if (o.order != null && pos != null)
+            return pos === o.order ? `#${pos} ✓` : `you:#${pos} → correct:#${o.order}`;
+          if (o.order != null) return `correct:#${o.order}`;
+          if (pos != null) return `you:#${pos}`;
+          return "—";
+        }
+        return pos != null ? `#${pos}` : "○";
+      }
+      if (isMulti) return isSelected(o.key) ? "☑" : "☐";
+      return "○";
+    }
+
+    function pickSummary() {
+      if (!anyPicked) return null;
+      if (isOrdered) return `Your order: ${selected.map((k) => "(" + k + ")").join(" → ")}`;
+      if (isMulti) return "You picked " + selected.size + " of " + correctCount + " correct option" + (correctCount === 1 ? "" : "s");
+      return "You picked (" + selected + ")";
+    }
+
+    return h("section", { id, className: "vis-trap" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        modeBadge ? h("span", { className: "vis-trap-multi-badge" }, modeBadge) : null
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      diagram ? h("div", { className: "vis-trap-diagram" }, diagram) : null,
+      h("div", { className: "vis-trap-options",
+                 role: (isMulti || isOrdered) ? "group" : "radiogroup" },
+        options.map((o) => h("button", {
+          key: o.key,
+          type: "button",
+          className: optionClass(o),
+          onClick: () => pick(o.key),
+          disabled: revealed && (
+            isOrdered
+              ? (o.order == null && !isSelected(o.key))
+              : (!o.correct && !isSelected(o.key))
+          ),
+          "aria-pressed": isSelected(o.key)
+        },
+          h("span", { className: "vis-trap-key" },
+            optionPrefix(o) + " (" + o.key + ")"),
+          " ",
+          o.text
+        ))
+      ),
+      !revealed ? h("div", { className: "vis-trap-actions" },
+        h("button", {
+          type: "button",
+          className: "vis-trap-reveal-btn",
+          onClick: reveal
+        }, anyPicked ? "Reveal model answer" : "Skip & reveal"),
+        anyPicked ? h("span", { className: "vis-trap-hint" }, pickSummary()) : null
+      ) : null,
+      revealed ? h("div", { className: "vis-trap-reveal-block" },
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"),
+          h("div", null, trap)
+        ) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The lens (model answer)"),
+          h("div", null, lens)
+        ) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"),
+          h("div", null, stretch)
+        ) : null,
+        h("button", {
+          type: "button",
+          className: "vis-trap-reset-btn",
+          onClick: reset
+        }, "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.SystemDesign> — pick-and-connect block-diagram problem for system
+  // design questions. Palette of N pieces (some are distractors), user clicks
+  // to add to canvas, then clicks pairs of placed pieces to draw directed
+  // edges. Reveal compares both the picked SET and the edge TOPOLOGY against
+  // expected. Pieces have categories that drive color coding.
+  function SystemDesign(props) {
+    const { id, difficulty = "hard", title, scenario,
+            pieces = [], expectedPieces = [], expectedEdges = [],
+            trap, lens, stretch } = props;
+    const [placed, setPlaced] = React.useState([]);     // [pieceId]
+    const [edges, setEdges] = React.useState([]);       // [[src, tgt]]
+    const [connectMode, setConnectMode] = React.useState(null); // null | "waiting" | {src}
+    const [revealed, setRevealed] = React.useState(false);
+
+    const pieceById = Object.fromEntries(pieces.map((p) => [p.id, p]));
+    function pieceLabel(id) { return pieceById[id]?.label || id; }
+
+    function addPiece(pieceId) {
+      if (revealed || placed.includes(pieceId)) return;
+      setPlaced([...placed, pieceId]);
+    }
+    function removePiece(pieceId) {
+      if (revealed) return;
+      setPlaced(placed.filter((p) => p !== pieceId));
+      setEdges(edges.filter(([s, t]) => s !== pieceId && t !== pieceId));
+    }
+    function startConnect() {
+      if (revealed || placed.length < 2) return;
+      setConnectMode("waiting");
+    }
+    function clickPlacedPiece(pieceId) {
+      if (revealed) return;
+      if (connectMode === "waiting") {
+        setConnectMode({ src: pieceId });
+      } else if (connectMode && connectMode.src) {
+        if (connectMode.src === pieceId) {
+          setConnectMode(null);
+        } else {
+          const edge = [connectMode.src, pieceId];
+          if (!edges.some(([s, t]) => s === edge[0] && t === edge[1])) {
+            setEdges([...edges, edge]);
+          }
+          setConnectMode(null);
+        }
+      }
+    }
+    function removeEdge(idx) {
+      if (revealed) return;
+      setEdges(edges.filter((_, i) => i !== idx));
+    }
+    function reveal() { setRevealed(true); setConnectMode(null); }
+    function reset() {
+      setPlaced([]); setEdges([]); setConnectMode(null); setRevealed(false);
+    }
+
+    function paletteClass(p) {
+      const base = "vis-sd-piece" + (p.category ? " cat-" + p.category : "");
+      return placed.includes(p.id) ? base + " is-placed" : base;
+    }
+    function placedClass(pieceId) {
+      let cls = "vis-sd-placed";
+      if (connectMode && connectMode.src === pieceId) cls += " is-connect-source";
+      if (revealed) {
+        cls += expectedPieces.includes(pieceId) ? " is-correct" : " is-wrong";
+      }
+      return cls;
+    }
+    function edgeIsExpected(edge) {
+      return expectedEdges.some(([s, t]) => s === edge[0] && t === edge[1]);
+    }
+
+    const correctPicks = placed.filter((id) => expectedPieces.includes(id)).length;
+    const correctEdges = edges.filter((e) => edgeIsExpected(e)).length;
+    const missingPieces = expectedPieces.filter((id) => !placed.includes(id));
+    const missingEdges = expectedEdges.filter(([s, t]) =>
+      !edges.some(([es, et]) => es === s && et === t)
+    );
+    const distractorPicks = placed.filter((id) => !expectedPieces.includes(id));
+    const wrongEdges = edges.filter((e) => !edgeIsExpected(e));
+
+    return h("section", { id, className: "vis-sd" },
+      h("div", { className: "vis-sd-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-sd-mode-badge" }, "Pick & connect")
+      ),
+      scenario ? h("div", { className: "vis-sd-scenario" }, scenario) : null,
+      h("div", { className: "vis-sd-label" },
+        "Palette — click a piece to add it to your design"),
+      h("div", { className: "vis-sd-palette" },
+        pieces.map((p) => h("button", {
+          key: p.id, type: "button",
+          className: paletteClass(p),
+          onClick: () => addPiece(p.id),
+          disabled: revealed || placed.includes(p.id),
+          title: p.description || p.label,
+        }, p.label))
+      ),
+      h("div", { className: "vis-sd-label" },
+        "Your design (" + placed.length + " piece" + (placed.length === 1 ? "" : "s") + ")"),
+      h("div", { className: "vis-sd-canvas" },
+        placed.length === 0
+          ? h("div", { className: "vis-sd-canvas-empty" },
+              "Click pieces above to start building your design.")
+          : placed.map((pieceId) => h("button", {
+              key: pieceId, type: "button",
+              className: placedClass(pieceId),
+              onClick: () => clickPlacedPiece(pieceId),
+            },
+              pieceLabel(pieceId),
+              !revealed ? h("span", {
+                className: "vis-sd-remove",
+                onClick: (e) => { e.stopPropagation(); removePiece(pieceId); },
+                role: "button", "aria-label": "Remove"
+              }, " ✕") : null
+            ))
+      ),
+      !revealed && placed.length >= 2 ? h("div", { className: "vis-sd-actions" },
+        connectMode === null ? h("button", {
+          type: "button", className: "vis-sd-connect-btn", onClick: startConnect,
+        }, "+ Add connection") : null,
+        connectMode === "waiting" ? h("span", { className: "vis-sd-connect-status" },
+          "Click the SOURCE piece on the canvas...") : null,
+        connectMode && connectMode.src ? h("span", { className: "vis-sd-connect-status" },
+          "Source: " + pieceLabel(connectMode.src) + ". Click the TARGET piece.") : null,
+        connectMode ? h("button", {
+          type: "button", className: "vis-sd-connect-cancel",
+          onClick: () => setConnectMode(null),
+        }, "cancel") : null
+      ) : null,
+      edges.length > 0 ? h("div", { className: "vis-sd-edges" },
+        h("div", { className: "vis-sd-label", style: { margin: "0 0 4px" } },
+          "Connections (" + edges.length + ")"),
+        h("ul", null,
+          edges.map((edge, idx) => h("li", {
+            key: idx, className: revealed ? (edgeIsExpected(edge) ? "is-correct" : "is-wrong") : ""
+          },
+            pieceLabel(edge[0]) + " → " + pieceLabel(edge[1]),
+            revealed && edgeIsExpected(edge) ? h("span", null, " ✓") : null,
+            revealed && !edgeIsExpected(edge) ? h("span", null, " ✗") : null,
+            !revealed ? h("button", {
+              type: "button", className: "vis-sd-edge-x",
+              onClick: () => removeEdge(idx)
+            }, "✕") : null
+          ))
+        )
+      ) : null,
+      !revealed ? h("button", {
+        type: "button", className: "vis-sd-reveal-btn", onClick: reveal,
+      }, "Reveal model design") : null,
+      revealed ? h("div", null,
+        h("div", { className: "vis-sd-score" },
+          "Pieces correct: " + correctPicks + " / " + expectedPieces.length + ".  ",
+          "Connections correct: " + correctEdges + " / " + expectedEdges.length + "."
+        ),
+        distractorPicks.length > 0 ? h("div", { className: "vis-sd-missing-block",
+          style: { background: "#fee2e2", borderLeftColor: "#dc2626", color: "#7f1d1d" } },
+          h("strong", null, "✗ You picked pieces that don't belong"),
+          distractorPicks.map(pieceLabel).join(", ")
+        ) : null,
+        missingPieces.length > 0 ? h("div", { className: "vis-sd-missing-block" },
+          h("strong", null, "⚠ You missed these pieces"),
+          missingPieces.map(pieceLabel).join(", ")
+        ) : null,
+        missingEdges.length > 0 ? h("div", { className: "vis-sd-missing-block" },
+          h("strong", null, "⚠ Missing connections"),
+          missingEdges.map(([s, t]) => pieceLabel(s) + " → " + pieceLabel(t)).join("; ")
+        ) : null,
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"), h("div", null, trap)
+        ) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The model design"), h("div", null, lens)
+        ) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"), h("div", null, stretch)
+        ) : null,
+        h("button", {
+          type: "button", className: "vis-trap-reset-btn", onClick: reset,
+        }, "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.CodeFillin> — fill-in-the-blank code exercise.
+  //   code: array of lines. Blanks are written as __N__ (e.g., __1__, __2__).
+  //   options: pool of pickable answers. Each {key, text, fills: [blankN, ...]}
+  //            where `fills` is the set of blanks this option is correct for.
+  //            Options without `fills` (or with empty fills) are pure decoys.
+  // Workflow: click option → it highlights. Click blank → it gets filled with
+  //           the picked option's text. Click a filled blank → clears it.
+  function CodeFillin(props) {
+    const { id, difficulty = "hard", title, scenario,
+            language = "python", code = [], options = [],
+            trap, lens, stretch } = props;
+    const [fills, setFills] = React.useState({}); // {blankN: optionKey}
+    const [picked, setPicked] = React.useState(null);
+    const [revealed, setRevealed] = React.useState(false);
+
+    const optionByKey = Object.fromEntries(options.map((o) => [o.key, o]));
+    function correctOptionsFor(blank) {
+      return options.filter((o) => Array.isArray(o.fills) && o.fills.includes(blank));
+    }
+    function isOptionCorrectForBlank(optionKey, blank) {
+      const o = optionByKey[optionKey];
+      return o && Array.isArray(o.fills) && o.fills.includes(blank);
+    }
+    function clickOption(key) {
+      if (revealed) return;
+      setPicked(picked === key ? null : key);
+    }
+    function clickBlank(blank) {
+      if (revealed) return;
+      if (fills[blank]) {
+        const next = { ...fills }; delete next[blank]; setFills(next);
+        return;
+      }
+      if (!picked) return;
+      setFills({ ...fills, [blank]: picked });
+      setPicked(null);
+    }
+    function reveal() { setRevealed(true); setPicked(null); }
+    function reset() { setFills({}); setPicked(null); setRevealed(false); }
+
+    function blankClass(blank) {
+      let cls = "vis-cf-blank";
+      if (fills[blank]) cls += " is-filled";
+      if (revealed) {
+        cls += isOptionCorrectForBlank(fills[blank], blank) ? " is-correct" : " is-wrong";
+      }
+      return cls;
+    }
+    function optionClass(o) {
+      let cls = "vis-cf-option";
+      if (!revealed && picked === o.key) cls += " is-picked";
+      const usedInBlank = Object.entries(fills).find(([, v]) => v === o.key);
+      if (usedInBlank) cls += " is-used";
+      if (revealed) {
+        const correctSlots = Array.isArray(o.fills) ? o.fills : [];
+        if (correctSlots.length > 0) cls += " is-correct-option";
+      }
+      return cls;
+    }
+
+    function renderLine(line, lineIdx) {
+      const parts = []; let last = 0;
+      const re = /__(\d+)__/g; let m;
+      while ((m = re.exec(line)) !== null) {
+        if (m.index > last)
+          parts.push(h("span", { key: "t" + parts.length }, line.slice(last, m.index)));
+        const n = parseInt(m[1], 10);
+        const filled = fills[n];
+        parts.push(h("button", {
+          key: "b" + n,
+          type: "button",
+          className: blankClass(n),
+          onClick: () => clickBlank(n),
+          title: filled ? "Click to clear" : "Pick an option first, then click here",
+          disabled: revealed,
+        }, filled ? optionByKey[filled]?.text || filled : `␣${n}`));
+        last = m.index + m[0].length;
+      }
+      if (last < line.length)
+        parts.push(h("span", { key: "tail" }, line.slice(last)));
+      return h("div", { key: lineIdx, className: "vis-cf-line" }, parts);
+    }
+
+    const blanksInCode = new Set();
+    code.forEach((line) => {
+      let m; const re = /__(\d+)__/g;
+      while ((m = re.exec(line)) !== null) blanksInCode.add(parseInt(m[1], 10));
+    });
+    const totalBlanks = blanksInCode.size;
+    const correctFills = Object.entries(fills).filter(([b, k]) =>
+      isOptionCorrectForBlank(k, parseInt(b, 10))).length;
+
+    return h("section", { id, className: "vis-trap vis-cf" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-cf-mode-badge" }, "Fill in the code")
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      h("div", { className: "vis-cf-code-wrap" },
+        h("div", { className: "vis-cf-code-lang" }, language),
+        h("pre", { className: "vis-cf-code" },
+          code.map((line, idx) => renderLine(line, idx))
+        )
+      ),
+      h("div", { className: "vis-trap-scenario", style: { fontSize: 14, color: "#475569", margin: "12px 0 6px" } },
+        "Pick an option below (it highlights), then click a blank in the code to fill it. Click a filled blank to clear it."),
+      h("div", { className: "vis-cf-options" },
+        options.map((o) => h("button", {
+          key: o.key, type: "button",
+          className: optionClass(o),
+          onClick: () => clickOption(o.key),
+          disabled: revealed,
+        },
+          h("code", null, o.text),
+          revealed && Array.isArray(o.fills) && o.fills.length > 0
+            ? h("span", { className: "vis-cf-correct-mark" }, " ✓ (fills " + o.fills.map((b) => "␣" + b).join(", ") + ")") : null
+        ))
+      ),
+      !revealed ? h("div", { className: "vis-trap-actions" },
+        h("button", { type: "button", className: "vis-trap-reveal-btn", onClick: reveal },
+          Object.keys(fills).length > 0 ? "Reveal answer" : "Skip & reveal"),
+        Object.keys(fills).length > 0 ? h("span", { className: "vis-trap-hint" },
+          "Filled " + Object.keys(fills).length + " of " + totalBlanks + " blanks") : null
+      ) : null,
+      revealed ? h("div", { className: "vis-trap-reveal-block" },
+        h("div", { className: "vis-sd-score" },
+          "Correct blanks: " + correctFills + " / " + totalBlanks),
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"), h("div", null, trap)) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The reference implementation"), h("div", null, lens)) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"), h("div", null, stretch)) : null,
+        h("button", { type: "button", className: "vis-trap-reset-btn", onClick: reset },
+          "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.MathDerivation> — step-by-step proof with click-to-reveal per step.
+  //   steps: [{label, tex, decoyTex?, explain}]
+  // Each step starts collapsed; "Show step N" reveals the equation + explanation.
+  // If decoyTex is provided, the step becomes a 2-option MCQ first (right vs decoy).
+  function MathDerivation(props) {
+    const { id, difficulty = "hard", title, scenario, steps = [],
+            trap, lens, stretch } = props;
+    const [stepState, setStepState] = React.useState(
+      steps.map(() => ({ shown: false, picked: null }))
+    );
+    const [revealedAll, setRevealedAll] = React.useState(false);
+
+    function showStep(idx) {
+      const next = stepState.map((s, i) => i === idx ? { ...s, shown: true } : s);
+      setStepState(next);
+    }
+    function pickStep(idx, which) {
+      const next = stepState.map((s, i) =>
+        i === idx ? { ...s, shown: true, picked: which } : s);
+      setStepState(next);
+    }
+    function revealAll() {
+      setStepState(stepState.map((s) => ({ ...s, shown: true })));
+      setRevealedAll(true);
+    }
+    function reset() {
+      setStepState(steps.map(() => ({ shown: false, picked: null })));
+      setRevealedAll(false);
+    }
+
+    return h("section", { id, className: "vis-trap vis-md" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-md-mode-badge" }, "Step-by-step proof")
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      h("ol", { className: "vis-md-steps" },
+        steps.map((step, idx) => {
+          const st = stepState[idx];
+          const hasDecoy = !!step.decoyTex;
+          return h("li", { key: idx, className: "vis-md-step" },
+            h("div", { className: "vis-md-step-label" },
+              h("strong", null, "Step " + (idx + 1) + " — " + step.label)),
+            !st.shown && hasDecoy ? h("div", { className: "vis-md-mcq" },
+              h("p", { style: { margin: "4px 0", fontSize: 14, color: "#475569" } },
+                "Which is correct for this step?"),
+              h("button", {
+                type: "button", className: "vis-md-step-option",
+                onClick: () => pickStep(idx, "right"),
+              }, h(Equation, { tex: step.tex, display: true })),
+              h("button", {
+                type: "button", className: "vis-md-step-option",
+                onClick: () => pickStep(idx, "decoy"),
+              }, h(Equation, { tex: step.decoyTex, display: true }))
+            ) : null,
+            !st.shown && !hasDecoy ? h("button", {
+              type: "button", className: "vis-md-show-btn",
+              onClick: () => showStep(idx),
+            }, "Show step " + (idx + 1)) : null,
+            st.shown ? h("div", { className: "vis-md-step-body" },
+              hasDecoy && st.picked ? h("div", {
+                className: "vis-md-pick-feedback " +
+                  (st.picked === "right" ? "is-correct" : "is-wrong")
+              }, st.picked === "right" ? "✓ You picked correctly" : "✗ The other option is correct") : null,
+              h(Equation, { tex: step.tex, display: true }),
+              step.explain ? h("p", { className: "vis-md-explain" }, step.explain) : null
+            ) : null
+          );
+        })
+      ),
+      !revealedAll ? h("button", {
+        type: "button", className: "vis-trap-reveal-btn",
+        onClick: revealAll,
+        style: { marginTop: 12 },
+      }, "Reveal full proof") : null,
+      revealedAll ? h("div", { className: "vis-trap-reveal-block" },
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The common mistake"),
+          h("div", null, trap)) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The intuition"),
+          h("div", null, lens)) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"),
+          h("div", null, stretch)) : null,
+        h("button", { type: "button", className: "vis-trap-reset-btn", onClick: reset },
+          "↺ Try again")
+      ) : null
+    );
+  }
+
+  window.VIS = { Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle,
+                 Mermaid, VegaLite, Equation, CodeBlock, Callout, Term,
+                 TrapProblem, SystemDesign, CodeFillin, MathDerivation };
+  // Back-compat: report-viewer downstream uses window.RV. Keep both bindings.
+  window.RV = window.VIS;
+  console.log("[vis-components] ready: window.VIS =", Object.keys(window.VIS));
+})();
+
+</script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+// TabPFN for tabular few-shot fraud — Fraud SOTA · Few-shot / meta-learning for fraud
+// Pre-trained transformer doing Bayesian inference over tabular data in one forward pass.
+
+const App = () => (
+  <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
+    <VIS.Hero
+      pill="Fraud SOTA · Few-shot / meta-learning for fraud"
+      title="TabPFN for tabular few-shot fraud"
+      subtitle="A pre-trained transformer doing approximate Bayesian inference over tabular tasks — usable at 50 labels where XGBoost is still useless."
+      byline={[
+        {label: "Source", value: "Hollmann et al. (ICLR 2023, v2 NeurIPS 2024)"},
+        {label: "Year", value: "2024"},
+        {label: "L3", value: "Few-shot tabular fraud"},
+      ]}/>
+
+    <VIS.TLDR>
+      <VIS.Term def="Tabular Prior-Fitted Network — a transformer pre-trained on millions of synthetic tabular tasks drawn from a prior over Structural Causal Models (SCMs). At inference, it ingests labelled support + unlabelled query in one forward pass and emits posterior class probabilities. Hollmann et al., ICLR 2023; v2 NeurIPS 2024.">TabPFN</VIS.Term>{" "}
+      treats a small tabular task (≤1k rows, ≤100 features in v1) as input to a single transformer forward pass. The model has been pre-trained to do approximate{" "}
+      <VIS.Term def="A Bayesian framework where the goal is to predict a held-out value's distribution after conditioning on a small labelled context — equivalent to integrating over the posterior of a model class. TabPFN approximates this for tabular data.">posterior prediction</VIS.Term>{" "}
+      over a wide prior of tabular tasks. At 50-200 labels it beats XGBoost; past ~1000 examples XGBoost catches up.
+    </VIS.TLDR>
+
+    <VIS.Section id="sec-what" title="What it is">
+      <p>
+        TabPFN is pre-trained ONCE on tens of millions of synthetic tabular classification tasks drawn from a prior over plausible data-generating processes (Structural Causal Models with various dependencies, non-linearities and noise levels). The pre-training objective is: given a labelled context (X_train, y_train) and a query x_test, predict P(y_test | x_test, X_train, y_train). At deployment, you do NOT fine-tune — you simply pass your labelled fraud examples as context, your unlabelled transactions as queries, and read off class probabilities.
+      </p>
+      <VIS.Mermaid chart={`
+flowchart TB
+  PRETRAIN["Pre-train on millions of synthetic tabular tasks"] --> WEIGHTS["Frozen TabPFN weights"]
+  CTX["Labelled fraud examples (50-1000)"] --> FWD["Single forward pass"]
+  QRY["Unlabelled query transactions"] --> FWD
+  WEIGHTS --> FWD
+  FWD --> PROBS["Posterior P(fraud | x)"]
+  style WEIGHTS fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px
+  style FWD fill:#fef3c7,stroke:#b45309,stroke-width:2px
+      `} />
+      <p>The astonishing thing is that there is no training step at deployment — the pre-trained network has learned to approximate Bayesian inference over the prior of plausible tasks, so context-conditioning IS the learning.</p>
+    </VIS.Section>
+
+    <VIS.Section id="sec-diff" title="How it differs from XGBoost on small data">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
+        <thead>
+          <tr style={{background:"#1f3a5f", color:"#fff"}}>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>XGBoost on small data</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>TabPFN</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style={{background:"#e8f0fa"}}>
+            <td style={{padding:"8px 10px"}}>Training cost per task</td>
+            <td style={{padding:"8px 10px"}}>Minutes-hours per task</td>
+            <td style={{padding:"8px 10px"}}>Zero (one-time pre-train)</td>
+          </tr>
+          <tr>
+            <td style={{padding:"8px 10px"}}>Accuracy at n=100</td>
+            <td style={{padding:"8px 10px"}}>Weak (high variance)</td>
+            <td style={{padding:"8px 10px"}}>Strong</td>
+          </tr>
+          <tr style={{background:"#e8f0fa"}}>
+            <td style={{padding:"8px 10px"}}>Accuracy at n=10k</td>
+            <td style={{padding:"8px 10px"}}>Strong</td>
+            <td style={{padding:"8px 10px"}}>Hits row cap, falls behind</td>
+          </tr>
+          <tr>
+            <td style={{padding:"8px 10px"}}>Row / feature limits</td>
+            <td style={{padding:"8px 10px"}}>None</td>
+            <td style={{padding:"8px 10px"}}>v1: 1k rows / 100 feats; v2: larger</td>
+          </tr>
+          <tr style={{background:"#e8f0fa"}}>
+            <td style={{padding:"8px 10px"}}>Hyperparameter tuning</td>
+            <td style={{padding:"8px 10px"}}>Required, expensive</td>
+            <td style={{padding:"8px 10px"}}>None</td>
+          </tr>
+          <tr>
+            <td style={{padding:"8px 10px"}}>Calibration out-of-box</td>
+            <td style={{padding:"8px 10px"}}>Often miscalibrated</td>
+            <td style={{padding:"8px 10px"}}>Generally well-calibrated</td>
+          </tr>
+        </tbody>
+      </table>
+    </VIS.Section>
+
+    <VIS.Section id="sec-when" title="When to pick">
+      <ul>
+        <li><strong>New fraud vertical with fewer than ~500 labels</strong> — the regime XGBoost overfits and TabPFN dominates.</li>
+        <li><strong>Rapid prototyping</strong> — TabPFN gives a strong baseline in minutes; useful as the gold-standard reference when iterating on features.</li>
+        <li><strong>Calibrated probabilities are important</strong> — TabPFN's posterior is generally well-calibrated, helpful for cost-sensitive decisions.</li>
+        <li><strong>Small feature sets</strong> — TabPFN v1 caps at ~100 features. Pre-select carefully.</li>
+      </ul>
+    </VIS.Section>
+
+    <VIS.Section id="sec-limits" title="Limitations &amp; gotchas">
+      <VIS.Callout kind="gotcha" title="Hard caps on rows and features">
+        TabPFN v1: ~1000 rows, ~100 features, ~10 classes. v2 lifts these but still has bounds. Past the cap, you must subsample (lossy) or fall back to XGBoost. For high-dimensional fraud features (thousands of one-hot device fingerprints), apply dimension reduction BEFORE TabPFN.
+      </VIS.Callout>
+      <VIS.Callout kind="warn" title="The prior matters — and you cannot change it">
+        TabPFN's pre-training prior covers plausible SCMs. If your fraud problem has a structure the prior never sampled (e.g. heavy-tailed extreme outliers, time-series dependencies), expect underperformance. The fix is not to retrain TabPFN but to feature-engineer your data into the prior's shape.
+      </VIS.Callout>
+      <VIS.Callout kind="warn" title="Memory blows up with context size">
+        Inference is quadratic in context size (transformer attention). At n=1000 rows the forward pass uses several GB of GPU memory. Batch inference across many queries to amortise context cost.
+      </VIS.Callout>
+    </VIS.Section>
+
+    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        Ten interview traps on TabPFN, the few-shot tabular regime, and when XGBoost re-takes the lead.
+      </p>
+
+      <VIS.TrapProblem
+        id="tab-p1"
+        difficulty="hard"
+        title="P1 — TabPFN beats XGBoost at n=100 fraud examples. Why, and when does that flip?"
+        scenario={<>You benchmark TabPFN against XGBoost on a new fraud vertical. At n=100 labels: TabPFN AUC 0.84, XGBoost AUC 0.71. At n=10000: TabPFN cannot run (over row cap), subsampled TabPFN AUC 0.86, XGBoost AUC 0.91. What is the cleanest single-sentence explanation?</>}
+        options={[
+          {key:"a", text:"TabPFN's pre-trained prior gives strong inductive bias at small n; XGBoost has no prior beyond what 100 examples teach. Past ~1000 examples, the data dominates the prior and the tree-ensemble's flexibility wins.", correct:true},
+          {key:"b", text:"XGBoost has a bug at small n."},
+          {key:"c", text:"TabPFN is just a better algorithm at every n."},
+          {key:"d", text:"The benchmark is unfair to XGBoost."},
+        ]}
+        trap={<>(b), (c), (d) are dodges.</>}
+        lens={<>(a). The standard Bayesian-vs-frequentist intuition: priors dominate when data is scarce, data dominates when it is abundant. TabPFN bakes the prior into its weights via meta-training; XGBoost has only the data. The crossover is around n ~ 500-1000 for typical tabular fraud tasks.</>}
+        stretch={<>If your fraud problem has 100 labels today and you expect 100k by year-end, which model do you ship today, and what is the migration path?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tab-p2"
+        difficulty="hard"
+        multiSelect
+        title="P2 — TabPFN inference cost: what scales how?"
+        scenario={<>You measure TabPFN inference latency. Context size 100 queries 1 row takes 80 ms; context size 1000 queries 1 row takes 1.2 s; context size 100 queries 100 rows takes 100 ms. Which scaling statements are correct? Select all that apply.</>}
+        options={[
+          {key:"a", text:"Cost scales quadratically in context size (transformer self-attention).", correct:true},
+          {key:"b", text:"Cost scales roughly linearly in batch (query) size at fixed context.", correct:true},
+          {key:"c", text:"Amortised cost per query drops when batching many queries against the same context.", correct:true},
+          {key:"d", text:"Cost scales linearly in context size and is independent of batch size."},
+          {key:"e", text:"Memory scales quadratically in context size due to attention matrices.", correct:true},
+        ]}
+        trap={<>(d) is the wrong scaling story — many practitioners assume it because transformers feel "linear" superficially.</>}
+        lens={<>(a), (b), (c), (e). Self-attention is O(context^2) in compute and memory. Batching queries amortises the context-encoding cost; this is why production TabPFN serving uses very large query batches against a fixed context.</>}
+        stretch={<>If your production traffic is 100 queries / second with daily-refreshed context, what serving architecture matches?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tab-p3"
+        difficulty="hard"
+        title="P3 — Your fraud features include 10000 one-hot device-IDs"
+        scenario={<>You have 200 labelled fraud examples and 200 legit, plus features: 8 numerical aggregates, 10 categorical (low cardinality), AND a 10000-dim one-hot encoding of device-IDs. TabPFN v1 caps at ~100 features. What ships?</>}
+        options={[
+          {key:"a", text:"Use TabPFN on the 18 numerical + categorical features, drop device-IDs."},
+          {key:"b", text:"Compute a learned embedding of device-IDs (e.g. via a SimCLR pre-train on device co-occurrence), reduce to 16-32 dims, then concatenate with the other features for TabPFN.", correct:true},
+          {key:"c", text:"Skip TabPFN — use XGBoost which has no feature cap."},
+          {key:"d", text:"Apply PCA on the 10000-dim one-hot to keep top 90 components."},
+        ]}
+        trap={<>(a) discards the most predictive feature class. (c) is defensible but at n=400 you give up TabPFN's small-data advantage. (d) PCA on one-hots is mathematically odd and rarely useful.</>}
+        lens={<>(b). The standard workflow: high-cardinality categoricals get compressed into a dense embedding via a separate pre-training step (entity embeddings, SimCLR on co-occurrence, or simple PCA on a feature-co-occurrence matrix), then fed into TabPFN at low dimension. Captures the signal while respecting the feature cap.</>}
+        stretch={<>What is the smallest embedding dim that retains useful device signal?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tab-p4"
+        difficulty="medium"
+        multiSelect
+        title="P4 — Calibration of TabPFN posteriors"
+        scenario={<>You ship TabPFN and downstream decisions are cost-sensitive — you act differently at P(fraud)=0.6 vs 0.9. Which statements about TabPFN calibration are TRUE? Select all that apply.</>}
+        options={[
+          {key:"a", text:"TabPFN's outputs are generally better-calibrated out-of-the-box than tree ensembles.", correct:true},
+          {key:"b", text:"Calibration can still drift when the deployment task differs from the pre-training prior.", correct:true},
+          {key:"c", text:"Post-hoc calibration (Platt, isotonic) can be applied on a labelled holdout if drift is observed.", correct:true},
+          {key:"d", text:"TabPFN never needs calibration."},
+          {key:"e", text:"XGBoost is always better-calibrated than TabPFN."},
+        ]}
+        trap={<>(d) over-claims calibration robustness. (e) reverses the empirical finding.</>}
+        lens={<>(a), (b), (c). TabPFN's Bayesian framing produces well-calibrated outputs in-distribution; calibration drifts under distribution shift like any model; post-hoc recalibration works.</>}
+        stretch={<>How would you measure calibration drift over time without burning your test set?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tab-p5"
+        difficulty="hard"
+        title="P5 — Class imbalance: 1 percent fraud rate, 200 labels"
+        scenario={<>You have 200 labels: 2 fraud, 198 legit. TabPFN's context will be heavily imbalanced. What is the soundest first move?</>}
+        options={[
+          {key:"a", text:"Pass the 200 labels as-is — TabPFN handles imbalance natively."},
+          {key:"b", text:"Oversample fraud to balance, e.g. include the 2 fraud examples 20 times each."},
+          {key:"c", text:"Augment fraud labels via expert hand-labelling to bring fraud count to ~20-50, then balance the context to ~50/50 in a 100-row subset.", correct:true},
+          {key:"d", text:"Skip the labelling — ship a rule engine."},
+        ]}
+        trap={<>(a) under-uses the context space. (b) is the textbook imbalance fix but multiplying 2 examples into 20 copies leaks no new signal — just amplifies noise. (d) is the give-up.</>}
+        lens={<>(c). 2 examples of fraud is the binding constraint, not the rate. Get to 20-50 fraud labels (expert effort: a day or two) then balance the context. TabPFN benefits more from MORE positives than from REWEIGHTED few positives. Once you have ~50 positives, balance the context for clean Bayesian conditioning.</>}
+        stretch={<>What is the minimum positive count that produces a useful TabPFN fraud model?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tab-p6"
+        difficulty="hard"
+        multiSelect
+        title="P6 — Production architecture for TabPFN at 100 queries per second"
+        scenario={<>You decide to ship TabPFN at production scale. Which architecture choices make sense? Select all that apply.</>}
+        options={[
+          {key:"a", text:"Cache the encoded context — re-encode only when the labelled context changes (e.g. daily).", correct:true},
+          {key:"b", text:"Run inference on GPU — TabPFN's transformer benefits from accelerator hardware.", correct:true},
+          {key:"c", text:"Batch queries against the cached context — amortises the context-encoding cost.", correct:true},
+          {key:"d", text:"Fall back to a cheaper baseline (XGBoost or rule engine) if TabPFN inference exceeds the latency budget.", correct:true},
+          {key:"e", text:"Re-encode context on every query for freshness."},
+          {key:"f", text:"Serve TabPFN as a per-request training-and-predict cycle."},
+        ]}
+        trap={<>(e) and (f) misunderstand how TabPFN works — there is no per-request training.</>}
+        lens={<>(a), (b), (c), (d). Standard serving patterns: cache, accelerate, batch, fall-back. TabPFN's context is the analogue of a trained model — refresh it on a cadence, not per-request.</>}
+        stretch={<>What single signal would tell you the cache refresh cadence is wrong?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tab-p7"
+        difficulty="hard"
+        title="P7 — The pre-training prior does not match your task"
+        scenario={<>You deploy TabPFN on a fraud task. The features include heavy-tailed transaction amounts (Pareto, alpha ~1.5). TabPFN performance is mediocre. What is the right move?</>}
+        options={[
+          {key:"a", text:"Retrain TabPFN with a heavy-tailed prior."},
+          {key:"b", text:"Feature-engineer to bring the data into the prior's shape — e.g. log-transform the amount before passing to TabPFN.", correct:true},
+          {key:"c", text:"Drop the heavy-tailed feature."},
+          {key:"d", text:"TabPFN cannot handle heavy tails; switch to XGBoost."},
+        ]}
+        trap={<>(a) is conceptually right but the pre-train is a multi-week effort no team will undertake. (c) discards signal. (d) is the easy give-up.</>}
+        lens={<>(b). Feature engineering — log, rank, winsorize — bring heavy-tailed features into a Gaussian-ish range that the pre-training prior covers well. This is the standard practical fix and is much cheaper than retraining.</>}
+        stretch={<>What features would you log-transform vs rank-transform vs leave alone?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tab-p8"
+        difficulty="medium"
+        multiSelect
+        title="P8 — When to escalate from TabPFN to XGBoost"
+        scenario={<>You started with TabPFN at n=200. Six months later you have n=20000. Which signals tell you it is time to escalate to XGBoost? Select all that apply.</>}
+        options={[
+          {key:"a", text:"TabPFN's row cap forces you to subsample; AUC on subsampled context plateaus while held-out test grows.", correct:true},
+          {key:"b", text:"Labelled budget is large enough that XGBoost CV beats TabPFN on a head-to-head.", correct:true},
+          {key:"c", text:"Latency budget no longer accommodates O(n^2) context encoding.", correct:true},
+          {key:"d", text:"You added many high-cardinality categoricals that bust the feature cap.", correct:true},
+          {key:"e", text:"You upgraded to a newer GPU."},
+          {key:"f", text:"TabPFN authors released a new version."},
+        ]}
+        trap={<>(e) and (f) are unrelated to the escalation decision.</>}
+        lens={<>(a), (b), (c), (d). The four legitimate escalation triggers. Each corresponds to a fundamental scaling limit of TabPFN.</>}
+        stretch={<>If all four signals fire at once, how do you sequence the migration?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tab-p9"
+        difficulty="hard"
+        title="P9 — Hybrid: TabPFN as a feature, not a final classifier"
+        scenario={<>Senior engineer suggests: instead of replacing XGBoost, USE TabPFN as one signal (its output probability) among many features fed into XGBoost. Sound?</>}
+        options={[
+          {key:"a", text:"Useless — two probabilistic classifiers stacked add nothing."},
+          {key:"b", text:"Genuinely useful when TabPFN encodes prior knowledge XGBoost cannot derive from the available data — but mind the leakage when constructing the training set.", correct:true},
+          {key:"c", text:"Always worse than either alone."},
+          {key:"d", text:"Only useful if the two models share architectures."},
+        ]}
+        trap={<>(a) misses that the two models use different inductive biases. (c) and (d) are dogmatic.</>}
+        lens={<>(b). Stacking is a legitimate ensembling pattern when the constituent models capture different inductive biases. The trap is leakage: TabPFN's output is fitted on a context — if any of the XGBoost training rows are IN the TabPFN context, you leak labels. Use out-of-fold TabPFN predictions for the XGBoost training set.</>}
+        stretch={<>Describe a fold scheme that prevents the leakage.</>}
+      />
+
+      <VIS.TrapProblem
+        id="tab-p10"
+        difficulty="hard"
+        multiSelect
+        title="P10 — Failure modes specific to TabPFN"
+        scenario={<>Which failure modes are SPECIFIC to TabPFN (not generic supervised pitfalls)? Select all that apply.</>}
+        options={[
+          {key:"a", text:"Hard row / feature caps cause silent performance cliffs when exceeded via subsampling.", correct:true},
+          {key:"b", text:"Pre-training prior mismatch (heavy tails, time-series structure, hierarchical features).", correct:true},
+          {key:"c", text:"O(n^2) memory blow-up at the row cap on commodity GPUs.", correct:true},
+          {key:"d", text:"You cannot iterate on the model — only on features and context.", correct:true},
+          {key:"e", text:"Class imbalance hurts every supervised method."},
+          {key:"f", text:"Slow training time — TabPFN trains for hours per task."},
+        ]}
+        trap={<>(e) is generic. (f) is exactly backwards — TabPFN has zero per-task training cost.</>}
+        lens={<>(a), (b), (c), (d). Each is a TabPFN-specific constraint: caps, prior fit, memory, frozen model. Senior teams pick TabPFN with full eyes on these four; junior teams trip on each in order.</>}
+        stretch={<>Which of these four is most likely to surprise a team three months into deployment?</>}
+      />
+    </VIS.Section>
+
+    <VIS.Section id="sec-further" title="Further reading">
+      <ul>
+        <li>
+          <a href="https://arxiv.org/abs/2207.01848" target="_blank" rel="noopener">
+            <strong>Hollmann et al. — TabPFN: A Transformer That Solves Small Tabular Classification</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper, ICLR 2023; v2 NeurIPS 2024)</span>
+          <br/>The original TabPFN paper. Read sections 3-4 for the prior-fitting framework and section 5 for the benchmark vs XGBoost / AutoGluon.
+        </li>
+        <li>
+          <a href="https://github.com/automl/TabPFN" target="_blank" rel="noopener">
+            <strong>AutoML group — TabPFN GitHub repository</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(code + examples)</span>
+          <br/>The reference implementation. The README has a one-line scikit-learn-style example you can run in 30 seconds. Notebooks demonstrate scaling beyond the cap via ensembling.
+        </li>
+        <li>
+          <a href="https://www.youtube.com/watch?v=-uujmrnEKhU" target="_blank" rel="noopener">
+            <strong>Frank Hutter — TabPFN talk at ICLR</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(video, ~20 min)</span>
+          <br/>Author-led intuition for prior-fitted networks and why they outperform tree ensembles at small n. Watch before reading the paper.
+        </li>
+        <li>
+          <a href="https://www.openml.org/auto" target="_blank" rel="noopener">
+            <strong>OpenML AutoML benchmark</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(benchmark hub)</span>
+          <br/>The community benchmark used in the TabPFN paper. Useful for grounding your own evaluation in standard tasks before deploying to fraud.
+        </li>
+        <li>
+          <a href="https://parameterfree.com/2023/03/15/tabpfn/" target="_blank" rel="noopener">
+            <strong>Francesco Orabona — TabPFN: a transformer learning to do Bayesian inference</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
+          <br/>A sceptical, mathematically grounded read on whether TabPFN really is doing Bayesian inference. Useful counterweight before you over-sell to leadership.
+        </li>
+      </ul>
+    </VIS.Section>
+  </main>
+);
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+</script>
+  <script>
+    window.addEventListener("error", function (e) {
+      const pre = document.createElement("pre");
+      pre.style.cssText = "position:fixed;top:0;left:0;right:0;max-height:35vh;"
+        + "overflow:auto;background:#fee2e2;color:#7f1d1d;padding:8px;"
+        + "margin:0;font:12px/1.4 monospace;z-index:10002;";
+      pre.textContent = "[visualize] " + (e.error?.stack || e.message || e);
+      document.body.appendChild(pre);
+    }, true);
+  </script>
+</body>
+</html>
