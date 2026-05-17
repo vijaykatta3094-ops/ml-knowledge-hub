@@ -1022,19 +1022,19 @@ flowchart TB
       <VIS.TrapProblem
         id="bv-p1"
         difficulty="hard"
-        multiSelect
-        title="P1 — ResNet-50 on CIFAR: what's the cheapest first move?"
-        scenario={<>You train ResNet-50 (~25M params) on CIFAR-10. Setup: AdamW with <code>lr=3e-4</code>, weight decay <code>1e-4</code>, batch size 256 on a single A100, basic random-crop + horizontal-flip augmentation, 80 epochs. Result: train accuracy <strong>99.8%</strong>, test accuracy <strong>75%</strong>. Validation was a stratified random split (5k held out from the original 50k — same distribution). Val accuracy plateaued around epoch <strong>30</strong> while train kept climbing. Your tech lead suggests collecting 200k additional images via Mechanical Turk — ~$2,500, ~2 weeks of labeling. Which actions are valid as <em>first moves</em> that are cheaper than buying labels? Select all that apply.</>}
+        mode="ordered"
+        title="P1 — ResNet-50 on CIFAR: order your first moves by priority"
+        scenario={<>You train ResNet-50 (~25M params) on CIFAR-10. Setup: AdamW <code>lr=3e-4</code>, weight decay <code>1e-4</code>, batch size 256 on a single A100, basic random-crop + horizontal-flip augmentation, 80 epochs. Result: train accuracy <strong>99.8%</strong>, test accuracy <strong>75%</strong>. Validation was a stratified random split (5k held out from the original 50k — same distribution as train). Val accuracy plateaued around epoch <strong>30</strong> while train kept climbing. Tech lead suggests collecting 200k MTurk images (~$2,500, ~2 weeks). <strong>Click options in the order you would actually try them.</strong> Wrong moves (no number assigned) should NOT appear in your sequence.</>}
         options={[
           {key:"a", text:"Order the MTurk data — more data is the textbook fix for overfitting."},
-          {key:"b", text:"Take the epoch-30 checkpoint where val peaked (early stopping in retrospect).", correct:true},
-          {key:"c", text:"Re-train with stronger augmentation (Mixup + RandAugment) and dropout 0.3.", correct:true},
+          {key:"b", text:"Restore the epoch-30 val-peak checkpoint (early stopping in retrospect).", order:1},
+          {key:"c", text:"Re-train with stronger augmentation (Mixup + RandAugment) and dropout 0.3.", order:2},
           {key:"d", text:"Drop to ResNet-18 — fewer parameters mean less variance."},
           {key:"e", text:"Lower learning rate from 3e-4 to 1e-5 to stabilize training."},
         ]}
-        trap={<>(a) is the textbook reflex; this is what most candidates pick first. But 200k MTurk images cost real money, take weeks, and add labeling noise. Two cheaper levers were sitting in the data: (b) the val-peak checkpoint at epoch 30 is FREE — you already trained through it; just save and restore that checkpoint. (c) adds variance-killing regularization without changing data or architecture. (d) is plausible but premature — you'd lose representational power on hard CIFAR classes (cat-vs-dog, deer-vs-horse). (e) is a guess masquerading as caution: a lower LR doesn't address the train≫test gap, it just trains slower.</>}
-        lens={<>This is variance (train ≫ test by 24 points). The cheap-fast-first levers are <strong>(b) save the val-peak checkpoint</strong> and <strong>(c) stronger regularization</strong>. The fact that val plateaued at epoch 30 while train kept climbing IS the early-stopping signal — you already paid for those epochs, just don't keep training past them. After regularization, if test is still poor, escalate to data or architecture changes.</>}
-        stretch={<>The setup uses basic augmentation only. What kind of variance does MTurk data fix that stronger augmentation CANNOT?</>}
+        trap={<>Most candidates jump to (a) — "more data fixes overfitting" is the textbook reflex. The 200k MTurk images cost money, time, and add labeling noise. The ordering trap that catches senior candidates: many pick (c) FIRST because regularization "feels active" — but (b) is <em>free</em>. You already paid for those 30 epochs; just save and restore the checkpoint. Doing (c) before (b) means you immediately retrain instead of harvesting the val-peak you already have. Right SET but wrong ORDER is the senior-vs-junior signal — in a real loop, it wastes 4-8 hours of GPU time you didn't need to spend.</>}
+        lens={<>Correct order: <strong>(b) first — restore the free checkpoint</strong>, then <strong>(c) — augmentation + dropout re-training</strong>. The val-plateau at epoch 30 IS the early-stopping signal; you trained through the optimum. Only AFTER regularization fails do you escalate to data (a) or architecture (d). (e) is a non-fix — LR doesn't address variance, it slows training.</>}
+        stretch={<>If the val curve had ONLY plateaued (not dropped) after epoch 30, would the order change? Why?</>}
       />
 
       <VIS.TrapProblem
