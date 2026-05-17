@@ -1374,23 +1374,34 @@
 // draw arrows between them with Excalidraw's native arrow tool. Reveal
 // reads the scene and compares to expected.
 
-// --- 14 palette pieces (same as the click/connect version) ---
+// --- Palette pieces ---
+// `shape` follows whiteboard convention: ellipse = data source, rectangle = stateless
+// service / model, rounded rectangle = stateful store, diamond = control / monitoring.
+// The user is NOT told how many belong vs. how many are distractors.
 const PIECES = [
-  { id:"user_features",  category:"data",  label:"User features\n(demographics)" },
-  { id:"item_features",  category:"data",  label:"Item features\n(genre, tags)" },
-  { id:"interaction_log", category:"data", label:"Interaction log\n(clicks)" },
-  { id:"feature_store",  category:"infra", label:"Feature store\n(online + offline)" },
-  { id:"embedding_store", category:"infra", label:"Embedding store\n(ANN index)" },
-  { id:"model_server",   category:"infra", label:"Model server\n(serving)" },
-  { id:"user_tower",     category:"model", label:"User tower" },
-  { id:"item_tower",     category:"model", label:"Item tower" },
-  { id:"candidate_gen",  category:"model", label:"Candidate generator\n(top-K from ANN)" },
-  { id:"ranker",         category:"model", label:"Ranker\n(DNN / GBDT)" },
-  { id:"re_ranker",      category:"model", label:"Re-ranker\n(diversity)" },
-  { id:"monitoring",     category:"monitor", label:"Monitoring\n+ drift" },
-  // distractors
-  { id:"kafka_stream",   category:"infra", label:"Raw Kafka stream" },
-  { id:"ab_test_framework", category:"infra", label:"A/B test framework" },
+  // data sources
+  { id:"user_features",    category:"data",    shape:"ellipse",   label:"User features\n(demographics,\nwatch history)" },
+  { id:"item_features",    category:"data",    shape:"ellipse",   label:"Item features\n(genre, tags,\nactors, runtime)" },
+  { id:"interaction_log",  category:"data",    shape:"ellipse",   label:"Interaction log\n(clicks, plays,\ncompletions)" },
+  // stores
+  { id:"feature_store",    category:"infra",   shape:"rounded",   label:"Feature store\n(online + offline,\npoint-in-time correct)" },
+  { id:"embedding_store",  category:"infra",   shape:"rounded",   label:"Embedding store\n(ANN index,\nFAISS / ScaNN)" },
+  // model components
+  { id:"user_tower",       category:"model",   shape:"rectangle", label:"User tower\n(MLP → user emb)" },
+  { id:"item_tower",       category:"model",   shape:"rectangle", label:"Item tower\n(MLP → item emb)" },
+  { id:"candidate_gen",    category:"model",   shape:"rectangle", label:"Candidate generator\n(ANN top-K\nfrom user emb)" },
+  { id:"ranker",           category:"model",   shape:"rectangle", label:"Ranker\n(DNN / GBDT,\nfull features)" },
+  { id:"re_ranker",        category:"model",   shape:"rectangle", label:"Re-ranker\n(diversity,\nbusiness rules)" },
+  // serving
+  { id:"model_server",     category:"infra",   shape:"rectangle", label:"Model server\n(p99 < 100ms)" },
+  // control
+  { id:"monitoring",       category:"monitor", shape:"diamond",   label:"Monitoring\n+ drift detection" },
+  // ---- distractors (count not revealed to user) ----
+  { id:"kafka_stream",        category:"infra",   shape:"rounded",   label:"Raw Kafka stream\n(unfiltered)" },
+  { id:"ab_test_framework",   category:"infra",   shape:"rectangle", label:"A/B test\nframework" },
+  { id:"cdn_edge",            category:"infra",   shape:"rounded",   label:"CDN edge cache\n(video chunks)" },
+  { id:"knowledge_graph",     category:"data",    shape:"ellipse",   label:"Content\nknowledge graph" },
+  { id:"bandit_policy",       category:"model",   shape:"rectangle", label:"Contextual bandit\nexplorer" },
 ];
 const EXPECTED_PIECES = [
   "user_features", "item_features", "interaction_log",
@@ -1449,18 +1460,25 @@ function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges }) {
 
   React.useEffect(() => { loadExcalidraw().then(setLib).catch(console.error); }, []);
 
-  // Add a piece to the canvas as an Excalidraw rectangle with a text label
+  // Add a piece to the canvas using a shape that matches its role.
+  // ellipse = data source, rectangle = stateless service / model,
+  // rounded rectangle = stateful store, diamond = control / monitoring.
   function addPiece(piece) {
     if (!api || !lib || revealed || placedIdMap[piece.id]) return;
-    // Compute a free-ish position based on how many already placed
     const idx = Object.keys(placedIdMap).length;
-    const x = 60 + (idx % 4) * 220;
-    const y = 60 + Math.floor(idx / 4) * 110;
-    // convertToExcalidrawElements expands a labeled rectangle skeleton into BOTH
-    // a rectangle AND a bound-text element. Take the whole array, not just [0].
-    const generated = lib.convertToExcalidrawElements([{
-      type: "rectangle",
-      x, y, width: 200, height: 80,
+    const x = 60 + (idx % 4) * 230;
+    const y = 60 + Math.floor(idx / 4) * 130;
+    // Pick the Excalidraw primitive + sizing per shape kind.
+    const shape = piece.shape || "rectangle";
+    const dims = {
+      rectangle: { type: "rectangle", w: 200, h: 90, roundness: null },
+      rounded:   { type: "rectangle", w: 200, h: 90, roundness: { type: 3 } },
+      ellipse:   { type: "ellipse",   w: 220, h: 100, roundness: null },
+      diamond:   { type: "diamond",   w: 200, h: 120, roundness: null },
+    }[shape];
+    const skeleton = {
+      type: dims.type,
+      x, y, width: dims.w, height: dims.h,
       backgroundColor: CATEGORY_COLOR[piece.category] || "#f1f5f9",
       strokeColor: "#1e293b",
       fillStyle: "solid",
@@ -1468,18 +1486,19 @@ function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges }) {
       strokeWidth: 1,
       label: {
         text: piece.label,
-        fontSize: 16,
+        fontSize: 15,
         textAlign: "center",
         verticalAlign: "middle",
       },
       customData: { pieceId: piece.id },
-    }]);
-    // The first generated element is the rectangle (the container), the rest are
-    // the bound text element(s). Tag the rectangle's id so we can find the piece later.
-    const rectEl = generated.find((e) => e.type === "rectangle") || generated[0];
+    };
+    if (dims.roundness) skeleton.roundness = dims.roundness;
+    const generated = lib.convertToExcalidrawElements([skeleton]);
+    // The first generated element is the container shape; the rest are bound text.
+    const shapeEl = generated.find((e) => e.type === dims.type) || generated[0];
     const next = [...api.getSceneElements(), ...generated];
     api.updateScene({ elements: next });
-    setPlacedIdMap({ ...placedIdMap, [piece.id]: rectEl.id });
+    setPlacedIdMap({ ...placedIdMap, [piece.id]: shapeEl.id });
   }
 
   function reveal() {
@@ -1654,16 +1673,50 @@ const App = () => (
       ]}/>
 
     <VIS.TLDR>
-      Same problem as the pick-and-connect version, but with a real free-form canvas. Drop pieces, drag them anywhere, use Excalidraw's arrow tool to connect them. Excalidraw's bindings keep arrows attached when you move rectangles around.
+      A real onsite system-design question depends almost entirely on the brief. Latency budgets, scale numbers, existing infrastructure, business constraints — all of that should shape your blocks and arrows. Read the brief below as if your interviewer just finished saying it, then build.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-prompt" title="The prompt">
-      <VIS.Callout kind="info" title="Question (Amazon Prime Video onsite, March 2026)">
-        Prime Video has billions of users and millions of titles. You can't run a deep ranking model on every (user, item) pair. Design the retrieval pipeline from raw signals all the way to serving recommendations at &lt;100ms p99 latency. Include data sources, model stages, monitoring, and feedback loops. <strong>14 palette pieces — 12 belong, 2 are distractors.</strong>
-      </VIS.Callout>
+    <VIS.Section id="sec-brief" title="The interviewer's brief">
+      <p>
+        Your interviewer leans forward. "Walk me through how you'd design the recommendation retrieval system at Prime Video. I'll give you context, you ask whatever you need, then sketch the architecture. Let's say we're focused on the home page 'Recommended for you' carousel — that's our main surface."
+      </p>
+
+      <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>Scale</h3>
+      <ul style={{margin:"4px 0 0 0", paddingLeft:22, lineHeight:1.6}}>
+        <li><strong>~200M</strong> global subscribers across US / EU / APAC</li>
+        <li><strong>~10M</strong> active items in catalog (movies + episodes), refreshed nightly</li>
+        <li><strong>~100M home-page renders/day</strong>, spiking 3× during evening prime-time per region</li>
+        <li><strong>p99 latency budget: 100ms</strong> end-to-end for the carousel API</li>
+        <li><strong>~5B impression events/day</strong> streamed back (click, play, completion, skip)</li>
+      </ul>
+
+      <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>What already exists</h3>
+      <ul style={{margin:"4px 0 0 0", paddingLeft:22, lineHeight:1.6}}>
+        <li>Kafka topics for clickstream, an S3 datalake, Spark for batch jobs, Flink for streaming</li>
+        <li>An offline training cluster (GPUs) and a model registry</li>
+        <li>A CDN edge serving the actual video chunks (separate concern)</li>
+        <li>An A/B test framework wired into the carousel API</li>
+      </ul>
+
+      <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>Constraints + signals you should ask about</h3>
+      <ul style={{margin:"4px 0 0 0", paddingLeft:22, lineHeight:1.6}}>
+        <li>You cannot run a deep ranking model over the full 10M catalog per request — way over budget. You need a cheap recall stage AND a precise scoring stage.</li>
+        <li>Some titles are licensed only in specific regions — the design must respect that constraint somewhere.</li>
+        <li>The product team wants a diversity guarantee — the final 10 results shouldn't all be the same genre or franchise.</li>
+        <li>Cold-start: new titles must be eligible within 24 hours of release, before they have meaningful interaction signal.</li>
+        <li>Feedback loops matter — plays today should influence recommendations tomorrow.</li>
+      </ul>
+
+      <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>Your task</h3>
+      <p style={{margin:"4px 0 0 0"}}>
+        Drop the relevant blocks on the canvas, draw the data + request flow with arrows, and ignore anything that doesn't belong in <em>retrieval and ranking for this carousel</em>. The palette deliberately includes some plausible-but-wrong pieces — part of the exercise is knowing what NOT to put on the diagram.
+      </p>
     </VIS.Section>
 
     <VIS.Section id="sec-design" title="Build the design on the canvas">
+      <p style={{margin:"0 0 10px 0", fontSize:14, color:"#64748b"}}>
+        Shape convention: <strong>ellipse</strong> = data source, <strong>rectangle</strong> = stateless service / model, <strong>rounded rectangle</strong> = stateful store, <strong>diamond</strong> = control / monitoring.
+      </p>
       <ExcalidrawCanvas
         pieces={PIECES}
         expectedPieces={EXPECTED_PIECES}
