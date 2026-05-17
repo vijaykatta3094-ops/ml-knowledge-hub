@@ -1375,33 +1375,38 @@
 // reads the scene and compares to expected.
 
 // --- Palette pieces ---
-// `shape` follows whiteboard convention: ellipse = data source, rectangle = stateless
-// service / model, rounded rectangle = stateful store, diamond = control / monitoring.
+// `shape` encodes the architectural role using whiteboard convention:
+//   service        = stateless processing       (solid rectangle, sharp)
+//   store          = stateful storage           (composite cylinder)
+//   source         = static / batch data        (solid ellipse)
+//   stream_source  = streaming data             (hachure ellipse, dashed stroke)
+//   queue          = message bus / pipe         (hachure rounded rectangle, dashed)
+//   control        = monitoring / decision      (cross-hatched diamond)
 // The user is NOT told how many belong vs. how many are distractors.
 const PIECES = [
   // data sources
-  { id:"user_features",    category:"data",    shape:"ellipse",   label:"User features\n(demographics,\nwatch history)" },
-  { id:"item_features",    category:"data",    shape:"ellipse",   label:"Item features\n(genre, tags,\nactors, runtime)" },
-  { id:"interaction_log",  category:"data",    shape:"ellipse",   label:"Interaction log\n(clicks, plays,\ncompletions)" },
+  { id:"user_features",    category:"data",    shape:"source",        label:"User features\n(demographics,\nwatch history)" },
+  { id:"item_features",    category:"data",    shape:"source",        label:"Item features\n(genre, tags,\nactors, runtime)" },
+  { id:"interaction_log",  category:"data",    shape:"stream_source", label:"Interaction log\n(clicks, plays,\ncompletions)" },
   // stores
-  { id:"feature_store",    category:"infra",   shape:"rounded",   label:"Feature store\n(online + offline,\npoint-in-time correct)" },
-  { id:"embedding_store",  category:"infra",   shape:"rounded",   label:"Embedding store\n(ANN index,\nFAISS / ScaNN)" },
+  { id:"feature_store",    category:"infra",   shape:"store",         label:"Feature store\n(online + offline,\npoint-in-time)" },
+  { id:"embedding_store",  category:"infra",   shape:"store",         label:"Embedding store\n(ANN index,\nFAISS / ScaNN)" },
   // model components
-  { id:"user_tower",       category:"model",   shape:"rectangle", label:"User tower\n(MLP → user emb)" },
-  { id:"item_tower",       category:"model",   shape:"rectangle", label:"Item tower\n(MLP → item emb)" },
-  { id:"candidate_gen",    category:"model",   shape:"rectangle", label:"Candidate generator\n(ANN top-K\nfrom user emb)" },
-  { id:"ranker",           category:"model",   shape:"rectangle", label:"Ranker\n(DNN / GBDT,\nfull features)" },
-  { id:"re_ranker",        category:"model",   shape:"rectangle", label:"Re-ranker\n(diversity,\nbusiness rules)" },
+  { id:"user_tower",       category:"model",   shape:"service",       label:"User tower\n(MLP → user emb)" },
+  { id:"item_tower",       category:"model",   shape:"service",       label:"Item tower\n(MLP → item emb)" },
+  { id:"candidate_gen",    category:"model",   shape:"service",       label:"Candidate generator\n(ANN top-K\nfrom user emb)" },
+  { id:"ranker",           category:"model",   shape:"service",       label:"Ranker\n(DNN / GBDT,\nfull features)" },
+  { id:"re_ranker",        category:"model",   shape:"service",       label:"Re-ranker\n(diversity,\nbusiness rules)" },
   // serving
-  { id:"model_server",     category:"infra",   shape:"rectangle", label:"Model server\n(p99 < 100ms)" },
+  { id:"model_server",     category:"infra",   shape:"service",       label:"Model server\n(p99 < 100ms)" },
   // control
-  { id:"monitoring",       category:"monitor", shape:"diamond",   label:"Monitoring\n+ drift detection" },
+  { id:"monitoring",       category:"monitor", shape:"control",       label:"Monitoring\n+ drift detection" },
   // ---- distractors (count not revealed to user) ----
-  { id:"kafka_stream",        category:"infra",   shape:"rounded",   label:"Raw Kafka stream\n(unfiltered)" },
-  { id:"ab_test_framework",   category:"infra",   shape:"rectangle", label:"A/B test\nframework" },
-  { id:"cdn_edge",            category:"infra",   shape:"rounded",   label:"CDN edge cache\n(video chunks)" },
-  { id:"knowledge_graph",     category:"data",    shape:"ellipse",   label:"Content\nknowledge graph" },
-  { id:"bandit_policy",       category:"model",   shape:"rectangle", label:"Contextual bandit\nexplorer" },
+  { id:"kafka_stream",        category:"infra", shape:"queue",   label:"Raw Kafka stream\n(unfiltered)" },
+  { id:"ab_test_framework",   category:"infra", shape:"service", label:"A/B test\nframework" },
+  { id:"cdn_edge",            category:"infra", shape:"store",   label:"CDN edge cache\n(video chunks)" },
+  { id:"knowledge_graph",     category:"data",  shape:"source",  label:"Content\nknowledge graph" },
+  { id:"bandit_policy",       category:"model", shape:"service", label:"Contextual bandit\nexplorer" },
 ];
 const EXPECTED_PIECES = [
   "user_features", "item_features", "interaction_log",
@@ -1460,63 +1465,110 @@ function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges }) {
 
   React.useEffect(() => { loadExcalidraw().then(setLib).catch(console.error); }, []);
 
-  // Add a piece to the canvas using a shape that matches its role.
-  // ellipse = data source, rectangle = stateless service / model,
-  // rounded rectangle = stateful store, diamond = control / monitoring.
+  // Add a piece to the canvas using a shape that matches its architectural role.
+  // Returns one or more Excalidraw elements (cylinder = 3 grouped primitives).
   function addPiece(piece) {
     if (!api || !lib || revealed || placedIdMap[piece.id]) return;
     const idx = Object.keys(placedIdMap).length;
-    const x = 60 + (idx % 4) * 230;
-    const y = 60 + Math.floor(idx / 4) * 130;
-    // Pick the Excalidraw primitive + sizing per shape kind.
-    const shape = piece.shape || "rectangle";
-    const dims = {
-      rectangle: { type: "rectangle", w: 200, h: 90, roundness: null },
-      rounded:   { type: "rectangle", w: 200, h: 90, roundness: { type: 3 } },
-      ellipse:   { type: "ellipse",   w: 220, h: 100, roundness: null },
-      diamond:   { type: "diamond",   w: 200, h: 120, roundness: null },
-    }[shape];
-    const skeleton = {
-      type: dims.type,
-      x, y, width: dims.w, height: dims.h,
-      backgroundColor: CATEGORY_COLOR[piece.category] || "#f1f5f9",
-      strokeColor: "#1e293b",
-      fillStyle: "solid",
-      roughness: 1,
-      strokeWidth: 1,
-      label: {
-        text: piece.label,
-        fontSize: 15,
-        textAlign: "center",
-        verticalAlign: "middle",
-      },
-      customData: { pieceId: piece.id },
+    const x = 60 + (idx % 4) * 250;
+    const y = 60 + Math.floor(idx / 4) * 150;
+    const color = CATEGORY_COLOR[piece.category] || "#f1f5f9";
+    const shape = piece.shape || "service";
+
+    // Shape specs encode visual conventions: solid/dashed stroke, solid/hachure/
+    // cross-hatch fill, sharp/rounded corners, composite cylinder for stores.
+    const specs = {
+      service:       { type:"rectangle", w:210, h:90,  fillStyle:"solid",       strokeStyle:"solid",  strokeWidth:1, roundness:null },
+      source:        { type:"ellipse",   w:230, h:100, fillStyle:"solid",       strokeStyle:"solid",  strokeWidth:1, roundness:null },
+      stream_source: { type:"ellipse",   w:230, h:100, fillStyle:"hachure",     strokeStyle:"dashed", strokeWidth:2, roundness:null },
+      queue:         { type:"rectangle", w:230, h:75,  fillStyle:"hachure",     strokeStyle:"dashed", strokeWidth:2, roundness:{type:3} },
+      control:       { type:"diamond",   w:210, h:140, fillStyle:"cross-hatch", strokeStyle:"solid",  strokeWidth:2, roundness:null },
+      store:         { composite:"cylinder", w:190, h:140 },
     };
-    if (dims.roundness) skeleton.roundness = dims.roundness;
-    const generated = lib.convertToExcalidrawElements([skeleton]);
-    // The first generated element is the container shape; the rest are bound text.
-    const shapeEl = generated.find((e) => e.type === dims.type) || generated[0];
+    const spec = specs[shape] || specs.service;
+    let generated;
+    let anchorEl;
+
+    if (spec.composite === "cylinder") {
+      // Build a cylinder: body rectangle + top ellipse + bottom ellipse, grouped.
+      // Render body FIRST so the two ellipses cover the body's top/bottom strokes.
+      const W = spec.w, H = spec.h, lipH = 26;
+      const groupId = `g-${piece.id}-${Date.now()}`;
+      const common = {
+        backgroundColor: color, strokeColor:"#1e293b",
+        fillStyle:"solid", roughness:1, strokeWidth:1,
+        groupIds:[groupId],
+      };
+      const bodyArr = lib.convertToExcalidrawElements([{
+        type:"rectangle",
+        x, y: y + lipH/2,
+        width: W, height: H - lipH,
+        ...common,
+        label: { text: piece.label, fontSize:14, textAlign:"center", verticalAlign:"middle" },
+        customData: { pieceId: piece.id },
+      }]);
+      const topEllipse = lib.convertToExcalidrawElements([{
+        type:"ellipse", x, y, width:W, height:lipH, ...common,
+      }])[0];
+      const bottomEllipse = lib.convertToExcalidrawElements([{
+        type:"ellipse", x, y: y + H - lipH, width:W, height:lipH, ...common,
+      }])[0];
+      generated = [...bodyArr, topEllipse, bottomEllipse];
+      anchorEl = bodyArr.find((e) => e.type === "rectangle");
+    } else {
+      const skeleton = {
+        type: spec.type,
+        x, y, width: spec.w, height: spec.h,
+        backgroundColor: color,
+        strokeColor: "#1e293b",
+        fillStyle: spec.fillStyle,
+        strokeStyle: spec.strokeStyle,
+        strokeWidth: spec.strokeWidth,
+        roughness: 1,
+        label: { text: piece.label, fontSize:14, textAlign:"center", verticalAlign:"middle" },
+        customData: { pieceId: piece.id },
+      };
+      if (spec.roundness) skeleton.roundness = spec.roundness;
+      generated = lib.convertToExcalidrawElements([skeleton]);
+      anchorEl = generated.find((e) => e.type === spec.type) || generated[0];
+    }
+
     const next = [...api.getSceneElements(), ...generated];
     api.updateScene({ elements: next });
-    setPlacedIdMap({ ...placedIdMap, [piece.id]: shapeEl.id });
+    setPlacedIdMap({ ...placedIdMap, [piece.id]: anchorEl.id });
   }
 
   function reveal() {
     if (!api) return;
     const elements = api.getSceneElements();
-    // Map excalidraw element id → pieceId via customData
-    const elemToPiece = {};
+    // Direct map: element id → pieceId (for elements that own the customData tag).
+    const directElemToPiece = {};
     elements.forEach((el) => {
       if (el.customData && el.customData.pieceId)
-        elemToPiece[el.id] = el.customData.pieceId;
+        directElemToPiece[el.id] = el.customData.pieceId;
     });
-    const placedPieces = Array.from(new Set(Object.values(elemToPiece)));
+    // For composite shapes (cylinder = body rect + 2 ellipses sharing a groupId),
+    // only the body rect carries the pieceId. To resolve arrows that snapped to
+    // a sibling primitive, walk groupIds back to whichever element has the pieceId.
+    function resolvePieceId(elementId) {
+      if (directElemToPiece[elementId]) return directElemToPiece[elementId];
+      const el = elements.find((e) => e.id === elementId);
+      if (!el || !el.groupIds || el.groupIds.length === 0) return null;
+      for (const gid of el.groupIds) {
+        const tagged = elements.find(
+          (e) => e.groupIds && e.groupIds.includes(gid) && e.customData && e.customData.pieceId
+        );
+        if (tagged) return tagged.customData.pieceId;
+      }
+      return null;
+    }
+    const placedPieces = Array.from(new Set(Object.values(directElemToPiece)));
     // Arrows have startBinding/endBinding pointing at element ids
     const userEdges = [];
     elements.forEach((el) => {
       if (el.type === "arrow" && el.startBinding && el.endBinding) {
-        const src = elemToPiece[el.startBinding.elementId];
-        const tgt = elemToPiece[el.endBinding.elementId];
+        const src = resolvePieceId(el.startBinding.elementId);
+        const tgt = resolvePieceId(el.endBinding.elementId);
         if (src && tgt) userEdges.push([src, tgt]);
       }
     });
