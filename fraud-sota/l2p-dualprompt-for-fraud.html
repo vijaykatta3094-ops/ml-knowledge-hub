@@ -1,0 +1,1707 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>visualize</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+  <style>
+    body { font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+           margin: 0; background: #ffffff; color: #0f172a; }
+  </style>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/@lottiefiles/lottie-player@2.0.8/dist/lottie-player.js" async></script>
+  <script>
+// vis-components.js — design-system JSX components for the /visualize skill.
+// Exposed as window.VIS.{Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle}.
+// window.RV is aliased to window.VIS for report-viewer back-compat.
+// Available globally to any visual.jsx without imports.
+// (CSS class prefix kept as "rv-" — internal namespace; preserves report-viewer interop.)
+
+(function () {
+  "use strict";
+
+  if (!window.React) {
+    console.warn("[vis-components] React not loaded yet; skipping setup");
+    return;
+  }
+  const h = React.createElement;
+
+  // Lazy-load a CDN script; cache the load Promise so repeats are cheap.
+  const _scriptCache = new Map();
+  function _loadScript(src) {
+    if (_scriptCache.has(src)) return _scriptCache.get(src);
+    const p = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[data-vis-cdn="${src}"]`);
+      if (existing) return existing.addEventListener("load", resolve);
+      const s = document.createElement("script");
+      s.src = src; s.async = false; s.dataset.visCdn = src;
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    _scriptCache.set(src, p);
+    return p;
+  }
+
+  let _katexCssInjected = false;
+  function _ensureKatexCss() {
+    if (_katexCssInjected) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+    document.head.appendChild(link);
+    _katexCssInjected = true;
+  }
+
+  let _hljsCssInjected = false;
+  function _ensureHljsCss() {
+    if (_hljsCssInjected) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css";
+    document.head.appendChild(link);
+    _hljsCssInjected = true;
+  }
+
+  // ----- Styles, injected once ----- //
+  (function injectStyles() {
+    if (document.getElementById("rv-components-styles")) return;
+    const css = `
+      .rv-hero {
+        background: radial-gradient(120% 90% at 20% 0%, #dbeafe 0%, #ffffff 60%);
+        padding: 28px 28px 22px; border-radius: 16px; margin-bottom: 20px;
+        border: 1px solid #e2e8f0;
+      }
+      .rv-hero h1 {
+        font-size: 38px; line-height: 1.1; letter-spacing: -0.02em;
+        font-weight: 700; margin: 10px 0 6px; color: #0f172a;
+      }
+      .rv-hero .rv-sub {
+        font-size: 16px; color: #475569; margin: 0; max-width: 60ch;
+      }
+      .rv-hero .rv-byline {
+        font-size: 12px; color: #64748b; margin-top: 14px;
+        display: flex; gap: 14px; flex-wrap: wrap;
+      }
+      .rv-hero .rv-byline span strong { color: #1e293b; font-weight: 600; }
+
+      .rv-pill {
+        display: inline-block; padding: 2px 10px; border-radius: 999px;
+        background: #2563eb; color: #fff; font-size: 11px; font-weight: 600;
+        letter-spacing: 0.6px; text-transform: uppercase;
+      }
+
+      .rv-tag {
+        display: inline-block; padding: 1px 8px; border-radius: 999px;
+        font-size: 11px; font-weight: 600; vertical-align: middle;
+      }
+      .rv-tag-green  { background: #dcfce7; color: #166534; }
+      .rv-tag-yellow { background: #fef9c3; color: #854d0e; }
+      .rv-tag-red    { background: #fee2e2; color: #991b1b; }
+      .rv-tag-blue   { background: #dbeafe; color: #1e40af; }
+      .rv-tag-gray   { background: #e4e4e7; color: #3f3f46; }
+
+      .rv-card {
+        border: 1px solid #e4e4e7; border-radius: 10px;
+        padding: 14px 16px; margin: 12px 0;
+        background: linear-gradient(180deg, #fafafa, #fff);
+      }
+
+      .rv-tldr {
+        background: #f1f5f9;
+        border-left: 4px solid #2563eb;
+        border-radius: 0 10px 10px 0;
+        padding: 14px 18px; margin: 0 0 24px;
+        font-size: 15px; line-height: 1.55; color: #0f172a;
+      }
+      .rv-tldr .rv-tldr-label {
+        display: inline-block; margin-right: 8px;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+        color: #2563eb; text-transform: uppercase;
+        vertical-align: 1px;
+      }
+      .vis-callout {
+        border-left: 4px solid; border-radius: 0 8px 8px 0;
+        padding: 12px 16px; margin: 14px 0;
+      }
+      .vis-callout-title { display: block; margin-bottom: 4px; }
+      .vis-callout-info   { background: #dbeafe; border-color: #2563eb; color: #1e3a8a; }
+      .vis-callout-warn   { background: #fef3c7; border-color: #d97706; color: #78350f; }
+      .vis-callout-gotcha { background: #fee2e2; border-color: #dc2626; color: #7f1d1d; }
+      .vis-callout-ok     { background: #dcfce7; border-color: #16a34a; color: #14532d; }
+
+      .vis-term {
+        text-decoration: underline dotted;
+        text-decoration-color: #94a3b8;
+        text-underline-offset: 3px;
+        cursor: help;
+      }
+      .vis-term:focus { outline: 2px solid #2563eb; outline-offset: 2px; }
+      .vis-term-tip {
+        position: fixed; z-index: 10001; max-width: 340px;
+        background: #0f172a; color: #f8fafc; font-size: 13px; line-height: 1.45;
+        padding: 8px 10px; border-radius: 6px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.22);
+        pointer-events: none; white-space: pre-wrap;
+      }
+
+      /* Trap problem (MCQ with click-to-reveal). One block per problem. */
+      .vis-trap {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px 22px;
+        margin: 24px 0;
+        background: #fafbfc;
+      }
+      .vis-trap-header {
+        display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      .vis-trap-difficulty {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+        padding: 3px 10px; border-radius: 999px; text-transform: uppercase;
+      }
+      .vis-trap-diff-easy   { background: #dcfce7; color: #166534; }
+      .vis-trap-diff-medium { background: #fef9c3; color: #854d0e; }
+      .vis-trap-diff-hard   { background: #fee2e2; color: #991b1b; }
+      .vis-trap-title { font-size: 17px; color: #0f172a; }
+      .vis-trap-multi-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #e0e7ff; color: #3730a3;
+        text-transform: uppercase;
+      }
+      .vis-trap-scenario { margin: 0 0 12px; line-height: 1.65; }
+      .vis-trap-diagram  { margin: 12px 0; }
+      .vis-trap-options  { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+      .vis-trap-option {
+        text-align: left;
+        padding: 11px 14px;
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        font: inherit; color: #0f172a;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .vis-trap-option:hover:not(:disabled) {
+        border-color: #2563eb; background: #f1f5f9;
+      }
+      .vis-trap-option.is-selected {
+        border-color: #2563eb; background: #dbeafe;
+      }
+      .vis-trap-option.is-correct {
+        border-color: #16a34a; background: #dcfce7;
+      }
+      .vis-trap-option.is-wrong-selected {
+        border-color: #dc2626; background: #fee2e2;
+      }
+      .vis-trap-option.is-correct-wrong-pos {
+        border-color: #d97706; background: #fef3c7;
+      }
+      .vis-trap-option.is-disabled {
+        opacity: 0.6;
+      }
+      .vis-trap-key { font-weight: 700; margin-right: 4px; color: #475569; }
+      .vis-trap-tick { color: #16a34a; font-weight: 700; margin-left: 6px; }
+      .vis-trap-x    { color: #dc2626; font-weight: 700; margin-left: 6px; }
+      .vis-trap-actions {
+        display: flex; align-items: center; gap: 12px;
+        margin-top: 8px;
+      }
+      .vis-trap-reveal-btn, .vis-trap-reset-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 10px 18px; border-radius: 8px;
+        font: inherit; font-weight: 600;
+        cursor: pointer;
+      }
+      .vis-trap-reveal-btn:hover, .vis-trap-reset-btn:hover { background: #1d4ed8; }
+      .vis-trap-reset-btn {
+        background: #64748b; margin-top: 12px;
+        font-size: 13px; padding: 8px 14px;
+      }
+      .vis-trap-reset-btn:hover { background: #475569; }
+      .vis-trap-hint { color: #64748b; font-size: 14px; }
+      .vis-trap-reveal-block {
+        margin-top: 18px; padding-top: 16px; border-top: 1px solid #e2e8f0;
+      }
+      .vis-trap-trap, .vis-trap-lens, .vis-trap-stretch {
+        margin: 10px 0; padding: 12px 16px; border-radius: 8px;
+      }
+      .vis-trap-trap    { background: #fef3c7; border-left: 4px solid #d97706; color: #78350f; }
+      .vis-trap-lens    { background: #dcfce7; border-left: 4px solid #16a34a; color: #14532d; }
+      .vis-trap-stretch { background: #e0e7ff; border-left: 4px solid #6366f1; color: #312e81; }
+      .vis-trap-trap strong, .vis-trap-lens strong, .vis-trap-stretch strong {
+        display: block; margin-bottom: 4px;
+      }
+      .vis-trap-trap p, .vis-trap-lens p, .vis-trap-stretch p { margin: 0; line-height: 1.55; }
+
+      /* System Design — pick-and-connect block diagram */
+      .vis-sd {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px 22px;
+        margin: 24px 0;
+        background: #fafbfc;
+      }
+      .vis-sd-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+      .vis-sd-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #fef3c7; color: #78350f; text-transform: uppercase;
+      }
+      .vis-sd-scenario { margin: 0 0 14px; line-height: 1.65; }
+      .vis-sd-label { font-size: 13px; font-weight: 600; color: #475569; margin: 14px 0 6px; }
+      .vis-sd-palette { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px;
+                        background: #ffffff; border: 1px dashed #cbd5e1; border-radius: 8px; }
+      .vis-sd-piece {
+        padding: 8px 12px;
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+        font: inherit; font-size: 13px; cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+        white-space: nowrap;
+      }
+      .vis-sd-piece:hover:not(:disabled) { border-color: #2563eb; background: #f1f5f9; }
+      .vis-sd-piece.is-placed { opacity: 0.4; cursor: default; }
+      .vis-sd-piece.cat-data    { border-left: 4px solid #0ea5e9; }
+      .vis-sd-piece.cat-model   { border-left: 4px solid #8b5cf6; }
+      .vis-sd-piece.cat-infra   { border-left: 4px solid #f59e0b; }
+      .vis-sd-piece.cat-monitor { border-left: 4px solid #10b981; }
+
+      .vis-sd-canvas {
+        display: flex; flex-wrap: wrap; gap: 10px;
+        min-height: 80px;
+        padding: 14px;
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+      }
+      .vis-sd-canvas-empty { color: #94a3b8; font-style: italic; font-size: 14px; }
+      .vis-sd-placed {
+        padding: 9px 13px;
+        background: #ffffff; border: 1.5px solid #2563eb; border-radius: 8px;
+        font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+        position: relative;
+        transition: all 0.15s;
+      }
+      .vis-sd-placed:hover { background: #eff6ff; }
+      .vis-sd-placed.is-connect-source {
+        background: #dbeafe; border-color: #1d4ed8; border-width: 2.5px;
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+      }
+      .vis-sd-placed.is-correct  { background: #dcfce7; border-color: #16a34a; }
+      .vis-sd-placed.is-wrong    { background: #fee2e2; border-color: #dc2626; }
+      .vis-sd-remove {
+        margin-left: 8px; color: #94a3b8; font-weight: 700;
+        cursor: pointer; padding: 0 4px;
+      }
+      .vis-sd-remove:hover { color: #dc2626; }
+
+      .vis-sd-actions { display: flex; align-items: center; gap: 12px; margin: 12px 0 8px; }
+      .vis-sd-connect-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 8px 14px; border-radius: 6px;
+        font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+      }
+      .vis-sd-connect-btn:hover { background: #1d4ed8; }
+      .vis-sd-connect-status { color: #475569; font-size: 14px; font-style: italic; }
+      .vis-sd-connect-cancel {
+        background: transparent; color: #dc2626; border: 1px solid #fca5a5;
+        padding: 4px 10px; border-radius: 6px;
+        font: inherit; font-size: 12px; cursor: pointer;
+      }
+
+      .vis-sd-edges { background: #ffffff; border: 1px solid #e2e8f0;
+                      border-radius: 8px; padding: 10px 14px; }
+      .vis-sd-edges ul { list-style: none; padding: 0; margin: 6px 0 0; }
+      .vis-sd-edges li {
+        padding: 6px 10px; margin: 4px 0; border-radius: 6px;
+        display: flex; align-items: center; gap: 8px;
+        background: #f8fafc; font-size: 14px;
+      }
+      .vis-sd-edges li.is-correct { background: #dcfce7; }
+      .vis-sd-edges li.is-wrong   { background: #fee2e2; }
+      .vis-sd-edge-x {
+        background: transparent; color: #94a3b8; border: none;
+        cursor: pointer; padding: 0 4px; margin-left: auto;
+      }
+      .vis-sd-edge-x:hover { color: #dc2626; }
+      .vis-sd-reveal-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 10px 18px; border-radius: 8px;
+        font: inherit; font-weight: 600; cursor: pointer;
+        margin-top: 12px;
+      }
+      .vis-sd-reveal-btn:hover { background: #1d4ed8; }
+      .vis-sd-score {
+        background: #eff6ff; border: 1px solid #93c5fd;
+        padding: 10px 14px; border-radius: 8px;
+        margin: 12px 0;
+        font-size: 14px; color: #1e3a8a;
+      }
+      .vis-sd-missing-block {
+        background: #fef3c7; border-left: 4px solid #d97706;
+        padding: 10px 14px; border-radius: 8px;
+        margin: 10px 0;
+        font-size: 14px; color: #78350f;
+      }
+      .vis-sd-missing-block strong { display: block; margin-bottom: 4px; }
+
+      /* CodeFillin — fill-in-the-blank code exercise */
+      .vis-cf-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #dcfce7; color: #14532d; text-transform: uppercase;
+      }
+      .vis-cf-code-wrap {
+        position: relative;
+        background: #0f172a; color: #e2e8f0;
+        padding: 16px 18px 14px;
+        border-radius: 8px;
+        margin: 12px 0;
+        font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+        font-size: 14px; line-height: 1.65;
+        overflow-x: auto;
+      }
+      .vis-cf-code-lang {
+        position: absolute; top: 6px; right: 12px;
+        font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;
+      }
+      .vis-cf-code { background: transparent !important; color: inherit; margin: 0; }
+      .vis-cf-line { white-space: pre; }
+      .vis-cf-blank {
+        background: #1e293b; color: #fbbf24; border: 1px dashed #475569;
+        padding: 1px 8px; border-radius: 4px;
+        font-family: inherit; font-size: 13.5px; cursor: pointer;
+        margin: 0 1px;
+        transition: all 0.12s;
+      }
+      .vis-cf-blank:hover:not(:disabled) { background: #334155; border-color: #94a3b8; }
+      .vis-cf-blank.is-filled {
+        background: #1e3a8a; color: #ffffff; border-style: solid; border-color: #3b82f6;
+      }
+      .vis-cf-blank.is-correct { background: #14532d; color: #bbf7d0; border-color: #16a34a; }
+      .vis-cf-blank.is-wrong   { background: #7f1d1d; color: #fecaca; border-color: #dc2626; }
+      .vis-cf-options {
+        display: flex; flex-wrap: wrap; gap: 8px;
+        margin: 8px 0 12px;
+      }
+      .vis-cf-option {
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+        padding: 8px 12px; font: inherit; cursor: pointer;
+        transition: all 0.12s;
+      }
+      .vis-cf-option:hover:not(:disabled) { border-color: #2563eb; background: #f1f5f9; }
+      .vis-cf-option.is-picked { border-color: #2563eb; background: #dbeafe; border-width: 2px; }
+      .vis-cf-option.is-used { opacity: 0.5; }
+      .vis-cf-option.is-correct-option { background: #f0fdf4; border-color: #16a34a; }
+      .vis-cf-option code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 13.5px; }
+      .vis-cf-correct-mark { color: #16a34a; font-size: 12px; margin-left: 6px; }
+
+      /* MathDerivation — step-by-step proof */
+      .vis-md-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #e0e7ff; color: #312e81; text-transform: uppercase;
+      }
+      .vis-md-steps { padding: 0; list-style: none; counter-reset: vmds; }
+      .vis-md-step {
+        background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;
+        padding: 14px 16px; margin: 10px 0;
+      }
+      .vis-md-step-label { margin-bottom: 8px; }
+      .vis-md-show-btn {
+        background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1;
+        padding: 6px 12px; border-radius: 6px; font: inherit; font-size: 13px;
+        cursor: pointer;
+      }
+      .vis-md-show-btn:hover { background: #e2e8f0; }
+      .vis-md-mcq { display: flex; flex-direction: column; gap: 8px; }
+      .vis-md-step-option {
+        background: #ffffff; border: 1.5px solid #cbd5e1; border-radius: 8px;
+        padding: 14px 16px; cursor: pointer;
+        transition: border-color 0.12s, background 0.12s;
+        text-align: left; font: inherit;
+      }
+      .vis-md-step-option:hover { border-color: #2563eb; background: #f1f5f9; }
+      .vis-md-pick-feedback {
+        padding: 6px 12px; border-radius: 6px; margin-bottom: 8px;
+        font-size: 13px; font-weight: 600;
+      }
+      .vis-md-pick-feedback.is-correct { background: #dcfce7; color: #14532d; }
+      .vis-md-pick-feedback.is-wrong   { background: #fee2e2; color: #7f1d1d; }
+      .vis-md-step-body { margin-top: 10px; }
+      .vis-md-explain { margin: 8px 0 0; color: #475569; line-height: 1.6; }
+
+      /* Responsive SVG wrappers — diagrams shrink to fit narrow containers
+         instead of overflowing the parent. Without these, Mermaid/Vega SVGs
+         render at their intrinsic width and get clipped on the left/right
+         when viewport is narrower than ~900px. */
+      .vis-mermaid svg, .vis-vega svg {
+        max-width: 100%;
+        height: auto;
+        display: inline-block;
+      }
+      .vis-mermaid, .vis-vega { overflow-x: auto; }
+
+      /* Mermaid text rendering fixes for Mermaid 10. By default the auto-sized
+         node fill rect and the edge-label background rect are both tight to the
+         text, which clips descenders (g/p/y/j/q) at the bottom of nodes AND
+         the right edge of edge labels ("Yes" → "Ye"). Force overflow:visible
+         everywhere and give the labels generous padding. */
+      .vis-mermaid svg,
+      .vis-mermaid foreignObject,
+      .vis-mermaid .node foreignObject,
+      .vis-mermaid .edgeLabel,
+      .vis-mermaid .edgeLabel foreignObject,
+      .vis-mermaid .label,
+      .vis-mermaid .label foreignObject {
+        overflow: visible !important;
+      }
+      .vis-mermaid .node .nodeLabel,
+      .vis-mermaid .node .label,
+      .vis-mermaid .label foreignObject div {
+        line-height: 1.5;
+        padding: 2px 4px;
+      }
+      .vis-mermaid .edgeLabel {
+        padding: 2px 8px;
+        background: #ffffff;
+        border-radius: 3px;
+        line-height: 1.4;
+      }
+      .vis-mermaid .edgeLabel foreignObject div,
+      .vis-mermaid .edgeLabel span,
+      .vis-mermaid .edgeLabel .labelBkg {
+        padding: 0 4px !important;
+        background: transparent !important;
+      }
+    `;
+    const tag = document.createElement("style");
+    tag.id = "rv-components-styles";
+    tag.textContent = css;
+    document.head.appendChild(tag);
+  })();
+
+  // ----- Components ----- //
+
+  // <RV.Pill>v0.2</RV.Pill>  →  small uppercase pill
+  function Pill({ children, color }) {
+    const style = color ? { background: color } : null;
+    return h("span", { className: "rv-pill", style }, children);
+  }
+
+  // <RV.Tag color="green">ok</RV.Tag>  →  status pill
+  function Tag({ children, color = "gray" }) {
+    return h("span", { className: "rv-tag rv-tag-" + color }, children);
+  }
+
+  // <RV.ByLine items={[{label:"Build",value:"2026-05-15"}, ...]} />
+  function ByLine({ items = [] }) {
+    return h("div", { className: "rv-byline" },
+      items.map((it, i) =>
+        h("span", { key: i },
+          h("strong", null, it.label), " ", it.value
+        )
+      )
+    );
+  }
+
+  // Set the browser tab title. Auto-called by RV.Hero; reports without a
+  // Hero can call this directly: RV.setTitle("...").
+  function setTitle(str) {
+    if (typeof str === "string" && str.trim()) document.title = str.trim();
+  }
+
+  // <RV.Hero title="..." subtitle="..." pill="v0.2" byline={[...]}>
+  //   children (optional, rendered below subtitle)
+  // </RV.Hero>
+  function Hero({ title, subtitle, pill, byline, accent, children }) {
+    React.useEffect(() => { setTitle(title); }, [title]);
+    return h("section", { className: "rv-hero" },
+      pill ? h(Pill, null, pill) : null,
+      h("h1", null,
+        accent ? h("span", { className: accent }) : null,
+        accent ? " " : null,
+        title
+      ),
+      subtitle ? h("p", { className: "rv-sub" }, subtitle) : null,
+      byline && byline.length ? h(ByLine, { items: byline }) : null,
+      children
+    );
+  }
+
+  // <RV.Card><strong>title</strong><p>body</p></RV.Card>
+  function Card({ children, className }) {
+    return h("div", {
+      className: "rv-card" + (className ? " " + className : "")
+    }, children);
+  }
+
+  // <RV.Section id="sec-foo" title="Foo">...</RV.Section>
+  //   — renders <h2 id={id}>{title}</h2> + body. The id is picked up by
+  //   the auto-TOC sidebar.
+  function Section({ id, title, children }) {
+    return h(React.Fragment, null,
+      h("h2", { id }, title),
+      children
+    );
+  }
+
+  // <RV.TLDR>One-paragraph headline answer.</RV.TLDR>
+  // ALWAYS render this immediately after <RV.Hero>, before any sections.
+  // Reader should be able to leave after reading it.
+  function TLDR({ children }) {
+    return h("aside", { className: "rv-tldr", role: "note" },
+      h("span", { className: "rv-tldr-label" }, "TL;DR"),
+      children
+    );
+  }
+
+  function Mermaid({ chart, id }) {
+    const ref = React.useRef(null);
+    const autoId = React.useId();
+    React.useEffect(() => {
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js")
+        .then(() => {
+          if (!window.mermaid._inited) {
+            window.mermaid._inited = true;
+            // trusted-author content; "loose" enables click handlers + HTML labels in mermaid
+            // trusted-author content; "loose" enables click handlers + HTML labels in mermaid.
+            // flowchart.padding + nodePadding give descenders (g, p, y, j, q) room to render
+            // inside diamond/rectangle nodes — without this Mermaid 10 clips them at the bottom edge.
+            window.mermaid.initialize({
+              startOnLoad: false,
+              theme: "default",
+              securityLevel: "loose",
+              flowchart: { padding: 18, nodeSpacing: 50, rankSpacing: 60, useMaxWidth: true, htmlLabels: true },
+              themeVariables: { fontSize: "14px" }
+            });
+          }
+          return window.mermaid.render((id || "mmd") + "-" + autoId.replace(/:/g, ""), chart);
+        })
+        .then(({ svg }) => {
+          if (cancelled || !ref.current) return;
+          ref.current.innerHTML = svg;
+          // POST-PROCESS to fix Mermaid 10 descender clipping (g, p, y, j, q).
+          // Mermaid sizes foreignObjects to the font em-box, which does NOT include
+          // descender depth. Grow each foreignObject by 12px (6 top + 6 bottom) so
+          // descenders render fully. Also grow rectangle node fills to match so the
+          // colored box doesn't show a thin sliver above/below the text.
+          const svgEl = ref.current.querySelector("svg");
+          if (!svgEl) return;
+          svgEl.querySelectorAll("foreignObject").forEach((fo) => {
+            const h = parseFloat(fo.getAttribute("height") || "0");
+            const y = parseFloat(fo.getAttribute("y") || "0");
+            fo.setAttribute("height", String(h + 12));
+            fo.setAttribute("y", String(y - 6));
+          });
+          svgEl.querySelectorAll("g.node > rect").forEach((rect) => {
+            const h = parseFloat(rect.getAttribute("height") || "0");
+            const y = parseFloat(rect.getAttribute("y") || "0");
+            rect.setAttribute("height", String(h + 12));
+            rect.setAttribute("y", String(y - 6));
+          });
+          // Diamonds use <polygon points="..."/>. Expand vertically by translating
+          // top and bottom vertices outward from the centroid by 6px each.
+          svgEl.querySelectorAll("g.node > polygon").forEach((poly) => {
+            const pts = (poly.getAttribute("points") || "").trim().split(/\s+/)
+              .map((p) => p.split(",").map(parseFloat));
+            if (pts.length < 3 || pts.some((p) => p.length < 2 || p.some(isNaN))) return;
+            const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+            const grown = pts.map(([x, py]) => [x, py + (py < cy ? -6 : 6)]);
+            poly.setAttribute("points", grown.map((p) => p.join(",")).join(" "));
+          });
+        })
+        .catch((e) => { if (ref.current) ref.current.textContent = "[mermaid error] " + e; });
+      return () => { cancelled = true; };
+    }, [chart, id, autoId]);
+    return h("div", { ref, className: "vis-mermaid", style: { margin: "16px 0", textAlign: "center" } });
+  }
+
+  function VegaLite({ spec, data }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      let cancelled = false;
+      Promise.all([
+        _loadScript("https://cdn.jsdelivr.net/npm/vega@5"),
+        _loadScript("https://cdn.jsdelivr.net/npm/vega-lite@5"),
+        _loadScript("https://cdn.jsdelivr.net/npm/vega-embed@6"),
+      ]).then(() => {
+        if (cancelled || !ref.current) return;
+        const full = data ? { ...spec, data: { values: data } } : spec;
+        window.vegaEmbed(ref.current, full, { actions: false, renderer: "svg" });
+      }).catch((e) => { if (ref.current) ref.current.textContent = "[vega error] " + e; });
+      return () => { cancelled = true; };
+    }, [spec, data]);
+    return h("div", { ref, className: "vis-vega", style: { margin: "16px 0" } });
+  }
+
+  function Equation({ tex, display = false }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      _ensureKatexCss();
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js")
+        .then(() => {
+          if (cancelled || !ref.current) return;
+          window.katex.render(tex, ref.current, { displayMode: display, throwOnError: false });
+        });
+      return () => { cancelled = true; };
+    }, [tex, display]);
+    const Tag = display ? "div" : "span";
+    return h(Tag, { ref, className: "vis-eq" });
+  }
+
+  function CodeBlock({ lang = "plaintext", children }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      _ensureHljsCss();
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js")
+        .then(() => _loadScript(`https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/${lang}.min.js`).catch(() => {}))
+        .then(() => {
+          if (cancelled || !ref.current) return;
+          // Reset so hljs re-highlights when `children` or `lang` change
+          ref.current.removeAttribute("data-highlighted");
+          ref.current.className = "language-" + lang;
+          ref.current.textContent = String(Array.isArray(children) ? children.join("") : children);
+          window.hljs.highlightElement(ref.current);
+        });
+      return () => { cancelled = true; };
+    }, [lang, children]);
+    return h("pre", { style: { margin: "12px 0", borderRadius: 8, overflow: "auto" } },
+      h("code", { ref, className: `language-${lang}` }, children));
+  }
+
+  function Callout({ kind = "info", title, children }) {
+    return h("aside", { className: `vis-callout vis-callout-${kind}`, role: "note" },
+      title ? h("strong", { className: "vis-callout-title" }, title) : null,
+      children);
+  }
+
+  // <VIS.Term def="1-2 sentence plain-English explanation">jargon</VIS.Term>
+  //
+  // Wraps any technical term so a non-technical reader can hover for an
+  // immediate definition. The explanation should:
+  //   - assume the reader knows English but not software/your domain
+  //   - fit in 1-2 short sentences (a tooltip, not a paragraph)
+  //   - avoid further jargon (or wrap that too)
+  //
+  // The element exposes `data-rv-info` so the report-viewer overlay reuses
+  // its own tooltip + double-click "explain this" feedback flow. In
+  // standalone /visualize mode (no overlay), the lightweight hover handler
+  // below renders the tooltip directly.
+  function Term({ def, children }) {
+    if (!def) return h(React.Fragment, null, children);
+    return h("span", {
+      className: "vis-term",
+      "data-rv-info": def,
+      "aria-label": def,
+      tabIndex: 0,
+    }, children);
+  }
+
+  // Standalone hover tooltip for <VIS.Term>. If the report-viewer overlay
+  // is loaded it already shows tooltips for any [data-rv-info] element, so
+  // we short-circuit here to avoid double-rendering.
+  (function installTermTooltip() {
+    let tip = null;
+    function show(el) {
+      if (window.__rvReady) return;  // overlay.js owns the tooltip in report-viewer mode
+      const text = el.getAttribute("data-rv-info");
+      if (!text) return;
+      if (!tip) {
+        tip = document.createElement("div");
+        tip.className = "vis-term-tip";
+        document.body.appendChild(tip);
+      }
+      tip.textContent = text;
+      const r = el.getBoundingClientRect();
+      const tr = tip.getBoundingClientRect();
+      const pad = 8;
+      let left = Math.max(pad,
+        Math.min(r.left, window.innerWidth - tr.width - pad));
+      const above = r.top - tr.height - pad;
+      const below = r.bottom + pad;
+      tip.style.left = left + "px";
+      tip.style.top  = (above >= pad ? above : below) + "px";
+      tip.style.display = "block";
+    }
+    function hide() { if (tip) tip.style.display = "none"; }
+    document.addEventListener("mouseover", (e) => {
+      const el = e.target.closest && e.target.closest(".vis-term");
+      if (el) show(el); else hide();
+    });
+    document.addEventListener("focusin", (e) => {
+      const el = e.target.closest && e.target.closest(".vis-term");
+      if (el) show(el);
+    });
+    document.addEventListener("focusout", hide);
+    document.addEventListener("scroll", hide, true);
+  })();
+
+  // <VIS.TrapProblem
+  //   id="bv-q1"
+  //   difficulty="hard"
+  //   title="..."
+  //   scenario={<>...JSX...</>}
+  //   diagram={<VIS.Mermaid chart={...} />}
+  //   options={[
+  //     {key:"a", text:"...", correct:false},
+  //     {key:"b", text:"...", correct:true},
+  //     ...
+  //   ]}
+  //   trap={<>The most tempting wrong is X because...</>}
+  //   lens={<>The right answer + reasoning</>}
+  //   stretch="optional follow-up question"
+  // />
+  //
+  // Trap problem from the Idea Engine /learn template. MCQ with click-to-pick,
+  // then click-to-reveal model answer. Each problem owns its own state.
+  // Trap problem from the Idea Engine /learn template. MCQ with click-to-pick,
+  // then click-to-reveal model answer. Each problem owns its own state.
+  //
+  // Three modes, chosen per-problem based on what the concept needs:
+  //   mode="single"  (default): one option is correct (radio-style)
+  //   mode="multi":  multiple options correct, user picks any subset
+  //                  (set `multiSelect={true}` OR `mode="multi"`)
+  //   mode="ordered": real-world priority test — options have an `order` field
+  //                  (1, 2, 3 …) saying their correct rank. Wrong-move options
+  //                  have `order: null` and should NOT be picked at all.
+  //                  User clicks in order; each pick gets a position badge.
+  //                  Reveal shows correct rank, marks wrong-position picks and
+  //                  wrong-move picks differently.
+  function TrapProblem(props) {
+    const { id, difficulty = "hard", title, scenario, diagram,
+            options = [], trap, lens, stretch,
+            multiSelect = false, mode } = props;
+    const effectiveMode = mode || (multiSelect ? "multi" : "single");
+    const isOrdered = effectiveMode === "ordered";
+    const isMulti = effectiveMode === "multi";
+
+    // Selection state shape varies by mode:
+    //   single  → string | null
+    //   multi   → Set<string>
+    //   ordered → string[]  (in pick order)
+    const [selected, setSelected] = React.useState(
+      isOrdered ? [] : (isMulti ? new Set() : null)
+    );
+    const [revealed, setRevealed] = React.useState(false);
+
+    function isSelected(key) {
+      if (isOrdered) return selected.includes(key);
+      if (isMulti) return selected.has(key);
+      return selected === key;
+    }
+    function pickOrder(key) {
+      if (isOrdered) {
+        const idx = selected.indexOf(key);
+        return idx >= 0 ? idx + 1 : null;
+      }
+      return null;
+    }
+    function pick(key) {
+      if (revealed) return;
+      if (isOrdered) {
+        setSelected(
+          selected.includes(key)
+            ? selected.filter((k) => k !== key)
+            : [...selected, key]
+        );
+      } else if (isMulti) {
+        const next = new Set(selected);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        setSelected(next);
+      } else {
+        setSelected(key);
+      }
+    }
+    function reveal() { setRevealed(true); }
+    function reset() {
+      setSelected(isOrdered ? [] : (isMulti ? new Set() : null));
+      setRevealed(false);
+    }
+    function optionClass(o) {
+      if (!revealed) return "vis-trap-option" + (isSelected(o.key) ? " is-selected" : "");
+      if (isOrdered) {
+        // Right move at right rank → fully correct
+        const userPos = pickOrder(o.key);
+        const correctPos = o.order; // null = wrong move
+        if (correctPos != null && userPos === correctPos) return "vis-trap-option is-correct";
+        // Right move at wrong rank → partial credit (yellow)
+        if (correctPos != null && userPos != null && userPos !== correctPos)
+          return "vis-trap-option is-correct-wrong-pos";
+        // Right move not picked → "you missed this"
+        if (correctPos != null && userPos == null) return "vis-trap-option is-correct";
+        // Wrong move picked → red
+        if (correctPos == null && userPos != null) return "vis-trap-option is-wrong-selected";
+        // Wrong move not picked → faded
+        return "vis-trap-option is-disabled";
+      }
+      if (o.correct) return "vis-trap-option is-correct";
+      if (isSelected(o.key)) return "vis-trap-option is-wrong-selected";
+      return "vis-trap-option is-disabled";
+    }
+    const anyPicked = isOrdered ? selected.length > 0
+                                : (isMulti ? selected.size > 0 : selected !== null);
+    const correctCount = isOrdered
+      ? options.filter((o) => o.order != null).length
+      : options.filter((o) => o.correct).length;
+    const modeBadge = isOrdered ? "Pick in correct ORDER"
+                                : (isMulti ? "Select all that apply" : null);
+
+    function optionPrefix(o) {
+      if (isOrdered) {
+        const pos = pickOrder(o.key);
+        if (revealed) {
+          // After reveal: show user pos vs correct pos
+          if (o.order != null && pos != null)
+            return pos === o.order ? `#${pos} ✓` : `you:#${pos} → correct:#${o.order}`;
+          if (o.order != null) return `correct:#${o.order}`;
+          if (pos != null) return `you:#${pos}`;
+          return "—";
+        }
+        return pos != null ? `#${pos}` : "○";
+      }
+      if (isMulti) return isSelected(o.key) ? "☑" : "☐";
+      return "○";
+    }
+
+    function pickSummary() {
+      if (!anyPicked) return null;
+      if (isOrdered) return `Your order: ${selected.map((k) => "(" + k + ")").join(" → ")}`;
+      if (isMulti) return "You picked " + selected.size + " of " + correctCount + " correct option" + (correctCount === 1 ? "" : "s");
+      return "You picked (" + selected + ")";
+    }
+
+    return h("section", { id, className: "vis-trap" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        modeBadge ? h("span", { className: "vis-trap-multi-badge" }, modeBadge) : null
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      diagram ? h("div", { className: "vis-trap-diagram" }, diagram) : null,
+      h("div", { className: "vis-trap-options",
+                 role: (isMulti || isOrdered) ? "group" : "radiogroup" },
+        options.map((o) => h("button", {
+          key: o.key,
+          type: "button",
+          className: optionClass(o),
+          onClick: () => pick(o.key),
+          disabled: revealed && (
+            isOrdered
+              ? (o.order == null && !isSelected(o.key))
+              : (!o.correct && !isSelected(o.key))
+          ),
+          "aria-pressed": isSelected(o.key)
+        },
+          h("span", { className: "vis-trap-key" },
+            optionPrefix(o) + " (" + o.key + ")"),
+          " ",
+          o.text
+        ))
+      ),
+      !revealed ? h("div", { className: "vis-trap-actions" },
+        h("button", {
+          type: "button",
+          className: "vis-trap-reveal-btn",
+          onClick: reveal
+        }, anyPicked ? "Reveal model answer" : "Skip & reveal"),
+        anyPicked ? h("span", { className: "vis-trap-hint" }, pickSummary()) : null
+      ) : null,
+      revealed ? h("div", { className: "vis-trap-reveal-block" },
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"),
+          h("div", null, trap)
+        ) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The lens (model answer)"),
+          h("div", null, lens)
+        ) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"),
+          h("div", null, stretch)
+        ) : null,
+        h("button", {
+          type: "button",
+          className: "vis-trap-reset-btn",
+          onClick: reset
+        }, "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.SystemDesign> — pick-and-connect block-diagram problem for system
+  // design questions. Palette of N pieces (some are distractors), user clicks
+  // to add to canvas, then clicks pairs of placed pieces to draw directed
+  // edges. Reveal compares both the picked SET and the edge TOPOLOGY against
+  // expected. Pieces have categories that drive color coding.
+  function SystemDesign(props) {
+    const { id, difficulty = "hard", title, scenario,
+            pieces = [], expectedPieces = [], expectedEdges = [],
+            trap, lens, stretch } = props;
+    const [placed, setPlaced] = React.useState([]);     // [pieceId]
+    const [edges, setEdges] = React.useState([]);       // [[src, tgt]]
+    const [connectMode, setConnectMode] = React.useState(null); // null | "waiting" | {src}
+    const [revealed, setRevealed] = React.useState(false);
+
+    const pieceById = Object.fromEntries(pieces.map((p) => [p.id, p]));
+    function pieceLabel(id) { return pieceById[id]?.label || id; }
+
+    function addPiece(pieceId) {
+      if (revealed || placed.includes(pieceId)) return;
+      setPlaced([...placed, pieceId]);
+    }
+    function removePiece(pieceId) {
+      if (revealed) return;
+      setPlaced(placed.filter((p) => p !== pieceId));
+      setEdges(edges.filter(([s, t]) => s !== pieceId && t !== pieceId));
+    }
+    function startConnect() {
+      if (revealed || placed.length < 2) return;
+      setConnectMode("waiting");
+    }
+    function clickPlacedPiece(pieceId) {
+      if (revealed) return;
+      if (connectMode === "waiting") {
+        setConnectMode({ src: pieceId });
+      } else if (connectMode && connectMode.src) {
+        if (connectMode.src === pieceId) {
+          setConnectMode(null);
+        } else {
+          const edge = [connectMode.src, pieceId];
+          if (!edges.some(([s, t]) => s === edge[0] && t === edge[1])) {
+            setEdges([...edges, edge]);
+          }
+          setConnectMode(null);
+        }
+      }
+    }
+    function removeEdge(idx) {
+      if (revealed) return;
+      setEdges(edges.filter((_, i) => i !== idx));
+    }
+    function reveal() { setRevealed(true); setConnectMode(null); }
+    function reset() {
+      setPlaced([]); setEdges([]); setConnectMode(null); setRevealed(false);
+    }
+
+    function paletteClass(p) {
+      const base = "vis-sd-piece" + (p.category ? " cat-" + p.category : "");
+      return placed.includes(p.id) ? base + " is-placed" : base;
+    }
+    function placedClass(pieceId) {
+      let cls = "vis-sd-placed";
+      if (connectMode && connectMode.src === pieceId) cls += " is-connect-source";
+      if (revealed) {
+        cls += expectedPieces.includes(pieceId) ? " is-correct" : " is-wrong";
+      }
+      return cls;
+    }
+    function edgeIsExpected(edge) {
+      return expectedEdges.some(([s, t]) => s === edge[0] && t === edge[1]);
+    }
+
+    const correctPicks = placed.filter((id) => expectedPieces.includes(id)).length;
+    const correctEdges = edges.filter((e) => edgeIsExpected(e)).length;
+    const missingPieces = expectedPieces.filter((id) => !placed.includes(id));
+    const missingEdges = expectedEdges.filter(([s, t]) =>
+      !edges.some(([es, et]) => es === s && et === t)
+    );
+    const distractorPicks = placed.filter((id) => !expectedPieces.includes(id));
+    const wrongEdges = edges.filter((e) => !edgeIsExpected(e));
+
+    return h("section", { id, className: "vis-sd" },
+      h("div", { className: "vis-sd-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-sd-mode-badge" }, "Pick & connect")
+      ),
+      scenario ? h("div", { className: "vis-sd-scenario" }, scenario) : null,
+      h("div", { className: "vis-sd-label" },
+        "Palette — click a piece to add it to your design"),
+      h("div", { className: "vis-sd-palette" },
+        pieces.map((p) => h("button", {
+          key: p.id, type: "button",
+          className: paletteClass(p),
+          onClick: () => addPiece(p.id),
+          disabled: revealed || placed.includes(p.id),
+          title: p.description || p.label,
+        }, p.label))
+      ),
+      h("div", { className: "vis-sd-label" },
+        "Your design (" + placed.length + " piece" + (placed.length === 1 ? "" : "s") + ")"),
+      h("div", { className: "vis-sd-canvas" },
+        placed.length === 0
+          ? h("div", { className: "vis-sd-canvas-empty" },
+              "Click pieces above to start building your design.")
+          : placed.map((pieceId) => h("button", {
+              key: pieceId, type: "button",
+              className: placedClass(pieceId),
+              onClick: () => clickPlacedPiece(pieceId),
+            },
+              pieceLabel(pieceId),
+              !revealed ? h("span", {
+                className: "vis-sd-remove",
+                onClick: (e) => { e.stopPropagation(); removePiece(pieceId); },
+                role: "button", "aria-label": "Remove"
+              }, " ✕") : null
+            ))
+      ),
+      !revealed && placed.length >= 2 ? h("div", { className: "vis-sd-actions" },
+        connectMode === null ? h("button", {
+          type: "button", className: "vis-sd-connect-btn", onClick: startConnect,
+        }, "+ Add connection") : null,
+        connectMode === "waiting" ? h("span", { className: "vis-sd-connect-status" },
+          "Click the SOURCE piece on the canvas...") : null,
+        connectMode && connectMode.src ? h("span", { className: "vis-sd-connect-status" },
+          "Source: " + pieceLabel(connectMode.src) + ". Click the TARGET piece.") : null,
+        connectMode ? h("button", {
+          type: "button", className: "vis-sd-connect-cancel",
+          onClick: () => setConnectMode(null),
+        }, "cancel") : null
+      ) : null,
+      edges.length > 0 ? h("div", { className: "vis-sd-edges" },
+        h("div", { className: "vis-sd-label", style: { margin: "0 0 4px" } },
+          "Connections (" + edges.length + ")"),
+        h("ul", null,
+          edges.map((edge, idx) => h("li", {
+            key: idx, className: revealed ? (edgeIsExpected(edge) ? "is-correct" : "is-wrong") : ""
+          },
+            pieceLabel(edge[0]) + " → " + pieceLabel(edge[1]),
+            revealed && edgeIsExpected(edge) ? h("span", null, " ✓") : null,
+            revealed && !edgeIsExpected(edge) ? h("span", null, " ✗") : null,
+            !revealed ? h("button", {
+              type: "button", className: "vis-sd-edge-x",
+              onClick: () => removeEdge(idx)
+            }, "✕") : null
+          ))
+        )
+      ) : null,
+      !revealed ? h("button", {
+        type: "button", className: "vis-sd-reveal-btn", onClick: reveal,
+      }, "Reveal model design") : null,
+      revealed ? h("div", null,
+        h("div", { className: "vis-sd-score" },
+          "Pieces correct: " + correctPicks + " / " + expectedPieces.length + ".  ",
+          "Connections correct: " + correctEdges + " / " + expectedEdges.length + "."
+        ),
+        distractorPicks.length > 0 ? h("div", { className: "vis-sd-missing-block",
+          style: { background: "#fee2e2", borderLeftColor: "#dc2626", color: "#7f1d1d" } },
+          h("strong", null, "✗ You picked pieces that don't belong"),
+          distractorPicks.map(pieceLabel).join(", ")
+        ) : null,
+        missingPieces.length > 0 ? h("div", { className: "vis-sd-missing-block" },
+          h("strong", null, "⚠ You missed these pieces"),
+          missingPieces.map(pieceLabel).join(", ")
+        ) : null,
+        missingEdges.length > 0 ? h("div", { className: "vis-sd-missing-block" },
+          h("strong", null, "⚠ Missing connections"),
+          missingEdges.map(([s, t]) => pieceLabel(s) + " → " + pieceLabel(t)).join("; ")
+        ) : null,
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"), h("div", null, trap)
+        ) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The model design"), h("div", null, lens)
+        ) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"), h("div", null, stretch)
+        ) : null,
+        h("button", {
+          type: "button", className: "vis-trap-reset-btn", onClick: reset,
+        }, "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.CodeFillin> — fill-in-the-blank code exercise.
+  //   code: array of lines. Blanks are written as __N__ (e.g., __1__, __2__).
+  //   options: pool of pickable answers. Each {key, text, fills: [blankN, ...]}
+  //            where `fills` is the set of blanks this option is correct for.
+  //            Options without `fills` (or with empty fills) are pure decoys.
+  // Workflow: click option → it highlights. Click blank → it gets filled with
+  //           the picked option's text. Click a filled blank → clears it.
+  function CodeFillin(props) {
+    const { id, difficulty = "hard", title, scenario,
+            language = "python", code = [], options = [],
+            trap, lens, stretch } = props;
+    const [fills, setFills] = React.useState({}); // {blankN: optionKey}
+    const [picked, setPicked] = React.useState(null);
+    const [revealed, setRevealed] = React.useState(false);
+
+    const optionByKey = Object.fromEntries(options.map((o) => [o.key, o]));
+    function correctOptionsFor(blank) {
+      return options.filter((o) => Array.isArray(o.fills) && o.fills.includes(blank));
+    }
+    function isOptionCorrectForBlank(optionKey, blank) {
+      const o = optionByKey[optionKey];
+      return o && Array.isArray(o.fills) && o.fills.includes(blank);
+    }
+    function clickOption(key) {
+      if (revealed) return;
+      setPicked(picked === key ? null : key);
+    }
+    function clickBlank(blank) {
+      if (revealed) return;
+      if (fills[blank]) {
+        const next = { ...fills }; delete next[blank]; setFills(next);
+        return;
+      }
+      if (!picked) return;
+      setFills({ ...fills, [blank]: picked });
+      setPicked(null);
+    }
+    function reveal() { setRevealed(true); setPicked(null); }
+    function reset() { setFills({}); setPicked(null); setRevealed(false); }
+
+    function blankClass(blank) {
+      let cls = "vis-cf-blank";
+      if (fills[blank]) cls += " is-filled";
+      if (revealed) {
+        cls += isOptionCorrectForBlank(fills[blank], blank) ? " is-correct" : " is-wrong";
+      }
+      return cls;
+    }
+    function optionClass(o) {
+      let cls = "vis-cf-option";
+      if (!revealed && picked === o.key) cls += " is-picked";
+      const usedInBlank = Object.entries(fills).find(([, v]) => v === o.key);
+      if (usedInBlank) cls += " is-used";
+      if (revealed) {
+        const correctSlots = Array.isArray(o.fills) ? o.fills : [];
+        if (correctSlots.length > 0) cls += " is-correct-option";
+      }
+      return cls;
+    }
+
+    function renderLine(line, lineIdx) {
+      const parts = []; let last = 0;
+      const re = /__(\d+)__/g; let m;
+      while ((m = re.exec(line)) !== null) {
+        if (m.index > last)
+          parts.push(h("span", { key: "t" + parts.length }, line.slice(last, m.index)));
+        const n = parseInt(m[1], 10);
+        const filled = fills[n];
+        parts.push(h("button", {
+          key: "b" + n,
+          type: "button",
+          className: blankClass(n),
+          onClick: () => clickBlank(n),
+          title: filled ? "Click to clear" : "Pick an option first, then click here",
+          disabled: revealed,
+        }, filled ? optionByKey[filled]?.text || filled : `␣${n}`));
+        last = m.index + m[0].length;
+      }
+      if (last < line.length)
+        parts.push(h("span", { key: "tail" }, line.slice(last)));
+      return h("div", { key: lineIdx, className: "vis-cf-line" }, parts);
+    }
+
+    const blanksInCode = new Set();
+    code.forEach((line) => {
+      let m; const re = /__(\d+)__/g;
+      while ((m = re.exec(line)) !== null) blanksInCode.add(parseInt(m[1], 10));
+    });
+    const totalBlanks = blanksInCode.size;
+    const correctFills = Object.entries(fills).filter(([b, k]) =>
+      isOptionCorrectForBlank(k, parseInt(b, 10))).length;
+
+    return h("section", { id, className: "vis-trap vis-cf" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-cf-mode-badge" }, "Fill in the code")
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      h("div", { className: "vis-cf-code-wrap" },
+        h("div", { className: "vis-cf-code-lang" }, language),
+        h("pre", { className: "vis-cf-code" },
+          code.map((line, idx) => renderLine(line, idx))
+        )
+      ),
+      h("div", { className: "vis-trap-scenario", style: { fontSize: 14, color: "#475569", margin: "12px 0 6px" } },
+        "Pick an option below (it highlights), then click a blank in the code to fill it. Click a filled blank to clear it."),
+      h("div", { className: "vis-cf-options" },
+        options.map((o) => h("button", {
+          key: o.key, type: "button",
+          className: optionClass(o),
+          onClick: () => clickOption(o.key),
+          disabled: revealed,
+        },
+          h("code", null, o.text),
+          revealed && Array.isArray(o.fills) && o.fills.length > 0
+            ? h("span", { className: "vis-cf-correct-mark" }, " ✓ (fills " + o.fills.map((b) => "␣" + b).join(", ") + ")") : null
+        ))
+      ),
+      !revealed ? h("div", { className: "vis-trap-actions" },
+        h("button", { type: "button", className: "vis-trap-reveal-btn", onClick: reveal },
+          Object.keys(fills).length > 0 ? "Reveal answer" : "Skip & reveal"),
+        Object.keys(fills).length > 0 ? h("span", { className: "vis-trap-hint" },
+          "Filled " + Object.keys(fills).length + " of " + totalBlanks + " blanks") : null
+      ) : null,
+      revealed ? h("div", { className: "vis-trap-reveal-block" },
+        h("div", { className: "vis-sd-score" },
+          "Correct blanks: " + correctFills + " / " + totalBlanks),
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"), h("div", null, trap)) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The reference implementation"), h("div", null, lens)) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"), h("div", null, stretch)) : null,
+        h("button", { type: "button", className: "vis-trap-reset-btn", onClick: reset },
+          "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.MathDerivation> — step-by-step proof with click-to-reveal per step.
+  //   steps: [{label, tex, decoyTex?, explain}]
+  // Each step starts collapsed; "Show step N" reveals the equation + explanation.
+  // If decoyTex is provided, the step becomes a 2-option MCQ first (right vs decoy).
+  function MathDerivation(props) {
+    const { id, difficulty = "hard", title, scenario, steps = [],
+            trap, lens, stretch } = props;
+    const [stepState, setStepState] = React.useState(
+      steps.map(() => ({ shown: false, picked: null }))
+    );
+    const [revealedAll, setRevealedAll] = React.useState(false);
+
+    function showStep(idx) {
+      const next = stepState.map((s, i) => i === idx ? { ...s, shown: true } : s);
+      setStepState(next);
+    }
+    function pickStep(idx, which) {
+      const next = stepState.map((s, i) =>
+        i === idx ? { ...s, shown: true, picked: which } : s);
+      setStepState(next);
+    }
+    function revealAll() {
+      setStepState(stepState.map((s) => ({ ...s, shown: true })));
+      setRevealedAll(true);
+    }
+    function reset() {
+      setStepState(steps.map(() => ({ shown: false, picked: null })));
+      setRevealedAll(false);
+    }
+
+    return h("section", { id, className: "vis-trap vis-md" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-md-mode-badge" }, "Step-by-step proof")
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      h("ol", { className: "vis-md-steps" },
+        steps.map((step, idx) => {
+          const st = stepState[idx];
+          const hasDecoy = !!step.decoyTex;
+          return h("li", { key: idx, className: "vis-md-step" },
+            h("div", { className: "vis-md-step-label" },
+              h("strong", null, "Step " + (idx + 1) + " — " + step.label)),
+            !st.shown && hasDecoy ? h("div", { className: "vis-md-mcq" },
+              h("p", { style: { margin: "4px 0", fontSize: 14, color: "#475569" } },
+                "Which is correct for this step?"),
+              h("button", {
+                type: "button", className: "vis-md-step-option",
+                onClick: () => pickStep(idx, "right"),
+              }, h(Equation, { tex: step.tex, display: true })),
+              h("button", {
+                type: "button", className: "vis-md-step-option",
+                onClick: () => pickStep(idx, "decoy"),
+              }, h(Equation, { tex: step.decoyTex, display: true }))
+            ) : null,
+            !st.shown && !hasDecoy ? h("button", {
+              type: "button", className: "vis-md-show-btn",
+              onClick: () => showStep(idx),
+            }, "Show step " + (idx + 1)) : null,
+            st.shown ? h("div", { className: "vis-md-step-body" },
+              hasDecoy && st.picked ? h("div", {
+                className: "vis-md-pick-feedback " +
+                  (st.picked === "right" ? "is-correct" : "is-wrong")
+              }, st.picked === "right" ? "✓ You picked correctly" : "✗ The other option is correct") : null,
+              h(Equation, { tex: step.tex, display: true }),
+              step.explain ? h("p", { className: "vis-md-explain" }, step.explain) : null
+            ) : null
+          );
+        })
+      ),
+      !revealedAll ? h("button", {
+        type: "button", className: "vis-trap-reveal-btn",
+        onClick: revealAll,
+        style: { marginTop: 12 },
+      }, "Reveal full proof") : null,
+      revealedAll ? h("div", { className: "vis-trap-reveal-block" },
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The common mistake"),
+          h("div", null, trap)) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The intuition"),
+          h("div", null, lens)) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"),
+          h("div", null, stretch)) : null,
+        h("button", { type: "button", className: "vis-trap-reset-btn", onClick: reset },
+          "↺ Try again")
+      ) : null
+    );
+  }
+
+  window.VIS = { Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle,
+                 Mermaid, VegaLite, Equation, CodeBlock, Callout, Term,
+                 TrapProblem, SystemDesign, CodeFillin, MathDerivation };
+  // Back-compat: report-viewer downstream uses window.RV. Keep both bindings.
+  window.RV = window.VIS;
+  console.log("[vis-components] ready: window.VIS =", Object.keys(window.VIS));
+})();
+
+</script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+// L2P / DualPrompt for fraud — Fraud SOTA · Continual learning under concept drift
+// Frozen backbone + learnable prompt pool — replay-free continual learning under GDPR.
+
+const App = () => (
+  <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
+    <VIS.Hero
+      pill="Fraud SOTA · Continual learning under concept drift"
+      title="L2P / DualPrompt for fraud"
+      subtitle="Frozen backbone + a small learnable prompt pool indexed by task identity. No replay buffer, no stored fraud examples."
+      byline={[
+        {label: "Paper", value: "Wang et al. L2P (CVPR 2022); tabular adaptation arXiv 2025"},
+        {label: "Year", value: "2025"},
+        {label: "L3", value: "Prompt-based continual learning"},
+      ]}/>
+
+    <VIS.TLDR>
+      Classical{" "}
+      <VIS.Term def="A technique for continual learning where you store a small buffer of past examples and mix them into the current training batch to prevent forgetting older tasks.">replay-based CL</VIS.Term>{" "}
+      stores past fraud cases — which is a GDPR/PII landmine. L2P keeps a frozen feature extractor and learns a tiny pool of{" "}
+      <VIS.Term def="Small learnable embedding vectors prepended to a model&apos;s input or hidden states. Originally from prompt-tuning of LLMs; here used to encode task-specific knowledge without storing raw examples.">prompts</VIS.Term>{" "}
+      indexed by a query-key match on the input. Each new fraud regime trains a new prompt; old prompts are never overwritten. The trap: backbone is frozen, so you cannot fix systematic feature failures.
+    </VIS.TLDR>
+
+    <VIS.Section id="sec-what" title="What it is">
+      <p>
+        Continual learning under GDPR or "right to be forgotten" has a brutal constraint: you cannot keep raw fraud examples around for replay. L2P (Learning to Prompt) and its sibling DualPrompt sidestep this by NEVER storing examples — instead they store small learnable vectors (prompts) that encode what was learned without retaining the data itself.
+      </p>
+      <ol>
+        <li><strong>Frozen backbone</strong> — a pretrained encoder (transformer, MLP) is locked. No gradients flow through it.</li>
+        <li><strong>Prompt pool</strong> — N learnable prompt vectors stored alongside N learnable keys. Each new task adds 1-2 new (key, prompt) pairs.</li>
+        <li><strong>Query-key match</strong> — at inference, the input is encoded by the frozen backbone to a query; nearest keys retrieve their prompts; those prompts are prepended/inserted before the classifier head.</li>
+      </ol>
+      <VIS.Mermaid chart={`
+flowchart TB
+  X["Input txn"] --> ENC["Frozen encoder"]
+  ENC --> Q["Query vector q"]
+  POOL["Prompt pool (K_i, P_i)"] --> MATCH["Top-k key match"]
+  Q --> MATCH
+  MATCH --> P["Selected prompts"]
+  ENC --> H["Hidden state"]
+  P --> COMBINE["Prepend / inject"]
+  H --> COMBINE
+  COMBINE --> HEAD["Classifier head"]
+  HEAD --> Y["Fraud score"]
+  style ENC fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+  style POOL fill:#fef3c7,stroke:#b45309,stroke-width:2px
+      `} />
+      <p>Blue = frozen, yellow = the only thing that learns. Per-task gradient updates touch the prompt pool and the head only.</p>
+    </VIS.Section>
+
+    <VIS.Section id="sec-diff" title="How it differs from replay-based CL">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
+        <thead>
+          <tr style={{background:"#1f3a5f", color:"#fff"}}>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Replay buffer (ER, GEM, A-GEM)</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>L2P / DualPrompt</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style={{background:"#e8f0fa"}}>
+            <td style={{padding:"8px 10px"}}>Stores</td>
+            <td style={{padding:"8px 10px"}}>Raw past examples (PII risk)</td>
+            <td style={{padding:"8px 10px"}}>Learned prompt vectors only</td>
+          </tr>
+          <tr>
+            <td style={{padding:"8px 10px"}}>Catastrophic forgetting</td>
+            <td style={{padding:"8px 10px"}}>Mitigated by mixing replay</td>
+            <td style={{padding:"8px 10px"}}>Prevented — old prompts untouched</td>
+          </tr>
+          <tr style={{background:"#e8f0fa"}}>
+            <td style={{padding:"8px 10px"}}>Storage cost</td>
+            <td style={{padding:"8px 10px"}}>O(buffer size) data</td>
+            <td style={{padding:"8px 10px"}}>O(N tasks) small vectors</td>
+          </tr>
+          <tr>
+            <td style={{padding:"8px 10px"}}>Backbone update</td>
+            <td style={{padding:"8px 10px"}}>Free to fine-tune</td>
+            <td style={{padding:"8px 10px"}}>Frozen — limits representation drift</td>
+          </tr>
+          <tr style={{background:"#e8f0fa"}}>
+            <td style={{padding:"8px 10px"}}>GDPR delete</td>
+            <td style={{padding:"8px 10px"}}>Hard (buffer + retrain)</td>
+            <td style={{padding:"8px 10px"}}>Drop the relevant prompt</td>
+          </tr>
+        </tbody>
+      </table>
+    </VIS.Section>
+
+    <VIS.Section id="sec-when" title="When to pick">
+      <ul>
+        <li><strong>Privacy-regulated settings</strong> — EU/UK GDPR, CCPA — where storing raw fraud examples is a compliance risk.</li>
+        <li><strong>Task-boundary visible</strong> — new BIN-attack waves, new geo onboards, where you can label "this is task k+1".</li>
+        <li><strong>Backbone is good enough</strong> — pretrained on broad transaction data; you do not need representations to fundamentally shift per task.</li>
+      </ul>
+    </VIS.Section>
+
+    <VIS.Section id="sec-limits" title="Limitations &amp; gotchas">
+      <VIS.Callout kind="gotcha" title="Frozen backbone is a ceiling, not a floor">
+        L2P only works when the frozen encoder captures the features needed for all future tasks. If a new fraud regime requires NEW features (e.g. crypto-on-chain signals on a backbone trained on card txns), prompts cannot fix this. You will need either a backbone refresh (which forgets) or a hybrid (backbone + adapter).
+      </VIS.Callout>
+      <VIS.Callout kind="warn" title="Prompt drift over many tasks">
+        After 50+ tasks, key-query matching becomes ambiguous (many keys cluster). Performance on early tasks degrades silently. Mitigations: hierarchical prompt pools (DualPrompt&apos;s general + expert prompts), or prompt consolidation (merge similar keys).
+      </VIS.Callout>
+      <VIS.Callout kind="warn" title="Task identity at inference is implicit">
+        L2P does not need explicit task labels at inference — the key-query match does that. But if the query is ambiguous (an input that looks like both old fraud and new fraud), the prompts you retrieve may be wrong. Run with a confidence threshold on the match score.
+      </VIS.Callout>
+    </VIS.Section>
+
+    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        Ten traps on prompt-based CL vs replay, GDPR right-to-be-forgotten, and the frozen-backbone ceiling.
+      </p>
+
+      <VIS.TrapProblem
+        id="l2p-p1"
+        difficulty="hard"
+        title="P1 — Replay vs prompt under GDPR right-to-be-forgotten"
+        scenario={<>An EU customer files a GDPR Article 17 request: delete all personal data. Your fraud model was trained with a 50k-example replay buffer that included this user&apos;s past transactions. Compare against an L2P stack with a frozen backbone and 30 task-specific prompts. Which is GDPR-compliant out of the box?</>}
+        options={[
+          {key:"a", text:"Replay-based — the buffer is well-defined, you can delete the user&apos;s rows and retrain."},
+          {key:"b", text:"L2P — the prompt pool does not contain raw examples; you cannot identify the user&apos;s contribution to any specific prompt at inference time. But the relevant prompt may still encode the user&apos;s pattern, so you may still need to retrain it. L2P is closer to compliant by design.", correct:true},
+          {key:"c", text:"Both equivalently compliant — both store derived representations."},
+          {key:"d", text:"Neither — any model trained on the user&apos;s data violates GDPR."},
+        ]}
+        trap={<>(a) ignores that "delete and retrain" is exactly what GDPR demands and replay makes this expensive. (c) glosses over the storage distinction. (d) misreads GDPR — derived models are usually fine.</>}
+        lens={<>(b). L2P stores no raw examples and the prompts are an indirect representation. Compliance-wise this is much cleaner. But honest answer: a prompt trained on a user&apos;s data may still encode their pattern, so for true Article 17 compliance you retrain the affected prompt(s). Total cost: smaller than full retrain.</>}
+        stretch={<>What is "machine unlearning" and how does it relate?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2p-p2"
+        difficulty="medium"
+        title="P2 — Prompt pool size: 10 or 100?"
+        scenario={<>Your fraud regime changes every 2-3 weeks. Over a year you accumulate ~20 distinct task regimes. The L2P paper uses pool size 10 for vision benchmarks (split-CIFAR100). What pool size should you start with?</>}
+        options={[
+          {key:"a", text:"~30-40 — slightly larger than the expected number of regimes, leaving headroom for sub-tasks and key collisions.", correct:true},
+          {key:"b", text:"Exactly 20 — one per regime."},
+          {key:"c", text:"10 — copy the paper&apos;s setting."},
+          {key:"d", text:"500 — more is always better."},
+        ]}
+        trap={<>(b) is the textbook trap — 1:1 mapping ignores that key collisions and sub-task variation need slack. (c) copies a setting tuned for a different domain. (d) makes the key-query match slow and ambiguous.</>}
+        lens={<>(a). Pool size should be 1.5-2x the expected number of distinct tasks. With 20 regimes, start at 30-40 with top-k=2 retrieval, then prune unused prompts after stabilisation. Monitor the key utilisation histogram for collisions.</>}
+        stretch={<>What metric on the prompt pool tells you it&apos;s too small vs too large?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2p-p3"
+        difficulty="hard"
+        multiSelect
+        title="P3 — Frozen backbone fails: which symptoms indicate it?"
+        scenario={<>You deploy L2P on a card-fraud problem. After 8 months of task additions, performance on the latest task plateaus 4 points below what a fresh model can achieve. Which symptoms point to backbone-not-prompt as the bottleneck? Select all that apply.</>}
+        options={[
+          {key:"a", text:"New task involves a feature distribution not seen at backbone pretraining (e.g. new BNPL flow features).", correct:true},
+          {key:"b", text:"Even with task labels known at inference, prompt-based prediction underperforms head-only fine-tuning of the same prompts.", correct:true},
+          {key:"c", text:"Performance on old tasks is also degrading."},
+          {key:"d", text:"Prompt pool key entropy is high (good utilisation across keys).", correct:true},
+          {key:"e", text:"Increasing pool size from 30 to 60 does not help.", correct:true},
+        ]}
+        trap={<>(c) points to forgetting, which is a different problem.</>}
+        lens={<>(a)(b)(d)(e) all indicate the backbone is the ceiling. New feature regimes the backbone never saw cannot be rescued by prompts alone. Fix: hybrid with a small adapter layer (LoRA-style) that gets trained per task alongside the prompt.</>}
+        stretch={<>Would you re-pretrain the backbone or hybridise with adapters?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2p-p4"
+        difficulty="hard"
+        title="P4 — Key-query match gives the wrong prompt"
+        scenario={<>An incoming transaction triggers prompt retrieval. Top-1 key match is prompt-7 (old phishing regime), but the input is actually a new BIN-attack pattern (would be best handled by prompt-23, top-2 match). The model misclassifies. What systemic fix?</>}
+        options={[
+          {key:"a", text:"Increase top-k from 1 to 3 and average / concatenate retrieved prompts; rely on the classifier head to compose information from multiple regimes.", correct:true},
+          {key:"b", text:"Hard-code task labels at inference; never use key-query matching."},
+          {key:"c", text:"Delete prompt-7 — it must be wrong."},
+          {key:"d", text:"Retrain the backbone."},
+        ]}
+        trap={<>(b) requires task labels you do not have at inference. (c) deletes useful information. (d) is the sledgehammer.</>}
+        lens={<>(a). The L2P paper uses top-N (typically 4-5) prompts with summation. When the top-1 is ambiguous, mixing the top-k forces the head to learn cross-prompt composition. Pair with a confidence-on-match score: when the match is low-confidence, fall back to a default prompt or a rules path.</>}
+        stretch={<>What replaces the key-query match in DualPrompt and why?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2p-p5"
+        difficulty="medium"
+        multiSelect
+        title="P5 — DualPrompt vs L2P: what does the second prompt buy?"
+        scenario={<>DualPrompt extends L2P with two prompt types: G-prompt (general, task-shared) and E-prompt (expert, task-specific). Why?</>}
+        options={[
+          {key:"a", text:"G-prompts capture task-invariant features so individual E-prompts can be smaller and more specialised.", correct:true},
+          {key:"b", text:"DualPrompt does not need a key-query match — G-prompt is always used and E-prompt selected by task id.", correct:true},
+          {key:"c", text:"Reduces forgetting on shared features across tasks.", correct:true},
+          {key:"d", text:"Eliminates the need for a backbone."},
+          {key:"e", text:"DualPrompt only works on vision, not tabular data."},
+        ]}
+        trap={<>(d) misreads the architecture. (e) is false; tabular adaptations exist.</>}
+        lens={<>(a)(b)(c). The G/E split is just the realisation that some learning IS task-shared and some isn&apos;t. By giving each a separate prompt, you stop fighting the trade-off. The cost is more hyperparameters.</>}
+        stretch={<>How do you initialise G-prompt — random or from L2P&apos;s top-k average?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2p-p6"
+        difficulty="hard"
+        title="P6 — Replay buffer with synthetic data instead of real"
+        scenario={<>An alternative to L2P: keep replay-based CL but use synthetic / generated fraud examples instead of real ones, satisfying GDPR. Compare to L2P for a card-fraud detector.</>}
+        options={[
+          {key:"a", text:"Synthetic replay only works if the generator captures the true fraud distribution; in adversarial fraud the distribution evolves and the generator lags. L2P&apos;s frozen-backbone-plus-prompt is more robust because it learns directly from real new tasks without needing to model the data distribution.", correct:true},
+          {key:"b", text:"Synthetic replay is strictly better — no privacy risk."},
+          {key:"c", text:"Both equivalent — synthetic data is real for training purposes."},
+          {key:"d", text:"Synthetic replay is the only GDPR-compliant solution."},
+        ]}
+        trap={<>(b)(d) treat synthetic data as a privacy panacea. (c) ignores distribution-gap issues.</>}
+        lens={<>(a). Synthetic data has its place but the generator is itself a model that must be kept current — meta-problem. L2P avoids the generator entirely.</>}
+        stretch={<>When would you use synthetic data alongside L2P?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2p-p7"
+        difficulty="hard"
+        title="P7 — Task identity not given: how do you split into tasks?"
+        scenario={<>The L2P paper assumes a stream of clearly-bounded tasks. In production fraud, drifts are continuous — there is no obvious "task k boundary". How do you bootstrap L2P?</>}
+        options={[
+          {key:"a", text:"Use an unsupervised drift detector (ADWIN on feature embeddings) to declare a new task each time it fires; create a new prompt at that moment.", correct:true},
+          {key:"b", text:"Calendar-based: declare a new task every 2 weeks."},
+          {key:"c", text:"L2P cannot work without explicit task labels — switch to a different approach."},
+          {key:"d", text:"Use the LLM to label tasks based on incident descriptions."},
+        ]}
+        trap={<>(b) is the brittle textbook fallback. (c) gives up too early. (d) is over-engineered and depends on incident descriptions you may not have.</>}
+        lens={<>(a). Pair a drift detector with L2P&apos;s prompt creation. When ADWIN/DDM fires, you have your task boundary; create a new prompt. This is exactly the composability L2P enables — and ties back to the DDM/ADWIN visual.</>}
+        stretch={<>What if drift detector and prompt creation get out of sync?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2p-p8"
+        difficulty="medium"
+        title="P8 — Prompt size: how many vectors per prompt?"
+        scenario={<>Each "prompt" is a sequence of small learnable vectors (e.g. 5-20 vectors of dimension 768). What governs the choice of length per prompt?</>}
+        options={[
+          {key:"a", text:"Longer prompts have more capacity but train slower and risk overfitting on small per-task data; choose by data-budget per task and validate on holdout.", correct:true},
+          {key:"b", text:"Always 5 — the original paper&apos;s setting."},
+          {key:"c", text:"Length should equal the backbone&apos;s sequence length."},
+          {key:"d", text:"One vector per class."},
+        ]}
+        trap={<>(b) is copy-paste from the paper without re-tuning. (c) confuses prompt length with input length. (d) misreads how prompts work.</>}
+        lens={<>(a). Prompt length is a capacity knob. For small per-task fraud data (a few thousand examples) 5-10 vectors per prompt is typical. Tune as you would any hyperparameter — wider with more data, narrower with less.</>}
+        stretch={<>What is "prefix tuning" and how does it differ from prompt tuning?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2p-p9"
+        difficulty="hard"
+        title="P9 — Combined L2P + rules engine for cold start"
+        scenario={<>You have an L2P fraud detector with 12 prompts learned over 6 months. A new geography onboards. Day-1 you have no labels, no prompt. Architecture?</>}
+        options={[
+          {key:"a", text:"Inference on the new geo falls back to a rules engine; in parallel, label a small bootstrap set from rules-engine outputs and train a new prompt; switch over once the new prompt validates on a holdout.", correct:true},
+          {key:"b", text:"Use the closest existing prompt by key match."},
+          {key:"c", text:"Train a backbone refresh; L2P is unsuitable for cold start."},
+          {key:"d", text:"Average all existing prompts."},
+        ]}
+        trap={<>(b) is a reasonable interim but unsafe at scale — the closest prompt may be totally inappropriate. (c) is over-correction. (d) blurs all knowledge into one prompt.</>}
+        lens={<>(a). Production CL stacks always have a rules-engine fallback for cold start. L2P&apos;s prompt training is fast and data-efficient, so you can stand up a new prompt within days.</>}
+        stretch={<>How would you know when to switch from rules to the new prompt?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2p-p10"
+        difficulty="medium"
+        title="P10 — Forgetting check: how do you verify?"
+        scenario={<>You claim L2P avoids catastrophic forgetting. To prove it, you need to measure performance on OLD tasks after training new ones. But you cannot store the old examples (the whole point of L2P). What do you do?</>}
+        options={[
+          {key:"a", text:"Keep a small private evaluation set per task (NOT used for training) that is approved for retention under your compliance framework; measure on it after each new task.", correct:true},
+          {key:"b", text:"You cannot — that&apos;s the trade-off."},
+          {key:"c", text:"Use synthetic data to evaluate."},
+          {key:"d", text:"Compare to a held-out fresh distribution."},
+        ]}
+        trap={<>(b) gives up too easily. (c) puts the generator quality on the critical path. (d) measures different distribution, not old-task perf.</>}
+        lens={<>(a). Evaluation sets under retention agreement are standard in regulated ML. They are smaller and segregated from training; lawful basis is "evaluation of automated decision-making" under GDPR Recital 71.</>}
+        stretch={<>How big does the per-task eval set need to be to give a confidence interval of ±1 F1 point?</>}
+      />
+    </VIS.Section>
+
+    <VIS.Section id="sec-further" title="Further reading">
+      <ul>
+        <li>
+          <a href="https://arxiv.org/abs/2112.08654" target="_blank" rel="noopener">
+            <strong>Wang et al. — Learning to Prompt for Continual Learning (L2P)</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper, CVPR 2022)</span>
+          <br/>The original L2P paper. Read sections 3 (method) and 4.3 (ablations on pool size, top-k, prompt length).
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2204.04799" target="_blank" rel="noopener">
+            <strong>Wang et al. — DualPrompt</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper, ECCV 2022)</span>
+          <br/>The G-prompt / E-prompt split. Pair with L2P to see the design evolution.
+        </li>
+        <li>
+          <a href="https://lilianweng.github.io/posts/2022-02-20-active-learning/" target="_blank" rel="noopener">
+            <strong>Lilian Weng — Active Learning &amp; Continual Learning</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
+          <br/>Surveys the full CL landscape — replay, regularisation, parameter-isolation, prompt-based. Best single read to place L2P in context.
+        </li>
+        <li>
+          <a href="https://github.com/G-U-N/PyCIL" target="_blank" rel="noopener">
+            <strong>PyCIL — Python Class-Incremental Learning toolbox</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(library)</span>
+          <br/>Reference implementations of L2P, DualPrompt, iCaRL, GEM, A-GEM under a common API. Run the head-to-heads before committing to one approach.
+        </li>
+        <li>
+          <a href="https://gdpr-info.eu/art-17-gdpr/" target="_blank" rel="noopener">
+            <strong>GDPR Article 17 — Right to be forgotten (official text)</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(reference)</span>
+          <br/>Read this once before designing the CL architecture. Recital 71 is the relevant note on automated decision-making.
+        </li>
+      </ul>
+    </VIS.Section>
+  </main>
+);
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+</script>
+  <script>
+    window.addEventListener("error", function (e) {
+      const pre = document.createElement("pre");
+      pre.style.cssText = "position:fixed;top:0;left:0;right:0;max-height:35vh;"
+        + "overflow:auto;background:#fee2e2;color:#7f1d1d;padding:8px;"
+        + "margin:0;font:12px/1.4 monospace;z-index:10002;";
+      pre.textContent = "[visualize] " + (e.error?.stack || e.message || e);
+      document.body.appendChild(pre);
+    }, true);
+  </script>
+</body>
+</html>
