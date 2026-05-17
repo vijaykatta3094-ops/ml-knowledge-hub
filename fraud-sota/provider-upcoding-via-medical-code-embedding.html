@@ -1,0 +1,1717 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>visualize</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+  <style>
+    body { font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+           margin: 0; background: #ffffff; color: #0f172a; }
+  </style>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/@lottiefiles/lottie-player@2.0.8/dist/lottie-player.js" async></script>
+  <script>
+// vis-components.js — design-system JSX components for the /visualize skill.
+// Exposed as window.VIS.{Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle}.
+// window.RV is aliased to window.VIS for report-viewer back-compat.
+// Available globally to any visual.jsx without imports.
+// (CSS class prefix kept as "rv-" — internal namespace; preserves report-viewer interop.)
+
+(function () {
+  "use strict";
+
+  if (!window.React) {
+    console.warn("[vis-components] React not loaded yet; skipping setup");
+    return;
+  }
+  const h = React.createElement;
+
+  // Lazy-load a CDN script; cache the load Promise so repeats are cheap.
+  const _scriptCache = new Map();
+  function _loadScript(src) {
+    if (_scriptCache.has(src)) return _scriptCache.get(src);
+    const p = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[data-vis-cdn="${src}"]`);
+      if (existing) return existing.addEventListener("load", resolve);
+      const s = document.createElement("script");
+      s.src = src; s.async = false; s.dataset.visCdn = src;
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    _scriptCache.set(src, p);
+    return p;
+  }
+
+  let _katexCssInjected = false;
+  function _ensureKatexCss() {
+    if (_katexCssInjected) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+    document.head.appendChild(link);
+    _katexCssInjected = true;
+  }
+
+  let _hljsCssInjected = false;
+  function _ensureHljsCss() {
+    if (_hljsCssInjected) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css";
+    document.head.appendChild(link);
+    _hljsCssInjected = true;
+  }
+
+  // ----- Styles, injected once ----- //
+  (function injectStyles() {
+    if (document.getElementById("rv-components-styles")) return;
+    const css = `
+      .rv-hero {
+        background: radial-gradient(120% 90% at 20% 0%, #dbeafe 0%, #ffffff 60%);
+        padding: 28px 28px 22px; border-radius: 16px; margin-bottom: 20px;
+        border: 1px solid #e2e8f0;
+      }
+      .rv-hero h1 {
+        font-size: 38px; line-height: 1.1; letter-spacing: -0.02em;
+        font-weight: 700; margin: 10px 0 6px; color: #0f172a;
+      }
+      .rv-hero .rv-sub {
+        font-size: 16px; color: #475569; margin: 0; max-width: 60ch;
+      }
+      .rv-hero .rv-byline {
+        font-size: 12px; color: #64748b; margin-top: 14px;
+        display: flex; gap: 14px; flex-wrap: wrap;
+      }
+      .rv-hero .rv-byline span strong { color: #1e293b; font-weight: 600; }
+
+      .rv-pill {
+        display: inline-block; padding: 2px 10px; border-radius: 999px;
+        background: #2563eb; color: #fff; font-size: 11px; font-weight: 600;
+        letter-spacing: 0.6px; text-transform: uppercase;
+      }
+
+      .rv-tag {
+        display: inline-block; padding: 1px 8px; border-radius: 999px;
+        font-size: 11px; font-weight: 600; vertical-align: middle;
+      }
+      .rv-tag-green  { background: #dcfce7; color: #166534; }
+      .rv-tag-yellow { background: #fef9c3; color: #854d0e; }
+      .rv-tag-red    { background: #fee2e2; color: #991b1b; }
+      .rv-tag-blue   { background: #dbeafe; color: #1e40af; }
+      .rv-tag-gray   { background: #e4e4e7; color: #3f3f46; }
+
+      .rv-card {
+        border: 1px solid #e4e4e7; border-radius: 10px;
+        padding: 14px 16px; margin: 12px 0;
+        background: linear-gradient(180deg, #fafafa, #fff);
+      }
+
+      .rv-tldr {
+        background: #f1f5f9;
+        border-left: 4px solid #2563eb;
+        border-radius: 0 10px 10px 0;
+        padding: 14px 18px; margin: 0 0 24px;
+        font-size: 15px; line-height: 1.55; color: #0f172a;
+      }
+      .rv-tldr .rv-tldr-label {
+        display: inline-block; margin-right: 8px;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+        color: #2563eb; text-transform: uppercase;
+        vertical-align: 1px;
+      }
+      .vis-callout {
+        border-left: 4px solid; border-radius: 0 8px 8px 0;
+        padding: 12px 16px; margin: 14px 0;
+      }
+      .vis-callout-title { display: block; margin-bottom: 4px; }
+      .vis-callout-info   { background: #dbeafe; border-color: #2563eb; color: #1e3a8a; }
+      .vis-callout-warn   { background: #fef3c7; border-color: #d97706; color: #78350f; }
+      .vis-callout-gotcha { background: #fee2e2; border-color: #dc2626; color: #7f1d1d; }
+      .vis-callout-ok     { background: #dcfce7; border-color: #16a34a; color: #14532d; }
+
+      .vis-term {
+        text-decoration: underline dotted;
+        text-decoration-color: #94a3b8;
+        text-underline-offset: 3px;
+        cursor: help;
+      }
+      .vis-term:focus { outline: 2px solid #2563eb; outline-offset: 2px; }
+      .vis-term-tip {
+        position: fixed; z-index: 10001; max-width: 340px;
+        background: #0f172a; color: #f8fafc; font-size: 13px; line-height: 1.45;
+        padding: 8px 10px; border-radius: 6px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.22);
+        pointer-events: none; white-space: pre-wrap;
+      }
+
+      /* Trap problem (MCQ with click-to-reveal). One block per problem. */
+      .vis-trap {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px 22px;
+        margin: 24px 0;
+        background: #fafbfc;
+      }
+      .vis-trap-header {
+        display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      .vis-trap-difficulty {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+        padding: 3px 10px; border-radius: 999px; text-transform: uppercase;
+      }
+      .vis-trap-diff-easy   { background: #dcfce7; color: #166534; }
+      .vis-trap-diff-medium { background: #fef9c3; color: #854d0e; }
+      .vis-trap-diff-hard   { background: #fee2e2; color: #991b1b; }
+      .vis-trap-title { font-size: 17px; color: #0f172a; }
+      .vis-trap-multi-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #e0e7ff; color: #3730a3;
+        text-transform: uppercase;
+      }
+      .vis-trap-scenario { margin: 0 0 12px; line-height: 1.65; }
+      .vis-trap-diagram  { margin: 12px 0; }
+      .vis-trap-options  { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+      .vis-trap-option {
+        text-align: left;
+        padding: 11px 14px;
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        font: inherit; color: #0f172a;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .vis-trap-option:hover:not(:disabled) {
+        border-color: #2563eb; background: #f1f5f9;
+      }
+      .vis-trap-option.is-selected {
+        border-color: #2563eb; background: #dbeafe;
+      }
+      .vis-trap-option.is-correct {
+        border-color: #16a34a; background: #dcfce7;
+      }
+      .vis-trap-option.is-wrong-selected {
+        border-color: #dc2626; background: #fee2e2;
+      }
+      .vis-trap-option.is-correct-wrong-pos {
+        border-color: #d97706; background: #fef3c7;
+      }
+      .vis-trap-option.is-disabled {
+        opacity: 0.6;
+      }
+      .vis-trap-key { font-weight: 700; margin-right: 4px; color: #475569; }
+      .vis-trap-tick { color: #16a34a; font-weight: 700; margin-left: 6px; }
+      .vis-trap-x    { color: #dc2626; font-weight: 700; margin-left: 6px; }
+      .vis-trap-actions {
+        display: flex; align-items: center; gap: 12px;
+        margin-top: 8px;
+      }
+      .vis-trap-reveal-btn, .vis-trap-reset-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 10px 18px; border-radius: 8px;
+        font: inherit; font-weight: 600;
+        cursor: pointer;
+      }
+      .vis-trap-reveal-btn:hover, .vis-trap-reset-btn:hover { background: #1d4ed8; }
+      .vis-trap-reset-btn {
+        background: #64748b; margin-top: 12px;
+        font-size: 13px; padding: 8px 14px;
+      }
+      .vis-trap-reset-btn:hover { background: #475569; }
+      .vis-trap-hint { color: #64748b; font-size: 14px; }
+      .vis-trap-reveal-block {
+        margin-top: 18px; padding-top: 16px; border-top: 1px solid #e2e8f0;
+      }
+      .vis-trap-trap, .vis-trap-lens, .vis-trap-stretch {
+        margin: 10px 0; padding: 12px 16px; border-radius: 8px;
+      }
+      .vis-trap-trap    { background: #fef3c7; border-left: 4px solid #d97706; color: #78350f; }
+      .vis-trap-lens    { background: #dcfce7; border-left: 4px solid #16a34a; color: #14532d; }
+      .vis-trap-stretch { background: #e0e7ff; border-left: 4px solid #6366f1; color: #312e81; }
+      .vis-trap-trap strong, .vis-trap-lens strong, .vis-trap-stretch strong {
+        display: block; margin-bottom: 4px;
+      }
+      .vis-trap-trap p, .vis-trap-lens p, .vis-trap-stretch p { margin: 0; line-height: 1.55; }
+
+      /* System Design — pick-and-connect block diagram */
+      .vis-sd {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px 22px;
+        margin: 24px 0;
+        background: #fafbfc;
+      }
+      .vis-sd-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+      .vis-sd-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #fef3c7; color: #78350f; text-transform: uppercase;
+      }
+      .vis-sd-scenario { margin: 0 0 14px; line-height: 1.65; }
+      .vis-sd-label { font-size: 13px; font-weight: 600; color: #475569; margin: 14px 0 6px; }
+      .vis-sd-palette { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px;
+                        background: #ffffff; border: 1px dashed #cbd5e1; border-radius: 8px; }
+      .vis-sd-piece {
+        padding: 8px 12px;
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+        font: inherit; font-size: 13px; cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+        white-space: nowrap;
+      }
+      .vis-sd-piece:hover:not(:disabled) { border-color: #2563eb; background: #f1f5f9; }
+      .vis-sd-piece.is-placed { opacity: 0.4; cursor: default; }
+      .vis-sd-piece.cat-data    { border-left: 4px solid #0ea5e9; }
+      .vis-sd-piece.cat-model   { border-left: 4px solid #8b5cf6; }
+      .vis-sd-piece.cat-infra   { border-left: 4px solid #f59e0b; }
+      .vis-sd-piece.cat-monitor { border-left: 4px solid #10b981; }
+
+      .vis-sd-canvas {
+        display: flex; flex-wrap: wrap; gap: 10px;
+        min-height: 80px;
+        padding: 14px;
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+      }
+      .vis-sd-canvas-empty { color: #94a3b8; font-style: italic; font-size: 14px; }
+      .vis-sd-placed {
+        padding: 9px 13px;
+        background: #ffffff; border: 1.5px solid #2563eb; border-radius: 8px;
+        font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+        position: relative;
+        transition: all 0.15s;
+      }
+      .vis-sd-placed:hover { background: #eff6ff; }
+      .vis-sd-placed.is-connect-source {
+        background: #dbeafe; border-color: #1d4ed8; border-width: 2.5px;
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+      }
+      .vis-sd-placed.is-correct  { background: #dcfce7; border-color: #16a34a; }
+      .vis-sd-placed.is-wrong    { background: #fee2e2; border-color: #dc2626; }
+      .vis-sd-remove {
+        margin-left: 8px; color: #94a3b8; font-weight: 700;
+        cursor: pointer; padding: 0 4px;
+      }
+      .vis-sd-remove:hover { color: #dc2626; }
+
+      .vis-sd-actions { display: flex; align-items: center; gap: 12px; margin: 12px 0 8px; }
+      .vis-sd-connect-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 8px 14px; border-radius: 6px;
+        font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+      }
+      .vis-sd-connect-btn:hover { background: #1d4ed8; }
+      .vis-sd-connect-status { color: #475569; font-size: 14px; font-style: italic; }
+      .vis-sd-connect-cancel {
+        background: transparent; color: #dc2626; border: 1px solid #fca5a5;
+        padding: 4px 10px; border-radius: 6px;
+        font: inherit; font-size: 12px; cursor: pointer;
+      }
+
+      .vis-sd-edges { background: #ffffff; border: 1px solid #e2e8f0;
+                      border-radius: 8px; padding: 10px 14px; }
+      .vis-sd-edges ul { list-style: none; padding: 0; margin: 6px 0 0; }
+      .vis-sd-edges li {
+        padding: 6px 10px; margin: 4px 0; border-radius: 6px;
+        display: flex; align-items: center; gap: 8px;
+        background: #f8fafc; font-size: 14px;
+      }
+      .vis-sd-edges li.is-correct { background: #dcfce7; }
+      .vis-sd-edges li.is-wrong   { background: #fee2e2; }
+      .vis-sd-edge-x {
+        background: transparent; color: #94a3b8; border: none;
+        cursor: pointer; padding: 0 4px; margin-left: auto;
+      }
+      .vis-sd-edge-x:hover { color: #dc2626; }
+      .vis-sd-reveal-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 10px 18px; border-radius: 8px;
+        font: inherit; font-weight: 600; cursor: pointer;
+        margin-top: 12px;
+      }
+      .vis-sd-reveal-btn:hover { background: #1d4ed8; }
+      .vis-sd-score {
+        background: #eff6ff; border: 1px solid #93c5fd;
+        padding: 10px 14px; border-radius: 8px;
+        margin: 12px 0;
+        font-size: 14px; color: #1e3a8a;
+      }
+      .vis-sd-missing-block {
+        background: #fef3c7; border-left: 4px solid #d97706;
+        padding: 10px 14px; border-radius: 8px;
+        margin: 10px 0;
+        font-size: 14px; color: #78350f;
+      }
+      .vis-sd-missing-block strong { display: block; margin-bottom: 4px; }
+
+      /* CodeFillin — fill-in-the-blank code exercise */
+      .vis-cf-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #dcfce7; color: #14532d; text-transform: uppercase;
+      }
+      .vis-cf-code-wrap {
+        position: relative;
+        background: #0f172a; color: #e2e8f0;
+        padding: 16px 18px 14px;
+        border-radius: 8px;
+        margin: 12px 0;
+        font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+        font-size: 14px; line-height: 1.65;
+        overflow-x: auto;
+      }
+      .vis-cf-code-lang {
+        position: absolute; top: 6px; right: 12px;
+        font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;
+      }
+      .vis-cf-code { background: transparent !important; color: inherit; margin: 0; }
+      .vis-cf-line { white-space: pre; }
+      .vis-cf-blank {
+        background: #1e293b; color: #fbbf24; border: 1px dashed #475569;
+        padding: 1px 8px; border-radius: 4px;
+        font-family: inherit; font-size: 13.5px; cursor: pointer;
+        margin: 0 1px;
+        transition: all 0.12s;
+      }
+      .vis-cf-blank:hover:not(:disabled) { background: #334155; border-color: #94a3b8; }
+      .vis-cf-blank.is-filled {
+        background: #1e3a8a; color: #ffffff; border-style: solid; border-color: #3b82f6;
+      }
+      .vis-cf-blank.is-correct { background: #14532d; color: #bbf7d0; border-color: #16a34a; }
+      .vis-cf-blank.is-wrong   { background: #7f1d1d; color: #fecaca; border-color: #dc2626; }
+      .vis-cf-options {
+        display: flex; flex-wrap: wrap; gap: 8px;
+        margin: 8px 0 12px;
+      }
+      .vis-cf-option {
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+        padding: 8px 12px; font: inherit; cursor: pointer;
+        transition: all 0.12s;
+      }
+      .vis-cf-option:hover:not(:disabled) { border-color: #2563eb; background: #f1f5f9; }
+      .vis-cf-option.is-picked { border-color: #2563eb; background: #dbeafe; border-width: 2px; }
+      .vis-cf-option.is-used { opacity: 0.5; }
+      .vis-cf-option.is-correct-option { background: #f0fdf4; border-color: #16a34a; }
+      .vis-cf-option code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 13.5px; }
+      .vis-cf-correct-mark { color: #16a34a; font-size: 12px; margin-left: 6px; }
+
+      /* MathDerivation — step-by-step proof */
+      .vis-md-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #e0e7ff; color: #312e81; text-transform: uppercase;
+      }
+      .vis-md-steps { padding: 0; list-style: none; counter-reset: vmds; }
+      .vis-md-step {
+        background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;
+        padding: 14px 16px; margin: 10px 0;
+      }
+      .vis-md-step-label { margin-bottom: 8px; }
+      .vis-md-show-btn {
+        background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1;
+        padding: 6px 12px; border-radius: 6px; font: inherit; font-size: 13px;
+        cursor: pointer;
+      }
+      .vis-md-show-btn:hover { background: #e2e8f0; }
+      .vis-md-mcq { display: flex; flex-direction: column; gap: 8px; }
+      .vis-md-step-option {
+        background: #ffffff; border: 1.5px solid #cbd5e1; border-radius: 8px;
+        padding: 14px 16px; cursor: pointer;
+        transition: border-color 0.12s, background 0.12s;
+        text-align: left; font: inherit;
+      }
+      .vis-md-step-option:hover { border-color: #2563eb; background: #f1f5f9; }
+      .vis-md-pick-feedback {
+        padding: 6px 12px; border-radius: 6px; margin-bottom: 8px;
+        font-size: 13px; font-weight: 600;
+      }
+      .vis-md-pick-feedback.is-correct { background: #dcfce7; color: #14532d; }
+      .vis-md-pick-feedback.is-wrong   { background: #fee2e2; color: #7f1d1d; }
+      .vis-md-step-body { margin-top: 10px; }
+      .vis-md-explain { margin: 8px 0 0; color: #475569; line-height: 1.6; }
+
+      /* Responsive SVG wrappers — diagrams shrink to fit narrow containers
+         instead of overflowing the parent. Without these, Mermaid/Vega SVGs
+         render at their intrinsic width and get clipped on the left/right
+         when viewport is narrower than ~900px. */
+      .vis-mermaid svg, .vis-vega svg {
+        max-width: 100%;
+        height: auto;
+        display: inline-block;
+      }
+      .vis-mermaid, .vis-vega { overflow-x: auto; }
+
+      /* Mermaid text rendering fixes for Mermaid 10. By default the auto-sized
+         node fill rect and the edge-label background rect are both tight to the
+         text, which clips descenders (g/p/y/j/q) at the bottom of nodes AND
+         the right edge of edge labels ("Yes" → "Ye"). Force overflow:visible
+         everywhere and give the labels generous padding. */
+      .vis-mermaid svg,
+      .vis-mermaid foreignObject,
+      .vis-mermaid .node foreignObject,
+      .vis-mermaid .edgeLabel,
+      .vis-mermaid .edgeLabel foreignObject,
+      .vis-mermaid .label,
+      .vis-mermaid .label foreignObject {
+        overflow: visible !important;
+      }
+      .vis-mermaid .node .nodeLabel,
+      .vis-mermaid .node .label,
+      .vis-mermaid .label foreignObject div {
+        line-height: 1.5;
+        padding: 2px 4px;
+      }
+      .vis-mermaid .edgeLabel {
+        padding: 2px 8px;
+        background: #ffffff;
+        border-radius: 3px;
+        line-height: 1.4;
+      }
+      .vis-mermaid .edgeLabel foreignObject div,
+      .vis-mermaid .edgeLabel span,
+      .vis-mermaid .edgeLabel .labelBkg {
+        padding: 0 4px !important;
+        background: transparent !important;
+      }
+    `;
+    const tag = document.createElement("style");
+    tag.id = "rv-components-styles";
+    tag.textContent = css;
+    document.head.appendChild(tag);
+  })();
+
+  // ----- Components ----- //
+
+  // <RV.Pill>v0.2</RV.Pill>  →  small uppercase pill
+  function Pill({ children, color }) {
+    const style = color ? { background: color } : null;
+    return h("span", { className: "rv-pill", style }, children);
+  }
+
+  // <RV.Tag color="green">ok</RV.Tag>  →  status pill
+  function Tag({ children, color = "gray" }) {
+    return h("span", { className: "rv-tag rv-tag-" + color }, children);
+  }
+
+  // <RV.ByLine items={[{label:"Build",value:"2026-05-15"}, ...]} />
+  function ByLine({ items = [] }) {
+    return h("div", { className: "rv-byline" },
+      items.map((it, i) =>
+        h("span", { key: i },
+          h("strong", null, it.label), " ", it.value
+        )
+      )
+    );
+  }
+
+  // Set the browser tab title. Auto-called by RV.Hero; reports without a
+  // Hero can call this directly: RV.setTitle("...").
+  function setTitle(str) {
+    if (typeof str === "string" && str.trim()) document.title = str.trim();
+  }
+
+  // <RV.Hero title="..." subtitle="..." pill="v0.2" byline={[...]}>
+  //   children (optional, rendered below subtitle)
+  // </RV.Hero>
+  function Hero({ title, subtitle, pill, byline, accent, children }) {
+    React.useEffect(() => { setTitle(title); }, [title]);
+    return h("section", { className: "rv-hero" },
+      pill ? h(Pill, null, pill) : null,
+      h("h1", null,
+        accent ? h("span", { className: accent }) : null,
+        accent ? " " : null,
+        title
+      ),
+      subtitle ? h("p", { className: "rv-sub" }, subtitle) : null,
+      byline && byline.length ? h(ByLine, { items: byline }) : null,
+      children
+    );
+  }
+
+  // <RV.Card><strong>title</strong><p>body</p></RV.Card>
+  function Card({ children, className }) {
+    return h("div", {
+      className: "rv-card" + (className ? " " + className : "")
+    }, children);
+  }
+
+  // <RV.Section id="sec-foo" title="Foo">...</RV.Section>
+  //   — renders <h2 id={id}>{title}</h2> + body. The id is picked up by
+  //   the auto-TOC sidebar.
+  function Section({ id, title, children }) {
+    return h(React.Fragment, null,
+      h("h2", { id }, title),
+      children
+    );
+  }
+
+  // <RV.TLDR>One-paragraph headline answer.</RV.TLDR>
+  // ALWAYS render this immediately after <RV.Hero>, before any sections.
+  // Reader should be able to leave after reading it.
+  function TLDR({ children }) {
+    return h("aside", { className: "rv-tldr", role: "note" },
+      h("span", { className: "rv-tldr-label" }, "TL;DR"),
+      children
+    );
+  }
+
+  function Mermaid({ chart, id }) {
+    const ref = React.useRef(null);
+    const autoId = React.useId();
+    React.useEffect(() => {
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js")
+        .then(() => {
+          if (!window.mermaid._inited) {
+            window.mermaid._inited = true;
+            // trusted-author content; "loose" enables click handlers + HTML labels in mermaid
+            // trusted-author content; "loose" enables click handlers + HTML labels in mermaid.
+            // flowchart.padding + nodePadding give descenders (g, p, y, j, q) room to render
+            // inside diamond/rectangle nodes — without this Mermaid 10 clips them at the bottom edge.
+            window.mermaid.initialize({
+              startOnLoad: false,
+              theme: "default",
+              securityLevel: "loose",
+              flowchart: { padding: 18, nodeSpacing: 50, rankSpacing: 60, useMaxWidth: true, htmlLabels: true },
+              themeVariables: { fontSize: "14px" }
+            });
+          }
+          return window.mermaid.render((id || "mmd") + "-" + autoId.replace(/:/g, ""), chart);
+        })
+        .then(({ svg }) => {
+          if (cancelled || !ref.current) return;
+          ref.current.innerHTML = svg;
+          // POST-PROCESS to fix Mermaid 10 descender clipping (g, p, y, j, q).
+          // Mermaid sizes foreignObjects to the font em-box, which does NOT include
+          // descender depth. Grow each foreignObject by 12px (6 top + 6 bottom) so
+          // descenders render fully. Also grow rectangle node fills to match so the
+          // colored box doesn't show a thin sliver above/below the text.
+          const svgEl = ref.current.querySelector("svg");
+          if (!svgEl) return;
+          svgEl.querySelectorAll("foreignObject").forEach((fo) => {
+            const h = parseFloat(fo.getAttribute("height") || "0");
+            const y = parseFloat(fo.getAttribute("y") || "0");
+            fo.setAttribute("height", String(h + 12));
+            fo.setAttribute("y", String(y - 6));
+          });
+          svgEl.querySelectorAll("g.node > rect").forEach((rect) => {
+            const h = parseFloat(rect.getAttribute("height") || "0");
+            const y = parseFloat(rect.getAttribute("y") || "0");
+            rect.setAttribute("height", String(h + 12));
+            rect.setAttribute("y", String(y - 6));
+          });
+          // Diamonds use <polygon points="..."/>. Expand vertically by translating
+          // top and bottom vertices outward from the centroid by 6px each.
+          svgEl.querySelectorAll("g.node > polygon").forEach((poly) => {
+            const pts = (poly.getAttribute("points") || "").trim().split(/\s+/)
+              .map((p) => p.split(",").map(parseFloat));
+            if (pts.length < 3 || pts.some((p) => p.length < 2 || p.some(isNaN))) return;
+            const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+            const grown = pts.map(([x, py]) => [x, py + (py < cy ? -6 : 6)]);
+            poly.setAttribute("points", grown.map((p) => p.join(",")).join(" "));
+          });
+        })
+        .catch((e) => { if (ref.current) ref.current.textContent = "[mermaid error] " + e; });
+      return () => { cancelled = true; };
+    }, [chart, id, autoId]);
+    return h("div", { ref, className: "vis-mermaid", style: { margin: "16px 0", textAlign: "center" } });
+  }
+
+  function VegaLite({ spec, data }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      let cancelled = false;
+      Promise.all([
+        _loadScript("https://cdn.jsdelivr.net/npm/vega@5"),
+        _loadScript("https://cdn.jsdelivr.net/npm/vega-lite@5"),
+        _loadScript("https://cdn.jsdelivr.net/npm/vega-embed@6"),
+      ]).then(() => {
+        if (cancelled || !ref.current) return;
+        const full = data ? { ...spec, data: { values: data } } : spec;
+        window.vegaEmbed(ref.current, full, { actions: false, renderer: "svg" });
+      }).catch((e) => { if (ref.current) ref.current.textContent = "[vega error] " + e; });
+      return () => { cancelled = true; };
+    }, [spec, data]);
+    return h("div", { ref, className: "vis-vega", style: { margin: "16px 0" } });
+  }
+
+  function Equation({ tex, display = false }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      _ensureKatexCss();
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js")
+        .then(() => {
+          if (cancelled || !ref.current) return;
+          window.katex.render(tex, ref.current, { displayMode: display, throwOnError: false });
+        });
+      return () => { cancelled = true; };
+    }, [tex, display]);
+    const Tag = display ? "div" : "span";
+    return h(Tag, { ref, className: "vis-eq" });
+  }
+
+  function CodeBlock({ lang = "plaintext", children }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      _ensureHljsCss();
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js")
+        .then(() => _loadScript(`https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/${lang}.min.js`).catch(() => {}))
+        .then(() => {
+          if (cancelled || !ref.current) return;
+          // Reset so hljs re-highlights when `children` or `lang` change
+          ref.current.removeAttribute("data-highlighted");
+          ref.current.className = "language-" + lang;
+          ref.current.textContent = String(Array.isArray(children) ? children.join("") : children);
+          window.hljs.highlightElement(ref.current);
+        });
+      return () => { cancelled = true; };
+    }, [lang, children]);
+    return h("pre", { style: { margin: "12px 0", borderRadius: 8, overflow: "auto" } },
+      h("code", { ref, className: `language-${lang}` }, children));
+  }
+
+  function Callout({ kind = "info", title, children }) {
+    return h("aside", { className: `vis-callout vis-callout-${kind}`, role: "note" },
+      title ? h("strong", { className: "vis-callout-title" }, title) : null,
+      children);
+  }
+
+  // <VIS.Term def="1-2 sentence plain-English explanation">jargon</VIS.Term>
+  //
+  // Wraps any technical term so a non-technical reader can hover for an
+  // immediate definition. The explanation should:
+  //   - assume the reader knows English but not software/your domain
+  //   - fit in 1-2 short sentences (a tooltip, not a paragraph)
+  //   - avoid further jargon (or wrap that too)
+  //
+  // The element exposes `data-rv-info` so the report-viewer overlay reuses
+  // its own tooltip + double-click "explain this" feedback flow. In
+  // standalone /visualize mode (no overlay), the lightweight hover handler
+  // below renders the tooltip directly.
+  function Term({ def, children }) {
+    if (!def) return h(React.Fragment, null, children);
+    return h("span", {
+      className: "vis-term",
+      "data-rv-info": def,
+      "aria-label": def,
+      tabIndex: 0,
+    }, children);
+  }
+
+  // Standalone hover tooltip for <VIS.Term>. If the report-viewer overlay
+  // is loaded it already shows tooltips for any [data-rv-info] element, so
+  // we short-circuit here to avoid double-rendering.
+  (function installTermTooltip() {
+    let tip = null;
+    function show(el) {
+      if (window.__rvReady) return;  // overlay.js owns the tooltip in report-viewer mode
+      const text = el.getAttribute("data-rv-info");
+      if (!text) return;
+      if (!tip) {
+        tip = document.createElement("div");
+        tip.className = "vis-term-tip";
+        document.body.appendChild(tip);
+      }
+      tip.textContent = text;
+      const r = el.getBoundingClientRect();
+      const tr = tip.getBoundingClientRect();
+      const pad = 8;
+      let left = Math.max(pad,
+        Math.min(r.left, window.innerWidth - tr.width - pad));
+      const above = r.top - tr.height - pad;
+      const below = r.bottom + pad;
+      tip.style.left = left + "px";
+      tip.style.top  = (above >= pad ? above : below) + "px";
+      tip.style.display = "block";
+    }
+    function hide() { if (tip) tip.style.display = "none"; }
+    document.addEventListener("mouseover", (e) => {
+      const el = e.target.closest && e.target.closest(".vis-term");
+      if (el) show(el); else hide();
+    });
+    document.addEventListener("focusin", (e) => {
+      const el = e.target.closest && e.target.closest(".vis-term");
+      if (el) show(el);
+    });
+    document.addEventListener("focusout", hide);
+    document.addEventListener("scroll", hide, true);
+  })();
+
+  // <VIS.TrapProblem
+  //   id="bv-q1"
+  //   difficulty="hard"
+  //   title="..."
+  //   scenario={<>...JSX...</>}
+  //   diagram={<VIS.Mermaid chart={...} />}
+  //   options={[
+  //     {key:"a", text:"...", correct:false},
+  //     {key:"b", text:"...", correct:true},
+  //     ...
+  //   ]}
+  //   trap={<>The most tempting wrong is X because...</>}
+  //   lens={<>The right answer + reasoning</>}
+  //   stretch="optional follow-up question"
+  // />
+  //
+  // Trap problem from the Idea Engine /learn template. MCQ with click-to-pick,
+  // then click-to-reveal model answer. Each problem owns its own state.
+  // Trap problem from the Idea Engine /learn template. MCQ with click-to-pick,
+  // then click-to-reveal model answer. Each problem owns its own state.
+  //
+  // Three modes, chosen per-problem based on what the concept needs:
+  //   mode="single"  (default): one option is correct (radio-style)
+  //   mode="multi":  multiple options correct, user picks any subset
+  //                  (set `multiSelect={true}` OR `mode="multi"`)
+  //   mode="ordered": real-world priority test — options have an `order` field
+  //                  (1, 2, 3 …) saying their correct rank. Wrong-move options
+  //                  have `order: null` and should NOT be picked at all.
+  //                  User clicks in order; each pick gets a position badge.
+  //                  Reveal shows correct rank, marks wrong-position picks and
+  //                  wrong-move picks differently.
+  function TrapProblem(props) {
+    const { id, difficulty = "hard", title, scenario, diagram,
+            options = [], trap, lens, stretch,
+            multiSelect = false, mode } = props;
+    const effectiveMode = mode || (multiSelect ? "multi" : "single");
+    const isOrdered = effectiveMode === "ordered";
+    const isMulti = effectiveMode === "multi";
+
+    // Selection state shape varies by mode:
+    //   single  → string | null
+    //   multi   → Set<string>
+    //   ordered → string[]  (in pick order)
+    const [selected, setSelected] = React.useState(
+      isOrdered ? [] : (isMulti ? new Set() : null)
+    );
+    const [revealed, setRevealed] = React.useState(false);
+
+    function isSelected(key) {
+      if (isOrdered) return selected.includes(key);
+      if (isMulti) return selected.has(key);
+      return selected === key;
+    }
+    function pickOrder(key) {
+      if (isOrdered) {
+        const idx = selected.indexOf(key);
+        return idx >= 0 ? idx + 1 : null;
+      }
+      return null;
+    }
+    function pick(key) {
+      if (revealed) return;
+      if (isOrdered) {
+        setSelected(
+          selected.includes(key)
+            ? selected.filter((k) => k !== key)
+            : [...selected, key]
+        );
+      } else if (isMulti) {
+        const next = new Set(selected);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        setSelected(next);
+      } else {
+        setSelected(key);
+      }
+    }
+    function reveal() { setRevealed(true); }
+    function reset() {
+      setSelected(isOrdered ? [] : (isMulti ? new Set() : null));
+      setRevealed(false);
+    }
+    function optionClass(o) {
+      if (!revealed) return "vis-trap-option" + (isSelected(o.key) ? " is-selected" : "");
+      if (isOrdered) {
+        // Right move at right rank → fully correct
+        const userPos = pickOrder(o.key);
+        const correctPos = o.order; // null = wrong move
+        if (correctPos != null && userPos === correctPos) return "vis-trap-option is-correct";
+        // Right move at wrong rank → partial credit (yellow)
+        if (correctPos != null && userPos != null && userPos !== correctPos)
+          return "vis-trap-option is-correct-wrong-pos";
+        // Right move not picked → "you missed this"
+        if (correctPos != null && userPos == null) return "vis-trap-option is-correct";
+        // Wrong move picked → red
+        if (correctPos == null && userPos != null) return "vis-trap-option is-wrong-selected";
+        // Wrong move not picked → faded
+        return "vis-trap-option is-disabled";
+      }
+      if (o.correct) return "vis-trap-option is-correct";
+      if (isSelected(o.key)) return "vis-trap-option is-wrong-selected";
+      return "vis-trap-option is-disabled";
+    }
+    const anyPicked = isOrdered ? selected.length > 0
+                                : (isMulti ? selected.size > 0 : selected !== null);
+    const correctCount = isOrdered
+      ? options.filter((o) => o.order != null).length
+      : options.filter((o) => o.correct).length;
+    const modeBadge = isOrdered ? "Pick in correct ORDER"
+                                : (isMulti ? "Select all that apply" : null);
+
+    function optionPrefix(o) {
+      if (isOrdered) {
+        const pos = pickOrder(o.key);
+        if (revealed) {
+          // After reveal: show user pos vs correct pos
+          if (o.order != null && pos != null)
+            return pos === o.order ? `#${pos} ✓` : `you:#${pos} → correct:#${o.order}`;
+          if (o.order != null) return `correct:#${o.order}`;
+          if (pos != null) return `you:#${pos}`;
+          return "—";
+        }
+        return pos != null ? `#${pos}` : "○";
+      }
+      if (isMulti) return isSelected(o.key) ? "☑" : "☐";
+      return "○";
+    }
+
+    function pickSummary() {
+      if (!anyPicked) return null;
+      if (isOrdered) return `Your order: ${selected.map((k) => "(" + k + ")").join(" → ")}`;
+      if (isMulti) return "You picked " + selected.size + " of " + correctCount + " correct option" + (correctCount === 1 ? "" : "s");
+      return "You picked (" + selected + ")";
+    }
+
+    return h("section", { id, className: "vis-trap" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        modeBadge ? h("span", { className: "vis-trap-multi-badge" }, modeBadge) : null
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      diagram ? h("div", { className: "vis-trap-diagram" }, diagram) : null,
+      h("div", { className: "vis-trap-options",
+                 role: (isMulti || isOrdered) ? "group" : "radiogroup" },
+        options.map((o) => h("button", {
+          key: o.key,
+          type: "button",
+          className: optionClass(o),
+          onClick: () => pick(o.key),
+          disabled: revealed && (
+            isOrdered
+              ? (o.order == null && !isSelected(o.key))
+              : (!o.correct && !isSelected(o.key))
+          ),
+          "aria-pressed": isSelected(o.key)
+        },
+          h("span", { className: "vis-trap-key" },
+            optionPrefix(o) + " (" + o.key + ")"),
+          " ",
+          o.text
+        ))
+      ),
+      !revealed ? h("div", { className: "vis-trap-actions" },
+        h("button", {
+          type: "button",
+          className: "vis-trap-reveal-btn",
+          onClick: reveal
+        }, anyPicked ? "Reveal model answer" : "Skip & reveal"),
+        anyPicked ? h("span", { className: "vis-trap-hint" }, pickSummary()) : null
+      ) : null,
+      revealed ? h("div", { className: "vis-trap-reveal-block" },
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"),
+          h("div", null, trap)
+        ) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The lens (model answer)"),
+          h("div", null, lens)
+        ) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"),
+          h("div", null, stretch)
+        ) : null,
+        h("button", {
+          type: "button",
+          className: "vis-trap-reset-btn",
+          onClick: reset
+        }, "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.SystemDesign> — pick-and-connect block-diagram problem for system
+  // design questions. Palette of N pieces (some are distractors), user clicks
+  // to add to canvas, then clicks pairs of placed pieces to draw directed
+  // edges. Reveal compares both the picked SET and the edge TOPOLOGY against
+  // expected. Pieces have categories that drive color coding.
+  function SystemDesign(props) {
+    const { id, difficulty = "hard", title, scenario,
+            pieces = [], expectedPieces = [], expectedEdges = [],
+            trap, lens, stretch } = props;
+    const [placed, setPlaced] = React.useState([]);     // [pieceId]
+    const [edges, setEdges] = React.useState([]);       // [[src, tgt]]
+    const [connectMode, setConnectMode] = React.useState(null); // null | "waiting" | {src}
+    const [revealed, setRevealed] = React.useState(false);
+
+    const pieceById = Object.fromEntries(pieces.map((p) => [p.id, p]));
+    function pieceLabel(id) { return pieceById[id]?.label || id; }
+
+    function addPiece(pieceId) {
+      if (revealed || placed.includes(pieceId)) return;
+      setPlaced([...placed, pieceId]);
+    }
+    function removePiece(pieceId) {
+      if (revealed) return;
+      setPlaced(placed.filter((p) => p !== pieceId));
+      setEdges(edges.filter(([s, t]) => s !== pieceId && t !== pieceId));
+    }
+    function startConnect() {
+      if (revealed || placed.length < 2) return;
+      setConnectMode("waiting");
+    }
+    function clickPlacedPiece(pieceId) {
+      if (revealed) return;
+      if (connectMode === "waiting") {
+        setConnectMode({ src: pieceId });
+      } else if (connectMode && connectMode.src) {
+        if (connectMode.src === pieceId) {
+          setConnectMode(null);
+        } else {
+          const edge = [connectMode.src, pieceId];
+          if (!edges.some(([s, t]) => s === edge[0] && t === edge[1])) {
+            setEdges([...edges, edge]);
+          }
+          setConnectMode(null);
+        }
+      }
+    }
+    function removeEdge(idx) {
+      if (revealed) return;
+      setEdges(edges.filter((_, i) => i !== idx));
+    }
+    function reveal() { setRevealed(true); setConnectMode(null); }
+    function reset() {
+      setPlaced([]); setEdges([]); setConnectMode(null); setRevealed(false);
+    }
+
+    function paletteClass(p) {
+      const base = "vis-sd-piece" + (p.category ? " cat-" + p.category : "");
+      return placed.includes(p.id) ? base + " is-placed" : base;
+    }
+    function placedClass(pieceId) {
+      let cls = "vis-sd-placed";
+      if (connectMode && connectMode.src === pieceId) cls += " is-connect-source";
+      if (revealed) {
+        cls += expectedPieces.includes(pieceId) ? " is-correct" : " is-wrong";
+      }
+      return cls;
+    }
+    function edgeIsExpected(edge) {
+      return expectedEdges.some(([s, t]) => s === edge[0] && t === edge[1]);
+    }
+
+    const correctPicks = placed.filter((id) => expectedPieces.includes(id)).length;
+    const correctEdges = edges.filter((e) => edgeIsExpected(e)).length;
+    const missingPieces = expectedPieces.filter((id) => !placed.includes(id));
+    const missingEdges = expectedEdges.filter(([s, t]) =>
+      !edges.some(([es, et]) => es === s && et === t)
+    );
+    const distractorPicks = placed.filter((id) => !expectedPieces.includes(id));
+    const wrongEdges = edges.filter((e) => !edgeIsExpected(e));
+
+    return h("section", { id, className: "vis-sd" },
+      h("div", { className: "vis-sd-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-sd-mode-badge" }, "Pick & connect")
+      ),
+      scenario ? h("div", { className: "vis-sd-scenario" }, scenario) : null,
+      h("div", { className: "vis-sd-label" },
+        "Palette — click a piece to add it to your design"),
+      h("div", { className: "vis-sd-palette" },
+        pieces.map((p) => h("button", {
+          key: p.id, type: "button",
+          className: paletteClass(p),
+          onClick: () => addPiece(p.id),
+          disabled: revealed || placed.includes(p.id),
+          title: p.description || p.label,
+        }, p.label))
+      ),
+      h("div", { className: "vis-sd-label" },
+        "Your design (" + placed.length + " piece" + (placed.length === 1 ? "" : "s") + ")"),
+      h("div", { className: "vis-sd-canvas" },
+        placed.length === 0
+          ? h("div", { className: "vis-sd-canvas-empty" },
+              "Click pieces above to start building your design.")
+          : placed.map((pieceId) => h("button", {
+              key: pieceId, type: "button",
+              className: placedClass(pieceId),
+              onClick: () => clickPlacedPiece(pieceId),
+            },
+              pieceLabel(pieceId),
+              !revealed ? h("span", {
+                className: "vis-sd-remove",
+                onClick: (e) => { e.stopPropagation(); removePiece(pieceId); },
+                role: "button", "aria-label": "Remove"
+              }, " ✕") : null
+            ))
+      ),
+      !revealed && placed.length >= 2 ? h("div", { className: "vis-sd-actions" },
+        connectMode === null ? h("button", {
+          type: "button", className: "vis-sd-connect-btn", onClick: startConnect,
+        }, "+ Add connection") : null,
+        connectMode === "waiting" ? h("span", { className: "vis-sd-connect-status" },
+          "Click the SOURCE piece on the canvas...") : null,
+        connectMode && connectMode.src ? h("span", { className: "vis-sd-connect-status" },
+          "Source: " + pieceLabel(connectMode.src) + ". Click the TARGET piece.") : null,
+        connectMode ? h("button", {
+          type: "button", className: "vis-sd-connect-cancel",
+          onClick: () => setConnectMode(null),
+        }, "cancel") : null
+      ) : null,
+      edges.length > 0 ? h("div", { className: "vis-sd-edges" },
+        h("div", { className: "vis-sd-label", style: { margin: "0 0 4px" } },
+          "Connections (" + edges.length + ")"),
+        h("ul", null,
+          edges.map((edge, idx) => h("li", {
+            key: idx, className: revealed ? (edgeIsExpected(edge) ? "is-correct" : "is-wrong") : ""
+          },
+            pieceLabel(edge[0]) + " → " + pieceLabel(edge[1]),
+            revealed && edgeIsExpected(edge) ? h("span", null, " ✓") : null,
+            revealed && !edgeIsExpected(edge) ? h("span", null, " ✗") : null,
+            !revealed ? h("button", {
+              type: "button", className: "vis-sd-edge-x",
+              onClick: () => removeEdge(idx)
+            }, "✕") : null
+          ))
+        )
+      ) : null,
+      !revealed ? h("button", {
+        type: "button", className: "vis-sd-reveal-btn", onClick: reveal,
+      }, "Reveal model design") : null,
+      revealed ? h("div", null,
+        h("div", { className: "vis-sd-score" },
+          "Pieces correct: " + correctPicks + " / " + expectedPieces.length + ".  ",
+          "Connections correct: " + correctEdges + " / " + expectedEdges.length + "."
+        ),
+        distractorPicks.length > 0 ? h("div", { className: "vis-sd-missing-block",
+          style: { background: "#fee2e2", borderLeftColor: "#dc2626", color: "#7f1d1d" } },
+          h("strong", null, "✗ You picked pieces that don't belong"),
+          distractorPicks.map(pieceLabel).join(", ")
+        ) : null,
+        missingPieces.length > 0 ? h("div", { className: "vis-sd-missing-block" },
+          h("strong", null, "⚠ You missed these pieces"),
+          missingPieces.map(pieceLabel).join(", ")
+        ) : null,
+        missingEdges.length > 0 ? h("div", { className: "vis-sd-missing-block" },
+          h("strong", null, "⚠ Missing connections"),
+          missingEdges.map(([s, t]) => pieceLabel(s) + " → " + pieceLabel(t)).join("; ")
+        ) : null,
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"), h("div", null, trap)
+        ) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The model design"), h("div", null, lens)
+        ) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"), h("div", null, stretch)
+        ) : null,
+        h("button", {
+          type: "button", className: "vis-trap-reset-btn", onClick: reset,
+        }, "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.CodeFillin> — fill-in-the-blank code exercise.
+  //   code: array of lines. Blanks are written as __N__ (e.g., __1__, __2__).
+  //   options: pool of pickable answers. Each {key, text, fills: [blankN, ...]}
+  //            where `fills` is the set of blanks this option is correct for.
+  //            Options without `fills` (or with empty fills) are pure decoys.
+  // Workflow: click option → it highlights. Click blank → it gets filled with
+  //           the picked option's text. Click a filled blank → clears it.
+  function CodeFillin(props) {
+    const { id, difficulty = "hard", title, scenario,
+            language = "python", code = [], options = [],
+            trap, lens, stretch } = props;
+    const [fills, setFills] = React.useState({}); // {blankN: optionKey}
+    const [picked, setPicked] = React.useState(null);
+    const [revealed, setRevealed] = React.useState(false);
+
+    const optionByKey = Object.fromEntries(options.map((o) => [o.key, o]));
+    function correctOptionsFor(blank) {
+      return options.filter((o) => Array.isArray(o.fills) && o.fills.includes(blank));
+    }
+    function isOptionCorrectForBlank(optionKey, blank) {
+      const o = optionByKey[optionKey];
+      return o && Array.isArray(o.fills) && o.fills.includes(blank);
+    }
+    function clickOption(key) {
+      if (revealed) return;
+      setPicked(picked === key ? null : key);
+    }
+    function clickBlank(blank) {
+      if (revealed) return;
+      if (fills[blank]) {
+        const next = { ...fills }; delete next[blank]; setFills(next);
+        return;
+      }
+      if (!picked) return;
+      setFills({ ...fills, [blank]: picked });
+      setPicked(null);
+    }
+    function reveal() { setRevealed(true); setPicked(null); }
+    function reset() { setFills({}); setPicked(null); setRevealed(false); }
+
+    function blankClass(blank) {
+      let cls = "vis-cf-blank";
+      if (fills[blank]) cls += " is-filled";
+      if (revealed) {
+        cls += isOptionCorrectForBlank(fills[blank], blank) ? " is-correct" : " is-wrong";
+      }
+      return cls;
+    }
+    function optionClass(o) {
+      let cls = "vis-cf-option";
+      if (!revealed && picked === o.key) cls += " is-picked";
+      const usedInBlank = Object.entries(fills).find(([, v]) => v === o.key);
+      if (usedInBlank) cls += " is-used";
+      if (revealed) {
+        const correctSlots = Array.isArray(o.fills) ? o.fills : [];
+        if (correctSlots.length > 0) cls += " is-correct-option";
+      }
+      return cls;
+    }
+
+    function renderLine(line, lineIdx) {
+      const parts = []; let last = 0;
+      const re = /__(\d+)__/g; let m;
+      while ((m = re.exec(line)) !== null) {
+        if (m.index > last)
+          parts.push(h("span", { key: "t" + parts.length }, line.slice(last, m.index)));
+        const n = parseInt(m[1], 10);
+        const filled = fills[n];
+        parts.push(h("button", {
+          key: "b" + n,
+          type: "button",
+          className: blankClass(n),
+          onClick: () => clickBlank(n),
+          title: filled ? "Click to clear" : "Pick an option first, then click here",
+          disabled: revealed,
+        }, filled ? optionByKey[filled]?.text || filled : `␣${n}`));
+        last = m.index + m[0].length;
+      }
+      if (last < line.length)
+        parts.push(h("span", { key: "tail" }, line.slice(last)));
+      return h("div", { key: lineIdx, className: "vis-cf-line" }, parts);
+    }
+
+    const blanksInCode = new Set();
+    code.forEach((line) => {
+      let m; const re = /__(\d+)__/g;
+      while ((m = re.exec(line)) !== null) blanksInCode.add(parseInt(m[1], 10));
+    });
+    const totalBlanks = blanksInCode.size;
+    const correctFills = Object.entries(fills).filter(([b, k]) =>
+      isOptionCorrectForBlank(k, parseInt(b, 10))).length;
+
+    return h("section", { id, className: "vis-trap vis-cf" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-cf-mode-badge" }, "Fill in the code")
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      h("div", { className: "vis-cf-code-wrap" },
+        h("div", { className: "vis-cf-code-lang" }, language),
+        h("pre", { className: "vis-cf-code" },
+          code.map((line, idx) => renderLine(line, idx))
+        )
+      ),
+      h("div", { className: "vis-trap-scenario", style: { fontSize: 14, color: "#475569", margin: "12px 0 6px" } },
+        "Pick an option below (it highlights), then click a blank in the code to fill it. Click a filled blank to clear it."),
+      h("div", { className: "vis-cf-options" },
+        options.map((o) => h("button", {
+          key: o.key, type: "button",
+          className: optionClass(o),
+          onClick: () => clickOption(o.key),
+          disabled: revealed,
+        },
+          h("code", null, o.text),
+          revealed && Array.isArray(o.fills) && o.fills.length > 0
+            ? h("span", { className: "vis-cf-correct-mark" }, " ✓ (fills " + o.fills.map((b) => "␣" + b).join(", ") + ")") : null
+        ))
+      ),
+      !revealed ? h("div", { className: "vis-trap-actions" },
+        h("button", { type: "button", className: "vis-trap-reveal-btn", onClick: reveal },
+          Object.keys(fills).length > 0 ? "Reveal answer" : "Skip & reveal"),
+        Object.keys(fills).length > 0 ? h("span", { className: "vis-trap-hint" },
+          "Filled " + Object.keys(fills).length + " of " + totalBlanks + " blanks") : null
+      ) : null,
+      revealed ? h("div", { className: "vis-trap-reveal-block" },
+        h("div", { className: "vis-sd-score" },
+          "Correct blanks: " + correctFills + " / " + totalBlanks),
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"), h("div", null, trap)) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The reference implementation"), h("div", null, lens)) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"), h("div", null, stretch)) : null,
+        h("button", { type: "button", className: "vis-trap-reset-btn", onClick: reset },
+          "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.MathDerivation> — step-by-step proof with click-to-reveal per step.
+  //   steps: [{label, tex, decoyTex?, explain}]
+  // Each step starts collapsed; "Show step N" reveals the equation + explanation.
+  // If decoyTex is provided, the step becomes a 2-option MCQ first (right vs decoy).
+  function MathDerivation(props) {
+    const { id, difficulty = "hard", title, scenario, steps = [],
+            trap, lens, stretch } = props;
+    const [stepState, setStepState] = React.useState(
+      steps.map(() => ({ shown: false, picked: null }))
+    );
+    const [revealedAll, setRevealedAll] = React.useState(false);
+
+    function showStep(idx) {
+      const next = stepState.map((s, i) => i === idx ? { ...s, shown: true } : s);
+      setStepState(next);
+    }
+    function pickStep(idx, which) {
+      const next = stepState.map((s, i) =>
+        i === idx ? { ...s, shown: true, picked: which } : s);
+      setStepState(next);
+    }
+    function revealAll() {
+      setStepState(stepState.map((s) => ({ ...s, shown: true })));
+      setRevealedAll(true);
+    }
+    function reset() {
+      setStepState(steps.map(() => ({ shown: false, picked: null })));
+      setRevealedAll(false);
+    }
+
+    return h("section", { id, className: "vis-trap vis-md" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-md-mode-badge" }, "Step-by-step proof")
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      h("ol", { className: "vis-md-steps" },
+        steps.map((step, idx) => {
+          const st = stepState[idx];
+          const hasDecoy = !!step.decoyTex;
+          return h("li", { key: idx, className: "vis-md-step" },
+            h("div", { className: "vis-md-step-label" },
+              h("strong", null, "Step " + (idx + 1) + " — " + step.label)),
+            !st.shown && hasDecoy ? h("div", { className: "vis-md-mcq" },
+              h("p", { style: { margin: "4px 0", fontSize: 14, color: "#475569" } },
+                "Which is correct for this step?"),
+              h("button", {
+                type: "button", className: "vis-md-step-option",
+                onClick: () => pickStep(idx, "right"),
+              }, h(Equation, { tex: step.tex, display: true })),
+              h("button", {
+                type: "button", className: "vis-md-step-option",
+                onClick: () => pickStep(idx, "decoy"),
+              }, h(Equation, { tex: step.decoyTex, display: true }))
+            ) : null,
+            !st.shown && !hasDecoy ? h("button", {
+              type: "button", className: "vis-md-show-btn",
+              onClick: () => showStep(idx),
+            }, "Show step " + (idx + 1)) : null,
+            st.shown ? h("div", { className: "vis-md-step-body" },
+              hasDecoy && st.picked ? h("div", {
+                className: "vis-md-pick-feedback " +
+                  (st.picked === "right" ? "is-correct" : "is-wrong")
+              }, st.picked === "right" ? "✓ You picked correctly" : "✗ The other option is correct") : null,
+              h(Equation, { tex: step.tex, display: true }),
+              step.explain ? h("p", { className: "vis-md-explain" }, step.explain) : null
+            ) : null
+          );
+        })
+      ),
+      !revealedAll ? h("button", {
+        type: "button", className: "vis-trap-reveal-btn",
+        onClick: revealAll,
+        style: { marginTop: 12 },
+      }, "Reveal full proof") : null,
+      revealedAll ? h("div", { className: "vis-trap-reveal-block" },
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The common mistake"),
+          h("div", null, trap)) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The intuition"),
+          h("div", null, lens)) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"),
+          h("div", null, stretch)) : null,
+        h("button", { type: "button", className: "vis-trap-reset-btn", onClick: reset },
+          "↺ Try again")
+      ) : null
+    );
+  }
+
+  window.VIS = { Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle,
+                 Mermaid, VegaLite, Equation, CodeBlock, Callout, Term,
+                 TrapProblem, SystemDesign, CodeFillin, MathDerivation };
+  // Back-compat: report-viewer downstream uses window.RV. Keep both bindings.
+  window.RV = window.VIS;
+  console.log("[vis-components] ready: window.VIS =", Object.keys(window.VIS));
+})();
+
+</script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+// Provider upcoding via medical-code embedding — Med2Vec/CPT2Vec embeddings let
+// you compare a provider's coding distribution vs peers to flag upcoding.
+// AMIA 2024 pattern.
+
+const App = () => (
+  <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
+    <VIS.Hero
+      pill="Fraud SOTA · Healthcare claim fraud"
+      title="Provider upcoding via medical-code embedding"
+      subtitle="Pretrained ICD/CPT embeddings (Med2Vec, Cui2Vec) let you compare a provider's coding-pattern distribution to a peer-cohort distribution. Novel upcoding combos that rule-based code-pair flags miss become detectable as embedding-space outliers."
+      byline={[
+        {label: "Source", value: "Med2Vec for Upcoding Detection (AMIA 2024)"},
+        {label: "Year", value: "2024"},
+        {label: "L3", value: "Healthcare claim fraud / Medicare integrity"},
+      ]}/>
+
+    <VIS.TLDR>
+      A medical-coding{" "}
+      <VIS.Term def="A way to turn discrete medical billing codes (ICD diagnoses, CPT procedures) into dense numeric vectors trained so that codes that co-occur on the same claim end up near each other in vector space. Same idea as word2vec, but for clinical codes.">code embedding</VIS.Term>{" "}
+      built on millions of historical claims places semantically related ICD/CPT codes near each other in vector space. A provider's typical billing pattern becomes a distribution over that space; the same is built for matched-specialty peers. Statistical distance between the provider's distribution and the peer distribution flags{" "}
+      <VIS.Term def="Billing a higher-paying procedure or diagnosis code than the documentation actually supports. E.g., a 15-minute office visit billed as a 45-minute high-complexity visit. The single biggest fraud-loss category in Medicare.">upcoding</VIS.Term>{" "}
+      that rule-based "if codes A and B appear together flag this" filters miss. The senior question is not "embeddings are better than rules" — it's how do you handle ICD-11 migration drift, how do you prove the flagged provider is upcoding rather than serving a sicker panel, and how does the system survive the next coding system rollover.
+    </VIS.TLDR>
+
+    <VIS.Section id="sec-what" title="What it is">
+      <p>
+        Train an embedding model (Med2Vec / Cui2Vec / a transformer on claim sequences) on millions of historical claims so each ICD-10 / CPT code becomes a dense vector. Codes that co-occur in real clinical workflows end up near each other (similar diagnoses, similar procedure bundles). For each provider, aggregate their billed codes over a window (last 90 days, weighted by claim) into a code-distribution vector. Compute a peer cohort matched on specialty, region, and patient-mix demographics; aggregate their codes too. Score the provider by the distance between their distribution and the peer distribution; investigate the top-tail.
+      </p>
+
+      <VIS.Mermaid chart={`
+flowchart TB
+  CLAIMS["Historical claims corpus"]
+  EMB["Med2Vec embedding model"]
+  PVEC["Provider code distribution"]
+  PEERVEC["Peer cohort distribution"]
+  SCORE["Distribution distance score"]
+  TRIAGE["SIU review queue"]
+  CLAIMS --> EMB
+  EMB --> PVEC
+  EMB --> PEERVEC
+  PVEC --> SCORE
+  PEERVEC --> SCORE
+  SCORE --> TRIAGE
+  style EMB fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+  style SCORE fill:#fef3c7,stroke:#d97706,stroke-width:2px
+      `} />
+      <p>
+        Blue = the embedding layer (the SOTA component). Yellow = the distance score (operational output). Senior insight: the embedding does not directly classify upcoding — it produces a continuous distance signal that a Special Investigations Unit (SIU) prioritizes. Embeddings are a triage prior, not a verdict.
+      </p>
+    </VIS.Section>
+
+    <VIS.Section id="sec-diff" title="How it differs from the baseline">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
+        <thead>
+          <tr style={{background:"#1f3a5f", color:"#fff"}}>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Rule-based code-pair flags</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Provider z-score on flat code counts</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Embedding-based peer distance</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style={{background:"#e8f0fa"}}>
+            <td style={{padding:"8px 10px"}}>Catches novel code combos</td>
+            <td style={{padding:"8px 10px"}}>No (rule list is static)</td>
+            <td style={{padding:"8px 10px"}}>Partially</td>
+            <td style={{padding:"8px 10px"}}>Yes (semantic neighborhood)</td>
+          </tr>
+          <tr>
+            <td style={{padding:"8px 10px"}}>Handles 70k+ code vocabulary</td>
+            <td style={{padding:"8px 10px"}}>Sparse coverage</td>
+            <td style={{padding:"8px 10px"}}>Curse of dimensionality</td>
+            <td style={{padding:"8px 10px"}}>Yes (dense low-dim)</td>
+          </tr>
+          <tr style={{background:"#e8f0fa"}}>
+            <td style={{padding:"8px 10px"}}>Interpretability for SIU</td>
+            <td style={{padding:"8px 10px"}}>High (named rule)</td>
+            <td style={{padding:"8px 10px"}}>Medium (per-code z)</td>
+            <td style={{padding:"8px 10px"}}>Lower (distance to abstract centroid)</td>
+          </tr>
+          <tr>
+            <td style={{padding:"8px 10px"}}>Survives ICD version rollover</td>
+            <td style={{padding:"8px 10px"}}>Brittle (rules need rewrite)</td>
+            <td style={{padding:"8px 10px"}}>Brittle (counts re-scaled)</td>
+            <td style={{padding:"8px 10px"}}>Brittle without retraining</td>
+          </tr>
+          <tr style={{background:"#e8f0fa"}}>
+            <td style={{padding:"8px 10px"}}>Risk of confounding (sicker panel)</td>
+            <td style={{padding:"8px 10px"}}>Low (binary rule)</td>
+            <td style={{padding:"8px 10px"}}>High (raw distance)</td>
+            <td style={{padding:"8px 10px"}}>High without peer matching</td>
+          </tr>
+        </tbody>
+      </table>
+    </VIS.Section>
+
+    <VIS.Section id="sec-when" title="When to pick">
+      <ul>
+        <li><strong>Medicare / Medicaid program integrity</strong> — large code vocabulary, large provider base, novel upcoding patterns emerge faster than rule lists.</li>
+        <li><strong>Commercial-payer claim audit</strong> — same shape, but you have richer enrollment + demographics to build sharper peer cohorts.</li>
+        <li><strong>You can compute matched peer cohorts</strong> — specialty + region + patient-mix matching is essential; without it the distance signal confounds case-mix with fraud.</li>
+        <li><strong>Triage prior, not autonomous block</strong> — outputs feed an SIU queue; humans decide audit and recoupment. PHI handling + due-process requirements rule out auto-block.</li>
+      </ul>
+    </VIS.Section>
+
+    <VIS.Section id="sec-limits" title="Limitations and gotchas">
+      <VIS.Callout kind="gotcha" title="Embedding drift on ICD-11 migration">
+        The ICD-11 rollover (US Medicare transition windows in 2026-2027) creates a new code vocabulary partially overlapping with ICD-10. Naive retraining on a 6-month mixed corpus produces unstable embeddings; embeddings for codes that exist in both versions can shift wildly because the surrounding code distribution changed. The fix is incremental: hold ICD-10 embeddings frozen, train ICD-11 codes into the same space using crosswalk anchors (CMS-published ICD-10 to ICD-11 maps) as alignment supervision.
+      </VIS.Callout>
+      <VIS.Callout kind="warn" title="Confounding: sicker panel vs upcoding">
+        A provider whose patient mix is sicker (e.g., a geriatric clinic in a low-income county) will look like an upcoder if you compare to specialty-only peers. Peer cohorts MUST match on patient-mix demographics (HCC risk score, age, dual-eligible share, region). Without that, your highest-distance providers are oncologists, geriatricians, and safety-net clinicians — and you destroy reputational and legal capital chasing them.
+      </VIS.Callout>
+      <VIS.Callout kind="warn" title="Interpretability for SIU + due process">
+        Investigators need to articulate why a provider was flagged in adverse-action letters and (often) in court. "Cosine distance 0.42 from peer centroid" is not a defensible explanation. Pair the distance score with named breakdowns: which specific codes contributed most to the distance, sample claims that exemplify the deviation, and per-code peer-distribution percentile.
+      </VIS.Callout>
+    </VIS.Section>
+
+    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        Ten interview-grade trap problems. The shape-suggestion was debugging; many of these are debugging plus tradeoff variants because real upcoding-detection stacks fail in subtle ways.
+      </p>
+
+      <VIS.TrapProblem
+        id="puc-p1"
+        difficulty="hard"
+        title="P1 — ICD-11 migration breaks your embedding model. Fix."
+        scenario={<>You shipped an upcoding detector built on a Med2Vec embedding trained on five years of ICD-10 claims. CMS begins ICD-11 migration. Within two months your queue is dominated by false-positive flags on providers who simply adopted ICD-11 codes early. The embedding has no vectors for many ICD-11 codes; the codes that overlap (same root code, slightly different specifier) sit at random initial positions. Provider-distance scores explode without any real change in billing behavior. Fix it.</>}
+        options={[
+          {key:"a", text:"Retrain from scratch on a 6-month mixed ICD-10 + ICD-11 corpus; ship the new model immediately."},
+          {key:"b", text:"Freeze ICD-10 embeddings, train ICD-11 codes into the same vector space using CMS crosswalk anchors as alignment supervision (each ICD-11 code initialized at its mapped ICD-10 neighbor and fine-tuned on co-occurrence). Re-baseline peer distributions on the joint vocabulary. Add a model-version gate: providers below 50% ICD-11 adoption scored by old model, above 50% scored by new, blended in the band.", correct:true},
+          {key:"c", text:"Map all ICD-11 codes back to ICD-10 via crosswalk and score as if nothing changed."},
+          {key:"d", text:"Suspend the detector until the migration completes."},
+        ]}
+        trap={<>(a) retrains on too-thin ICD-11 data; embeddings for rare ICD-11 codes are noise, and provider-distance baselines shift discontinuously. (c) discards the new specificity ICD-11 provides — exactly the codes upcoders move to first. (d) abandons fraud surveillance during the precise window when miscoding spikes (transition windows historically see fraud-loss surges).</>}
+        lens={<>(b). The senior pattern is incremental embedding extension with anchor supervision (analogous to how cross-lingual embedding alignment uses bilingual dictionaries). Freeze ICD-10, anchor ICD-11 to the same space via crosswalk, fine-tune on joint co-occurrence. The version-gate handles the transition band so a single provider does not switch models mid-quarter. Re-baseline peer distributions on the joint vocabulary.</>}
+        stretch={<>What guardrail metric on the new ICD-11 embedding quality would trigger rollback of the new model?</>}
+      />
+
+      <VIS.TrapProblem
+        id="puc-p2"
+        difficulty="hard"
+        title="P2 — Geriatric clinic flagged as top upcoder"
+        scenario={<>Your model's top-1 highest-distance provider for Q3 is a geriatric internal-medicine clinic in a rural high-poverty county. Cosine distance 0.51 (median 0.08). SIU is about to issue an audit letter. Before they do, a clinical adviser flags that geriatric patients in poverty-rural counties have higher HCC risk scores, more multi-morbidity, and code more high-complexity visits. What's the actual bug here?</>}
+        options={[
+          {key:"a", text:"Peer cohort matches only on specialty (internal medicine) and region (state). It does NOT match on patient-mix risk (HCC score, age distribution, dual-eligible share). A geriatric clinic's coding pattern legitimately diverges from a state-average internal-medicine peer — that's case mix, not upcoding.", correct:true},
+          {key:"b", text:"The cosine distance threshold is too low; raise it."},
+          {key:"c", text:"The embedding is overfit; train a smaller model."},
+          {key:"d", text:"This IS upcoding — SIU should send the letter."},
+        ]}
+        trap={<>(b) hides the bug — raises threshold uniformly and you still rank by a confounded score. (c) misdiagnoses an interpretability + match problem as a model-capacity problem. (d) is the failure mode the question warns against: the most reputationally and legally costly false positive a payer can make.</>}
+        lens={<>(a). The bug is peer matching, not the embedding. Specialty + region is insufficient when patient mix shifts billing patterns legitimately. Re-define peer cohorts on (specialty, region, HCC risk band, age band, dual-eligible share). Re-score; the clinic likely drops out of the queue. Senior signal: name CASE MIX vs FRAUD as the confound, propose explicit matching variables, and protect SIU + legal from acting on a confounded score.</>}
+        stretch={<>How would you build the matched-peer cohort if a small specialty has fewer than 30 matchable peers nationally?</>}
+      />
+
+      <VIS.TrapProblem
+        id="puc-p3"
+        difficulty="hard"
+        multiSelect
+        title="P3 — Embedding drift even WITHOUT ICD-11"
+        scenario={<>Six months after deploying the model, you observe: distance scores have crept upward across nearly all providers (median 0.08 to 0.14). False-positive flags are rising. ICD vocabulary did not change. Which causes are plausible? Select all that apply.</>}
+        options={[
+          {key:"a", text:"Real-world coding behavior shifts (telemedicine grew, post-COVID coding changed) — your fixed embedding lags reality.", correct:true},
+          {key:"b", text:"Peer-distribution baseline is computed on a fixed historical window; the population it represents has drifted but the baseline has not been refreshed.", correct:true},
+          {key:"c", text:"Provider mix in your queue changed (new payers onboarded, different specialty distribution); your global threshold is inappropriate per-cohort.", correct:true},
+          {key:"d", text:"The embedding model is overfitting in production; retrain weekly."},
+          {key:"e", text:"Cosmic rays."},
+        ]}
+        trap={<>(d) confuses "model in production" with "model being trained in production" — the embedding is FROZEN at inference, so cannot overfit further. (e) is the deliberate junk option.</>}
+        lens={<>Three correct. <strong>(a)</strong> data drift: embeddings encode co-occurrence as of training time; real coding behavior drifts. <strong>(b)</strong> baseline drift: peer distributions reflecting last year's population are stale. <strong>(c)</strong> cohort composition: a global threshold on a mixed population masks per-cohort behavior. Fixes: schedule rolling retraining (quarterly) of the embedding; refresh peer baselines monthly on a rolling window; set per-cohort thresholds.</>}
+        stretch={<>What single drift-monitor would you put in production as the leading indicator?</>}
+      />
+
+      <VIS.TrapProblem
+        id="puc-p4"
+        difficulty="hard"
+        title="P4 — SIU asks: WHY is this provider flagged?"
+        scenario={<>The model flags a provider with cosine distance 0.42. SIU asks: "tell us specifically which codes drove this." Currently, your system outputs only the scalar distance. What's the engineering fix to make the signal actionable?</>}
+        options={[
+          {key:"a", text:"Decompose the distance per code: for each code the provider billed, compute its contribution to the total distance (e.g., shapley-style on the embedding-space distance, or per-code log-likelihood-ratio between provider and peer distribution). Surface the top-10 driver codes plus a few sample claims using each. Display per-code provider-frequency vs peer-percentile so SIU can show 'this code is billed by 99th-percentile share of this provider's claims vs 35th-percentile for peers.'", correct:true},
+          {key:"b", text:"Replace embeddings with rule-based code-pair flags; SIU prefers the interpretability."},
+          {key:"c", text:"Add a free-form LLM explanation; ask GPT to summarize why."},
+          {key:"d", text:"Refuse — model details are proprietary."},
+        ]}
+        trap={<>(b) reverses the SOTA decision; loses novel-combo coverage. (c) is post-hoc rationalization that can lie about the model's actual decision basis (the model didn't use language; the LLM is fabricating a narrative). (d) breaks SIU workflow and likely fails due-process review in adverse-action proceedings.</>}
+        lens={<>(a). The senior pattern: an embedding-based score is interpretable when projected back to the code level. Per-code distance decomposition is mathematically grounded (it actually attributes the score) and operationally usable (SIU points at specific codes and claims). This is the same interpretability move you make for any "vector space distance" signal — decompose to the named-feature level.</>}
+        stretch={<>What is the difference between this decomposition and SHAP for tree models?</>}
+      />
+
+      <VIS.TrapProblem
+        id="puc-p5"
+        difficulty="medium"
+        multiSelect
+        title="P5 — Evaluation: how do you know this is working?"
+        scenario={<>You ship the embedding-based model. SIU investigates queued cases at ~50/week capacity. How should you evaluate model quality? Select all that apply.</>}
+        options={[
+          {key:"a", text:"Precision @ top-K, where the relevant 'K' is SIU capacity (top 50/week). Measure what fraction of the top 50 result in a substantiated upcoding finding.", correct:true},
+          {key:"b", text:"Recall is essentially unmeasurable directly (no ground-truth on the full provider population), but estimate it via stratified random audits: audit 30 providers from the bottom-tail and verify low miss rate.", correct:true},
+          {key:"c", text:"Recovered dollars per audit hour — the business metric, not the ML metric, but the one execs care about.", correct:true},
+          {key:"d", text:"AUC on a held-out set with provider-level labels."},
+          {key:"e", text:"F1 score with a fixed threshold."},
+        ]}
+        trap={<>(d) and (e) assume provider-level labeled data exists at scale. It does not. The few hundred substantiated upcoders are not a random sample; AUC/F1 on a non-random subsample is biased. The right evaluation matches the operational reality: SIU has a fixed K, so precision-at-K is the operational metric; everything else is supplementary.</>}
+        lens={<>Three correct. <strong>(a)</strong> precision-at-SIU-capacity is the right operational metric. <strong>(b)</strong> stratified random audits give a recall proxy at known cost. <strong>(c)</strong> dollars-recovered-per-hour grounds the business case. Senior signal: name what you CAN'T measure (full-population recall) and design substitutes.</>}
+        stretch={<>How do you avoid SIU's review process biasing your labels over time?</>}
+      />
+
+      <VIS.TrapProblem
+        id="puc-p6"
+        difficulty="hard"
+        title="P6 — Adversarial: a sophisticated upcoder adapts"
+        scenario={<>A national chain of urgent-care clinics observes which codes trigger SIU queues and shifts its upcoding to a different code family that is near-peer for their specialty but slightly elevates revenue. Their distance score drops below threshold. The model stops flagging. What's the structural response?</>}
+        options={[
+          {key:"a", text:"Treat this as continuous co-evolution. Multi-axis features beyond peer-distance (within-provider temporal drift, claim-amount distribution shift, patient-overlap-with-claim-density anomalies). Quarterly re-train on adversarially-mined attack patterns. Score-distribution monitor with per-chain segmentation. Combine the embedding-distance signal with non-embedding signals (claim-payment velocity, beneficiary repeat-visit pattern) in a calibrated ensemble.", correct:true},
+          {key:"b", text:"Lower the threshold globally."},
+          {key:"c", text:"Switch to a larger embedding model."},
+          {key:"d", text:"Trust the new low scores — the chain reformed."},
+        ]}
+        trap={<>(b) drowns SIU in false positives. (c) more capacity does not address the structural single-axis-defense weakness. (d) is the credulous reading — and the textbook fraud failure mode where the model rewards adaptive attackers.</>}
+        lens={<>(a). Single-axis defenses die first. The senior posture: combine the embedding-distance signal with within-provider temporal drift, claim-amount distribution shifts, patient-flow anomalies, and other non-embedding signals in a calibrated ensemble. Quarterly red-team retraining. Per-chain segmentation in monitoring so a chain-wide tactical shift surfaces as a chain-level alert.</>}
+        stretch={<>Which non-embedding signal is hardest for the adversary to game while still upcoding?</>}
+      />
+
+      <VIS.TrapProblem
+        id="puc-p7"
+        difficulty="medium"
+        title="P7 — Cold-start: new provider with little history"
+        scenario={<>A new physician opens a practice. After 60 days they have 200 claims. Their distance score is enormous (small samples are noisy in distribution-space). They're flagged. SIU questions whether the model is acting on too little data.</>}
+        options={[
+          {key:"a", text:"Apply a Bayesian smoothing: blend the provider's empirical distribution with a peer-cohort prior. As claim count grows, the prior weight decays. Below a claim-count floor (e.g., 500), suppress the alert entirely. Above the floor, surface the alert with a confidence band that reflects the remaining sample uncertainty.", correct:true},
+          {key:"b", text:"Flag aggressively — new providers are higher-risk in general."},
+          {key:"c", text:"Use the raw empirical distribution; the math is the math."},
+          {key:"d", text:"Wait until the provider has 5 years of history before scoring."},
+        ]}
+        trap={<>(b) is reputationally costly (new providers also include legitimate new practices). (c) ignores sampling variance entirely; the score is well-defined but operationally noisy. (d) is overcautious — five-year wait gives free upcoding windows.</>}
+        lens={<>(a). Bayesian smoothing with a peer prior + a claim-count floor + uncertainty band is the textbook fix for small-sample triage. Same shape as smoothing recommendations for new users in recsys cold-start, but with stricter operational guardrails (suppress below floor, never block above floor on first 90 days).</>}
+        stretch={<>What's the prior strength you'd start with, and how do you tune it?</>}
+      />
+
+      <VIS.TrapProblem
+        id="puc-p8"
+        difficulty="hard"
+        multiSelect
+        title="P8 — Multiple coding-system worlds: dental, behavioral health, DME"
+        scenario={<>Beyond general medical claims (ICD/CPT), your payer also handles dental (CDT codes), behavioral health (DSM + specific procedure codes), and durable medical equipment (HCPCS Level II). Should you build separate embeddings per vertical, one shared embedding, or something else?</>}
+        options={[
+          {key:"a", text:"Per-vertical embeddings — each coding system has its own co-occurrence structure and trains best in its own corpus.", correct:true},
+          {key:"b", text:"A shared embedding across all coding systems, since a provider can bill across verticals."},
+          {key:"c", text:"Per-vertical embeddings, plus a small set of cross-vertical anchor codes (e.g., E&M codes that appear in medical AND behavioral) used to weakly align the spaces — so multi-vertical providers get a coherent distance score.", correct:true},
+          {key:"d", text:"Per-vertical fraud teams, per-vertical models, per-vertical SIU queues — don't try to score multi-vertical providers globally.", correct:true},
+          {key:"e", text:"Skip the embedding approach for non-medical verticals; rules are sufficient there."},
+        ]}
+        trap={<>(b) trains a shared embedding on disjoint co-occurrence structures — codes that never co-occur cannot be placed meaningfully. (e) gives up SOTA on the largest fraud verticals after medical.</>}
+        lens={<>Three correct. <strong>(a)</strong> the standard answer — per-vertical training is cleaner. <strong>(c)</strong> for the small set of providers who genuinely span verticals, anchor-aligned embeddings allow coherent scoring. <strong>(d)</strong> operationally, verticals have different SIU staffing and different regulatory regimes; separate queues respect that. Senior signal: nuanced per-vertical + per-tenant architecture, not "one model rules all."</>}
+        stretch={<>If a multi-vertical provider's only suspicious behavior is the JUNCTION between two verticals (e.g., over-prescribing DME for behavioral patients), how does this architecture catch it?</>}
+      />
+
+      <VIS.TrapProblem
+        id="puc-p9"
+        difficulty="hard"
+        title="P9 — PHI + HIPAA + training data"
+        scenario={<>Training the Med2Vec embedding requires millions of historical claims, which contain PHI (Protected Health Information). Your CISO + privacy office push back on training a model on raw claim data. What's the right design?</>}
+        options={[
+          {key:"a", text:"De-identify the training corpus before embedding training: drop direct identifiers (member ID, provider tax ID, dates beyond month-year, ZIP3) and use only the (code, claim-grouping-token) pairs needed for co-occurrence. Run training inside the HIPAA-compliant data environment (VPC, audit logs, no egress). Embedding artifacts (the code vectors) are pure code-to-vector mappings and contain no PHI — they're free to deploy more broadly. Inference processes one provider's claim distribution at a time inside the same compliance boundary.", correct:true},
+          {key:"b", text:"Send claims to OpenAI to generate embeddings."},
+          {key:"c", text:"Refuse to use ML; rules only."},
+          {key:"d", text:"Synthesize fake claims and train on those."},
+        ]}
+        trap={<>(b) is a HIPAA business-associate-agreement nightmare and likely violates the original payer-provider agreements. (c) abandons the SOTA. (d) embedding quality on synthetic claims is poor — the co-occurrence structure of real claims is what gives the embedding its discriminative power.</>}
+        lens={<>(a). The senior compliance pattern: de-identify the training corpus to (code, claim-group) pairs (the minimum sufficient statistic for co-occurrence training), train inside the HIPAA-compliant environment, observe that the resulting embedding artifacts are PHI-free, then deploy those artifacts (the code-vector lookup) freely while the actual provider-distribution computation stays inside the compliance boundary.</>}
+        stretch={<>Is the embedding artifact itself de-identified under HIPAA's Safe Harbor or under Expert Determination?</>}
+      />
+
+      <VIS.TrapProblem
+        id="puc-p10"
+        difficulty="hard"
+        title="P10 — End-to-end upcoding detection stack"
+        scenario={<>You lead the program integrity ML team at a national Medicare Advantage plan. 40k providers, 80M claims/year, $80B in payouts. Design the complete upcoding-detection architecture.</>}
+        options={[
+          {key:"a", text:"Tiered architecture. Tier 0 rule-based code-pair flags (cheap, catch known patterns). Tier 1 embedding-based peer-distance signal with case-mix-matched peer cohorts (specialty + region + HCC band + age + dual-eligible). Tier 2 ensemble that combines tier 1 with temporal within-provider drift, claim-amount distribution shifts, patient-overlap anomalies. Bayesian smoothing for cold-start providers. Per-vertical embeddings (medical, dental, behavioral, DME) with anchor alignment for multi-vertical providers. ICD-11 incremental embedding extension via crosswalk-anchor supervision. Per-code distance decomposition surfaced to SIU. Score + uncertainty + reason codes feed an SIU queue prioritized by recoverable-dollars-per-hour. Quarterly retraining + drift monitor. PHI handling: de-identified training corpus, in-VPC training, PHI-free embedding artifacts. SIU dispositions feed back as supervised signal where labels are reliable.", correct:true},
+          {key:"b", text:"Replace SIU with the model; auto-recoup any flagged provider."},
+          {key:"c", text:"Rule-only stack; embeddings unproven."},
+          {key:"d", text:"One big neural net trained on raw claims; let it figure out everything."},
+        ]}
+        trap={<>(b) violates due process and CMS adverse-action rules. (c) misses novel upcoding (the entire reason for the embedding layer). (d) ignores per-vertical structure, HIPAA training boundary, SIU triage UX, ICD migration, and adversarial pressure — all of which require explicit architecture.</>}
+        lens={<>(a). The complete senior architecture: tiered (rule + embedding + ensemble), case-mix-matched, multi-vertical with anchor alignment, ICD-version-resilient, per-code-decomposed for SIU, PHI-compliant, with quarterly retraining and a feedback loop. This is what survives compliance, legal, SIU operations, and adversarial pressure at $80B-payout scale.</>}
+        stretch={<>What single failure mode would make you roll back the entire embedding tier overnight?</>}
+      />
+    </VIS.Section>
+
+    <VIS.Section id="sec-further" title="Further reading">
+      <ul>
+        <li>
+          <a href="https://knowledge.amia.org/76677" target="_blank" rel="noopener">
+            <strong>Med2Vec for Upcoding Detection</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(AMIA 2024)</span>
+          <br/>The source paper. Skim sections on embedding-training corpus and peer-cohort matching.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/1602.05568" target="_blank" rel="noopener">
+            <strong>Choi et al. — Multi-layer Representation Learning for Medical Concepts (Med2Vec)</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(KDD 2016, the original Med2Vec)</span>
+          <br/>The canonical Med2Vec paper. Useful background on training objectives for code embeddings.
+        </li>
+        <li>
+          <a href="https://oig.hhs.gov/" target="_blank" rel="noopener">
+            <strong>HHS Office of Inspector General — Medicare program-integrity reports</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(government reports)</span>
+          <br/>OIG annual reports on Medicare fraud + improper-payment estimates. Grounds the business case and gives realistic loss numbers.
+        </li>
+        <li>
+          <a href="https://www.cms.gov/medicare/coding-billing/icd-10-codes" target="_blank" rel="noopener">
+            <strong>CMS — ICD-10 to ICD-11 transition resources</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(government resource)</span>
+          <br/>The crosswalks and transition guidance that the anchor-alignment approach in P1 relies on.
+        </li>
+        <li>
+          <a href="https://www.acl.org/anthology/N19-1423/" target="_blank" rel="noopener">
+            <strong>Cross-lingual embedding alignment via anchor supervision</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(NLP analog)</span>
+          <br/>Useful conceptual analog: the same alignment trick used for ICD-10 / ICD-11 was first established for cross-lingual word embeddings.
+        </li>
+      </ul>
+    </VIS.Section>
+  </main>
+);
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+</script>
+  <script>
+    window.addEventListener("error", function (e) {
+      const pre = document.createElement("pre");
+      pre.style.cssText = "position:fixed;top:0;left:0;right:0;max-height:35vh;"
+        + "overflow:auto;background:#fee2e2;color:#7f1d1d;padding:8px;"
+        + "margin:0;font:12px/1.4 monospace;z-index:10002;";
+      pre.textContent = "[visualize] " + (e.error?.stack || e.message || e);
+      document.body.appendChild(pre);
+    }, true);
+  </script>
+</body>
+</html>
