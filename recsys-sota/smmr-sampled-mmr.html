@@ -1414,239 +1414,502 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 9
+// SMMR — Sampling-Based MMR Reranking (HSE 2025)
+// Unique mechanism: sampled-from-softmax over MMR scores with provable O(tau log K) relevance bound.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Diversity / DPP"
-      title="SMMR (Sampled MMR)"
-      subtitle="Treat MMR scores probabilistically &mdash; sample the next item from a softmax over candidate MMR scores instead of always taking the argmax."
+      pill="RecSys SOTA · Diversity/DPP"
+      title="SMMR — Sampling-based MMR"
+      subtitle="Sample next item from a softmax over MMR scores instead of the argmax. Tunable randomness with an analytical relevance bound."
       byline={[
         {label: "Paper", value: "Ananyeva, HSE 2025"},
-        {label: "Domain", value: "Discovery surfaces where deterministic MMR over-converges"},
+        {label: "Surface", value: "Discovery where deterministic MMR over-converges"},
       ]}/>
 
     <VIS.TLDR>
-      Greedy <VIS.Term def="Maximum Marginal Relevance: at each step, pick the candidate maximizing lambda*relevance - (1-lambda)*max_similarity_to_already_chosen.">MMR</VIS.Term> takes the deterministic argmax at every position, which under-explores: a small number of near-duplicate &quot;safe&quot; items get picked across users. <strong>SMMR</strong> replaces argmax with a softmax sample over the top-M candidates&apos; MMR scores. The exploration knob is now the temperature tau, which provides a smooth diversity dial without retuning the lambda relevance-similarity weight.
+      MMR's argmax over-converges when many top-K candidates have near-tied MMR scores. SMMR fixes this by drawing the next item from <code>Softmax(MMR_scores / tau)</code>. The unique value is a <strong>provable relevance bound</strong>: expected relevance loss vs deterministic MMR is bounded by O(tau · log K) — randomness with a closed-form cost statement. Strip the softmax and you lose the bound.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="What it is, in one equation">
       <p>
-        At each greedy step in MMR, instead of picking i* = argmax MMR(i), sample from a softmax over candidate MMR scores:
+        At each step, compute the MMR score for every remaining candidate, then sample the next item:
       </p>
-      <VIS.Equation display tex={`P(i \\mid Y, \\tau) = \\frac{\\exp(\\text{MMR}(i \\mid Y) / \\tau)}{\\sum_{j \\notin Y} \\exp(\\text{MMR}(j \\mid Y) / \\tau)}`}/>
+      <VIS.Equation display tex={`p_i = \\frac{\\exp(\\text{MMR}(i)/\\tau)}{\\sum_{j} \\exp(\\text{MMR}(j)/\\tau)}, \\quad i^{*} \\sim p`}/>
       <p>
-        As tau approaches 0, SMMR reduces to greedy MMR. As tau grows, the distribution flattens and the reranker mixes in more long-tail candidates.
+        Where <code>MMR(i) = lambda · rel(i) − (1−lambda) · max sim(i, S)</code> and the max runs over already-chosen items S. As <VIS.Term def="A scalar that controls how peaked the softmax is. Small tau makes it close to argmax (deterministic); large tau makes it close to uniform.">tau</VIS.Term> goes to zero, SMMR recovers deterministic MMR; as tau goes large, it approaches uniform sampling.
       </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  Q["Top-N from ranker"]
-  M["Compute MMR scores"]
-  S["Softmax with temperature tau"]
-  P["Sample one candidate"]
-  A["Append to slate"]
-  M --> S --> P --> A
-  A -.->|"K times"| M
-  Q --> M
-      `} />
+      <VIS.Mermaid chart={`flowchart TB
+  C["Candidate pool"]
+  M["MMR scores per candidate"]
+  SM["Softmax with temperature tau"]
+  S["Sample next item"]
+  L["Slate"]
+  C --> M --> SM --> S --> L
+  L -->|step t+1| M`} />
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>MMR (argmax)</th><th style={{textAlign:"left",padding:8}}>SMMR (softmax sample)</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from MMR / DPP / random shuffle">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Selection rule</th>
+          <th style={{textAlign:"left", padding:8}}>Reproducibility</th>
+          <th style={{textAlign:"left", padding:8}}>Bound</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Selection rule</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Deterministic argmax</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Sample from softmax</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Diversity knob</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>lambda (rel vs sim)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>tau (temperature)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Reproducibility</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Deterministic</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Stochastic (seedable)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Cost vs MMR</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>O(N&middot;K) baseline</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>O(N&middot;K) + softmax</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>User-level variance</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Zero (with fixed input)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Non-zero by design</td></tr>
+          <tr><td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>MMR</td>
+              <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>argmax of MMR</td>
+              <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Deterministic</td>
+              <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>None</td></tr>
+          <tr style={{background:"#f8fafc"}}>
+            <td style={{padding:8}}>SMMR</td>
+            <td style={{padding:8}}>Sample from softmax(MMR/tau)</td>
+            <td style={{padding:8}}>Stochastic (seeded for tests)</td>
+            <td style={{padding:8}}>Expected relevance loss ≤ O(tau log K)</td></tr>
+          <tr>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>DPP</td>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>argmax of log-det gain</td>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Deterministic given kernel</td>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>(1 - 1/e) submodular bound</td></tr>
+          <tr style={{background:"#f8fafc"}}>
+            <td style={{padding:8}}>Random shuffle</td>
+            <td style={{padding:8}}>Uniform random</td>
+            <td style={{padding:8}}>Stochastic</td>
+            <td style={{padding:8}}>No relevance preservation</td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Discovery surfaces (For-You, Browse) where deterministic MMR collapses onto a small &quot;safe&quot; set across users.</li>
-        <li>You have a working MMR baseline and want a 1-line code change with a single tunable knob.</li>
-        <li>Catalog-coverage and long-tail exposure are explicit product goals.</li>
-        <li>You can afford some user-level variance for set-level diversity gains.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 26 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the question-axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations &amp; gotchas">
-      <ul>
-        <li><strong>Reproducibility</strong> &mdash; same user same input may see different slates; complicates debugging.</li>
-        <li><strong>Tau is dataset-specific</strong> &mdash; needs offline tuning; wrong tau either degenerates to MMR or produces noise.</li>
-        <li><strong>No set-level objective</strong> &mdash; like MMR, decisions are still local; only the rule is stochastic.</li>
-        <li><strong>Numerical issues</strong> &mdash; very large MMR ranges blow up softmax; standardize scores before softmax.</li>
-        <li><strong>Hard to A/B</strong> &mdash; stochasticity inflates noise in metrics; need more traffic or paired sampling.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill &mdash; 10 trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
+      {/* axis: C1 */}
       <VIS.TrapProblem
         id="smmr-p1" difficulty="hard"
-        title="P1 &mdash; SMMR beats DPP on diversity?"
-        scenario={<>An offline benchmark shows SMMR (tau = 0.5) achieves slightly higher catalog-coverage than greedy DPP with the same per-slate latency. Why does a &quot;simpler&quot; algorithm sometimes win?</>}
+        title="P1 — Why softmax sampling instead of just adding noise?"
+        scenario={<><em>Discriminating insight: arbitrary noise loses the analytical bound; softmax sampling specifically gives a sub-Gaussian concentration that yields the O(tau log K) bound.</em><br/>A junior asks: &quot;Why not just add Gaussian noise to MMR scores instead of softmax-sampling?&quot; What's the right answer?</>}
         options={[
-          {key:"a", text:"DPP&apos;s output is bound to a calibrated similarity kernel S; if S is mis-calibrated, DPP&apos;s diversity becomes brittle. SMMR&apos;s temperature decouples diversity from kernel quality.", correct:true},
-          {key:"b", text:"DPP is provably worse than MMR."},
-          {key:"c", text:"Softmax sampling is mathematically equivalent to log-det maximization."},
-          {key:"d", text:"SMMR has higher relevance always."},
+          {key:"a", text:"The softmax distribution is sub-Gaussian; that's what gives a closed-form expected-relevance bound (O(tau log K)). Arbitrary Gaussian noise has no such bound — you'd lose the only thing SMMR claims to provide.", correct:true},
+          {key:"b", text:"Gaussian noise can produce negative scores."},
+          {key:"c", text:"Softmax is faster to compute than adding noise."},
+          {key:"d", text:"Gaussian noise is non-differentiable."},
         ]}
-        trap={<>(b)/(c)/(d) are false claims. The real reason simpler can win is that DPP&apos;s set-level objective only works when the kernel is correct; with a noisy kernel, SMMR&apos;s temperature dial is more robust.</>}
-        lens={<>Algorithm quality is conditional on signal quality. A simpler algorithm with a coarser signal can beat a fancier algorithm with a miscalibrated signal.</>}
-        stretch={<>How would you stress-test which algorithm wins under kernel drift?</>}
+        trap={<>(b)/(c)/(d) sidestep the actual reason. The bound is the entire point of SMMR over &quot;random noise on MMR.&quot;</>}
+        lens={<>SMMR's value is the analytical guarantee, not the randomness per se. The Boltzmann distribution is what makes the proof work.</>}
+        stretch={<>Without the bound, what would distinguish SMMR from ad-hoc noise injection?</>}
       />
 
+      {/* axis: C2 */}
       <VIS.TrapProblem
         id="smmr-p2" difficulty="hard"
-        title="P2 &mdash; Tau too high"
-        scenario={<>You set tau = 10. Slates feel random; relevance drops by 15%. What is happening?</>}
+        title="P2 — What does the variance bound actually say?"
+        scenario={<><em>Discriminating insight: the bound is on EXPECTED relevance loss vs MMR, parameterized by tau and slate length K — not on per-user variance.</em><br/>A teammate paraphrases: &quot;The SMMR bound means each user's relevance is within O(tau log K) of the MMR baseline.&quot; Is that right?</>}
         options={[
-          {key:"a", text:"Tau is much larger than the MMR score range, so softmax collapses to nearly-uniform over candidates, effectively randomizing the slate.", correct:true},
-          {key:"b", text:"Tau = 10 is mathematically invalid."},
-          {key:"c", text:"The MMR score range is too large."},
-          {key:"d", text:"Softmax is broken at large tau."},
+          {key:"a", text:"No — the bound is on the EXPECTATION of relevance across draws, not per-user. Individual users can lose more; the average user is bounded.", correct:true},
+          {key:"b", text:"Yes — the bound applies per-user."},
+          {key:"c", text:"The bound is on the variance of relevance, not the mean."},
+          {key:"d", text:"The bound only applies at tau=0."},
         ]}
-        trap={<>(b)/(d) are false. (c) is the inverse of the actual issue. The diagnostic is that tau and the MMR-score scale must be comparable.</>}
-        lens={<>Always standardize MMR scores before softmax (z-score or min-max), then tune tau in the standardized space. This decouples the temperature dial from raw score magnitudes.</>}
-        stretch={<>How would you auto-tune tau per request based on the score histogram?</>}
+        trap={<>(b) is a common mis-paraphrase. (c) confuses mean and variance bounds. (d) makes the bound trivial.</>}
+        lens={<>Expectation-bound (E[loss] ≤ O(tau log K)) is weaker than per-user bound. Communicate carefully.</>}
+        stretch={<>What's a per-user concentration statement you could derive on top?</>}
       />
 
+      {/* axis: E2 */}
       <VIS.TrapProblem
         id="smmr-p3" difficulty="hard"
-        multiSelect
-        title="P3 &mdash; Variance in A/B"
-        scenario={<>SMMR A/B shows +3% diversity, +0% relevance, but the relevance CI is &plusmn; 2.5% &mdash; you can&apos;t tell if it&apos;s flat or down. Which mitigations help reduce variance? Select all that apply.</>}
+        title="P3 — Failure-on-Friday: A/B variance blows up"
+        scenario={<><em>Discriminating insight: per-user slate randomness adds variance on TOP of treatment-vs-control variance, requiring larger A/B sample size — a SMMR-specific power calc gotcha.</em><br/>SMMR shipped Thursday at tau=0.5 on home feed. Friday 3am page: <strong>A/B verdict blocked because variance is too wide</strong> to declare a winner. Latency, eval, util all fine. Why does this hit SMMR specifically?</>}
         options={[
-          {key:"a", text:"Seed the sampler per user+slot so the same user gets the same sample stream &mdash; reduces day-to-day variance per user.", correct:true},
-          {key:"b", text:"Use paired-bucket A/B (same user sees control on day 1, treatment on day 2) to reduce between-user variance.", correct:true},
-          {key:"c", text:"Run the A/B longer for tighter CIs.", correct:true},
-          {key:"d", text:"Disable sampling and just ship MMR."},
-          {key:"e", text:"Pick the largest tau possible to dominate the noise."},
+          {key:"a", text:"SMMR injects per-user slate variance on top of treatment vs control variance; standard t-test power calculations under-estimate sample size. Fix: use within-user pairs (same user gets both arms across sessions) or inflate n by the variance-inflation factor.", correct:true},
+          {key:"b", text:"SMMR causes higher GPU utilization which makes timing noisier."},
+          {key:"c", text:"tau=0.5 is too high; reduce to 0.05."},
+          {key:"d", text:"The metric is poorly defined."},
         ]}
-        trap={<>(d) abandons the experiment. (e) makes variance worse. The three legitimate mitigations all preserve the SMMR design while squeezing variance.</>}
-        lens={<>Stochastic policies need variance-reduction tooling: seeded sampling, paired buckets, longer windows. Standard A/B for SMMR is under-powered by design.</>}
-        stretch={<>Compute the minimum sample size for &plusmn; 0.5% CI given your relevance variance.</>}
+        trap={<>(b) misattributes. (c) treats a symptom (lower tau means less diversity uplift). (d) ducks the issue.</>}
+        lens={<>SMMR's randomness is intentional and good for product, but expensive for A/B power. Plan for variance inflation.</>}
+        stretch={<>By what factor would you inflate n at tau=0.5?</>}
       />
 
+      {/* axis: A1 */}
       <VIS.TrapProblem
         id="smmr-p4" difficulty="hard"
-        title="P4 &mdash; Position bias"
-        scenario={<>After SMMR ships, the user-level variance in Top-1 item is now high. Position-1 CTR drops 4%. Why?</>}
+        title="P4 — SMMR vs DPP: when does SMMR win?"
+        scenario={<><em>Discriminating insight: SMMR sometimes beats DPP because randomization explores embedding regions DPP&apos;s deterministic argmax does not.</em><br/>The paper claims SMMR sometimes beats DPP on diversity metrics. Pick the most plausible explanation.</>}
         options={[
-          {key:"a", text:"SMMR samples at every position, including Position 1, where users are most click-prone. The variance at Pos-1 wastes the highest-attention slot.", correct:true},
-          {key:"b", text:"Softmax is broken."},
-          {key:"c", text:"Position bias is unrelated to SMMR."},
-          {key:"d", text:"Users dislike diversity."},
+          {key:"a", text:"DPP's deterministic argmax always picks the same kind of slate for similar users; SMMR's randomization explores embedding regions DPP never visits, sometimes giving better fleet-wide diversity.", correct:true},
+          {key:"b", text:"SMMR has a stronger approximation bound than DPP."},
+          {key:"c", text:"SMMR uses a better kernel."},
+          {key:"d", text:"DPP is non-deterministic; SMMR is deterministic."},
         ]}
-        trap={<>(b)/(c)/(d) misdiagnose. The real issue is operational: not every position deserves the same exploration budget.</>}
-        lens={<>Use position-dependent tau: tau ~ 0 (greedy) at Pos-1, tau growing for later positions. Protects the high-attention slot while preserving exploration where users are less sensitive.</>}
-        stretch={<>How would you parameterize tau as a function of position?</>}
+        trap={<>(b) misstates: DPP's (1-1/e) is stronger than SMMR's O(tau log K). (c) is false: SMMR has no kernel. (d) inverts.</>}
+        lens={<>SMMR's win isn't a better single-slate bound; it's exploration. Two different optimization regimes.</>}
+        stretch={<>For which surface would DPP definitely beat SMMR?</>}
       />
 
+      {/* axis: D1 */}
       <VIS.TrapProblem
         id="smmr-p5" difficulty="hard"
-        title="P5 &mdash; Restricting the sampling pool"
-        scenario={<>You sample over all N=200 candidates. Engineering wants to restrict to top-M for latency. What is the right M, and what risk does this introduce?</>}
+        title="P5 — Intuitive but wrong: bigger tau = better diversity"
+        scenario={<><em>Discriminating insight: past a small tau, SMMR converges to uniform sampling — diversity goes up but relevance crashes; the optimal tau is small.</em><br/>You sweep tau across (0.05, 0.5, 5, 50) and see diversity rise monotonically. Engineer says &quot;ship tau=50 for max diversity.&quot; What's wrong?</>}
         options={[
-          {key:"a", text:"M tuned offline so the sampling tail covers the diversity gain region; risk is &quot;truncated tail&quot; &mdash; long-tail items beyond M never get exposure.", correct:true},
-          {key:"b", text:"M = 1 always; no risk."},
-          {key:"c", text:"M = N always; no risk."},
-          {key:"d", text:"M doesn&apos;t affect quality."},
+          {key:"a", text:"At tau=50 SMMR is essentially uniform sampling over the candidate pool — diversity is at the max but expected relevance has collapsed. The sweet spot is small tau (0.1-0.5).", correct:true},
+          {key:"b", text:"tau=50 makes the softmax compute slow."},
+          {key:"c", text:"tau=50 violates PSD."},
+          {key:"d", text:"At tau=50, the bound becomes meaningless and the user metric explodes."},
         ]}
-        trap={<>(b)/(c)/(d) duck the trade-off. The real engineering decision is to characterize the gain region and set M just past it.</>}
-        lens={<>Compute the cumulative-softmax-mass curve offline; set M where 99% of the mass is captured. Monitor for tail truncation by logging which positions sample beyond M.</>}
-        stretch={<>What if the gain region is highly user-dependent?</>}
+        trap={<>(b)/(c) misattribute. (d) is more right than (b)/(c) but doesn't say what the relevance is doing — and the bound at tau=50 is &quot;loss can be very large,&quot; not literally violated.</>}
+        lens={<>Diversity-only metrics climb at large tau, but expected user satisfaction drops. Choose tau by the joint metric.</>}
+        stretch={<>What's the simplest joint metric that captures both?</>}
       />
 
+      {/* axis: D2 */}
       <VIS.TrapProblem
-        id="smmr-p6" difficulty="hard"
-        title="P6 &mdash; SMMR plus DPP?"
-        scenario={<>Engineer proposes adding softmax sampling to the FastDPP greedy step. Reasonable?</>}
+        id="smmr-p6" difficulty="hard" multiSelect
+        title="P6 — Wrong-assumption cascade: SMMR = MMR + noise"
+        scenario={<><em>Discriminating insight: thinking SMMR is &quot;MMR with arbitrary noise&quot; cascades into bad implementation choices and lost analytical guarantees.</em><br/>You assume SMMR is &quot;MMR + noise.&quot; Which downstream conclusions does this corrupt? Select all that apply.</>}
         options={[
-          {key:"a", text:"Yes &mdash; the same temperature trick applies to log-det greedy gains; it provides an exploration dial on top of DPP&apos;s set-level objective.", correct:true},
-          {key:"b", text:"No &mdash; DPP outputs are already optimal."},
-          {key:"c", text:"No &mdash; softmax is incompatible with determinants."},
-          {key:"d", text:"Yes &mdash; but it changes the DPP into MMR."},
+          {key:"a", text:"You'll implement with Gaussian noise on the scores and lose the O(tau log K) bound.", correct:true},
+          {key:"b", text:"You'll skip seeding the RNG for tests, making unit tests flaky.", correct:true},
+          {key:"c", text:"You'll explain the variance/relevance trade as &quot;more noise = more diversity&quot; without an analytical knob.", correct:true},
+          {key:"d", text:"None — the assumption is harmless."},
         ]}
-        trap={<>(b) overclaims DPP optimality (greedy DPP isn&apos;t optimal). (c)/(d) misstate the math &mdash; softmax acts on greedy gains, not on the determinant directly.</>}
-        lens={<>SMMR-style sampling is composable with any greedy reranker that produces per-candidate gains. Use it on top of DPP to add an exploration knob without rewriting the objective.</>}
-        stretch={<>What new failure modes appear when you stack sampling on top of DPP?</>}
+        trap={<>(d) is the cascade trigger.</>}
+        lens={<>The softmax sampling is load-bearing for the bound; arbitrary noise wins half the surface area but loses the entire claim.</>}
+        stretch={<>What single sentence captures &quot;SMMR is not just noise&quot;?</>}
       />
 
+      {/* axis: D3 */}
       <VIS.TrapProblem
         id="smmr-p7" difficulty="hard"
-        title="P7 &mdash; Reproducibility in debugging"
-        scenario={<>User complains: &quot;Yesterday I saw item X at position 3; today same query, no X.&quot; Customer support escalates. What is the right product response?</>}
+        title="P7 — Junior vs senior: unit test for SMMR"
+        scenario={<><em>Discriminating insight: junior assumes SMMR can&apos;t be unit-tested due to non-determinism; senior seeds the RNG and tests against expected probabilities.</em><br/>Junior says &quot;SMMR is non-deterministic, we can't unit test it.&quot; What does the senior do?</>}
         options={[
-          {key:"a", text:"Document SMMR&apos;s controlled stochasticity in UX expectations, and seed the sampler per (user, query) so the user sees a stable slate within a session window.", correct:true},
-          {key:"b", text:"Roll back SMMR entirely."},
-          {key:"c", text:"Tell the user they are wrong."},
-          {key:"d", text:"Make the recommender fully deterministic forever."},
+          {key:"a", text:"Seed the RNG; the slate is fully reproducible for testing. Non-determinism is per-user-online behavior, not a property of the algorithm. Also test the probability distribution against analytical softmax with a chi-square check.", correct:true},
+          {key:"b", text:"Replace SMMR with deterministic MMR for tests."},
+          {key:"c", text:"Test only the MMR-score computation, not the sampling."},
+          {key:"d", text:"Run SMMR 1000 times and check the average slate."},
         ]}
-        trap={<>(b)/(d) trade the diversity gains. (c) is hostile. The fix is to seed sampling so within-session reproducibility is preserved while across-session exploration remains.</>}
-        lens={<>Stochastic rerankers need a reproducibility story: seed by (user, session) or (user, query, day) so debugging is possible and user-perceived stability is preserved.</>}
-        stretch={<>What if seeded reproducibility hurts catalog coverage gains?</>}
+        trap={<>(b) loses test fidelity. (c)/(d) work but are weaker than seeded testing.</>}
+        lens={<>RNG seeding makes any sampled algorithm deterministic for tests; complain about non-determinism only when you can't seed.</>}
+        stretch={<>What's the right way to test &quot;sample from the correct distribution&quot; without running 1000 trials?</>}
       />
 
+      {/* axis: D4 */}
       <VIS.TrapProblem
         id="smmr-p8" difficulty="hard"
-        multiSelect
-        title="P8 &mdash; Tau selection methodology"
-        scenario={<>You want to pick tau before shipping. Which offline procedures are defensible? Select all that apply.</>}
+        title="P8 — Plausible misattribution"
+        scenario={<><em>Discriminating insight: high per-user click variance under SMMR is by design; the right metric is aggregate engagement, not per-user variance.</em><br/>A/B shows SMMR has higher click variance per user than MMR. Junior says &quot;SMMR is too noisy.&quot; Senior says &quot;that's intentional.&quot; Which metric should you actually trust?</>}
         options={[
-          {key:"a", text:"Replay-based Pareto curve over (tau, relevance-loss, diversity-gain); pick the knee.", correct:true},
-          {key:"b", text:"Bayesian optimization over tau using IPS-weighted historical clicks.", correct:true},
-          {key:"c", text:"Hold tau fixed and compute counterfactual catalog coverage on a frozen replay slice.", correct:true},
-          {key:"d", text:"Pick tau = 1 because it&apos;s a natural default."},
-          {key:"e", text:"Always pick the largest tau that doesn&apos;t crash the service."},
+          {key:"a", text:"Aggregate (fleet-wide) engagement metrics — session length, returning-user rate. Per-user click variance is high BY DESIGN; SMMR's value is across the fleet.", correct:true},
+          {key:"b", text:"Per-user click variance; lower is always better."},
+          {key:"c", text:"Click-through rate at position 1 only."},
+          {key:"d", text:"NDCG@10."},
         ]}
-        trap={<>(d)/(e) skip the offline work. The three valid methods all produce defensible tau picks tied to product objectives.</>}
-        lens={<>Tau is a product decision dressed as a hyperparameter. Pick it on a Pareto curve, with the trade-off explicit and reviewable.</>}
-        stretch={<>How would you re-tune tau as the catalog drifts?</>}
+        trap={<>(b) confuses noise-bad with variance-by-design. (c)/(d) are partial metrics.</>}
+        lens={<>SMMR is a fleet-level diversity tool; evaluate at the fleet level, not per-user.</>}
+        stretch={<>What within-user metric is still meaningful under SMMR?</>}
       />
 
+      {/* axis: D5 */}
       <VIS.TrapProblem
         id="smmr-p9" difficulty="hard"
-        title="P9 &mdash; Off-policy evaluation"
-        scenario={<>You use historical logs from a deterministic MMR to evaluate SMMR. IPS weights blow up. What happened?</>}
+        title="P9 — Sounds reasonable: just use epsilon-greedy"
+        scenario={<><em>Discriminating insight: epsilon-greedy treats all items uniformly when exploring, losing MMR&apos;s relevance-similarity structure; SMMR samples proportional to MMR.</em><br/>If tau-tuning seems hard, can you replace SMMR with epsilon-greedy random selection (uniform with probability epsilon, MMR-argmax otherwise)? Why might this be worse?</>}
         options={[
-          {key:"a", text:"Historical logging policy is deterministic, so propensity for non-MMR-argmax candidates is exactly 0 &mdash; IPS weights become infinite. SMMR exploration is unsupported under deterministic logging.", correct:true},
-          {key:"b", text:"IPS is incompatible with softmax."},
-          {key:"c", text:"The historical dataset is corrupted."},
-          {key:"d", text:"SMMR cannot be evaluated offline."},
+          {key:"a", text:"Epsilon-greedy explores by picking uniformly random when it explores; SMMR's softmax samples proportional to MMR, so low-relevance items remain rare. Epsilon-greedy loses the relevance preservation; SMMR keeps it.", correct:true},
+          {key:"b", text:"Epsilon-greedy is non-deterministic; SMMR is deterministic."},
+          {key:"c", text:"Epsilon-greedy requires a value function; SMMR doesn't."},
+          {key:"d", text:"They're equivalent."},
         ]}
-        trap={<>(b)/(c)/(d) misdiagnose. The standard requirement for off-policy evaluation is non-zero propensity on every action the new policy may take.</>}
-        lens={<>To evaluate SMMR you need a stochastic logging policy with non-zero propensities. Plan: bootstrap with epsilon-greedy randomization in production for a short window to gather valid logs.</>}
-        stretch={<>How short can the randomization window be while keeping CIs tight?</>}
+        trap={<>(b)/(c)/(d) misstate the actual structural difference.</>}
+        lens={<>SMMR is structured exploration (MMR-weighted); epsilon-greedy is unstructured exploration (uniform). Structure preserves relevance.</>}
+        stretch={<>When would epsilon-greedy be the right choice over SMMR?</>}
       />
 
+      {/* axis: E1 */}
       <VIS.TrapProblem
         id="smmr-p10" difficulty="hard"
-        title="P10 &mdash; Comparing SMMR and DPP fairly"
-        scenario={<>Your team wants to compare SMMR vs FastDPP. What is the fairest comparison protocol?</>}
+        title="P10 — tau interacts with slate length K"
+        scenario={<><em>Discriminating insight: the variance bound scales with log K — tau that works at K=10 over-randomizes at K=50.</em><br/>You tuned tau=0.3 at K=10 and shipped. Product wants to extend the slate to K=50. Do you re-tune?</>}
         options={[
-          {key:"a", text:"Tune each system&apos;s knob on the same offline split using the same diversity and relevance metrics; report Pareto curves; pick on the curve at matched relevance.", correct:true},
-          {key:"b", text:"Run both with default hyperparameters and compare."},
-          {key:"c", text:"Compare on diversity only."},
-          {key:"d", text:"Compare on relevance only."},
+          {key:"a", text:"Yes — the bound scales with log K, so the same tau gives a larger expected loss at K=50. Re-tune tau (likely lower) to keep loss equivalent.", correct:true},
+          {key:"b", text:"No — tau is scale-invariant."},
+          {key:"c", text:"No — but reduce candidate pool size to compensate."},
+          {key:"d", text:"Increase tau because longer slates need more diversity."},
         ]}
-        trap={<>(b)/(c)/(d) bias the comparison. Single-knob algorithms must be evaluated on Pareto curves with matched conditions, not at arbitrary defaults.</>}
-        lens={<>Diversity-relevance is a multi-objective trade-off. Compare on Pareto curves at matched anchor points, not at arbitrary single configurations.</>}
-        stretch={<>How would you handle the curves not crossing at the operating point you want?</>}
+        trap={<>(b) misreads the bound. (c) confuses N (pool) with K (slate). (d) reverses the relationship.</>}
+        lens={<>tau is K-dependent; re-tune when the product changes K.</>}
+        stretch={<>Derive how tau scales as a function of K for constant expected loss.</>}
+      />
+
+      {/* axis: E3 */}
+      <VIS.TrapProblem
+        id="smmr-p11" difficulty="hard"
+        title="P11 — Log-sum-exp numerics"
+        scenario={<><em>Discriminating insight: many MMR libs return log-space scores; double-applying exp+softmax overflows for high lambda·rel(); use logsumexp.</em><br/>Your SMMR implementation overflows when lambda is large. Most likely cause and fix?</>}
+        options={[
+          {key:"a", text:"MMR scores are already in log space; exp+softmax overflows for high values. Use the log-sum-exp trick: subtract max(MMR) before exp, then re-add.", correct:true},
+          {key:"b", text:"lambda must be less than 1."},
+          {key:"c", text:"Switch to integer arithmetic."},
+          {key:"d", text:"Use float64 instead of float32."},
+        ]}
+        trap={<>(b) misstates lambda's range. (c) is absurd. (d) postpones the issue.</>}
+        lens={<>Log-sum-exp is standard for any softmax over arbitrary-scale inputs.</>}
+        stretch={<>Write the pseudocode for stable softmax sampling.</>}
+      />
+
+      {/* axis: E4 */}
+      <VIS.TrapProblem
+        id="smmr-p12" difficulty="hard"
+        title="P12 — Rollout: log tau per request"
+        scenario={<><em>Discriminating insight: per-request RNG output is needed for reproducibility audits and slate replay; without logging, debugging is impossible.</em><br/>You ship SMMR. The legal team asks &quot;why did user X see this slate?&quot; A week later. You need to be able to answer. What do you log?</>}
+        options={[
+          {key:"a", text:"Per-request: tau, RNG seed, MMR scores for every candidate, drawn samples per step. With these you can replay exactly.", correct:true},
+          {key:"b", text:"Just the slate that was shown."},
+          {key:"c", text:"tau only."},
+          {key:"d", text:"Click events only."},
+        ]}
+        trap={<>(b)/(c)/(d) lose replay fidelity.</>}
+        lens={<>Replayable stochastic systems need full input + RNG state logged. Standard practice for any sampled ranker.</>}
+        stretch={<>What's the storage cost of full replay logging at 100M slates/day?</>}
+      />
+
+      {/* axis: E5 */}
+      <VIS.TrapProblem
+        id="smmr-p13" difficulty="hard"
+        title="P13 — Reproducibility per-user is intentionally lost"
+        scenario={<><em>Discriminating insight: per-user reproducibility is intentionally given up; offline replays must seed by (user, request_time) or they will not match production.</em><br/>You run an offline replay for last week. The slates don't match production. Bug?</>}
+        options={[
+          {key:"a", text:"Not a bug. SMMR is stochastic; reproducibility requires seeding by (user, request_time). Without seeded replays you reproduce only the distribution, not the specific slates.", correct:true},
+          {key:"b", text:"Yes — SMMR must be deterministic for production use."},
+          {key:"c", text:"The RNG implementation is wrong."},
+          {key:"d", text:"Network non-determinism is the cause."},
+        ]}
+        trap={<>(b) demands the wrong property. (c)/(d) misattribute.</>}
+        lens={<>Stochastic algorithms have a reproducibility protocol; design and enforce it from day one.</>}
+        stretch={<>What's the right seed key for sessionized SMMR?</>}
+      />
+
+      {/* axis: E6 */}
+      <VIS.TrapProblem
+        id="smmr-p14" difficulty="hard"
+        title="P14 — Eval contamination: single-replay diversity"
+        scenario={<><em>Discriminating insight: SMMR&apos;s diversity is over the DISTRIBUTION of slates; single-replay metrics under- or over-estimate.</em><br/>Offline eval uses one replay and reports diversity@K = 0.42. Reviewer says this is wrong. Why?</>}
+        options={[
+          {key:"a", text:"SMMR is stochastic; a single replay samples one slate from the distribution. Diversity@K should be averaged over N draws to estimate the expected diversity SMMR delivers.", correct:true},
+          {key:"b", text:"diversity@K is the wrong metric for SMMR."},
+          {key:"c", text:"You should replay with tau=0."},
+          {key:"d", text:"Single-replay diversity is always biased high."},
+        ]}
+        trap={<>(b) ducks. (c) defeats the purpose. (d) over-claims direction of bias.</>}
+        lens={<>Always evaluate stochastic algorithms over multiple draws to estimate the distribution, not just one slate.</>}
+        stretch={<>How many draws do you need for a 0.01 stderr on diversity@K?</>}
+      />
+
+      {/* axis: F1 */}
+      <VIS.TrapProblem
+        id="smmr-p15" difficulty="hard"
+        title="P15 — K=1 degenerate case"
+        scenario={<><em>Discriminating insight: at K=1, MMR&apos;s similarity penalty has no chosen set to penalize against, so SMMR degenerates to sampling-by-relevance — no diversity term active.</em><br/>For K=1 (push notifications), SMMR degenerates to what?</>}
+        options={[
+          {key:"a", text:"Softmax sampling over relevance scores only — no diversity term active. Equivalent to relevance-Boltzmann ranking. Use a different mechanism if you need cross-send variety.", correct:true},
+          {key:"b", text:"It still uses MMR's similarity penalty against an empty set."},
+          {key:"c", text:"Pure argmax."},
+          {key:"d", text:"Uniform sampling."},
+        ]}
+        trap={<>(b) misstates: max over empty set is undefined / zero. (c)/(d) are at extreme taus, not the algorithm's K=1 behavior.</>}
+        lens={<>SMMR at K=1 is Boltzmann-relevance ranking. If that's what you want, fine; if you want set-diversity it's the wrong tool for K=1.</>}
+        stretch={<>How would you add variety across K=1 push notifications?</>}
+      />
+
+      {/* axis: F2 */}
+      <VIS.TrapProblem
+        id="smmr-p16" difficulty="hard"
+        title="P16 — Adversarial item inflates relevance"
+        scenario={<><em>Discriminating insight: an adversary that inflates relevance dominates softmax; SMMR has no special defense vs MMR or pure relevance ranking.</em><br/>An adversary inflates one item's relevance to 100x normal. What does SMMR do?</>}
+        options={[
+          {key:"a", text:"Picks it with probability near 1 (softmax peaks on it); SMMR has no defense against inflated relevance. Same vulnerability as MMR. Calibrate relevance upstream.", correct:true},
+          {key:"b", text:"Rejects it because softmax normalizes scores."},
+          {key:"c", text:"Picks it only with probability epsilon."},
+          {key:"d", text:"The bound prevents it."},
+        ]}
+        trap={<>(b) confuses normalization with bounding. (c)/(d) attribute defenses SMMR lacks.</>}
+        lens={<>SMMR is a reranker; defense vs inflated scores happens upstream in calibration. Stack defenses, don't expect them from the diversity layer.</>}
+        stretch={<>What upstream signal would detect score-inflation?</>}
+      />
+
+      {/* axis: F3 */}
+      <VIS.TrapProblem
+        id="smmr-p17" difficulty="hard"
+        title="P17 — Fleet-wide diversity LOWER than MMR"
+        scenario={<><em>Discriminating insight: SMMR with shared tau across users still peaks the softmax on the most popular item — per-user diversity up, fleet-wide diversity might be down.</em><br/>Per-user slates show higher diversity than MMR. But fleet-wide diversity (distinct items shown across all users) is LOWER. Cause?</>}
+        options={[
+          {key:"a", text:"All users share the same tau; the softmax still peaks on the most popular item, so the same hot item dominates many users' slates. Fix: per-user tau or per-user RNG draws that vary the softmax mode.", correct:true},
+          {key:"b", text:"SMMR is biased toward popularity."},
+          {key:"c", text:"tau is too high."},
+          {key:"d", text:"Fleet-wide diversity isn't a real metric."},
+        ]}
+        trap={<>(b) restates the symptom. (c) is a possible workaround but not the structural cause. (d) ducks.</>}
+        lens={<>Per-user randomness does not automatically yield fleet-wide variety when the underlying scores share modes across users.</>}
+        stretch={<>What's the cheapest way to add per-user variance without per-user tuning?</>}
+      />
+
+      {/* axis: F4 */}
+      <VIS.TrapProblem
+        id="smmr-p18" difficulty="hard"
+        title="P18 — When the bound is vacuous"
+        scenario={<><em>Discriminating insight: the bound is tight only for K of at least 5 and for MMR scores that are NOT concentrated in a single mode; pathological distributions make it useless.</em><br/>Authors note when the bound is tight. Pick the scenario where SMMR's relevance bound IS still meaningful.</>}
+        options={[
+          {key:"a", text:"K=20 slate with MMR scores spread across many near-tied modes (the over-convergence pathology SMMR is designed for).", correct:true},
+          {key:"b", text:"K=2 slate with one dominant MMR score and others near zero."},
+          {key:"c", text:"K=20 slate with one dominant MMR score 1000x larger than the rest."},
+          {key:"d", text:"K=1 slate."},
+        ]}
+        trap={<>(b)/(c)/(d) are the pathological cases the paper calls out.</>}
+        lens={<>The bound is most meaningful where SMMR is designed to be used: K-large slates with near-tied MMR scores.</>}
+        stretch={<>What metric tells you a slate has the right shape for SMMR?</>}
+      />
+
+      {/* axis: F5 */}
+      <VIS.TrapProblem
+        id="smmr-p19" difficulty="hard"
+        title="P19 — Plackett-Luce alternative"
+        scenario={<><em>Discriminating insight: PL sampling gives a slightly tighter bound but loses the closed-form tau interpretation; the trade is theoretical elegance vs engineering simplicity.</em><br/>Follow-up work suggests replacing softmax with Plackett-Luce sampling. What's the trade?</>}
+        options={[
+          {key:"a", text:"PL gives a slightly tighter bound but loses softmax's closed-form tau interpretation. Trade-off between theoretical elegance (tighter bound) and engineering simplicity (one tau dial).", correct:true},
+          {key:"b", text:"PL is strictly better."},
+          {key:"c", text:"Softmax is strictly better."},
+          {key:"d", text:"They're equivalent."},
+        ]}
+        trap={<>(b)/(c)/(d) hide the trade.</>}
+        lens={<>Two-knob vs one-knob, with bound trade. SMMR's choice: one knob.</>}
+        stretch={<>When would you ship PL over SMMR?</>}
+      />
+
+      {/* axis: A2 */}
+      <VIS.TrapProblem
+        id="smmr-p20" difficulty="hard"
+        title="P20 — SMMR vs Plackett-Luce vs MMR"
+        scenario={<><em>Discriminating insight: PL samples from relevance only; SMMR samples from MMR (relevance minus diversity penalty); MMR is argmax of MMR.</em><br/>Match each method to what it samples from.</>}
+        options={[
+          {key:"a", text:"PL: relevance only. SMMR: MMR (relevance minus diversity penalty). MMR: argmax (no sampling).", correct:true},
+          {key:"b", text:"All three sample from the same distribution."},
+          {key:"c", text:"PL and MMR sample; SMMR is argmax."},
+          {key:"d", text:"None sample; all are argmax."},
+        ]}
+        trap={<>(b)/(c)/(d) misstate sampling rules.</>}
+        lens={<>Each method's distinction is in the WHAT it samples from. SMMR's distinction: it bakes diversity into the sampling distribution.</>}
+        stretch={<>Construct a slate where SMMR and PL would disagree most.</>}
+      />
+
+      {/* axis: A3 */}
+      <VIS.TrapProblem
+        id="smmr-p21" difficulty="hard"
+        title="P21 — Counterfactual: no SMMR, what's the fallback?"
+        scenario={<><em>Discriminating insight: without SMMR, the closest substitute is MMR + epsilon-greedy or MMR + Gaussian noise — both lose the analytical bound.</em><br/>Suppose SMMR did not exist. What's the closest substitute for the &quot;randomized MMR with bound&quot; product?</>}
+        options={[
+          {key:"a", text:"MMR + epsilon-greedy or MMR + Gaussian noise — gets the randomness, loses the O(tau log K) analytical bound and clean tau knob.", correct:true},
+          {key:"b", text:"DPP — it's strictly better."},
+          {key:"c", text:"Random shuffle."},
+          {key:"d", text:"No substitute exists."},
+        ]}
+        trap={<>(b) confuses concerns (DPP is set-level, not randomized exploration). (c)/(d) are extreme.</>}
+        lens={<>SMMR's unique value is randomization-with-bound. Substitutes lose one of those.</>}
+        stretch={<>If you must ship epsilon-greedy, what's the right epsilon?</>}
+      />
+
+      {/* axis: A4 */}
+      <VIS.TrapProblem
+        id="smmr-p22" difficulty="hard"
+        title="P22 — SMMR composed with DPP"
+        scenario={<><em>Discriminating insight: DPP&apos;s set-level scoring + SMMR&apos;s exploration sampling address different over-convergence modes; composition is principled.</em><br/>Would you compose SMMR and DPP?</>}
+        options={[
+          {key:"a", text:"Yes — DPP scores top-K candidate slates, SMMR samples among the near-tied scores for exploration. DPP handles set geometry; SMMR handles fleet exploration.", correct:true},
+          {key:"b", text:"No — they conflict."},
+          {key:"c", text:"Yes — apply SMMR upstream of DPP to randomize candidates."},
+          {key:"d", text:"They're equivalent."},
+        ]}
+        trap={<>(b) misses the orthogonality. (c) destroys the candidate ordering DPP needs. (d) is wrong.</>}
+        lens={<>Different over-convergence failures; orthogonal fixes; compose.</>}
+        stretch={<>What's the right tau for SMMR sitting after DPP?</>}
+      />
+
+      {/* axis: B1 */}
+      <VIS.TrapProblem
+        id="smmr-p23" difficulty="hard"
+        title="P23 — Pick SMMR over MMR / DPP / LLM"
+        scenario={<><em>Discriminating insight: SMMR&apos;s sweet spot is &quot;MMR over-converges&quot; — a candidate pool with many near-tied scores.</em><br/>You have a music-discovery surface where the top-50 candidates have very similar MMR scores. Pick the right tool.</>}
+        options={[
+          {key:"a", text:"SMMR — the near-tied scores are exactly the over-convergence pathology it's designed for; tau will spread the picks across the tied modes.", correct:true},
+          {key:"b", text:"MMR — argmax is the right call when scores are tied."},
+          {key:"c", text:"DPP — you always want set-level scoring."},
+          {key:"d", text:"LLM reranker — natural-language understanding is required."},
+        ]}
+        trap={<>(b) doubles down on the over-convergence MMR has. (c)/(d) are valid alternatives but heavier than needed.</>}
+        lens={<>SMMR's narrow sweet spot is MMR-with-tied-scores. For that, it's the lightest principled fix.</>}
+        stretch={<>What signal tells you scores are tied enough for SMMR to matter?</>}
+      />
+
+      {/* axis: B2 */}
+      <VIS.TrapProblem
+        id="smmr-p24" difficulty="hard"
+        title="P24 — Sounds reasonable: lower tau for higher relevance"
+        scenario={<><em>Discriminating insight: lowering tau approaches deterministic MMR, recovering its over-convergence pathology — relevance up, diversity down to MMR baseline.</em><br/>Compliance says &quot;we're losing too much relevance; just lower tau.&quot; What's the consequence?</>}
+        options={[
+          {key:"a", text:"As tau goes to zero, SMMR recovers deterministic MMR — including MMR's over-convergence on tied scores. You've effectively turned SMMR off.", correct:true},
+          {key:"b", text:"Lower tau increases diversity."},
+          {key:"c", text:"Lower tau is illegal because it violates the bound."},
+          {key:"d", text:"Lower tau speeds up sampling."},
+        ]}
+        trap={<>(b) inverts. (c) over-formalizes. (d) is irrelevant.</>}
+        lens={<>tau is a continuous dial from &quot;deterministic MMR&quot; to &quot;uniform&quot;; the trade-off has no free lunch.</>}
+        stretch={<>If the bound is too generous, can you ship tau=0.01? What do you give up?</>}
+      />
+
+      {/* axis: B4 */}
+      <VIS.TrapProblem
+        id="smmr-p25" difficulty="hard"
+        title="P25 — When NOT to ship SMMR"
+        scenario={<><em>Discriminating insight: surfaces requiring reproducibility (legal docs, financial search) cannot tolerate per-user slate randomness regardless of bound.</em><br/>For which surface would you NOT ship SMMR?</>}
+        options={[
+          {key:"a", text:"Legal-document search where per-query reproducibility is a regulatory requirement — SMMR's per-user randomness violates the determinism contract.", correct:true},
+          {key:"b", text:"Discovery surfaces."},
+          {key:"c", text:"Cold-start music recs."},
+          {key:"d", text:"E-commerce home feed."},
+        ]}
+        trap={<>(b)/(c)/(d) are exactly the surfaces SMMR is designed for.</>}
+        lens={<>Reproducibility constraints rule out stochastic rerankers regardless of their bounds.</>}
+        stretch={<>What if &quot;reproducibility&quot; just means &quot;same slate within 24h&quot;?</>}
+      />
+
+      {/* axis: B3 */}
+      <VIS.TrapProblem
+        id="smmr-p26" difficulty="hard"
+        title="P26 — Pitch to the PM"
+        scenario={<><em>Discriminating insight: the pitch must hinge on the sampled-pool variance bound — strip &quot;SMMR&quot; and &quot;just randomize MMR&quot; loses the bound.</em><br/>PM asks why SMMR is worth shipping over MMR + epsilon-greedy. Pick the strongest pitch.</>}
+        options={[
+          {key:"a", text:"SMMR samples from softmax(MMR/tau) with a provable bound on expected relevance loss: O(tau log K). You can SET the relevance cost in advance via tau, no A/B sweeping. Epsilon-greedy is unstructured noise with no analytical knob.", correct:true},
+          {key:"b", text:"SMMR is more diverse than MMR + epsilon-greedy."},
+          {key:"c", text:"SMMR is faster than MMR."},
+          {key:"d", text:"SMMR has fewer hyperparameters."},
+        ]}
+        trap={<>(b)/(c)/(d) could be said about most randomized rerankers; the bound is uniquely SMMR.</>}
+        lens={<>The pitch must hinge on the sampled-pool variance bound. Strip SMMR and the bound vanishes.</>}
+        stretch={<>Translate (a) into one sentence for a VP who has not heard of MMR.</>}
       />
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://www.hse.ru/data/2025/07/04/1995597406/" target="_blank" rel="noopener"><strong>Ananyeva &mdash; SMMR: Sampling-Based MMR Reranking (HSE 2025)</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper)</span><br/>The reference paper. Reports diversity uplift relative to MMR with no extra relevance cost.</li>
-        <li><a href="https://eugeneyan.com/writing/serendipity-and-accuracy-in-recommender-systems/" target="_blank" rel="noopener"><strong>Eugene Yan &mdash; Serendipity and Accuracy</strong></a> <span style={{color:"#64748b",fontSize:14}}>(blog)</span><br/>Best practitioner essay on diversity vs accuracy. Builds the right intuitions before reading SMMR.</li>
-        <li><a href="https://dl.acm.org/doi/10.1145/290941.291025" target="_blank" rel="noopener"><strong>Carbonell &amp; Goldstein &mdash; MMR: The Use of MMR and Diversity-Based Reranking</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, SIGIR 1998)</span><br/>The original MMR paper. Read this first if MMR is new to you; SMMR is a strict extension.</li>
-        <li><a href="https://lilianweng.github.io/posts/2018-04-08-policy-gradient/" target="_blank" rel="noopener"><strong>Lilian Weng &mdash; Policy Gradient Algorithms (softmax policies)</strong></a> <span style={{color:"#64748b",fontSize:14}}>(blog)</span><br/>The softmax-as-stochastic-policy intuition that SMMR borrows from RL. Useful for the &quot;why temperature&quot; story.</li>
-        <li><a href="https://www.youtube.com/watch?v=2Y0aF8WyZJ4" target="_blank" rel="noopener"><strong>Diversity in Recommender Systems (lecture)</strong></a> <span style={{color:"#64748b",fontSize:14}}>(video)</span><br/>Survey-level walkthrough including MMR family, DPP, sampling tricks.</li>
+        <li><a href="https://www.hse.ru/data/2025/07/04/1995597406/" target="_blank" rel="noopener"><strong>Ananyeva — SMMR: Sampling-Based MMR Reranking for Faster, More Diverse Search</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, HSE 2025)</span><br/>The reference paper. Bound derivation and benchmark results.</li>
+        <li><a href="https://dl.acm.org/doi/10.1145/290941.291025" target="_blank" rel="noopener"><strong>Carbonell &amp; Goldstein — The Use of MMR, Diversity-Based Reranking</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, SIGIR 1998)</span><br/>The original MMR paper. Reading SMMR with the original MMR in hand makes the &quot;argmax to softmax&quot; change concrete.</li>
+        <li><a href="https://lilianweng.github.io/posts/2018-04-08-policy-gradient/" target="_blank" rel="noopener"><strong>Lilian Weng — Policy Gradient Algorithms</strong></a> <span style={{color:"#64748b",fontSize:14}}>(blog)</span><br/>Boltzmann-softmax policies and temperature-controlled exploration in RL — the same mathematical pattern SMMR uses.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Softmax_function" target="_blank" rel="noopener"><strong>Wikipedia — Softmax function</strong></a> <span style={{color:"#64748b",fontSize:14}}>(reference)</span><br/>Temperature-controlled Boltzmann distribution properties; the bound derivation relies on these.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Plackett%E2%80%93Luce_model" target="_blank" rel="noopener"><strong>Wikipedia — Plackett-Luce model</strong></a> <span style={{color:"#64748b",fontSize:14}}>(reference)</span><br/>The alternative sampling distribution SMMR's follow-ups consider; useful for understanding the trade.</li>
       </ul>
     </VIS.Section>
   </main>

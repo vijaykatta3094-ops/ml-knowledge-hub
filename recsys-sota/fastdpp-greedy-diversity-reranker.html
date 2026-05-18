@@ -1414,238 +1414,597 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 9
+// FastDPP — Greedy Determinantal Point Process diversity reranker
+// Unique mechanism: log-det submodularity enables sub-quadratic greedy with (1-1/e) bound
+// and joint relevance×similarity scoring via L = Diag(r) S Diag(r).
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Diversity / DPP"
-      title="FastDPP greedy diversity reranker"
-      subtitle="Build a slate by greedily maximizing the log-determinant of a relevance-and-similarity kernel &mdash; a set-level objective that lets a medium-relevance unique item beat a high-relevance redundant one."
+      pill="RecSys SOTA · Diversity/DPP"
+      title="FastDPP — Greedy diversity reranker"
+      subtitle="Greedy log-det maximization over a relevance×similarity kernel. Submodularity gives (1−1/e) guarantee at O(K²N)."
       byline={[
-        {label: "Origin", value: "Chen et al. (Hulu, KDD 2018); recent 2024-2025 surveys"},
-        {label: "Domain", value: "Slate feeds: TikTok, Spotify, e-commerce carousels"},
+        {label: "Source", value: "Chen et al., NeurIPS 2018 (Hulu); Agrawal 2025 survey"},
+        {label: "Surface", value: "Slate feeds — TikTok, Spotify, YouTube home"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="Maximum Marginal Relevance: a greedy reranker that at each step picks the candidate maximizing a lambda-weighted blend of relevance and 1-minus-similarity to already-chosen items.">MMR</VIS.Term> scores each candidate locally: &quot;relevance minus max similarity to what is already in the slate.&quot; <strong>FastDPP</strong> scores the whole slate via the log-determinant of a kernel L = diag(q) &middot; S &middot; diag(q), where q encodes relevance and S encodes pairwise similarity. The greedy version picks the candidate that maximizes the determinant increment &mdash; O(K&#179;) per slate of K. Because the determinant of a Gram matrix measures the &quot;volume&quot; spanned, it rewards both high-relevance and mutually-dissimilar items, allowing a medium-relevance unique item to displace a high-relevance redundant one.
+      DPP scores entire slates jointly via the determinant of a kernel <code>L = Diag(r)·S·Diag(r)</code> that fuses relevance and pairwise similarity. <strong>Submodularity of log-det</strong> gives a greedy algorithm with a (1&minus;1/e) approximation bound and rank-1 Cholesky updates at O(K²N). The result: a &quot;medium-relevance but unique&quot; item can displace a &quot;high-relevance but redundant&quot; one because adding it increases the determinant more — a thing MMR&apos;s local marginal score cannot do.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="What it is, in one equation">
       <p>
-        A <VIS.Term def="A probability distribution over subsets where the probability of a set is proportional to the determinant of a submatrix of a positive semi-definite kernel L. Sets of similar items have small determinant; diverse sets have large determinant.">Determinantal Point Process (DPP)</VIS.Term> on a candidate set assigns each subset Y a probability proportional to det(L_Y). Maximizing log det(L_Y) over Y of size K is NP-hard; the greedy approximation picks items one-by-one to maximize the marginal log-det gain:
+        Define the kernel <code>L</code> over candidate items so <code>L_ij = r_i · S_ij · r_j</code> where <code>r_i</code> is relevance and <code>S_ij</code> is similarity (cosine on <VIS.Term def="A learned vector for each item. Items with similar interactions or content end up close.">item embeddings</VIS.Term>). The greedy DPP picks the next item that maximizes the marginal log-determinant gain:
       </p>
-      <VIS.Equation display tex={`i^{*} = \\arg\\max_{i \\notin Y} \\; \\log \\det(L_{Y \\cup \\{i\\}}) - \\log \\det(L_Y)`}/>
+      <VIS.Equation display tex={`i^{*} = \\arg\\max_{i \\notin S} \\;\\; \\log \\det(L_{S \\cup \\{i\\}}) \\;-\\; \\log \\det(L_{S})`}/>
       <p>
-        With the Cholesky-update trick, each greedy step is O(K&#178;) and the whole slate is O(K&#179;) &mdash; cheap enough for online reranking of K up to ~50.
+        Because <code>log det</code> is <VIS.Term def="A set function with diminishing-returns: adding an element to a small set gains more than adding it to a large set. Enables greedy approximation with a (1-1/e) bound.">submodular</VIS.Term> on PSD kernels, the greedy slate is within (1&minus;1/e) &approx; 63% of the optimal for the same kernel. Rank-1 Cholesky updates make each step O(N·t); total O(K²N).
       </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  Q["Top-N from ranker"]
-  K["Build kernel L = diag(q) S diag(q)"]
+      <VIS.Mermaid chart={`flowchart TB
+  C["Candidate pool top-N"]
+  K["Kernel L = Diag r times S times Diag r"]
   G["Greedy log-det step"]
-  S["Slate of K items"]
-  Q --> K --> G --> S
-  G -.->|"Cholesky update"| G
-      `} />
+  S["Selected slate"]
+  C --> K --> G --> S
+  G -->|rank-1 Cholesky update| G`} />
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>MMR</th><th style={{textAlign:"left",padding:8}}>FastDPP</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from MMR (and SMMR)">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Property</th>
+          <th style={{textAlign:"left", padding:8}}>MMR</th>
+          <th style={{textAlign:"left", padding:8}}>FastDPP</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Objective</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Local marginal score</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Set log-determinant</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Diversity signal</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Max-sim to chosen</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Volume spanned by all</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Cost per slate of K</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>O(N&middot;K)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>O(K&#179;) + O(N&middot;K)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Sensitivity to kernel</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Low (one similarity)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High (full S matrix)</td></tr>
+          <tr><td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Scoring scope</td>
+              <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Local: marginal vs current set</td>
+              <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Set-level: log-det of full slate</td></tr>
+          <tr style={{background:"#f8fafc"}}>
+            <td style={{padding:8}}>Relevance/diversity knob</td>
+            <td style={{padding:8}}>Explicit lambda</td>
+            <td style={{padding:8}}>Baked into kernel structure</td></tr>
+          <tr>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Guarantee</td>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>None</td>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>(1 - 1/e) approximation via submodularity</td></tr>
+          <tr style={{background:"#f8fafc"}}>
+            <td style={{padding:8}}>Complexity per slate</td>
+            <td style={{padding:8}}>O(K times N)</td>
+            <td style={{padding:8}}>O(K-squared times N) with rank-1 updates</td></tr>
+          <tr>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Achilles heel</td>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Over-converges on ties</td>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Mis-calibrated S kills relevance</td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Slate surfaces (feeds, carousels) where session engagement depends on slate-level diversity, not item-level relevance alone.</li>
-        <li>You have a calibrated similarity kernel S (item embeddings tuned for semantic distance).</li>
-        <li>K is small enough (5-50) that O(K&#179;) is cheap.</li>
-        <li>Published wins typically &asymp; +20% slate diversity with ~1-3% NDCG drop.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 32 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the question-axis it draws from (see <a href="https://vijaykatta3094-ops.github.io/ml-knowledge-hub/strategy-reference.html" target="_blank" rel="noopener">strategy &sect;8b</a>). Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations &amp; gotchas">
-      <ul>
-        <li><strong>Kernel calibration is the whole game</strong> &mdash; if S over-clusters, FastDPP picks too-diverse slates; under-clusters, it degenerates to top-K.</li>
-        <li><strong>Greedy approximation</strong> &mdash; (1 - 1/e) optimal at best; pathological kernels can break this.</li>
-        <li><strong>Relevance-similarity coupling</strong> &mdash; q (relevance) and S (similarity) live on different scales; mis-scaling kills either signal.</li>
-        <li><strong>Catalog drift</strong> &mdash; embeddings used for S age; periodic re-fit needed.</li>
-        <li><strong>Cold items</strong> &mdash; new items have unstable embeddings; their kernel rows are noisy.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill &mdash; 10 trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
+      {/* axis: A1 */}
       <VIS.TrapProblem
         id="dpp-p1" difficulty="hard"
-        title="P1 &mdash; Bigger diversity wins offline, smaller wins online"
-        scenario={<>Offline replay benchmark: FastDPP gives +22% diversity at -1% NDCG vs MMR. Live A/B: FastDPP gives +14% diversity at -6% relevance and -4% session-engagement. What is the most likely cause?</>}
+        title="P1 — MMR's set, DPP's set: same items?"
+        scenario={<><em>Discriminating insight: MMR scores marginally; DPP scores set-level via log-det. They diverge when the candidate pool has clusters.</em><br/>The top-100 candidates contain 30 near-clones of a hot item plus 70 diverse niche items. Compare MMR (lambda=0.5) and DPP slates of K=10. Which is most likely?</>}
         options={[
-          {key:"a", text:"The similarity kernel used offline was over-tuned on a stale embedding; online embeddings drift and the kernel under-estimates true similarity, so FastDPP over-diversifies in production.", correct:true},
-          {key:"b", text:"DPP cannot work online."},
-          {key:"c", text:"The greedy approximation degrades online."},
-          {key:"d", text:"Online traffic has higher quality."},
+          {key:"a", text:"MMR may pick 3-4 near-clones in a row before the marginal similarity penalty kicks in; DPP penalizes the cluster directly via log-det and avoids that pile-up.", correct:true},
+          {key:"b", text:"Both produce the same slate because both use the same similarity kernel."},
+          {key:"c", text:"MMR is more diverse than DPP because it has an explicit lambda."},
+          {key:"d", text:"DPP collapses to MMR when the kernel is diagonal."},
         ]}
-        trap={<>(b)/(c)/(d) misattribute the gap. FastDPP&apos;s output is dominated by the S kernel; if S drifts between offline replay and live serving, the diversity-relevance trade-off shifts non-linearly.</>}
-        lens={<>Treat the kernel as a model artifact with its own version, monitoring, and freshness SLA. Use online embeddings for both offline replay and live serving.</>}
-        stretch={<>How would you A/B test the kernel itself, holding the reranker fixed?</>}
+        trap={<>(b)/(c)/(d) miss the marginal-vs-set distinction. MMR's marginal penalty depends only on max similarity to the already-chosen set, not on how concentrated the cluster is.</>}
+        lens={<>The marginal/set distinction is the practical difference. With heavy clustering, MMR's first picks anchor on the cluster and only the penalty wakes up gradually.</>}
+        stretch={<>What lambda would MMR need to match DPP on this candidate pool? Why is there no clean answer?</>}
       />
 
+      {/* axis: C1 */}
       <VIS.TrapProblem
         id="dpp-p2" difficulty="hard"
-        title="P2 &mdash; Numerical instability"
-        scenario={<>Engineer reports that for some slates of K=20, the log-det computation returns -inf and the reranker falls back to identity. What is the root cause?</>}
+        title="P2 — Why log-det and not trace?"
+        scenario={<><em>Discriminating insight: log-det = squared volume of the embedding parallelepiped; trace is just sum of diagonal — no diversity signal.</em><br/>A junior asks: &quot;Why does DPP use log-det of L? Wouldn't trace of L be simpler?&quot; What's the right explanation?</>}
         options={[
-          {key:"a", text:"Two near-duplicate candidates produce near-zero eigenvalues in L_Y; det approaches 0 and log-det blows up. Need a small ridge: L = L + epsilon I.", correct:true},
-          {key:"b", text:"Cholesky decomposition is invalid for DPP."},
-          {key:"c", text:"K=20 is too small for DPP."},
-          {key:"d", text:"The ranker output is non-deterministic."},
+          {key:"a", text:"log det of L_S measures the squared volume spanned by chosen items' embedding columns scaled by relevance — high when items are mutually orthogonal AND relevant. Trace is a sum of diagonals; it doesn't see pairwise structure.", correct:true},
+          {key:"b", text:"Trace is non-submodular; log-det is submodular."},
+          {key:"c", text:"log-det is faster to compute than trace."},
+          {key:"d", text:"Trace is equivalent to MMR; log-det is equivalent to DPP."},
         ]}
-        trap={<>(b) misunderstands &mdash; Cholesky updates ARE the standard trick. (c) inverts reality. (d) blames upstream for a numerics bug.</>}
-        lens={<>Always regularize the kernel with a small diagonal ridge. Without it, near-duplicate candidates make L_Y singular and FastDPP collapses.</>}
-        stretch={<>How large should epsilon be? What does it cost?</>}
+        trap={<>(b) is true but secondary to the geometric meaning. (c) is false. (d) is a slogan.</>}
+        lens={<>log-det is a geometric quantity: high volume = relevant AND mutually orthogonal. That's the joint objective. Trace ignores pairwise structure and can't express diversity.</>}
+        stretch={<>What other set functions over a PSD kernel are submodular? Why isn't DPP the only choice?</>}
       />
 
+      {/* axis: C4 */}
       <VIS.TrapProblem
         id="dpp-p3" difficulty="hard"
-        multiSelect
-        title="P3 &mdash; When MMR wins"
-        scenario={<>You are choosing between MMR and FastDPP for an e-commerce category page. Which conditions favor MMR? Select all that apply.</>}
+        title="P3 — There is no lambda; the trade is in the kernel"
+        scenario={<><em>Discriminating insight: DPP has no explicit lambda — relevance/diversity trade is encoded in the kernel structure (relevance exponent, similarity scaling).</em><br/>Ops asks: &quot;What's DPP's diversity knob analogous to MMR's lambda?&quot; What's the right answer?</>}
         options={[
-          {key:"a", text:"Your similarity signal is a single scalar (one embedding distance) rather than a full kernel.", correct:true},
-          {key:"b", text:"Latency budget is tight; you serve K=200 items.", correct:true},
-          {key:"c", text:"Engineering team has limited DPP debugging experience and you need explainable per-item logic.", correct:true},
-          {key:"d", text:"You have a perfectly calibrated multi-aspect similarity kernel."},
-          {key:"e", text:"Slate is K=5 and engagement is set-level."},
+          {key:"a", text:"DPP has no explicit lambda; the relevance/diversity trade is encoded in the kernel. Tune by scaling relevance exponent (raise r_i to a power) or amplifying off-diagonal entries — those reshape what log-det optimizes.", correct:true},
+          {key:"b", text:"DPP's lambda is the regularization weight on the Cholesky update."},
+          {key:"c", text:"DPP's lambda is the slate length K."},
+          {key:"d", text:"DPP and MMR share the same lambda."},
         ]}
-        trap={<>(d)/(e) describe ideal DPP conditions. The MMR-favoring conditions are all about constraints &mdash; signal poverty, latency, debug-ability.</>}
-        lens={<>Pick FastDPP when you can fund a calibrated kernel and K is small. Pick MMR when you cannot or when explainability matters more.</>}
-        stretch={<>How would you stage from MMR to FastDPP incrementally?</>}
+        trap={<>(b)/(c)/(d) bolt MMR-style intuition onto DPP. The kernel is the spec; reshape it instead.</>}
+        lens={<>DPP's design choice: no explicit knob. Tuning is via the kernel, which is harder to interpret but more principled.</>}
+        stretch={<>Show how raising r to the power 0.5 changes the relevance/diversity trade in concrete terms.</>}
       />
 
+      {/* axis: E1 */}
       <VIS.TrapProblem
         id="dpp-p4" difficulty="hard"
-        title="P4 &mdash; Relevance-similarity scaling"
-        scenario={<>You serve L = diag(q) S diag(q) where q is raw ranker score (ranges 0-1) and S is cosine similarity (ranges -1 to 1, mostly 0.2-0.7). Live slates feel chaotic; A/B shows -8% relevance with only +5% diversity. What is wrong?</>}
+        title="P4 — Negative relevance scores break PSD"
+        scenario={<><em>Discriminating insight: L must be PSD; if r_i can be negative (logits), naive construction breaks the determinant.</em><br/>You wire DPP with <code>r_i = logit_i</code> (can be negative). The system produces silent NaN log-det values. Most likely cause?</>}
         options={[
-          {key:"a", text:"q&#178; on raw 0-1 ranker scores is too compressed; small differences in relevance get washed out by the larger similarity dynamic range, so the determinant chases diversity.", correct:true},
-          {key:"b", text:"Cosine similarity is invalid for DPP."},
-          {key:"c", text:"You should use q = q&#179; instead."},
-          {key:"d", text:"The bug is in the ranker."},
+          {key:"a", text:"Negative relevance values produce a non-PSD L; log-det is undefined. Use r_i = exp(alpha times logit_i) or r_i = max(0, score) to keep L PSD.", correct:true},
+          {key:"b", text:"NaN is from numerical underflow; add a small constant to logits."},
+          {key:"c", text:"Cholesky update overflows when relevance is negative."},
+          {key:"d", text:"This is a known bug in numpy's det function for sparse kernels."},
         ]}
-        trap={<>(b)/(d) blame the wrong component. (c) is a hack without diagnosis. The fix is calibration: transform q so relevance and similarity contribute on comparable scales.</>}
-        lens={<>Apply temperature-style scaling: q&apos; = exp(beta &middot; rank_score) where beta is tuned so relevance and similarity contribute comparably to log-det gain. Calibrate offline.</>}
-        stretch={<>How would you pick beta from offline diversity-relevance Pareto curves?</>}
+        trap={<>(b)/(c)/(d) are general numerics red herrings. The actual issue is structural: PSD is a hard requirement on L.</>}
+        lens={<>Keep L PSD by construction. Exponentiate or clip relevance before forming the kernel.</>}
+        stretch={<>What's the smallest fix that preserves the original score ranking?</>}
       />
 
+      {/* axis: E2 */}
       <VIS.TrapProblem
         id="dpp-p5" difficulty="hard"
-        title="P5 &mdash; Greedy vs optimal"
-        scenario={<>An interviewer asks: greedy FastDPP achieves at most (1 - 1/e) &asymp; 63% of the optimal log-det. Is this gap practically meaningful for slate sizes K=10?</>}
+        title="P5 — Failure-on-Friday: cold-item norm collapse"
+        scenario={<><em>Discriminating insight: DPP's set-level scoring with collapsed-norm cold embeddings makes cold items invisible to greedy; MMR's marginal-penalty rule does not have this collapse.</em><br/>DPP shipped Thursday on home feed. Friday 3am page: feed engagement steady but <strong>long-tail-coverage metric drops 15%</strong>. Latency, eval, util all fine. Why does this failure hit DPP specifically and not MMR or pure relevance ranking?</>}
         options={[
-          {key:"a", text:"Usually no &mdash; empirical studies show greedy log-det is within a few percent of optimal at small K; the worst-case bound is loose for practical kernels.", correct:true},
-          {key:"b", text:"Yes &mdash; the gap is always close to the worst case."},
-          {key:"c", text:"Greedy is optimal for DPP."},
-          {key:"d", text:"K=10 makes the gap exactly 0%."},
+          {key:"a", text:"Cold items have small-norm embeddings (collapsed during training); their contribution to det of L_S is near-zero, so DPP greedy never selects them. MMR's marginal-similarity penalty does not have a norm-collapse failure mode. Fix: regularize embedding norms or use a hot/cold-aware S.", correct:true},
+          {key:"b", text:"DPP is too compute-expensive for cold items; they're truncated upstream."},
+          {key:"c", text:"Cold items have negative relevance scores; PSD breaks."},
+          {key:"d", text:"Long-tail-coverage is incompatible with all diversity rerankers."},
         ]}
-        trap={<>(b) conflates worst-case bound with average case. (c) is false &mdash; max DPP is NP-hard. (d) is a numeric guess with no basis.</>}
-        lens={<>The (1 - 1/e) is a worst-case combinatorial bound for monotone submodular maximization. On real kernels, greedy log-det typically attains 90%+ of optimal; only pathological structured kernels saturate the bound.</>}
-        stretch={<>Construct a kernel where greedy is close to the (1 - 1/e) bound.</>}
+        trap={<>(b)/(d) misattribute. (c) is plausible but wrong: cold items have positive small relevance, not negative.</>}
+        lens={<>DPP's geometric formulation is exquisitely sensitive to embedding norms. Cold-item embeddings — exactly the items diversity is supposed to surface — get geometrically washed out.</>}
+        stretch={<>How would you renormalize embeddings to surface cold items without distorting relevance?</>}
       />
 
+      {/* axis: E3 */}
       <VIS.TrapProblem
         id="dpp-p6" difficulty="hard"
-        multiSelect
-        title="P6 &mdash; Cold-item rows in S"
-        scenario={<>20% of your daily candidates are brand-new items with embeddings derived from content (not behavior). Their similarity rows in S are systematically tighter to one cluster (content-only embeddings collapse). How should you adapt FastDPP? Select all that apply.</>}
+        title="P6 — Cholesky regularizer prevents log(0)"
+        scenario={<><em>Discriminating insight: rank-1 Cholesky update is unstable when the new item is near-linearly-dependent on selected — det approaches 0, log undefined. Need a tiny diagonal regularizer.</em><br/>Your DPP greedy implementation hits log(0) errors when the candidate pool contains near-duplicate items. What's the standard fix?</>}
         options={[
-          {key:"a", text:"Per-item kernel-row reweighting that increases the effective spread for cold items until they have enough impressions.", correct:true},
-          {key:"b", text:"Use a separate cold-item embedding head trained with hard-negative mining so content embeddings spread out.", correct:true},
-          {key:"c", text:"Mix two kernels S = (1-w(item)) S_content + w(item) S_behavior, where w grows with impressions.", correct:true},
-          {key:"d", text:"Drop cold items entirely from the slate."},
-          {key:"e", text:"Set q to 0 for cold items."},
+          {key:"a", text:"Add a tiny diagonal regularizer (e.g., 1e-6 times I) to L; this prevents det from going to 0 when items are near-linearly-dependent.", correct:true},
+          {key:"b", text:"Switch from Cholesky to LU decomposition."},
+          {key:"c", text:"Use double-precision floats."},
+          {key:"d", text:"Truncate the candidate pool further before running DPP."},
         ]}
-        trap={<>(d)/(e) trade the diversity goal for safety &mdash; you lose all cold-start exploration. The three correct moves all preserve cold-item exposure while fixing the embedding-collapse pathology.</>}
-        lens={<>FastDPP exposes embedding bugs that other rerankers hide. Treat content-only embeddings as a cold-start subsystem with its own calibration.</>}
-        stretch={<>How would you monitor &quot;effective spread&quot; live?</>}
+        trap={<>(b)/(c) address numerics in general but miss the specific cause. (d) is a workaround that hides the issue.</>}
+        lens={<>Diagonal regularization is standard practice for any submodular greedy over PSD kernels. Cheap, principled, and avoids the log-of-zero artifact.</>}
+        stretch={<>What's the largest regularizer value that doesn't materially change the slate?</>}
       />
 
+      {/* axis: D1 */}
       <VIS.TrapProblem
         id="dpp-p7" difficulty="hard"
-        title="P7 &mdash; Slate engagement metric for offline tuning"
-        scenario={<>You want to tune the relevance-diversity trade-off offline before A/B. Which proxy best correlates with live slate engagement?</>}
+        title="P7 — Paper says +22% diversity at small relevance cost; your A/B says large cost"
+        scenario={<><em>Discriminating insight: paper benchmarks use calibrated kernels; in production the embedding kernel is likely mis-calibrated and DPP rejects items that are not actually redundant.</em><br/>Hulu's 2018 paper reports +22% diversity at small relevance cost. Your production A/B finds DPP with the same kernel formula gives +18% diversity but a -3.5% click-through loss. Most likely cause?</>}
         options={[
-          {key:"a", text:"Counterfactual replay using IPS-weighted clicks across a stratified sample of historical slates and the new policy&apos;s slate.", correct:true},
-          {key:"b", text:"Single-item NDCG averaged across the slate."},
-          {key:"c", text:"Catalog coverage rate."},
-          {key:"d", text:"Average intra-slate cosine similarity."},
+          {key:"a", text:"Your similarity kernel S is mis-calibrated for the production candidate distribution; DPP rejects items it thinks are redundant when they aren't, costing relevance. Re-calibrate S on production embeddings.", correct:true},
+          {key:"b", text:"DPP needs more candidates than the paper used."},
+          {key:"c", text:"The paper's metric definition is different from yours."},
+          {key:"d", text:"DPP's relevance cost grows linearly with K; truncate the slate."},
         ]}
-        trap={<>(b)/(c)/(d) are item-level or aggregate proxies; they miss the slate-as-a-unit signal. Replay with importance weighting is the standard offline-online bridge.</>}
-        lens={<>For slate objectives, evaluate slates as units. <VIS.Term def="Inverse propensity score weighting: re-weights historical observations by 1 / probability-of-being-shown to estimate the counterfactual reward under a new policy.">IPS replay</VIS.Term> is the cheapest defensible offline-to-online bridge.</>}
-        stretch={<>How do you build a propensity model when production is itself a DPP?</>}
+        trap={<>(b)/(c)/(d) sweep the kernel-calibration issue under the rug. The kernel IS the algorithm in DPP.</>}
+        lens={<>DPP's success is dominated by S quality. Paper benchmarks have artisanal kernels; production kernels need re-calibration each catalog refresh.</>}
+        stretch={<>How would you detect kernel mis-calibration without an A/B?</>}
       />
 
+      {/* axis: A2 */}
       <VIS.TrapProblem
         id="dpp-p8" difficulty="hard"
-        title="P8 &mdash; Latency budget"
-        scenario={<>Your serving budget is 8ms for reranking. K=10, N=200. Greedy FastDPP currently takes 14ms because of the dense N&times;N kernel build. What is the most defensible fix?</>}
+        title="P8 — DPP vs MMR vs random shuffle"
+        scenario={<><em>Discriminating insight: random shuffle destroys relevance ordering; MMR/DPP preserve it within their objectives. The three are not interchangeable.</em><br/>A junior says: &quot;If we just want diversity, can we use random shuffle? It's free.&quot; Why is this wrong?</>}
         options={[
-          {key:"a", text:"Pre-compute embeddings, cache the top-N kernel block from ANN, and use the Cholesky-update trick to limit per-step work to O(K).", correct:true},
-          {key:"b", text:"Switch to FastDPP without the greedy step."},
-          {key:"c", text:"Drop K to 1."},
-          {key:"d", text:"Run FastDPP only at p99."},
+          {key:"a", text:"Random shuffle destroys relevance ordering. MMR and DPP trade relevance for diversity in a principled way; random shuffle has no relevance preservation and no diversity bound.", correct:true},
+          {key:"b", text:"Random shuffle is non-deterministic and breaks unit tests."},
+          {key:"c", text:"Random shuffle requires more candidates."},
+          {key:"d", text:"Random shuffle and DPP are equivalent on uniform candidate pools."},
         ]}
-        trap={<>(b) is incoherent &mdash; greedy IS the practical algorithm. (c)/(d) sacrifice the product. The right move is engineering: precompute, cache, and apply the Cholesky update that DPP greedy was built around.</>}
-        lens={<>FastDPP&apos;s latency story is well understood: the build of S is O(N&middot;d) for d-dim embeddings; the greedy update is O(K) per step. Stage by caching kernel rows behind the ANN lookup.</>}
-        stretch={<>How would you parallelize the greedy step?</>}
+        trap={<>(b)/(c)/(d) ignore the elephant: shuffle has no objective at all.</>}
+        lens={<>Diversity rerankers preserve relevance within a chosen tradeoff. Shuffle is the noise floor, not a diversity strategy.</>}
+        stretch={<>Construct a scenario where random shuffle would outperform DPP on user metrics.</>}
       />
 
+      {/* axis: D5 */}
       <VIS.TrapProblem
         id="dpp-p9" difficulty="hard"
-        multiSelect
-        title="P9 &mdash; Multi-aspect similarity"
-        scenario={<>Your platform cares about diversity along multiple axes (genre, creator, language, length). How should the kernel S reflect this? Select all that apply.</>}
+        title="P9 — Sub-quadratic, but is it fast enough?"
+        scenario={<><em>Discriminating insight: asymptotic complexity hides constant factors; production latency depends on implementation, not Big-O.</em><br/>For K=20, N=200, DPP greedy is O(K-squared times N) = 80k Cholesky updates per request. On CPU with naive numpy you measure p99 at 120ms. The latency SLO is 30ms. Which fix is most defensible?</>}
         options={[
-          {key:"a", text:"Weighted combination S = sum_a w_a S_a where each S_a is a single-aspect kernel and weights are tuned offline.", correct:true},
-          {key:"b", text:"Product kernel S(i,j) = prod_a S_a(i,j) emphasizing pairs that are similar on every axis.", correct:true},
-          {key:"c", text:"Per-aspect DPP applied in cascade with calibrated proportional weighting.", correct:true},
-          {key:"d", text:"Concatenate all attribute embeddings, ignoring aspect weights."},
-          {key:"e", text:"Pick one aspect; diversity is naturally one-dimensional."},
+          {key:"a", text:"Move kernel ops to GPU or use a Cholesky-optimized BLAS; the asymptotic complexity is fine, the constant factor is the bottleneck.", correct:true},
+          {key:"b", text:"Reduce K to 5 so latency falls."},
+          {key:"c", text:"Switch to MMR; DPP is too slow inherently."},
+          {key:"d", text:"Cache DPP slates per user."},
         ]}
-        trap={<>(d) collapses the design back into a one-aspect problem with hidden, accidental weights. (e) gives up. The three valid designs each let you tune aspect importance explicitly.</>}
-        lens={<>Multi-aspect diversity is a kernel-design problem. Make the aspect weighting an explicit, tunable, monitored parameter.</>}
-        stretch={<>How would you set initial weights when you have no labeled diversity data?</>}
+        trap={<>(b) trades product quality for latency. (c) abandons the algorithm. (d) caches stale slates.</>}
+        lens={<>DPP greedy is BLAS-bound; correct implementation matters more than the asymptote. Always profile before declaring DPP &quot;too slow&quot;.</>}
+        stretch={<>How big would N need to be before the asymptote is truly the bottleneck instead of constants?</>}
       />
 
+      {/* axis: F1 */}
       <VIS.TrapProblem
         id="dpp-p10" difficulty="hard"
-        title="P10 &mdash; Diversity boost shifts long-tail traffic"
-        scenario={<>After FastDPP launch, long-tail items get +35% impressions but creator-side complaints spike: a handful of newly-promoted long-tail creators have low-quality content. What is the cleanest fix?</>}
+        title="P10 — Candidate pool of identical items"
+        scenario={<><em>Discriminating insight: rank-deficient candidate pools collapse log-det to zero after the first pick; DPP has no defense without a check.</em><br/>Cold-start morning: candidate pool is K items, all near-duplicates (the same new movie at K resolutions). DPP picks one, then det of L_S = 0. What does greedy do next?</>}
         options={[
-          {key:"a", text:"Apply a quality-floor multiplier to q (relevance) for items below a creator-quality threshold; FastDPP then naturally avoids them while preserving diversity within the eligible pool.", correct:true},
-          {key:"b", text:"Disable FastDPP."},
-          {key:"c", text:"Lower the diversity weight uniformly."},
-          {key:"d", text:"Block all long-tail items."},
+          {key:"a", text:"Arbitrarily fills the remaining slots — log-det is zero for all remaining additions, so the picks are degenerate. Detect rank-deficiency in the candidate pool BEFORE running greedy and fall back to a different policy.", correct:true},
+          {key:"b", text:"Throws a divide-by-zero error every time."},
+          {key:"c", text:"Picks the highest-relevance remaining item (degrades to pure relevance ranking)."},
+          {key:"d", text:"Re-shuffles automatically."},
         ]}
-        trap={<>(b)/(c)/(d) all sacrifice the diversity wins to address a quality bug. The right fix lives in q, not in S.</>}
-        lens={<>Quality floors belong in the relevance dial (q), not the similarity dial (S). Keep the two concerns separable so diversity work doesn&apos;t become quality work.</>}
-        stretch={<>How would you set the quality threshold without hurting cold-start exploration?</>}
+        trap={<>(b)/(c)/(d) attribute polite behavior that DPP does not have. (c) is what you'd want, but DPP does not gracefully degrade.</>}
+        lens={<>Always rank-check the candidate pool. DPP is undefined on rank-deficient kernels; explicit fallback is required.</>}
+        stretch={<>How do you detect rank-deficiency cheaply at request time?</>}
+      />
+
+      {/* axis: F2 */}
+      <VIS.TrapProblem
+        id="dpp-p11" difficulty="hard"
+        title="P11 — Adversarial item: high relevance + orthogonal embedding"
+        scenario={<><em>Discriminating insight: DPP loves &quot;orthogonal&quot; embeddings; an adversary can craft gibberish that scores high on log-det.</em><br/>An adversary uploads an item with inflated relevance and a near-orthogonal embedding (gibberish text). What does DPP do?</>}
+        options={[
+          {key:"a", text:"DPP greedy LIKES this item — high r, near-orthogonal to chosen set — so it ranks high on log-det gain. Spam slips through. Pure relevance ranking with a semantic-quality filter would have rejected the gibberish.", correct:true},
+          {key:"b", text:"DPP rejects items with anomalous embeddings."},
+          {key:"c", text:"PSD check filters out adversarial items."},
+          {key:"d", text:"The Cholesky update would fail and the item is dropped."},
+        ]}
+        trap={<>(b)/(c)/(d) attribute defensive behavior DPP does not have. Orthogonal &amp; high-r is exactly the &quot;ideal&quot; DPP item.</>}
+        lens={<>DPP's geometric objective rewards exactly the kind of orthogonal-with-high-r the adversary creates. Need an upstream semantic-quality filter.</>}
+        stretch={<>Design a kernel modification that downweights anomalously orthogonal embeddings.</>}
+      />
+
+      {/* axis: F3 */}
+      <VIS.TrapProblem
+        id="dpp-p12" difficulty="hard"
+        title="P12 — log-det values that grow across slate steps"
+        scenario={<><em>Discriminating insight: submodularity ⟹ marginal log-det gain monotonically decreases; growth is impossible math and indicates an engineering bug.</em><br/>Monitoring shows the marginal log-det gain ACROSS slate steps is non-monotonic — sometimes step 5 gain is greater than step 3 gain. What's the most likely cause?</>}
+        options={[
+          {key:"a", text:"Race condition between parallel head workers reading stale L_S. The math says marginal gains must be non-increasing (submodularity); non-monotonic gains are an engineering bug, not an algorithm failure.", correct:true},
+          {key:"b", text:"Cholesky update introduces non-monotonicity."},
+          {key:"c", text:"DPP is non-submodular for non-symmetric kernels."},
+          {key:"d", text:"Relevance scores changed between steps."},
+        ]}
+        trap={<>(b)/(c) propose ghost-math reasons. log-det IS submodular for symmetric PSD; if you see violations, the code is wrong.</>}
+        lens={<>Submodularity is a hard guarantee from linear algebra; violations are diagnostics for engineering issues (caching, races, stale state).</>}
+        stretch={<>What's the cheapest invariant check you'd add to catch this in CI?</>}
+      />
+
+      {/* axis: F4 */}
+      <VIS.TrapProblem
+        id="dpp-p13" difficulty="hard"
+        title="P13 — Paper's pre-truncation is NOT optional"
+        scenario={<><em>Discriminating insight: Chen et al. explicitly pre-truncate to top-200 before DPP — &quot;sub-quadratic per slate item&quot; still scales with N.</em><br/>You skip the pre-truncation and run DPP on the full candidate pool (N=50k). Latency explodes. Was this an implementation bug or expected?</>}
+        options={[
+          {key:"a", text:"Expected. The paper explicitly pre-truncates candidates to top-200 before DPP. &quot;Sub-quadratic per slate item&quot; means O(K-squared times N) — still linear in N. Pre-truncation is part of the algorithm, not an optimization.", correct:true},
+          {key:"b", text:"Implementation bug — DPP should be sub-linear in N."},
+          {key:"c", text:"DPP requires a sparse-kernel optimization for large N."},
+          {key:"d", text:"The paper used GPUs; CPU implementations are slower."},
+        ]}
+        trap={<>(b) misreads complexity. (c)/(d) are red herrings.</>}
+        lens={<>Pre-truncation to the candidate gen output is part of the standard production recipe. Don't skip it.</>}
+        stretch={<>How small can N be before the (1-1/e) bound becomes too loose to be useful?</>}
+      />
+
+      {/* axis: F5 */}
+      <VIS.TrapProblem
+        id="dpp-p14" difficulty="hard"
+        title="P14 — Kernel drift over weeks"
+        scenario={<><em>Discriminating insight: embedding distributions drift faster than people expect in fast-moving catalogs; DPP&apos;s kernel calibration is not a set-and-forget knob.</em><br/>Production write-ups (Agrawal 2025 survey) note DPP slate quality drifts within weeks. Why?</>}
+        options={[
+          {key:"a", text:"Embedding distributions shift as catalogs evolve (new items, retired items, drift in user behavior). The kernel L = Diag(r) S Diag(r) needs periodic re-calibration; without it, S mis-estimates similarity and DPP misranks.", correct:true},
+          {key:"b", text:"DPP's submodularity bound degrades over time."},
+          {key:"c", text:"Cholesky updates accumulate floating-point error."},
+          {key:"d", text:"User preferences drift faster than DPP greedy converges."},
+        ]}
+        trap={<>(b) misreads what submodularity means. (c)/(d) are operational red herrings.</>}
+        lens={<>DPP is kernel-quality bound. Kernel calibration must be a scheduled job, not a one-time setup.</>}
+        stretch={<>What's a cheap drift signal you'd monitor in production?</>}
+      />
+
+      {/* axis: D2 */}
+      <VIS.TrapProblem
+        id="dpp-p15" difficulty="hard" multiSelect
+        title="P15 — Wrong-assumption cascade: DPP = MMR + lambda"
+        scenario={<><em>Discriminating insight: thinking DPP has a lambda-style knob cascades into tuning attempts that do not reflect the kernel structure.</em><br/>You assume DPP and MMR are interchangeable with different lambdas. Which downstream conclusions does this corrupt? Select all that apply.</>}
+        options={[
+          {key:"a", text:"You'll search for DPP's lambda knob — and not find one — wasting time.", correct:true},
+          {key:"b", text:"You'll tune by scaling relevance globally — the wrong dial in DPP.", correct:true},
+          {key:"c", text:"You'll explain the diversity/relevance trade to PMs in lambda terms that don't apply.", correct:true},
+          {key:"d", text:"None of the above — the assumption is harmless."},
+        ]}
+        trap={<>(d) is the original assumption that creates the other failures.</>}
+        lens={<>DPP's design choice: no lambda. Tune via kernel structure (relevance exponent, S amplification), not a knob that does not exist.</>}
+        stretch={<>How would you explain &quot;no lambda&quot; to a PM who is used to MMR?</>}
+      />
+
+      {/* axis: B1 */}
+      <VIS.TrapProblem
+        id="dpp-p16" difficulty="hard"
+        title="P16 — When to pick DPP over MMR"
+        scenario={<><em>Discriminating insight: DPP&apos;s set-level score is worth the kernel-calibration burden when the candidate pool is clustered AND embeddings are calibrated.</em><br/>Two surfaces: (A) news with hot-story clusters and well-trained article embeddings; (B) cold-start music recs with collapsing item embeddings. For which would you ship DPP first?</>}
+        options={[
+          {key:"a", text:"(A) — clustered candidates AND calibrated embeddings is exactly DPP's sweet spot; (B)'s norm-collapse makes DPP regress.", correct:true},
+          {key:"b", text:"(B) — diversity helps cold-start more."},
+          {key:"c", text:"Either; DPP is robust to embedding quality."},
+          {key:"d", text:"Neither; ship MMR everywhere."},
+        ]}
+        trap={<>(b) misreads cold-start as a kernel-quality-independent regime. (c) ignores that DPP is kernel-quality bound. (d) is generic.</>}
+        lens={<>DPP delivers when (i) candidates cluster and (ii) the similarity kernel is calibrated. Without (ii), it underperforms MMR.</>}
+        stretch={<>What's the smallest signal that tells you embeddings are calibrated enough for DPP?</>}
+      />
+
+      {/* axis: B2 */}
+      <VIS.TrapProblem
+        id="dpp-p17" difficulty="hard"
+        title="P17 — Sounds reasonable: bigger embedding dim"
+        scenario={<><em>Discriminating insight: bigger embedding dim raises the parallelepiped volume, which can make near-orthogonal items numerically dominant — not always a quality win.</em><br/>Engineer proposes: &quot;Bump embedding dim from 64 to 512 — more room to spread items out, better DPP quality.&quot; Why is this risky?</>}
+        options={[
+          {key:"a", text:"At higher dim, more items become near-orthogonal by chance; the determinant blows up and DPP picks based on noise dimensions rather than meaningful structure. The relevance signal can get drowned.", correct:true},
+          {key:"b", text:"Higher dim always improves DPP quality."},
+          {key:"c", text:"Cholesky updates fail at high dim."},
+          {key:"d", text:"512-dim embeddings exceed memory."},
+        ]}
+        trap={<>(b) is the naive optimistic take. (c)/(d) attribute infrastructure issues.</>}
+        lens={<>Embedding dim must be tuned to support meaningful angular separation without dimensions-by-chance dominating. Higher is not always better for set-level kernels.</>}
+        stretch={<>How would you A/B embedding dims with DPP-sensitive metrics?</>}
+      />
+
+      {/* axis: C2 */}
+      <VIS.TrapProblem
+        id="dpp-p18" difficulty="hard"
+        title="P18 — What objective replaces the lambda in MMR?"
+        scenario={<><em>Discriminating insight: log-det fuses relevance + similarity geometrically — relevance scales the volume; similarity changes the angle. The fusion is the objective.</em><br/>State precisely what objective DPP optimizes that MMR does not.</>}
+        options={[
+          {key:"a", text:"The squared geometric volume spanned by chosen items' embeddings, scaled by their relevance — a SINGLE scalar that increases with both relevance and pairwise orthogonality.", correct:true},
+          {key:"b", text:"Relevance plus diversity, with diversity weighted by lambda."},
+          {key:"c", text:"Trace of the kernel — the same as MMR."},
+          {key:"d", text:"Mutual information between selected items."},
+        ]}
+        trap={<>(b) is MMR's objective. (c)/(d) misstate.</>}
+        lens={<>log-det is a joint scalar. MMR is a relevance-minus-penalty sum; DPP is a geometric volume.</>}
+        stretch={<>What's the analog of tuning lambda under DPP's geometric objective?</>}
+      />
+
+      {/* axis: C3 */}
+      <VIS.TrapProblem
+        id="dpp-p19" difficulty="hard"
+        title="P19 — What DPP drops to gain the bound"
+        scenario={<><em>Discriminating insight: DPP gains a (1-1/e) approximation guarantee but gives up MMR&apos;s simple lambda-tunable trade-off and adds kernel-calibration burden.</em><br/>What does DPP deliberately drop vs MMR to gain its (1-1/e) bound?</>}
+        options={[
+          {key:"a", text:"The explicit, ops-tunable lambda knob — replaced by a kernel that fuses relevance and similarity and requires calibration.", correct:true},
+          {key:"b", text:"Nothing — DPP is strictly better."},
+          {key:"c", text:"Determinism — DPP is probabilistic."},
+          {key:"d", text:"Speed — DPP is slower than MMR by an order of magnitude."},
+        ]}
+        trap={<>(b) is the &quot;costume&quot; trap. (c) confuses DPP greedy (deterministic) with full DPP sampling. (d) is sometimes true but not the structural trade.</>}
+        lens={<>The lambda knob is the deliberate sacrifice. The geometric bound is the gain.</>}
+        stretch={<>When would ops teams prefer MMR's lambda over DPP's bound?</>}
+      />
+
+      {/* axis: A3 */}
+      <VIS.TrapProblem
+        id="dpp-p20" difficulty="hard"
+        title="P20 — Counterfactual: no DPP, what's the fallback?"
+        scenario={<><em>Discriminating insight: without DPP, the typical fallback is MMR with tuned lambda; SMMR or LLM reranking are the upmarket alternatives.</em><br/>Suppose DPP did not exist. What's the realistic fallback for slate diversity in 2025 production?</>}
+        options={[
+          {key:"a", text:"MMR with carefully-tuned lambda (cheap, no kernel needed but local). Upmarket: SMMR for randomized exploration or LLM reranker for natural-language diversity.", correct:true},
+          {key:"b", text:"Pure relevance ranking — diversity not solvable without DPP."},
+          {key:"c", text:"Random shuffle."},
+          {key:"d", text:"Manual editorial curation."},
+        ]}
+        trap={<>(b) overstates DPP's necessity. (c)/(d) ignore the established diversity-reranker stack.</>}
+        lens={<>Diversity has a well-established stack: MMR (baseline), SMMR (sampled), DPP (set-level), LLM-rerank (semantic). DPP is not the only option.</>}
+        stretch={<>For a 6-month migration, which non-DPP method gets closest to DPP's quality?</>}
+      />
+
+      {/* axis: A4 */}
+      <VIS.TrapProblem
+        id="dpp-p21" difficulty="hard"
+        title="P21 — DPP + SMMR composition"
+        scenario={<><em>Discriminating insight: DPP gives set-level geometry; SMMR adds randomized exploration. Composing them addresses different over-convergence modes.</em><br/>You consider stacking DPP and SMMR. Which composition makes sense?</>}
+        options={[
+          {key:"a", text:"Use DPP to score top-K candidate slates and SMMR to sample among near-tied DPP scores — DPP handles set geometry, SMMR adds controlled randomization for exploration.", correct:true},
+          {key:"b", text:"Use SMMR upstream of DPP to randomize candidates."},
+          {key:"c", text:"Composition is meaningless; pick one."},
+          {key:"d", text:"DPP and SMMR are equivalent and should not stack."},
+        ]}
+        trap={<>(b) destroys candidate ordering and gives DPP garbage to work with. (c)/(d) miss the orthogonal contributions.</>}
+        lens={<>DPP and SMMR address different failures: set-geometric redundancy vs argmax over-convergence. Composing them is principled.</>}
+        stretch={<>What does the resulting slate look like — more like DPP or more like SMMR?</>}
+      />
+
+      {/* axis: A5 */}
+      <VIS.TrapProblem
+        id="dpp-p22" difficulty="hard"
+        title="P22 — Slate length where DPP stops mattering"
+        scenario={<><em>Discriminating insight: at K=1 or K=2, log-det&apos;s submodularity diminishing-returns has nothing to act on; DPP degenerates to relevance argmax (K=1) or trivial pair (K=2).</em><br/>At what slate length K does DPP stop being meaningfully different from MMR / pure relevance?</>}
+        options={[
+          {key:"a", text:"K=1 (DPP picks argmax of r-squared) and K=2 (DPP picks the highest-r and the highest-r-with-highest-orthogonal). The diminishing-returns property only differentiates at K of at least 3-5.", correct:true},
+          {key:"b", text:"K=100 — DPP stops scaling beyond that."},
+          {key:"c", text:"K=10 — beyond that DPP and MMR converge."},
+          {key:"d", text:"Never — DPP differs from MMR at all K."},
+        ]}
+        trap={<>(b)/(c)/(d) misstate. The geometric value of DPP rises with K up to a point and is most visible in the K=5-30 range.</>}
+        lens={<>DPP's advantage scales with K up to where set-level diminishing returns matter — usually K=5-30.</>}
+        stretch={<>For TikTok-style infinite scroll (K = unbounded), how does DPP behave?</>}
+      />
+
+      {/* axis: C5 */}
+      <VIS.TrapProblem
+        id="dpp-p23" difficulty="hard"
+        title="P23 — Data assumption: is S calibrated?"
+        scenario={<><em>Discriminating insight: DPP&apos;s entire value comes from S being a calibrated cosine similarity; without that, the kernel mis-encodes redundancy.</em><br/>Your S is cosine similarity on a model that was trained for relevance, not for similarity. What's the risk?</>}
+        options={[
+          {key:"a", text:"Relevance-trained embeddings cluster by predicted-CTR not by content. S can be wildly mis-calibrated as similarity, causing DPP to reject items that look similar (high cosine) but represent different content.", correct:true},
+          {key:"b", text:"Relevance-trained embeddings are always good similarity kernels."},
+          {key:"c", text:"Cosine works on any embedding regardless of training objective."},
+          {key:"d", text:"The Cholesky update would fail."},
+        ]}
+        trap={<>(b)/(c) overstate cosine's robustness. (d) is wrong.</>}
+        lens={<>Similarity-purpose embeddings are different from relevance embeddings. DPP needs the former; sharing the latter is a common, expensive bug.</>}
+        stretch={<>How would you build a cheap similarity-purpose embedding alongside the relevance one?</>}
+      />
+
+      {/* axis: D3 */}
+      <VIS.TrapProblem
+        id="dpp-p24" difficulty="hard"
+        title="P24 — Junior vs senior: NDCG regression"
+        scenario={<><em>Discriminating insight: junior tunes relevance; senior questions whether NDCG is the right metric for diversity-aware ranking.</em><br/>DPP A/B regresses NDCG@10 by 1.5% but raises session-length by 3%. Junior says &quot;back out, NDCG dropped.&quot; What does senior do?</>}
+        options={[
+          {key:"a", text:"Session-length is the better business metric for diversity-aware ranking; NDCG measures relevance-of-list-ordering, not user engagement with the list. Argue for the engagement metric and ship.", correct:true},
+          {key:"b", text:"Tune lambda to reduce diversity until NDCG recovers."},
+          {key:"c", text:"Replace DPP with MMR."},
+          {key:"d", text:"Re-train the relevance model on more data."},
+        ]}
+        trap={<>(b) is MMR-think. (c)/(d) ignore the metric mismatch.</>}
+        lens={<>NDCG is a relevance-ordering metric; diversity is a coverage metric. Pick the metric to match the product.</>}
+        stretch={<>What's the right offline metric for session-aware DPP A/B prep?</>}
+      />
+
+      {/* axis: D4 */}
+      <VIS.TrapProblem
+        id="dpp-p25" difficulty="hard"
+        title="P25 — Plausible misattribution"
+        scenario={<><em>Discriminating insight: when DPP regresses, the most common real cause is kernel drift or norm collapse, not DPP itself.</em><br/>Recent DPP rollout regresses click rate by 2%. Three plausible causes: (i) DPP itself is wrong for this surface, (ii) S has drifted, (iii) recent embedding retrain changed norm distribution. Which is most likely?</>}
+        options={[
+          {key:"a", text:"(ii) or (iii) — kernel drift or embedding norm change. (i) is the rare cause once DPP is known to work on similar surfaces; recent changes to embeddings or S are the usual suspects.", correct:true},
+          {key:"b", text:"(i) — DPP must be unsuitable."},
+          {key:"c", text:"All three equally likely."},
+          {key:"d", text:"None — must be infrastructure."},
+        ]}
+        trap={<>(b)/(c)/(d) ignore the change history. Regressions almost always trace to recent kernel/embedding changes.</>}
+        lens={<>When a known-good DPP regresses, look at kernel inputs first. The algorithm has not changed; the inputs have.</>}
+        stretch={<>What's the cheapest kernel-quality canary you'd add to catch drift before A/B?</>}
+      />
+
+      {/* axis: E4 */}
+      <VIS.TrapProblem
+        id="dpp-p26" difficulty="hard"
+        title="P26 — Rollout: instrumentation order"
+        scenario={<><em>Discriminating insight: DPP failures are kernel failures; instrumentation must monitor kernel quality alongside engagement.</em><br/>Order the rollout instrumentation: (i) S distribution monitor, (ii) per-request log-det values, (iii) slate diversity offline, (iv) click engagement A/B. Which to add FIRST?</>}
+        options={[
+          {key:"a", text:"(i) S distribution monitor — if S is mis-calibrated nothing else matters; instrument kernel quality first.", correct:true},
+          {key:"b", text:"(iv) Click engagement A/B — only the user metric matters."},
+          {key:"c", text:"(ii) Per-request log-det values — track the algorithm directly."},
+          {key:"d", text:"(iii) Slate diversity offline — diversity is the goal."},
+        ]}
+        trap={<>(b) over-relies on the lagging signal. (c)/(d) miss the upstream-vs-downstream priority.</>}
+        lens={<>DPP is downstream of S. Monitor S first; everything else trails it.</>}
+        stretch={<>What's a single S-quality metric you'd alarm on?</>}
+      />
+
+      {/* axis: E5 */}
+      <VIS.TrapProblem
+        id="dpp-p27" difficulty="hard"
+        title="P27 — Determinism vs reproducibility across days"
+        scenario={<><em>Discriminating insight: greedy DPP is deterministic given a kernel, but per-user kernels vary day-to-day (different candidates, different r); replays do not match production.</em><br/>You replay yesterday's user with today's model and get a different slate. Bug?</>}
+        options={[
+          {key:"a", text:"Not a bug. The candidate set and relevance scores change day-to-day; greedy DPP is deterministic given a kernel, not deterministic across kernels. Use frozen-kernel replay for regression testing.", correct:true},
+          {key:"b", text:"Yes — DPP must produce identical slates for the same user."},
+          {key:"c", text:"Cholesky update introduces randomness."},
+          {key:"d", text:"Embedding versioning is wrong."},
+        ]}
+        trap={<>(b) misreads deterministic as deterministic across time. (c) misattributes. (d) might be incidentally true but is not the structural answer.</>}
+        lens={<>Reproducibility requires freezing the kernel; without it, day-to-day slate differences are expected.</>}
+        stretch={<>What's the smallest set of inputs you'd freeze to replay a slate exactly?</>}
+      />
+
+      {/* axis: E6 */}
+      <VIS.TrapProblem
+        id="dpp-p28" difficulty="hard"
+        title="P28 — Eval contamination: diversity@K with same embeddings"
+        scenario={<><em>Discriminating insight: offline diversity@K computed with the SAME embeddings DPP uses is circular; need a held-out semantic similarity for honest eval.</em><br/>Offline eval: diversity@K is up 18% with DPP. The eval uses the same item embeddings as the DPP kernel. What's wrong?</>}
+        options={[
+          {key:"a", text:"Circular evaluation: DPP optimizes a metric defined by the same embeddings the eval uses to score diversity. Use a held-out semantic similarity (e.g., taxonomy distance, third-party embedding) for honest eval.", correct:true},
+          {key:"b", text:"+18% is a real result; no contamination."},
+          {key:"c", text:"Diversity@K is a deprecated metric."},
+          {key:"d", text:"Cosine similarity is inherently biased."},
+        ]}
+        trap={<>(b) confirms the circular setup. (c)/(d) miss the structural issue.</>}
+        lens={<>Always evaluate diversity with a similarity definition orthogonal to the one used for optimization, or at least call out the dependence.</>}
+        stretch={<>What's a cheap held-out similarity for a fashion catalog?</>}
+      />
+
+      {/* axis: B4 */}
+      <VIS.TrapProblem
+        id="dpp-p29" difficulty="hard"
+        title="P29 — When NOT to use DPP"
+        scenario={<><em>Discriminating insight: when similarity is hard to embed (long-form articles, audio without good encoders), DPP fails silently on mis-estimated S.</em><br/>For a podcast-recommendation surface where item similarity is multi-dimensional and hard to embed, would you ship DPP?</>}
+        options={[
+          {key:"a", text:"Probably not. DPP requires a well-calibrated similarity kernel; on hard-to-embed content it fails silently. LLM-as-reranker or human curation may be a better starting point.", correct:true},
+          {key:"b", text:"Yes — DPP works on any catalog."},
+          {key:"c", text:"Yes — DPP does not actually use embeddings at runtime."},
+          {key:"d", text:"No — DPP requires K=1."},
+        ]}
+        trap={<>(b)/(c) overstate DPP's robustness. (d) is wrong.</>}
+        lens={<>DPP&apos;s win is bounded by S quality. On hard-to-embed catalogs, other diversity strategies win.</>}
+        stretch={<>What signal would tell you embeddings are good enough for DPP?</>}
+      />
+
+      {/* axis: D2 */}
+      <VIS.TrapProblem
+        id="dpp-p30" difficulty="hard" multiSelect
+        title="P30 — Wrong-assumption cascade: identical to two-pass MMR"
+        scenario={<><em>Discriminating insight: assuming DPP = MMR with extra steps cascades into mistuning, mis-interpreting the bound, and missing the geometric objective.</em><br/>You believe &quot;DPP is just MMR with a more complex score.&quot; Which downstream conclusions does this corrupt? Select all that apply.</>}
+        options={[
+          {key:"a", text:"You'll expect a lambda knob and search for one in DPP code.", correct:true},
+          {key:"b", text:"You'll explain DPP's (1-1/e) bound as if it applied to MMR too.", correct:true},
+          {key:"c", text:"You'll skip kernel calibration because MMR does not need it.", correct:true},
+          {key:"d", text:"None — it's a harmless mental model."},
+        ]}
+        trap={<>(d) is the assumption that creates all the other failures.</>}
+        lens={<>DPP is a different objective with different requirements (PSD kernel, calibration, submodularity). MMR-think does not transfer cleanly.</>}
+        stretch={<>What single sentence captures the actual difference for a colleague?</>}
+      />
+
+      {/* axis: B3 */}
+      <VIS.TrapProblem
+        id="dpp-p31" difficulty="hard"
+        title="P31 — Pitch to the head of ranking"
+        scenario={<><em>Discriminating insight: the pitch must hinge on log-det submodularity giving a (1-1/e) bound + set-level joint relevance/similarity scoring — strip DPP and the bound disappears.</em><br/>Your head of ranking asks why DPP is worth a 6-month migration from MMR. Pick the strongest pitch.</>}
+        options={[
+          {key:"a", text:"DPP exploits log-det submodularity to score whole slates jointly with a (1-1/e) approximation guarantee — the only diversity reranker that gives a math bound on the greedy slate's relevance-times-diversity product. MMR's lambda has no analogous guarantee.", correct:true},
+          {key:"b", text:"DPP gives more diversity than MMR."},
+          {key:"c", text:"DPP is faster than MMR at scale."},
+          {key:"d", text:"DPP has fewer hyperparameters than MMR."},
+        ]}
+        trap={<>(b)/(c)/(d) could be said about any diversity reranker. The (1-1/e) submodular bound is uniquely DPP.</>}
+        lens={<>The pitch must hinge on log-det submodularity — the unique mechanism. Strip &quot;DPP&quot; and (a) loses the bound; the others do not lose anything.</>}
+        stretch={<>Translate (a) into a single sentence the CFO would understand.</>}
+      />
+
+      {/* axis: F1 */}
+      <VIS.TrapProblem
+        id="dpp-p32" difficulty="hard"
+        title="P32 — Single-pick slate (K=1) DPP behavior"
+        scenario={<><em>Discriminating insight: at K=1, DPP&apos;s greedy step is argmax of L_ii = r_i-squared times S_ii = r_i-squared — pure relevance-squared, no diversity term active.</em><br/>For a notification system that picks K=1 item per send, your team proposes DPP. What's wrong?</>}
+        options={[
+          {key:"a", text:"DPP at K=1 reduces to argmax of r-squared (since S_ii = 1) — pure relevance ranking. The geometric volume / pairwise term has no items to act on. Use a different mechanism (epsilon-greedy, Thompson sampling) for variety in K=1 selection.", correct:true},
+          {key:"b", text:"DPP still adds variety at K=1 via the Cholesky update."},
+          {key:"c", text:"K=1 DPP is faster than K=10."},
+          {key:"d", text:"K=1 is the optimal slate for DPP."},
+        ]}
+        trap={<>(b)/(c)/(d) attribute properties DPP does not have at K=1.</>}
+        lens={<>DPP's value is set-level; at K=1 there's no set. Use an exploration mechanism that's defined at K=1.</>}
+        stretch={<>How would you add variety across K=1 sends without DPP?</>}
       />
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://medium.com/data-science-collective/diversity-in-recommendations-determinantal-point-processes-dpp-2427bf1b6324" target="_blank" rel="noopener"><strong>Agrawal &mdash; Diversity in Recommendations: DPP (2025)</strong></a> <span style={{color:"#64748b",fontSize:14}}>(blog)</span><br/>Recent practitioner walkthrough with code snippets and kernel calibration recipes.</li>
-        <li><a href="https://arxiv.org/abs/1709.05135" target="_blank" rel="noopener"><strong>Chen, Zhang, Zhou &mdash; Fast Greedy MAP Inference for DPP (Hulu)</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, NeurIPS 2018)</span><br/>The original FastDPP paper. The Cholesky-update trick that makes greedy DPP cheap enough for production.</li>
-        <li><a href="https://www.alexkulesza.com/pubs/dpps_fnt12.pdf" target="_blank" rel="noopener"><strong>Kulesza &amp; Taskar &mdash; Determinantal Point Processes for Machine Learning</strong></a> <span style={{color:"#64748b",fontSize:14}}>(textbook chapter / monograph, Foundations and Trends 2012)</span><br/>The canonical mathematical treatment. Long but the right place to learn DPP theory.</li>
-        <li><a href="https://eugeneyan.com/writing/serendipity-and-accuracy-in-recommender-systems/" target="_blank" rel="noopener"><strong>Eugene Yan &mdash; Serendipity and Accuracy in Recommender Systems</strong></a> <span style={{color:"#64748b",fontSize:14}}>(blog)</span><br/>Practitioner essay on why diversity matters and how to measure it. Excellent intuition primer.</li>
-        <li><a href="https://www.youtube.com/watch?v=2Y0aF8WyZJ4" target="_blank" rel="noopener"><strong>Determinantal Point Processes (Stanford CS, lecture)</strong></a> <span style={{color:"#64748b",fontSize:14}}>(video)</span><br/>A clean visual derivation of det-as-volume that anchors the &quot;why does the determinant capture diversity&quot; intuition.</li>
+        <li><a href="https://medium.com/data-science-collective/diversity-in-recommendations-determinantal-point-processes-dpp-2427bf1b6324" target="_blank" rel="noopener"><strong>Agrawal — Diversity in Recommendations: DPP</strong></a> <span style={{color:"#64748b",fontSize:14}}>(practitioner blog, 2025)</span><br/>Production-flavored walkthrough of greedy DPP, kernel choices, and recent production write-ups.</li>
+        <li><a href="https://arxiv.org/abs/1709.05135" target="_blank" rel="noopener"><strong>Chen, Zhang, Zhou — Fast Greedy MAP Inference for DPP to Improve Recommendation Diversity</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, NeurIPS 2018; Hulu)</span><br/>The canonical fast-DPP paper. The rank-1 Cholesky update derivation is here.</li>
+        <li><a href="https://www.alexkulesza.com/pubs/dpps_fnt12.pdf" target="_blank" rel="noopener"><strong>Kulesza &amp; Taskar — Determinantal Point Processes for Machine Learning</strong></a> <span style={{color:"#64748b",fontSize:14}}>(monograph, FnT ML 2012)</span><br/>The reference text on DPPs — submodularity proofs, sampling algorithms, and applications beyond recsys.</li>
+        <li><a href="https://www.youtube.com/watch?v=49uG3rZb1pE" target="_blank" rel="noopener"><strong>Alex Kulesza — DPPs Tutorial (lecture)</strong></a> <span style={{color:"#64748b",fontSize:14}}>(video)</span><br/>Hour-long primer on the geometric intuition (volume, orthogonality) that motivates log-det.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Submodular_set_function" target="_blank" rel="noopener"><strong>Wikipedia — Submodular set function</strong></a> <span style={{color:"#64748b",fontSize:14}}>(reference)</span><br/>The (1-1/e) bound and submodularity definition; useful for sanity-checking your monitoring invariants.</li>
       </ul>
     </VIS.Section>
   </main>

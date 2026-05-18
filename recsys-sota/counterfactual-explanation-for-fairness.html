@@ -1414,244 +1414,568 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 9
+// Counterfactual Explanation for Fairness in Recommendation (Tan et al., ACM TOIS 2024)
+// Per-prediction "would-decision-flip-if-protected" counterfactual is the unique mechanism.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Fairness"
+      pill="RecSys SOTA · Fairness"
       title="Counterfactual Explanation for Fairness"
-      subtitle="Audit why a recommender is unfair by finding the smallest user/item attribute perturbation that would flip the recommendation."
+      subtitle="Per-prediction would-decision-flip-if-protected counterfactual — the smallest input edit that flips Top-K is the audit signal."
       byline={[
         {label: "Paper", value: "Tan et al., ACM TOIS 2024"},
-        {label: "Domain", value: "Regulated rec surfaces: lending, hiring, content"},
+        {label: "Foundations", value: "Kusner 2017 (NeurIPS) counterfactual fairness"},
+        {label: "Surface", value: "Regulated rec: lending, hiring, housing, healthcare"},
       ]}/>
 
     <VIS.TLDR>
-      Demographic parity and equal-opportunity audits tell you <em>that</em> a recommender is unfair; they don&apos;t tell you <em>why</em>. <strong>Counterfactual fairness explanations</strong> search for the smallest perturbation to a user or item attribute (gender, zip-code tier, channel, age bucket) that would change the recommendation. If a tiny flip of a protected attribute changes outcomes, that attribute is acting as a causal driver &mdash; not a coincident correlate.
+      Demographic parity tells you <em>that</em> a recommender is unfair. Counterfactual explanation tells you <em>why</em>, per user: search for the smallest input edit &Delta; that flips Top-K, and check whether the cheapest edit touches a protected attribute. The whole audit is a per-prediction counterfactual; the cost metric chosen for &Delta; <strong>defines which feature gets blamed</strong>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="What it is, in one equation">
       <p>
-        A <VIS.Term def="A method that generates a small synthetic change to the input which would have produced a different model output. Used to explain why a model decided what it did.">counterfactual explanation</VIS.Term> for recommendation searches over user/item attributes for the cheapest edit that flips the predicted item or its rank position. Define the recommender as r(u, i) returning a score; a counterfactual for user u and item i is an edit &Delta; such that the recommendation set changes:
+        A <VIS.Term def="A synthetic small change to a model's input that would have produced a different model output. Used to explain why a model decided as it did.">counterfactual explanation</VIS.Term> for recommender r and user u is the minimum-cost edit that flips the Top-K:
       </p>
-      <VIS.Equation display tex={`\\Delta^{*} = \\arg\\min_{\\Delta} \\; d(u, u \\oplus \\Delta) \\;\\;\\text{s.t.}\\;\\; \\text{TopK}(r, u \\oplus \\Delta) \\ne \\text{TopK}(r, u)`}/>
+      <VIS.Equation display tex={`\\Delta^{*} = \\arg\\min_{\\Delta} \\; d(u,\\, u \\oplus \\Delta) \\;\\;\\text{s.t.}\\;\\; \\text{TopK}(r,\\, u \\oplus \\Delta) \\ne \\text{TopK}(r,\\, u)`}/>
       <p>
-        d is a cost metric (number of attributes changed, semantic distance). If the cheapest flip touches a protected attribute, that attribute is causally implicated in the unfair outcome.
+        If &Delta;* edits a protected attribute (race, gender, zip-tier), that attribute is causally implicated in the decision <em>for this individual</em>. Aggregate <VIS.Term def="A fairness criterion: positive-prediction rate is equal across protected groups. Aggregate, observational, says nothing about individuals.">demographic parity</VIS.Term> can hold while many individuals fail this test.
       </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  U["User u + features"]
+      <VIS.Mermaid chart={`flowchart TB
+  U["User u"]
   R["Recommender r"]
   T["TopK output"]
   U --> R --> T
-  S["Search for minimal edit Delta"]
+  S["Search min-cost edit"]
   S --> UP["u + Delta"]
   UP --> R2["r"]
-  R2 --> T2["TopK changes?"]
-  T2 --> A["Audit verdict"]
-      `} />
+  R2 --> T2["TopK flipped?"]
+  T2 --> A["Audit: which attr did Delta touch?"]`} />
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <p>
-        Group-fairness metrics (demographic parity, equal opportunity) are <strong>aggregate, observational</strong> checks. They say &quot;outcome rate for group A vs group B&quot; without ever asking which feature causes the gap.
-      </p>
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Group parity audit</th><th style={{textAlign:"left",padding:8}}>Counterfactual explanation</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from baselines (table)">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Property</th>
+          <th style={{textAlign:"left", padding:8}}>Parity audit</th>
+          <th style={{textAlign:"left", padding:8}}>SHAP / LIME</th>
+          <th style={{textAlign:"left", padding:8}}>Counterfactual</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Question answered</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Are we unfair?</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Why are we unfair?</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Granularity</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Cohort-level</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Per-instance</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Causal claim</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Local, model-level</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Regulator narrative</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Statistical gap</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Concrete &quot;if X had been Y, decision flips&quot;</td></tr>
+          <tr><td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Question</td>
+              <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Are we unfair?</td>
+              <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>What features score the prediction?</td>
+              <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>What edit flips the decision?</td></tr>
+          <tr style={{background:"#f8fafc"}}>
+            <td style={{padding:8}}>Granularity</td>
+            <td style={{padding:8}}>Cohort</td>
+            <td style={{padding:8}}>Per-instance, additive</td>
+            <td style={{padding:8}}>Per-instance, decision-boundary</td></tr>
+          <tr>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Regulator narrative</td>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Statistical rate gap</td>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Feature attribution chart</td>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>&quot;If X had been Y, decision flips&quot;</td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Regulated domains (lending, employment, housing ads, healthcare): regulators want a why, not a parity-rate table.</li>
-        <li>You already pass parity but suspect proxy leakage (e.g., zip-code standing in for race).</li>
-        <li>You need item-level redress narratives for affected users.</li>
-        <li>You have differentiable or surrogate access to the recommender.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 30 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the question-axis it draws from (see <a href="https://vijaykatta3094-ops.github.io/ml-knowledge-hub/strategy-reference.html" target="_blank" rel="noopener">strategy &sect;8b</a>). Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations &amp; gotchas">
-      <ul>
-        <li><strong>Unrealistic counterfactuals</strong> &mdash; minimal-distance edits can hop off the data manifold (a 22-year-old with 30 years of credit history).</li>
-        <li><strong>Single-model</strong> &mdash; explains the model, not the population. A different model class can give different counterfactuals.</li>
-        <li><strong>Cost metric defines the answer</strong> &mdash; L0 (count of flips) vs semantic distance produces different &quot;cheapest&quot; flips.</li>
-        <li><strong>Correlated features</strong> &mdash; flipping only the protected attribute leaves its correlated proxies untouched; the audit may declare &quot;fair&quot; while proxies still leak.</li>
-        <li><strong>Search cost</strong> &mdash; combinatorial over categorical attributes; gradient-based methods need a differentiable recommender.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill &mdash; 10 trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
+      {/* axis: A1 */}
       <VIS.TrapProblem
         id="cf-p1" difficulty="hard"
-        title="P1 &mdash; Passes parity, fails counterfactual"
-        scenario={<>Your lending recommender passes <VIS.Term def="A fairness criterion where the positive-prediction rate is equal across groups.">demographic parity</VIS.Term> at 1pp absolute. A counterfactual audit on 5k users finds that flipping <code>gender</code> alone (holding everything else constant) flips the recommendation for 18% of women. What is most likely happening?</>}
+        title="P1 — Parity holds; counterfactual fails"
+        scenario={<><em>Discriminating insight: parity is aggregate; counterfactual is per-instance, the two can disagree even with no bug.</em><br/>Your lending recommender passes demographic parity at 1pp absolute. A counterfactual audit on 5k users finds that flipping <code>gender</code> alone (holding everything else constant) flips Top-K for 18% of women. What is most likely happening?</>}
         options={[
-          {key:"a", text:"Parity holds in aggregate because two opposing proxy effects cancel, but gender still has direct causal weight on individuals.", correct:true},
-          {key:"b", text:"The counterfactual audit is buggy &mdash; parity guarantees individual fairness."},
+          {key:"a", text:"Parity holds in aggregate because two opposing proxy effects cancel, but gender still has direct causal weight on individual decisions.", correct:true},
+          {key:"b", text:"The audit is buggy — parity guarantees individual fairness."},
           {key:"c", text:"Parity is a strict superset of counterfactual fairness."},
-          {key:"d", text:"You should ship; parity is the regulator-facing metric."},
+          {key:"d", text:"Counterfactual audits cannot disagree with parity."},
         ]}
-        trap={<>(b)/(c) reverse the relationship. Parity is observational and aggregate; counterfactual fairness is causal and per-instance. Aggregate parity can hold by cancellation while individuals still see flipped outcomes from a protected attribute.</>}
-        lens={<>Parity is necessary but not sufficient. Counterfactual flips on a protected attribute mean the model is using it directly, even if its averaged effect across the population sums to roughly zero.</>}
-        stretch={<>How would you ship a model that passes both parity and counterfactual fairness?</>}
+        trap={<>(b)/(c)/(d) all assume parity implies counterfactual fairness. Parity is observational and aggregate; the per-instance counterfactual exposes cases where individuals are flipped on the protected attribute even when the population rate is balanced.</>}
+        lens={<>Aggregate parity and per-instance counterfactual fairness are different fairness criteria; one does not imply the other.</>}
+        stretch={<>Build a synthetic dataset where parity is exact (50/50) but counterfactual flip rate on the protected attribute is 100%.</>}
       />
 
+      {/* axis: C1 */}
       <VIS.TrapProblem
         id="cf-p2" difficulty="hard"
-        title="P2 &mdash; Off-manifold counterfactual"
-        scenario={<>An L0 counterfactual search returns: &quot;to flip the loan recommendation, change <code>age</code> from 22 to 65 while keeping <code>years_of_credit_history</code> = 1.&quot; Reviewer rejects it as an audit signal. Why?</>}
+        title="P2 — Off-manifold counterfactual"
+        scenario={<><em>Discriminating insight: unconstrained min-distance edits jump off the data manifold; the audit needs a feasibility constraint.</em><br/>An L0 counterfactual search returns: &quot;to flip the loan recommendation, change <code>age</code> from 22 to 65 while keeping <code>years_of_credit_history</code> = 1.&quot; The compliance reviewer rejects it as audit signal. Why?</>}
         options={[
-          {key:"a", text:"The counterfactual is off the data manifold &mdash; a 65-year-old with 1 year of credit history is implausible, so the flip tells us little about realistic decisions.", correct:true},
-          {key:"b", text:"L0 distance is mathematically invalid for fairness."},
+          {key:"a", text:"The counterfactual is off the data manifold; a 65-year-old with 1 year of credit history is implausible, so the model's prediction at that input is not reliable evidence.", correct:true},
+          {key:"b", text:"L0 distance is mathematically invalid for counterfactual fairness."},
           {key:"c", text:"Age cannot be a protected attribute under any framework."},
-          {key:"d", text:"The recommender is broken."},
+          {key:"d", text:"The recommender is broken because it produced this output."},
         ]}
-        trap={<>(b)/(c) attack the wrong target. The issue isn&apos;t the metric or the legal status; it&apos;s that the edit produced an unrealistic input the model was never trained to handle, so its prediction is unreliable evidence.</>}
-        lens={<>Always constrain counterfactual search to the data manifold &mdash; via a density model, autoencoder, or feasibility constraints between correlated attributes.</>}
+        trap={<>(b) attacks the metric, not the issue. (c) confuses legal categories with the mechanical question. (d) blames the model rather than the search procedure.</>}
+        lens={<>Constrain counterfactual search to the data manifold via a density model, autoencoder reconstruction penalty, or feasibility constraints between correlated attributes.</>}
         stretch={<>How would you enforce manifold constraints without retraining the recommender?</>}
       />
 
+      {/* axis: C2 */}
       <VIS.TrapProblem
-        id="cf-p3" difficulty="hard"
-        multiSelect
-        title="P3 &mdash; Choosing a cost metric"
-        scenario={<>You are designing the cost metric d for a counterfactual search on a hiring recommender. Which choices are defensible? Select all that apply.</>}
+        id="cf-p3" difficulty="hard" multiSelect
+        title="P3 — Choosing a cost metric"
+        scenario={<><em>Discriminating insight: the cost metric d defines which feature the audit blames; it is part of the audit design, not a neutral default.</em><br/>You are designing the cost metric d for a counterfactual search on a hiring recommender. Which choices are defensible? Select all that apply.</>}
         options={[
-          {key:"a", text:"L0 (count of attributes changed) &mdash; surfaces minimal flips, good for narrative redress.", correct:true},
-          {key:"b", text:"Semantic distance via a feature-aware embedding &mdash; respects domain meaning.", correct:true},
-          {key:"c", text:"Mahalanobis distance on the training covariance &mdash; keeps the edit on the manifold.", correct:true},
+          {key:"a", text:"L0 (count of attributes changed) — surfaces minimal flips, narrative-friendly for redress notices.", correct:true},
+          {key:"b", text:"Semantic distance via feature-aware embedding — respects domain meaning.", correct:true},
+          {key:"c", text:"Mahalanobis distance on training covariance — keeps edits near manifold.", correct:true},
           {key:"d", text:"Always use L2 because it is differentiable."},
-          {key:"e", text:"Cost metric does not affect which features the audit implicates."},
+          {key:"e", text:"Cost metric does not change which features the audit implicates."},
         ]}
-        trap={<>(d) confuses tractability with appropriateness; L2 over arbitrary feature scales is meaningless. (e) is the load-bearing error &mdash; the cost metric determines which flip is &quot;cheapest&quot; and therefore which feature gets blamed.</>}
-        lens={<>Cost metric is part of the audit design. Pick one that matches your causal narrative and data manifold; declare it explicitly.</>}
-        stretch={<>If two reasonable metrics disagree, what do you do?</>}
+        trap={<>(d) confuses tractability with appropriateness; L2 over heterogeneous feature scales is meaningless. (e) is the load-bearing error — the cost metric IS the audit&apos;s definition of &quot;cheapest&quot;.</>}
+        lens={<>Cost metric is a first-class audit-design decision; declare it explicitly, justify it against the data manifold and the narrative form required by regulators.</>}
+        stretch={<>If two reasonable metrics disagree on which feature is implicated, what do you do?</>}
       />
 
+      {/* axis: F2 */}
       <VIS.TrapProblem
         id="cf-p4" difficulty="hard"
-        title="P4 &mdash; Proxy leakage despite the flip"
-        scenario={<>Counterfactual audit shows that flipping only <code>gender</code> does NOT flip recommendations for any user (good). You ship. A month later, a journalist demonstrates the model still discriminates. What did the audit miss?</>}
+        title="P4 — Proxy leakage despite a clean flip"
+        scenario={<><em>Discriminating insight: flipping only the protected attribute leaves correlated proxies intact; the audit can be silent while the model still discriminates via proxies.</em><br/>Counterfactual audit shows that flipping only <code>gender</code> does NOT flip recommendations for any user (good). You ship. A month later, a journalist demonstrates the model still discriminates by gender. What did the audit miss?</>}
         options={[
-          {key:"a", text:"Flipping only gender while leaving correlated proxies (occupation, hobby, name embedding) intact understates the protected attribute&apos;s effective influence.", correct:true},
-          {key:"b", text:"Counterfactual fairness is not a real concept."},
+          {key:"a", text:"Flipping gender alone while leaving correlated proxies (occupation, hobby vector, name embedding) intact understates the protected attribute's effective influence.", correct:true},
+          {key:"b", text:"Counterfactual fairness is a flawed concept."},
           {key:"c", text:"The audit should have ignored proxies."},
           {key:"d", text:"The journalist used a different model."},
         ]}
-        trap={<>(c) is exactly backwards &mdash; ignoring proxies is the bug. The model can route protected information through correlated features and still discriminate while the single-attribute counterfactual is silent.</>}
-        lens={<>Counterfactual audits must perturb the protected attribute AND its known proxies as a set, or use causal-graph-aware perturbations that propagate downstream.</>}
-        stretch={<>How would you identify proxy variables programmatically before designing the audit?</>}
+        trap={<>(c) is exactly backwards — ignoring proxies is the bug. (b)/(d) try to dismiss the failure rather than locate it.</>}
+        lens={<>Audit must perturb the protected attribute AND its known proxies as a set, or use causal-graph-aware perturbations that propagate downstream effects.</>}
+        stretch={<>How would you identify proxies programmatically before designing the audit?</>}
       />
 
+      {/* axis: C5 */}
       <VIS.TrapProblem
         id="cf-p5" difficulty="hard"
-        title="P5 &mdash; Categorical attribute, gradient search"
-        scenario={<>Your team uses a gradient-based counterfactual search (relax categorical features to soft one-hot and project at the end). For <code>zip_code</code> with 30k unique values, the search returns garbage. Why?</>}
+        title="P5 — Categorical, gradient search, 30k levels"
+        scenario={<><em>Discriminating insight: relax-to-soft-one-hot becomes ill-conditioned at high cardinality; the search method must match the cardinality.</em><br/>Your team uses gradient-based counterfactual search (relax categorical features to soft one-hot, project at the end). For <code>zip_code</code> with 30k unique values, the search returns garbage. Why?</>}
         options={[
-          {key:"a", text:"Relaxation followed by projection across 30k categorical levels gives an ill-conditioned search; nearest-neighbor or discrete combinatorial search is more appropriate.", correct:true},
+          {key:"a", text:"Relaxation-plus-projection across 30k categorical levels is ill-conditioned; discrete combinatorial search or k-NN over a candidate set is more appropriate.", correct:true},
           {key:"b", text:"Gradient methods cannot handle any categorical features."},
           {key:"c", text:"The recommender is non-differentiable."},
           {key:"d", text:"30k is below typical scale for counterfactual search."},
         ]}
-        trap={<>(b) overgeneralizes &mdash; gradient methods handle small-cardinality categoricals fine. (d) inverts reality &mdash; 30k IS high cardinality for relax-then-project.</>}
-        lens={<>High-cardinality categoricals need discrete search over a candidate set (k-NN in attribute space, or grouping into tiers) instead of continuous relaxation.</>}
+        trap={<>(b) overgeneralizes — gradient methods handle low-cardinality categoricals fine. (d) inverts reality.</>}
+        lens={<>High-cardinality categoricals need discrete search over a curated candidate set (k-NN in attribute space, or tiered grouping) rather than continuous relaxation.</>}
         stretch={<>If you must keep gradient search, how could you constrain it to plausible zip codes?</>}
       />
 
+      {/* axis: B4 */}
       <VIS.TrapProblem
-        id="cf-p6" difficulty="hard"
-        multiSelect
-        title="P6 &mdash; What a counterfactual audit can and cannot certify"
-        scenario={<>A compliance team asks: &quot;If our model passes a counterfactual fairness audit on 10k users, what does that prove?&quot; Select valid claims.</>}
+        id="cf-p6" difficulty="hard" multiSelect
+        title="P6 — What a clean audit certifies, and what it does not"
+        scenario={<><em>Discriminating insight: a counterfactual audit certifies a narrow per-instance per-attribute claim; over-claiming is the most common compliance failure.</em><br/>Compliance asks: &quot;If our model passes a counterfactual fairness audit on 10k users, what does that prove?&quot; Select valid claims.</>}
         options={[
-          {key:"a", text:"For those 10k inputs, single-attribute flips on the protected attribute do not change the model output.", correct:true},
-          {key:"b", text:"The model is unbiased on the population it serves."},
+          {key:"a", text:"For those 10k inputs, single-attribute flips on the protected attribute do not change Top-K.", correct:true},
+          {key:"b", text:"The model is unbiased on the entire population it serves."},
           {key:"c", text:"The model has no protected-attribute leakage through correlated proxies."},
-          {key:"d", text:"The audit holds for the model version tested, not for future retrains.", correct:true},
-          {key:"e", text:"The audit&apos;s validity depends on the realism of the counterfactual edits.", correct:true},
+          {key:"d", text:"The certificate is bound to the model version tested; retrains void it.", correct:true},
+          {key:"e", text:"The certificate's validity depends on the realism (manifold-feasibility) of the counterfactual edits.", correct:true},
         ]}
-        trap={<>(b)/(c) overclaim. The audit is local, single-attribute, single-model-version, and limited to whatever edits were generated. Compliance teams routinely overstate these results.</>}
-        lens={<>Write the audit certificate with explicit scope: which inputs, which attribute, which model version, which edit constraints.</>}
+        trap={<>(b)/(c) overclaim. Counterfactual audits are local: this attribute, this model version, this edit constraint, these inputs.</>}
+        lens={<>Write the audit certificate with explicit scope: which inputs, which attribute, which model version, which edit constraints, which K.</>}
         stretch={<>Design a retrain-time check that re-runs the audit automatically.</>}
       />
 
+      {/* axis: E4 */}
       <VIS.TrapProblem
         id="cf-p7" difficulty="hard"
-        title="P7 &mdash; Counterfactual rate as a metric"
-        scenario={<>You define <em>counterfactual flip rate</em> = fraction of users whose Top-1 changes when their protected attribute is flipped. You report 4% for a candidate model. A reviewer says this is meaningless without a baseline. What is the right baseline?</>}
+        title="P7 — What baseline turns flip rate into a number"
+        scenario={<><em>Discriminating insight: any feature flipped will produce some flips from noise; the audit needs a placebo baseline, not an absolute target.</em><br/>You define <em>counterfactual flip rate</em> = fraction of users whose Top-1 changes when their protected attribute is flipped. You report 4%. A reviewer says this is meaningless without a baseline. What is the right baseline?</>}
         options={[
-          {key:"a", text:"Flip rate from flipping a known non-protected, low-importance attribute &mdash; the gap measures protected-attribute influence above noise.", correct:true},
+          {key:"a", text:"Flip rate from flipping a known non-protected, low-importance attribute — the gap measures protected-attribute influence above noise.", correct:true},
           {key:"b", text:"Random recommender flip rate."},
-          {key:"c", text:"Zero &mdash; any non-zero flip rate is failure."},
-          {key:"d", text:"100% &mdash; only certain failure is meaningful."},
+          {key:"c", text:"Zero — any non-zero flip rate is failure."},
+          {key:"d", text:"100% — only certain failure is meaningful."},
         ]}
-        trap={<>(c) is the absolutist take but ignores that ANY recommender will have non-zero flip rate from noise. (b) is too loose. The right comparison is &quot;flip rate from this attribute vs a placebo attribute.&quot;</>}
-        lens={<>Treat counterfactual flip rate like an A/B test: report the protected-attribute rate minus a placebo control rate, with a confidence interval.</>}
-        stretch={<>What if every attribute shows a similar non-zero flip rate?</>}
+        trap={<>(c) is the absolutist take but ignores that ANY perturbation produces noise-floor flips. (b) is too loose: random rec has nothing to do with this model.</>}
+        lens={<>Counterfactual flip rate is a treatment effect; report it as protected-attribute rate minus a placebo control rate, with a confidence interval.</>}
+        stretch={<>What if every attribute has a similar non-zero flip rate?</>}
       />
 
+      {/* axis: E1 */}
       <VIS.TrapProblem
         id="cf-p8" difficulty="hard"
-        title="P8 &mdash; Manifold-constrained search runs slow"
-        scenario={<>Your manifold-constrained counterfactual search uses an autoencoder reconstruction-loss penalty inside the optimization loop. Searching one user takes 12 seconds. You need to audit 10M users nightly. What is the most defensible first move?</>}
+        title="P8 — Manifold-constrained search is slow"
+        scenario={<><em>Discriminating insight: audits are statistical instruments; stratified sampling preserves the claim while making the cost tractable.</em><br/>Your manifold-constrained search uses an autoencoder reconstruction-loss penalty inside the optimization loop. One user takes 12 seconds. You need to audit 10M users nightly. What is the most defensible first move?</>}
         options={[
-          {key:"a", text:"Audit a stratified sample (e.g., 10k per protected subgroup) and report subgroup flip rates with CIs, instead of brute-forcing 10M.", correct:true},
+          {key:"a", text:"Audit a stratified sample (e.g., 10k per protected subgroup) and report subgroup flip rates with confidence intervals.", correct:true},
           {key:"b", text:"Drop the manifold constraint to speed up search."},
           {key:"c", text:"Switch to L2 cost regardless of feature semantics."},
-          {key:"d", text:"Skip the audit on weekends."},
+          {key:"d", text:"Skip the audit on weekends to reduce volume."},
         ]}
-        trap={<>(b)/(c) trade correctness for speed in ways that undermine the audit&apos;s claims. (d) is operationally lazy. Sampling preserves the audit&apos;s statistical guarantees.</>}
+        trap={<>(b)/(c) trade correctness for speed in ways that undermine the audit&apos;s legal narrative. (d) is operationally lazy.</>}
         lens={<>Audits are statistical instruments; sample stratification with reported CIs is the standard scaling pattern. Population audits are usually unnecessary.</>}
-        stretch={<>How would you stratify if some subgroups have only 200 users?</>}
+        stretch={<>How do you stratify when some protected subgroups have only 200 users?</>}
       />
 
+      {/* axis: B1 */}
       <VIS.TrapProblem
-        id="cf-p9" difficulty="hard"
-        multiSelect
-        title="P9 &mdash; What to do when the audit fails"
-        scenario={<>Counterfactual audit shows 9% flip rate from flipping a protected attribute, vs 0.4% from a placebo attribute. Which remediations are defensible? Select all that apply.</>}
+        id="cf-p9" difficulty="hard" multiSelect
+        title="P9 — When audit fails: defensible remediations"
+        scenario={<><em>Discriminating insight: remediations operate at different stages (training, post-hoc, feature) and you pick by where you have control.</em><br/>Audit shows 9% flip rate from protected attribute, vs 0.4% from a placebo. Which remediations are defensible? Select all that apply.</>}
         options={[
-          {key:"a", text:"Add an adversarial debiasing term during training that penalizes protected-attribute recoverability from the score.", correct:true},
-          {key:"b", text:"Add a post-hoc reranker that equalizes Top-K rates across subgroups while preserving relevance ordering within.", correct:true},
-          {key:"c", text:"Remove the protected attribute and its top proxies from features, then re-audit.", correct:true},
+          {key:"a", text:"Adversarial debiasing term during training that penalizes protected-attribute recoverability from the score.", correct:true},
+          {key:"b", text:"Post-hoc reranker that equalizes Top-K rates across subgroups while preserving relevance order within each group.", correct:true},
+          {key:"c", text:"Remove the protected attribute and its top proxies from features; re-audit.", correct:true},
           {key:"d", text:"Hide the audit results from regulators."},
-          {key:"e", text:"Switch the recommender to a black-box model so counterfactuals become harder to compute."},
+          {key:"e", text:"Switch the recommender to a black-box model so counterfactuals are harder to compute."},
         ]}
-        trap={<>(d)/(e) are obvious anti-patterns inserted as a sanity check &mdash; obscuring a fairness signal is not a remediation. The three real options each operate at a different stage: training-time, post-hoc, feature-time.</>}
-        lens={<>Pick remediation by where you can act. If you control training, adversarial debias. If you can only rerank, equalize Top-K. If you can&apos;t do either, prune features and re-audit.</>}
-        stretch={<>Each remediation has a relevance cost. How do you decide which to ship?</>}
+        trap={<>(d)/(e) are obvious anti-patterns inserted as a sanity check; obscuring a fairness signal is not a remediation.</>}
+        lens={<>Match the remediation to where you have control: training-time, ranking-time, or feature-time.</>}
+        stretch={<>How do you pick among the three when each has a different relevance cost?</>}
       />
 
+      {/* axis: A2 */}
       <VIS.TrapProblem
         id="cf-p10" difficulty="hard"
-        title="P10 &mdash; Counterfactual vs SHAP"
-        scenario={<>An engineer says: &quot;We already report SHAP values for the protected attribute. SHAP shows it has low importance, so counterfactual audit is redundant.&quot; Why is the engineer wrong?</>}
+        title="P10 — Counterfactual vs SHAP"
+        scenario={<><em>Discriminating insight: SHAP averages contributions; counterfactual finds decision flips. Low average attribution can coexist with high flip rate.</em><br/>An engineer says: &quot;SHAP shows protected attribute has tiny importance, so counterfactual audit is redundant.&quot; Why is the engineer wrong?</>}
         options={[
-          {key:"a", text:"Low average SHAP can coexist with high per-instance counterfactual flip rate &mdash; SHAP averages contributions while counterfactuals find the cheapest decision-changing edit.", correct:true},
+          {key:"a", text:"Low average SHAP can coexist with high per-instance counterfactual flip rate — SHAP averages contributions while counterfactuals find the cheapest decision-changing edit.", correct:true},
           {key:"b", text:"SHAP and counterfactuals are mathematically equivalent."},
           {key:"c", text:"SHAP is invalid for tree models."},
           {key:"d", text:"Counterfactual audits are deprecated by SHAP."},
         ]}
-        trap={<>(b)/(d) misstate the relationship. SHAP attributes the score; counterfactuals find decision flips. A feature can have small average attribution but be the swing variable on the decision boundary for many users.</>}
-        lens={<>Use both. SHAP for average contribution; counterfactuals for decision-changing edits. They answer different questions.</>}
-        stretch={<>Construct an example where SHAP is tiny but flip rate is large.</>}
+        trap={<>(b)/(d) misstate the relationship. A feature can have tiny average attribution but be the swing variable on the decision boundary for many users.</>}
+        lens={<>Use both: SHAP for average contribution, counterfactual for decision-changing edits. They answer different questions.</>}
+        stretch={<>Construct a concrete example where SHAP is tiny but counterfactual flip rate is large.</>}
+      />
+
+      {/* axis: A1 */}
+      <VIS.TrapProblem
+        id="cf-p11" difficulty="hard"
+        title="P11 — Counterfactual vs causal-graph (Kusner) fairness"
+        scenario={<><em>Discriminating insight: Kusner 2017 requires a hypothesized SCM; Tan's recsys formulation is model-local — assumes only function access.</em><br/>Your team considers Kusner-style counterfactual fairness vs Tan et al.'s recsys formulation. The data team cannot supply a causal DAG. Which approach can still be applied, and what is the trade-off?</>}
+        options={[
+          {key:"a", text:"Tan's formulation only — it audits the model as a function, no SCM required. Trade-off: cannot claim true causal fairness, only model-local counterfactual behavior.", correct:true},
+          {key:"b", text:"Kusner's only — counterfactual fairness without an SCM is undefined."},
+          {key:"c", text:"Both work identically; the DAG is optional in Kusner."},
+          {key:"d", text:"Neither works; you must use parity instead."},
+        ]}
+        trap={<>(b) overstates Kusner's strictness for the recsys application. (c) is wrong: Kusner's claims explicitly need the SCM.</>}
+        lens={<>Model-local counterfactuals (Tan) audit the model's input-output behavior. Causal-graph counterfactuals (Kusner) audit the data-generating process. Both useful; only the first is feasible without an SCM.</>}
+        stretch={<>What's the strongest fairness claim you can make from Tan's audit alone?</>}
+      />
+
+      {/* axis: D1 */}
+      <VIS.TrapProblem
+        id="cf-p12" difficulty="hard"
+        title="P12 — Intuitive but wrong: minimum-distance always wins"
+        scenario={<><em>Discriminating insight: smaller distance is not always better — manifold-feasible edits may have larger L0 but be the only audit-valid evidence.</em><br/>Two counterfactual searches on the same user return: (1) L0=1 edit that's off-manifold (implausible combo of attributes); (2) L0=3 edit that stays on manifold. Which should you use as audit evidence?</>}
+        options={[
+          {key:"a", text:"The L0=3 manifold-feasible edit; model predictions at off-manifold inputs are unreliable.", correct:true},
+          {key:"b", text:"The L0=1 edit because minimum-distance is the canonical definition."},
+          {key:"c", text:"Average the two."},
+          {key:"d", text:"Neither — counterfactual evidence is invalid here."},
+        ]}
+        trap={<>(b) confuses the canonical optimization with the audit's validity. Smaller distance is only better when the edit is realizable.</>}
+        lens={<>Manifold feasibility is a hard constraint of the audit, not a soft preference. Min-distance is meaningful only over feasible edits.</>}
+        stretch={<>When all feasible edits have the same L0, how do you tiebreak?</>}
+      />
+
+      {/* axis: F5 */}
+      <VIS.TrapProblem
+        id="cf-p13" difficulty="hard"
+        title="P13 — K-sensitivity: flip at position 1 vs position 8"
+        scenario={<><em>Discriminating insight: a Top-K flip at position 1 looks unfair while the same flip at position 8 may be invisible — the audit must report K-sensitivity.</em><br/>Your counterfactual audit reports a 5% flip rate at K=1. A follow-up question: does this number generalize to K=10? Reviewers find it does not. What is the right operational fix?</>}
+        options={[
+          {key:"a", text:"Report counterfactual flip rates over multiple K values (1, 5, 10) and document K-sensitivity in the certificate.", correct:true},
+          {key:"b", text:"Report K=1 only; K=10 results don't matter for fairness."},
+          {key:"c", text:"Average across all K to get a single number."},
+          {key:"d", text:"Use K=&infin; (rank-correlation) to remove K-sensitivity."},
+        ]}
+        trap={<>(b) ignores the regulator-facing reality that the visible slate is K&gt;1. (c) hides the signal. (d) destroys the &quot;does the user see something different?&quot; question.</>}
+        lens={<>Audit K-sensitivity is a first-class reporting requirement; the &quot;flip rate&quot; depends on what the user actually sees.</>}
+        stretch={<>How would you communicate K-sensitivity to a non-technical compliance reviewer?</>}
+      />
+
+      {/* axis: E5 */}
+      <VIS.TrapProblem
+        id="cf-p14" difficulty="hard"
+        title="P14 — Per-user counterfactual changed across audit runs"
+        scenario={<><em>Discriminating insight: per-user counterfactuals are non-unique under random search init; only flip RATES across users are stable evidence.</em><br/>Your nightly audit runs the same search twice on the same user and gets two different counterfactuals (different attributes flipped, same flip outcome). The legal team panics. What do you tell them?</>}
+        options={[
+          {key:"a", text:"Per-user counterfactuals are non-unique under random init; report the flip RATE across users — that's the stable statistic — and note that the specific edit per user is illustrative, not canonical.", correct:true},
+          {key:"b", text:"The audit is broken; halt deployment."},
+          {key:"c", text:"Fix the random seed and use one specific run as the canonical answer."},
+          {key:"d", text:"Average the two counterfactuals."},
+        ]}
+        trap={<>(c) gives spurious determinism — the seeded run is one of many equally valid edits. (d) makes no sense for categorical edits.</>}
+        lens={<>The audit's load-bearing statistic is the population flip rate (with CI), not the specific edit per user. Per-user edits are explanatory aids.</>}
+        stretch={<>How would you select a canonical per-user counterfactual to show to that user?</>}
+      />
+
+      {/* axis: F1 */}
+      <VIS.TrapProblem
+        id="cf-p15" difficulty="hard"
+        title="P15 — Sparse user, only protected attribute differentiates"
+        scenario={<><em>Discriminating insight: when the protected attribute is the only differentiator, the audit reports 100% trivially — needs guardrails.</em><br/>For a sparse-feature user (only protected attribute and 2 generic features), the counterfactual audit always finds the cheapest edit IS the protected attribute. Audit reports 100% flip rate for this user. Is this evidence of bias?</>}
+        options={[
+          {key:"a", text:"Inconclusive — the user has so few non-protected features that the audit has nothing else to perturb; require Delta to contain at least one non-protected change.", correct:true},
+          {key:"b", text:"Yes, clear bias — 100% flip rate is unambiguous."},
+          {key:"c", text:"No bias — sparse-feature users always show 100% by definition."},
+          {key:"d", text:"The audit is invalid for any sparse user."},
+        ]}
+        trap={<>(b) over-interprets the artifact. (c) under-interprets — it's not &quot;by definition,&quot; it's a search artifact.</>}
+        lens={<>Add a hard constraint: Delta must include at least one non-protected change. Otherwise sparse users distort the audit signal.</>}
+        stretch={<>How do you decide when a user is too sparse to audit?</>}
+      />
+
+      {/* axis: F4 */}
+      <VIS.TrapProblem
+        id="cf-p16" difficulty="hard"
+        title="P16 — Cost-metric sensitivity is the paper-named limitation"
+        scenario={<><em>Discriminating insight: Tan et al. themselves flag cost-metric choice as the main limitation; reported flip rates are L0-specific.</em><br/>You read Tan et al. and find they report flip rates only under L0 cost. A follow-up team uses Mahalanobis cost and gets different numbers. Which is the right interpretation?</>}
+        options={[
+          {key:"a", text:"Both are valid under their own cost definitions; the audit's claim is metric-relative, not absolute. Authors flag this explicitly.", correct:true},
+          {key:"b", text:"L0 is canonical; Mahalanobis numbers are wrong."},
+          {key:"c", text:"Mahalanobis is more realistic; L0 numbers are wrong."},
+          {key:"d", text:"The two should agree if the model is calibrated."},
+        ]}
+        trap={<>(b)/(c) bake in a canonical metric the paper explicitly declines to endorse. (d) confuses calibration with metric-independence.</>}
+        lens={<>Audit results are conditional on cost metric. Declare the metric, justify it, and document its trade-offs in the certificate.</>}
+        stretch={<>If your regulator demands one number, which metric would you defend in court?</>}
+      />
+
+      {/* axis: D4 */}
+      <VIS.TrapProblem
+        id="cf-p17" difficulty="hard"
+        title="P17 — Plausible misattribution after retrain"
+        scenario={<><em>Discriminating insight: a drop in flip rate post-retrain isn't proof of fairness — proxies may have tightened.</em><br/>After retraining your recommender, flip rate on the protected attribute alone drops from 9% to 0.8%. Eng announces &quot;we fixed bias.&quot; What's the most defensible follow-up audit?</>}
+        options={[
+          {key:"a", text:"Re-run the audit perturbing the protected attribute AND its proxies as a set; verify the proxy-aware flip rate also dropped.", correct:true},
+          {key:"b", text:"Trust the 0.8% number and ship."},
+          {key:"c", text:"Rerun parity audit — if parity passes, no need for counterfactual."},
+          {key:"d", text:"Increase the audit sample size to confirm 0.8%."},
+        ]}
+        trap={<>(b)/(c) declare victory too early. (d) increases precision on a number that may be measuring the wrong thing.</>}
+        lens={<>The retrain may have pushed the bias signal further into proxies; the audit must include the proxy set, not just the protected attribute alone.</>}
+        stretch={<>How would you build a regression test that catches a proxy-bias regrowth across retrains?</>}
+      />
+
+      {/* axis: F3 */}
+      <VIS.TrapProblem
+        id="cf-p18" difficulty="hard"
+        title="P18 — Audit silent while journalist proves bias"
+        scenario={<><em>Discriminating insight: an audit limited to single-attribute Delta is silent on multi-attribute proxy effects; the audit's scope IS the failure mode.</em><br/>Your audit reports 0% flip rate on the protected attribute. A journalist demonstrates the model still discriminates by gender via the <code>name_embedding</code> proxy. What does this tell you about the audit's scope?</>}
+        options={[
+          {key:"a", text:"The audit's Delta is constrained to single-attribute flips; multi-attribute proxy paths are outside its scope by construction. Extend Delta to include name_embedding and other proxies.", correct:true},
+          {key:"b", text:"The journalist's demonstration is wrong; the audit takes precedence."},
+          {key:"c", text:"The model is fine; the journalist constructed a synthetic edge case."},
+          {key:"d", text:"Parity would have caught this."},
+        ]}
+        trap={<>(b)/(c) try to discredit the external evidence rather than locate the audit's blind spot. (d) is false: parity is even more aggregate.</>}
+        lens={<>An audit's scope (single attribute, particular Delta budget, fixed K) creates blind spots. Expand the scope when proxies are known.</>}
+        stretch={<>How would you set the Delta budget so the audit catches proxy paths without becoming meaningless?</>}
+      />
+
+      {/* axis: E6 */}
+      <VIS.TrapProblem
+        id="cf-p19" difficulty="hard"
+        title="P19 — Benchmark without protected attribute"
+        scenario={<><em>Discriminating insight: public recsys benchmarks (MovieLens, Amazon) typically scrub protected attributes; you cannot evaluate counterfactual fairness on them.</em><br/>An engineer claims &quot;Tan et al.'s method was validated on MovieLens.&quot; The reviewer disagrees. Why?</>}
+        options={[
+          {key:"a", text:"MovieLens and similar public benchmarks do not include protected attributes by design (privacy); counterfactual fairness audits cannot be evaluated on them.", correct:true},
+          {key:"b", text:"MovieLens is too small for counterfactual evaluation."},
+          {key:"c", text:"The paper used MovieLens explicitly for fairness validation."},
+          {key:"d", text:"Counterfactual fairness only applies to deep models, MovieLens uses MF."},
+        ]}
+        trap={<>(b)/(d) are red herrings about scale and model type. (c) is factually wrong.</>}
+        lens={<>Counterfactual fairness validation requires datasets with labeled protected attributes — typically synthetic or properly-consented industry data, not public benchmarks.</>}
+        stretch={<>How would you build a defensible counterfactual fairness benchmark?</>}
+      />
+
+      {/* axis: E2 */}
+      <VIS.TrapProblem
+        id="cf-p20" difficulty="hard"
+        title="P20 — Failure-on-Friday: counterfactual-only blind spot"
+        scenario={<><em>Discriminating insight: counterfactual audits have a unique &quot;silent when proxies are excluded&quot; failure that parity does not share — the failure is the audit's scope artifact.</em><br/>Counterfactual fairness audit shipped Thursday; the recommender passes on gender (0% flip). Friday 3am page: journalist publishes piece showing clear gender-disparate Top-K outputs via <code>applicant_name_embedding</code>. Latency, parity, eval all green. Why does THIS failure mode hit a counterfactual audit specifically, not a parity audit?</>}
+        options={[
+          {key:"a", text:"Parity is aggregate and would have flagged the disparity in subgroup rates; the counterfactual audit was scoped to a single-attribute Delta and missed the proxy path. The blind spot is unique to scoped per-prediction edits.", correct:true},
+          {key:"b", text:"Parity would also have missed this; they fail the same way."},
+          {key:"c", text:"This is a model bug, not an audit blind spot."},
+          {key:"d", text:"Latency caused the failure."},
+        ]}
+        trap={<>(b) flattens the distinction between aggregate and per-prediction audits. (c)/(d) misattribute.</>}
+        lens={<>Counterfactual audits are scope-narrow by design: which Delta, which attributes, which K. Pair with an aggregate parity check as a wide-net complement.</>}
+        stretch={<>Design a layered audit: counterfactual on protected + proxies, parity on subgroups. How do you reconcile disagreements?</>}
+      />
+
+      {/* axis: E3 */}
+      <VIS.TrapProblem
+        id="cf-p21" difficulty="hard"
+        title="P21 — OSS default produces unrealistic counterfactuals"
+        scenario={<><em>Discriminating insight: Tan et al.'s OSS default uses L0 with no manifold penalty; production users must set the penalty themselves.</em><br/>You install the reference implementation and run it out of the box. Most generated counterfactuals are clearly off-manifold (implausible attribute combos). What's the most likely cause?</>}
+        options={[
+          {key:"a", text:"The default config uses L0 with no autoencoder/density manifold penalty; you must configure the manifold penalty for production.", correct:true},
+          {key:"b", text:"The recommender is non-differentiable and the library doesn't handle that."},
+          {key:"c", text:"You're using the wrong protected attribute."},
+          {key:"d", text:"Counterfactual fairness is broken for this catalog."},
+        ]}
+        trap={<>(b)/(c)/(d) blame the model/data rather than reading the library docs for the manifold-penalty knob.</>}
+        lens={<>Most counterfactual-search libraries ship with permissive defaults; production use requires explicit manifold and feasibility constraints.</>}
+        stretch={<>What's the right reconstruction-loss weight to start with?</>}
+      />
+
+      {/* axis: A3 */}
+      <VIS.TrapProblem
+        id="cf-p22" difficulty="hard"
+        title="P22 — Counterfactual if no counterfactual existed?"
+        scenario={<><em>Discriminating insight: without counterfactual explanations, the regulatory narrative collapses to a parity rate — adequate for screening, inadequate for adverse-action notices.</em><br/>Suppose counterfactual fairness methods did not exist. What would a regulated lender's fairness report contain instead?</>}
+        options={[
+          {key:"a", text:"Parity-rate tables across protected subgroups, plus possibly SHAP feature-importance summaries — sufficient for aggregate screening but inadequate for per-decision adverse-action narratives.", correct:true},
+          {key:"b", text:"Nothing — there would be no fairness audit possible."},
+          {key:"c", text:"Counterfactual fairness is the only mathematically rigorous fairness method."},
+          {key:"d", text:"Causal-graph fairness alone, which is strictly stronger."},
+        ]}
+        trap={<>(b)/(c)/(d) overstate counterfactual fairness's uniqueness. Parity and SHAP exist and predate Tan et al.</>}
+        lens={<>Counterfactual fairness fills a specific gap: per-decision causal narratives. Other tools (parity, SHAP) cover other gaps.</>}
+        stretch={<>What kind of regulator demand makes counterfactual fairness uniquely necessary?</>}
+      />
+
+      {/* axis: A5 */}
+      <VIS.TrapProblem
+        id="cf-p23" difficulty="hard"
+        title="P23 — Where does counterfactual fairness stop being meaningful?"
+        scenario={<><em>Discriminating insight: counterfactual fairness assumes the model is well-defined on the perturbed input; for generative or non-deterministic recommenders this assumption may not hold.</em><br/>You consider applying Tan et al.'s method to a generative LLM recommender that produces non-deterministic recommendations. Which is the binding limitation?</>}
+        options={[
+          {key:"a", text:"Top-K is not a deterministic function of input for generative recommenders; the &quot;Top-K changes?&quot; check is ill-defined without averaging over samples.", correct:true},
+          {key:"b", text:"LLMs cannot be audited at all."},
+          {key:"c", text:"Counterfactual fairness applies only to linear models."},
+          {key:"d", text:"Manifold constraints are impossible for LLM inputs."},
+        ]}
+        trap={<>(b)/(c)/(d) overstate restrictions. The actual issue is decision determinism, which Tan et al. assume.</>}
+        lens={<>For generative recommenders, the audit needs an outer expectation: probability that Top-K changes under sampled outputs, not a point check.</>}
+        stretch={<>How many samples do you need to detect a 5% flip rate with 95% confidence?</>}
+      />
+
+      {/* axis: C3 */}
+      <VIS.TrapProblem
+        id="cf-p24" difficulty="hard"
+        title="P24 — What does the counterfactual drop vs. SHAP?"
+        scenario={<><em>Discriminating insight: counterfactual gives up additive attribution to gain decision-boundary signal; SHAP keeps additivity, loses boundary sensitivity.</em><br/>You hear &quot;counterfactual is SHAP plus more.&quot; This is wrong. What does counterfactual deliberately drop in exchange for what it adds?</>}
+        options={[
+          {key:"a", text:"Counterfactual drops additive feature attribution (Shapley-value decomposition) in exchange for decision-boundary, per-instance flip evidence.", correct:true},
+          {key:"b", text:"Counterfactual drops nothing; it's strictly more informative."},
+          {key:"c", text:"Counterfactual drops differentiability requirements."},
+          {key:"d", text:"Counterfactual drops sample efficiency."},
+        ]}
+        trap={<>(b) is the &quot;costume&quot; trap — claiming counterfactual is strict superset. (c)/(d) are unrelated.</>}
+        lens={<>Counterfactual and SHAP are complements: one finds flips, one attributes scores. Neither subsumes the other.</>}
+        stretch={<>When would you skip SHAP entirely and ship only counterfactual evidence?</>}
+      />
+
+      {/* axis: D5 */}
+      <VIS.TrapProblem
+        id="cf-p25" difficulty="hard"
+        title="P25 — Tighter cost metric = more conservative audit?"
+        scenario={<><em>Discriminating insight: a tighter (more restrictive) cost metric reduces the search space — it does NOT make the audit more conservative; it may HIDE bias.</em><br/>A reviewer suggests using a very tight manifold constraint to make the audit &quot;more rigorous.&quot; The audit then reports a much lower flip rate. The audit team celebrates. What's wrong?</>}
+        options={[
+          {key:"a", text:"Tightening the manifold constraint shrinks the feasible Delta set; lower flip rate may reflect a more conservative search, not less bias. The audit became more lenient, not more rigorous.", correct:true},
+          {key:"b", text:"Tightening always reflects less bias."},
+          {key:"c", text:"The audit is now over-rigorous and rejects valid counterfactuals."},
+          {key:"d", text:"Manifold tightening has no effect on flip rate."},
+        ]}
+        trap={<>(b) confuses search restriction with bias measurement. (c)/(d) miss the asymmetry: tighter constraint biases the audit DOWN.</>}
+        lens={<>Constraints on Delta affect the audit's sensitivity. Set them based on manifold realism, not on a desire for a specific number.</>}
+        stretch={<>How would you calibrate manifold tightness so the audit is sensitive to real bias without picking up off-manifold noise?</>}
+      />
+
+      {/* axis: F1 */}
+      <VIS.TrapProblem
+        id="cf-p26" difficulty="hard"
+        title="P26 — User where flipping any attribute changes Top-K"
+        scenario={<><em>Discriminating insight: highly sensitive users where every Delta flips Top-K reveal not bias but a recommender on the decision boundary.</em><br/>One user shows 100% flip rate across every single attribute (protected or not). What is most likely?</>}
+        options={[
+          {key:"a", text:"The user is on a decision-boundary cluster for the recommender; small input changes flip Top-K. Not evidence of protected-attribute bias by itself.", correct:true},
+          {key:"b", text:"The model is extremely biased for this user."},
+          {key:"c", text:"The audit code is broken."},
+          {key:"d", text:"This user should be excluded from production."},
+        ]}
+        trap={<>(b) over-interprets — uniformly high flip rate is a model-stability artifact, not bias.</>}
+        lens={<>Compare flip rate on the protected attribute to flip rates on placebo attributes per-user; the gap is the signal, not the absolute rate.</>}
+        stretch={<>How would you detect decision-boundary users systematically?</>}
+      />
+
+      {/* axis: B2 */}
+      <VIS.TrapProblem
+        id="cf-p27" difficulty="hard"
+        title="P27 — Sounds reasonable: remove the protected attribute"
+        scenario={<><em>Discriminating insight: removing the protected attribute is a valid first step but, alone, does not eliminate counterfactual flips via proxies; the audit must follow.</em><br/>Compliance proposes: &quot;Just remove the protected attribute from training data; the model can't discriminate on what it doesn't see.&quot; Why is this only partial?</>}
+        options={[
+          {key:"a", text:"Correlated proxies (occupation, name, zip) remain and can carry the protected information; the model can still counterfactually flip on those proxies, indirectly discriminating.", correct:true},
+          {key:"b", text:"Removing the protected attribute is always sufficient."},
+          {key:"c", text:"The model can re-learn the protected attribute from labels alone."},
+          {key:"d", text:"This violates regulatory requirements to consider protected attributes."},
+        ]}
+        trap={<>(b) is the classic &quot;fairness through unawareness&quot; mistake. (c)/(d) are red herrings.</>}
+        lens={<>&quot;Fairness through unawareness&quot; (drop the attribute) is necessary, not sufficient. Always pair with a proxy-aware counterfactual audit.</>}
+        stretch={<>What's the smallest set of proxies you'd remove next?</>}
+      />
+
+      {/* axis: D2 */}
+      <VIS.TrapProblem
+        id="cf-p28" difficulty="hard"
+        title="P28 — Wrong-assumption cascade: deterministic edit"
+        scenario={<><em>Discriminating insight: assuming a unique counterfactual per user cascades into: (a) wrong reproducibility expectation, (b) wrong audit interpretation, (c) wrong remediation choice.</em><br/>You assume each user has ONE canonical counterfactual edit. Which downstream conclusions does this assumption corrupt? Select all that apply.</>}
+        multiSelect
+        options={[
+          {key:"a", text:"You'll expect reproducibility per-user across runs — and panic when search finds different edits each time.", correct:true},
+          {key:"b", text:"You'll over-interpret a specific edit as &quot;the&quot; cause for that user — when it's one of many minimal edits.", correct:true},
+          {key:"c", text:"You'll target remediation at a specific feature when the bias might require fixing several features that any minimal-edit set could touch.", correct:true},
+          {key:"d", text:"None of the above — uniqueness is a safe assumption."},
+        ]}
+        trap={<>(d) is the assumption that creates all the other failures.</>}
+        lens={<>Counterfactuals are non-unique. The audit's stable quantity is the population flip rate; per-user edits are illustrative not canonical.</>}
+        stretch={<>If non-uniqueness bites in production, how would you choose one edit to show users?</>}
+      />
+
+      {/* axis: E1 */}
+      <VIS.TrapProblem
+        id="cf-p29" difficulty="hard"
+        title="P29 — Cost-metric drift across quarters"
+        scenario={<><em>Discriminating insight: switching cost metric between audit runs invalidates trend comparisons; freeze the metric or report a matched-pair comparison.</em><br/>Q1 audit (L0) reports 4% flip rate. Q2 audit (Mahalanobis) reports 7%. Compliance asks &quot;is bias growing?&quot; The right answer is...</>}
+        options={[
+          {key:"a", text:"Unknown — the metric changed between quarters; either re-run Q1 under Mahalanobis (or Q2 under L0) for a matched comparison, or freeze the metric going forward.", correct:true},
+          {key:"b", text:"Yes, bias grew from 4% to 7%."},
+          {key:"c", text:"No, both metrics are equivalent."},
+          {key:"d", text:"Bias is dropping because Q2's metric is stricter."},
+        ]}
+        trap={<>(b)/(c)/(d) compare numbers from incomparable scales. The metric defines the rate.</>}
+        lens={<>Audit operational hygiene: freeze cost metric, manifold constraint, K, and Delta budget across runs to enable trend comparisons.</>}
+        stretch={<>What's the minimum spec you'd freeze for a quarterly audit certificate?</>}
+      />
+
+      {/* axis: B3 */}
+      <VIS.TrapProblem
+        id="cf-p30" difficulty="hard"
+        title="P30 — Pitch to the compliance lead"
+        scenario={<><em>Discriminating insight: the pitch must hinge on the per-prediction would-decision-flip-if-protected mechanism, not on &quot;explainability in general&quot; — redacting &quot;counterfactual&quot; should make the pitch lose.</em><br/>Your compliance lead asks why counterfactual fairness is worth implementing on top of existing parity and SHAP reports. Pick the strongest pitch.</>}
+        options={[
+          {key:"a", text:"It produces per-decision &quot;if X had been Y, decision flips&quot; narratives — exactly the form ECOA / FCRA adverse-action notices demand. No other tool generates this per-prediction counterfactual sentence.", correct:true},
+          {key:"b", text:"It's a more rigorous fairness method than parity."},
+          {key:"c", text:"It supports cohort-level rate comparisons regulators want."},
+          {key:"d", text:"It is faster to compute than SHAP."},
+        ]}
+        trap={<>(b) is generic &quot;better fairness method&quot; — could be said about any fairness method. (c) is what parity does. (d) is false and irrelevant.</>}
+        lens={<>The unique value is the per-prediction counterfactual sentence required by regulatory adverse-action disclosures. Strip &quot;counterfactual&quot; and the pitch fails redaction.</>}
+        stretch={<>Translate (a) into a 1-sentence executive summary for the board.</>}
       />
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://dl.acm.org/doi/10.1145/3643670" target="_blank" rel="noopener"><strong>Tan et al. &mdash; Counterfactual Explanation for Fairness in Recommendation</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, ACM TOIS 2024)</span><br/>The reference paper. Formalizes the counterfactual-search objective specific to recommender Top-K outputs.</li>
-        <li><a href="https://christophm.github.io/interpretable-ml-book/counterfactual.html" target="_blank" rel="noopener"><strong>Christoph Molnar &mdash; Interpretable ML Book, Ch. Counterfactual Explanations</strong></a> <span style={{color:"#64748b",fontSize:14}}>(textbook, free online)</span><br/>Best intro to counterfactual methods; covers cost metrics, manifold constraints, and trade-offs.</li>
-        <li><a href="https://fairmlbook.org/" target="_blank" rel="noopener"><strong>Barocas, Hardt, Narayanan &mdash; Fairness and Machine Learning</strong></a> <span style={{color:"#64748b",fontSize:14}}>(textbook, free online)</span><br/>Chapter on causal fairness &mdash; the bridge between counterfactual reasoning and legal fairness criteria.</li>
-        <li><a href="https://arxiv.org/abs/1703.06856" target="_blank" rel="noopener"><strong>Kusner et al. &mdash; Counterfactual Fairness</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, NeurIPS 2017)</span><br/>The foundational counterfactual-fairness paper. Establishes the language Tan et al. extend to recommendation.</li>
-        <li><a href="https://www.youtube.com/watch?v=jIXIuYdnyyk" target="_blank" rel="noopener"><strong>Hardt &mdash; Fairness in Machine Learning (lecture)</strong></a> <span style={{color:"#64748b",fontSize:14}}>(video)</span><br/>Moritz Hardt walks through the relationship between parity, equal opportunity, and counterfactual fairness.</li>
+        <li><a href="https://dl.acm.org/doi/10.1145/3643670" target="_blank" rel="noopener"><strong>Tan et al. — Counterfactual Explanation for Fairness in Recommendation</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, ACM TOIS 2024)</span><br/>The reference paper. Formalizes the counterfactual-search objective for recommender Top-K outputs and cost-metric sensitivity.</li>
+        <li><a href="https://christophm.github.io/interpretable-ml-book/counterfactual.html" target="_blank" rel="noopener"><strong>Christoph Molnar — Interpretable ML Book, ch. Counterfactual Explanations</strong></a> <span style={{color:"#64748b",fontSize:14}}>(textbook, free online)</span><br/>Best practitioner intro to counterfactual methods; covers cost metrics, manifold constraints, and trade-offs.</li>
+        <li><a href="https://fairmlbook.org/" target="_blank" rel="noopener"><strong>Barocas, Hardt, Narayanan — Fairness and Machine Learning</strong></a> <span style={{color:"#64748b",fontSize:14}}>(textbook, free online)</span><br/>Chapter on causal fairness — bridges counterfactual reasoning and legal fairness criteria (ECOA, FCRA).</li>
+        <li><a href="https://arxiv.org/abs/1703.06856" target="_blank" rel="noopener"><strong>Kusner et al. — Counterfactual Fairness</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, NeurIPS 2017)</span><br/>The foundational counterfactual-fairness paper. Establishes the language Tan et al. specialize to recommendation.</li>
+        <li><a href="https://www.youtube.com/watch?v=jIXIuYdnyyk" target="_blank" rel="noopener"><strong>Hardt — Fairness in Machine Learning (lecture)</strong></a> <span style={{color:"#64748b",fontSize:14}}>(video)</span><br/>Moritz Hardt walks through parity, equal opportunity, and counterfactual fairness relationships.</li>
       </ul>
     </VIS.Section>
   </main>

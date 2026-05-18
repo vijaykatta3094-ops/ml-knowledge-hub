@@ -1414,241 +1414,564 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 9
+// DSAM — Deep Shared + Attentive Domain Mapping for Cross-Domain Recommendation (UMUAI 2024)
+// Unique mechanism: shared encoder + per-domain attention head over the shared rep
+// (selective alignment via learned attention, not hard sharing or adversarial alignment).
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Cross-domain"
-      title="DSAM (Deep Shared + Attentive Domain Mapping)"
-      subtitle="Cross-domain recommendation that uses attention to decide WHICH parts of one domain&apos;s representation to align with another &mdash; instead of hard-sharing everything."
+      pill="RecSys SOTA · Cross-Domain"
+      title="DSAM — Deep Shared + Attentive Domain Mapping"
+      subtitle="Shared encoder + per-domain attention head that learns which shared features to align — selective transfer between heterogeneous domains."
       byline={[
-        {label: "Paper", value: "UMUAI 2024 (Springer)"},
-        {label: "Domain", value: "Strongly heterogeneous CDR pairs (movies &rarr; groceries)"},
+        {label: "Paper", value: "UMUAI 2024"},
+        {label: "Surface", value: "Heterogeneous CDR (movies → groceries, music → news)"},
       ]}/>
 
     <VIS.TLDR>
-      Classic <VIS.Term def="Cross-domain recommendation: using user-item interaction data from a source domain (e.g., movies) to improve recommendations in a target domain (e.g., groceries) where data is sparser.">cross-domain recommendation (CDR)</VIS.Term> approaches use hard parameter sharing or a shared embedding layer &mdash; everything transfers, including the useless or harmful parts. <strong>DSAM</strong> introduces an attentive domain-mapping layer that learns <em>which</em> source-domain dimensions to align with the target. Shared representations are generated within each domain through cross-attention; the model decides where alignment helps and where domains should stay independent.
+      Hard parameter sharing transfers all features regardless of fit, which hurts when domains are heterogeneous (movie &rarr; grocery). DSAM keeps a single <strong>shared backbone</strong> (one model, one inference graph) but adds a <strong>per-domain attention head</strong> that learns selectively which shared features to align for each domain. The attention IS the transfer policy &mdash; learned, not hand-coded. One backbone, N attention heads, N domains.
     </VIS.TLDR>
 
     <VIS.Section id="sec-what" title="What it is">
       <p>
-        Two encoders produce per-domain user embeddings h_s (source) and h_t (target). An attentive mapping layer M computes context-aware alignment:
+        Two-piece design: (i) a deep encoder shared across all source &amp; target domains produces an embedding <code>e</code> from user + item features; (ii) for each domain k, an attention module <code>A_k</code> produces a domain-specific mapping <code>e_k = A_k(e)</code>. Joint multi-task training: each domain's loss backprops through the shared backbone AND its own <code>A_k</code>.
       </p>
-      <VIS.Equation display tex={`h_{s \\to t} = \\sum_k \\alpha_k(h_s, h_t) \\cdot W_k h_s, \\quad \\alpha = \\text{softmax}(Q h_t \\cdot K h_s / \\sqrt{d})`}/>
-      <p>
-        The shared component is generated <em>per-user</em>, not as a static cross-domain layer. The attention weights tell you which dimensions of the source representation actually transfer.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  US["User in source"]
-  UT["User in target"]
-  ES["Encoder source"]
-  ET["Encoder target"]
-  US --> ES
-  UT --> ET
-  ES --> AM["Attentive mapping"]
-  ET --> AM
-  AM --> ST["Shared shared representation"]
-  ST --> P["Predict in target"]
-      `} />
+      <VIS.Mermaid chart={`flowchart TB
+  X["User + item features"]
+  E["Shared encoder"]
+  M["e shared embedding"]
+  AA["Attention head A_movies"]
+  AB["Attention head A_groceries"]
+  EA["e_movies"]
+  EB["e_groceries"]
+  LA["Loss movies"]
+  LB["Loss groceries"]
+  X --> E --> M
+  M --> AA --> EA --> LA
+  M --> AB --> EB --> LB`} />
+      <p style={{color:"#64748b", fontSize:14, marginTop:8}}>The attention head&apos;s job: suppress shared dimensions that are noise for its domain, amplify dimensions that transfer.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Hard parameter sharing</th><th style={{textAlign:"left",padding:8}}>DSAM</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from hard sharing / MMoE / adversarial">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Approach</th>
+          <th style={{textAlign:"left", padding:8}}>Mechanism</th>
+          <th style={{textAlign:"left", padding:8}}>Failure mode</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Transfer granularity</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>All-or-nothing</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Per-user, per-dimension</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Negative transfer risk</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High when domains diverge</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Mitigated by attention</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Trainable parameters</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Fewer (shared layers)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>More (attention heads)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Interpretability</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Opaque</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Attention weights expose transfer</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Failure mode</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Source pollutes target</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Attention collapse to identity</td></tr>
+          <tr><td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Hard sharing (EMCDR, CoNet)</td>
+              <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Identical params across domains</td>
+              <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Negative transfer when domains differ</td></tr>
+          <tr style={{background:"#f8fafc"}}>
+            <td style={{padding:8}}>MMoE / PLE</td>
+            <td style={{padding:8}}>Mixture-of-experts gating</td>
+            <td style={{padding:8}}>Expert duplication; gate collapse</td></tr>
+          <tr>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>DARec (adversarial)</td>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Force shared rep domain-agnostic</td>
+            <td style={{padding:8, borderTop:"1px solid #e2e8f0"}}>Collapse if regularization is too strong</td></tr>
+          <tr style={{background:"#f8fafc"}}>
+            <td style={{padding:8}}><strong>DSAM</strong></td>
+            <td style={{padding:8}}>Shared backbone + per-domain attention head</td>
+            <td style={{padding:8}}>Attention can collapse to identity if not regularized</td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Strongly heterogeneous domains (movies &rarr; groceries) where most of the source representation does NOT transfer.</li>
-        <li>Cold-start in target domain with rich source data and overlapping users.</li>
-        <li>You need interpretability of what transfers (regulatory or product reasons).</li>
-        <li>Compute budget allows a few extra attention layers at training time.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 30 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the question-axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations &amp; gotchas">
-      <ul>
-        <li><strong>Attention collapse</strong> &mdash; without regularization, attention can collapse to identity (one-hot weights), defeating the purpose.</li>
-        <li><strong>Overlapping users required</strong> &mdash; like all CDR, needs a non-trivial user overlap between source and target.</li>
-        <li><strong>Two-tower disconnect</strong> &mdash; aligning users does not align items; complementary item-side mapping often needed.</li>
-        <li><strong>Negative transfer can still slip in</strong> &mdash; when both domains share spurious correlations.</li>
-        <li><strong>Training instability</strong> &mdash; joint optimization across two domains is sensitive to learning rate and loss weighting.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill &mdash; 10 trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
+      {/* axis: A1 */}
       <VIS.TrapProblem
         id="dsam-p1" difficulty="hard"
-        title="P1 &mdash; Why naive sharing fails for distant domains"
-        scenario={<>You apply hard parameter sharing CDR between movies (source) and groceries (target). Target performance gets worse than a target-only baseline. Why?</>}
+        title="P1 — DSAM vs hard parameter sharing"
+        scenario={<><em>Discriminating insight: hard sharing transfers all features; DSAM's attention transfers selectively. The selectivity is the entire point.</em><br/>You're considering hard parameter sharing vs DSAM for a movies → groceries CDR system. Both share parameters; what's the distinctive difference?</>}
         options={[
-          {key:"a", text:"Negative transfer: shared parameters force movie-domain patterns (genre, mood) to dominate grocery-domain representations (price, shelf-life), washing out target signal.", correct:true},
-          {key:"b", text:"Movies and groceries cannot be modeled in any framework."},
-          {key:"c", text:"Hard sharing always works; the implementation is buggy."},
-          {key:"d", text:"You need a larger model."},
+          {key:"a", text:"Hard sharing forces ALL features to transfer; DSAM's per-domain attention head learns which shared features to actually transfer. Selectivity is what protects heterogeneous domains from negative transfer.", correct:true},
+          {key:"b", text:"DSAM has more parameters; hard sharing has fewer."},
+          {key:"c", text:"DSAM uses a different loss function."},
+          {key:"d", text:"They're equivalent for heterogeneous domains."},
         ]}
-        trap={<>(b)/(c)/(d) all duck the diagnosis. The trap is treating &quot;transfer&quot; as monotone &mdash; more sharing isn&apos;t always better.</>}
-        lens={<>Negative transfer is the central CDR risk. The further apart the domains, the harder a static shared layer is to justify; selective alignment (DSAM-style) is needed.</>}
-        stretch={<>How would you measure negative transfer empirically?</>}
+        trap={<>(b) is structural-but-not-load-bearing; the count difference is small. (c)/(d) misstate.</>}
+        lens={<>Selective alignment via attention is THE mechanism. Hard sharing is the failure case DSAM is designed to fix.</>}
+        stretch={<>When would hard sharing actually beat DSAM?</>}
       />
 
+      {/* axis: A2 */}
       <VIS.TrapProblem
         id="dsam-p2" difficulty="hard"
-        title="P2 &mdash; Attention collapse"
-        scenario={<>You train DSAM. Attention weights inspected at convergence look one-hot: each user attends to a single source dimension. Target performance is identical to source-only baseline. What happened?</>}
+        title="P2 — DSAM vs MMoE / PLE"
+        scenario={<><em>Discriminating insight: MMoE uses discrete-ish gating over expert OUTPUTS (multiple experts); DSAM uses continuous attention over a single shared backbone (one expert with selective routing).</em><br/>How does DSAM's per-domain attention head differ from MMoE / PLE gating?</>}
         options={[
-          {key:"a", text:"Attention collapsed to identity. Without entropy regularization, the softmax sharpened too much and the mapping became degenerate &mdash; effectively a fixed projection.", correct:true},
-          {key:"b", text:"Attention always converges to one-hot."},
-          {key:"c", text:"DSAM is broken by design."},
-          {key:"d", text:"The source domain is too small."},
+          {key:"a", text:"MMoE/PLE gate over the outputs of MULTIPLE expert networks. DSAM has ONE shared backbone and per-domain attention over its embedding dimensions — cheaper (no expert duplication) and interpretable (which dimensions got amplified).", correct:true},
+          {key:"b", text:"They're equivalent."},
+          {key:"c", text:"DSAM uses sparse attention; MMoE uses dense."},
+          {key:"d", text:"MMoE is for multi-task; DSAM is for cross-domain — different problems."},
         ]}
-        trap={<>(b) overgeneralizes. (c) shoots the messenger. (d) misdiagnoses. The named failure mode in DSAM is attention collapse to a low-entropy distribution.</>}
-        lens={<>Add an attention-entropy penalty to the loss: L_total = L_task - beta &middot; H(alpha). Beta tuned to keep average entropy above a threshold.</>}
-        stretch={<>What other failure modes does the entropy penalty introduce?</>}
+        trap={<>(b)/(c) misstate. (d) overstates — both target multi-source training; DSAM is just specialized.</>}
+        lens={<>One backbone + N attention heads is cheaper than N experts + 1 gate. DSAM's design choice.</>}
+        stretch={<>What's the parameter-count gap between MMoE and DSAM for 5 domains?</>}
       />
 
+      {/* axis: A3 */}
       <VIS.TrapProblem
         id="dsam-p3" difficulty="hard"
-        multiSelect
-        title="P3 &mdash; Cold-start use case"
-        scenario={<>You have 50M users in source (movies), 2M users in target (groceries), 200k overlap. Which DSAM design choices support cold-start in target? Select all that apply.</>}
+        title="P3 — Counterfactual: no DSAM, what's the fallback?"
+        scenario={<><em>Discriminating insight: without DSAM the realistic fallbacks are MMoE/PLE (multi-expert) or per-domain independent models — both heavier than DSAM&apos;s shared backbone.</em><br/>Suppose DSAM didn't exist. How would you do CDR with selective alignment in 2025?</>}
         options={[
-          {key:"a", text:"Pretrain source encoder, freeze it, then train attentive mapping + target encoder jointly on the overlap.", correct:true},
-          {key:"b", text:"For target-only users with no source data, fall back to a target-only path that bypasses the mapping.", correct:true},
-          {key:"c", text:"Use source-derived item-side embeddings as initialization for target items where descriptions align.", correct:true},
-          {key:"d", text:"Train everything jointly from scratch with cold-start losses."},
-          {key:"e", text:"Discard non-overlap users."},
+          {key:"a", text:"MMoE/PLE (heavier — duplicates experts); or per-domain independent models with shared embedding-init (loses joint training); or DARec-style adversarial alignment (fragile to regularization).", correct:true},
+          {key:"b", text:"There's no alternative; CDR requires DSAM."},
+          {key:"c", text:"Hard sharing — it's strictly better."},
+          {key:"d", text:"Use a single domain only."},
         ]}
-        trap={<>(d) ignores the data-imbalance pathology. (e) throws away most target users. The three correct moves all respect the imbalanced overlap.</>}
-        lens={<>Cold-start CDR needs an architecture that gracefully handles non-overlap users (most of the population) while exploiting the overlap signal where it exists.</>}
-        stretch={<>What happens if the overlap is biased (e.g., overlap users are power users)?</>}
+        trap={<>(b) overclaims. (c) is the failure mode. (d) abandons the goal.</>}
+        lens={<>DSAM sits in a specific spot: shared backbone with selective alignment. Alternatives trade off cost, joint training, or stability.</>}
+        stretch={<>For a 6-month migration, which non-DSAM method is closest?</>}
       />
 
+      {/* axis: A4 */}
       <VIS.TrapProblem
         id="dsam-p4" difficulty="hard"
-        title="P4 &mdash; Item-side alignment"
-        scenario={<>DSAM aligns users via attention, but offline metrics show item-side recall on target hasn&apos;t improved. What is missing?</>}
+        title="P4 — DSAM + meta-learning"
+        scenario={<><em>Discriminating insight: DSAM&apos;s shared backbone is a natural fit for meta-learning — adapt the attention head per few-shot domain rather than retraining the backbone.</em><br/>You consider adding a new domain (cookware) with only 50k interactions. Would meta-learning over DSAM&apos;s attention head help?</>}
         options={[
-          {key:"a", text:"Item representations are not aligned. CDR needs both user and item bridges; aligning only users explains why predicted user-item scores on target items don&apos;t benefit from source signal.", correct:true},
-          {key:"b", text:"Recall metrics are misleading for CDR."},
-          {key:"c", text:"DSAM is user-only by design."},
-          {key:"d", text:"The target domain has too few items."},
+          {key:"a", text:"Yes — keep the shared backbone, meta-train the attention head so it adapts to a new domain with few samples. The attention head's small parameter count is exactly the surface meta-learning is suited for.", correct:true},
+          {key:"b", text:"No — meta-learning requires a different architecture."},
+          {key:"c", text:"No — DSAM doesn't support few-shot."},
+          {key:"d", text:"Yes, but you'd need to retrain the shared backbone for cookware."},
         ]}
-        trap={<>(b)/(c)/(d) all redirect. The pragmatic gap is that two-tower CDR needs alignment on both sides.</>}
-        lens={<>Mirror the user-mapping design on the item side: a symmetric attentive mapping that learns which source-item features transfer to target items.</>}
-        stretch={<>What happens when items are not aligned but users are?</>}
+        trap={<>(b)/(c) overstate restrictions. (d) defeats the point.</>}
+        lens={<>DSAM's attention head is the natural meta-learning surface. The backbone stays frozen.</>}
+        stretch={<>What's the right meta-objective for the attention head?</>}
       />
 
+      {/* axis: A5 */}
       <VIS.TrapProblem
         id="dsam-p5" difficulty="hard"
-        title="P5 &mdash; Loss weighting across domains"
-        scenario={<>You train with L = L_source + L_target. Source dominates the gradient because it has 25x more interactions. Target metrics stagnate. What is the right fix?</>}
+        title="P5 — Where DSAM stops adding value"
+        scenario={<><em>Discriminating insight: at the &quot;very similar domains&quot; boundary (movies vs TV shows), hard sharing or simple co-training is enough; DSAM&apos;s attention adds complexity without payoff.</em><br/>For movies vs TV shows (very similar catalogs, overlapping user behavior), would you ship DSAM?</>}
         options={[
-          {key:"a", text:"Use L = w_s L_source + w_t L_target with weights tuned on a target validation set; or use gradient-balancing methods that normalize per-domain gradient magnitudes.", correct:true},
-          {key:"b", text:"Drop the source loss entirely."},
-          {key:"c", text:"Increase the source-loss weight."},
-          {key:"d", text:"Sample equally from both domains regardless of imbalance."},
+          {key:"a", text:"Probably not. Very similar domains transfer cleanly under hard sharing; DSAM's attention head adds complexity (regularization, init, monitoring) without payoff. Ship plain shared learning.", correct:true},
+          {key:"b", text:"Yes — DSAM is strictly better everywhere."},
+          {key:"c", text:"Yes — selective alignment always wins."},
+          {key:"d", text:"No — too computationally expensive for any case."},
         ]}
-        trap={<>(b) loses transfer signal. (c) makes it worse. (d) helps but doesn&apos;t address loss-magnitude differences. The right move addresses BOTH sampling AND loss weighting.</>}
-        lens={<>Multi-domain training has two imbalance levers: sampling ratio and loss weighting. Tune both with target validation as the primary objective.</>}
-        stretch={<>When would equal-sampling alone be sufficient?</>}
+        trap={<>(b)/(c) overclaim. (d) misstates DSAM's cost.</>}
+        lens={<>DSAM&apos;s value scales with domain heterogeneity. At similar domains, simpler is better.</>}
+        stretch={<>What heterogeneity signal would tell you DSAM is warranted?</>}
       />
 
+      {/* axis: B1 */}
       <VIS.TrapProblem
         id="dsam-p6" difficulty="hard"
-        title="P6 &mdash; Interpretability check"
-        scenario={<>You inspect average attention weights across users for a (movies &rarr; groceries) DSAM. The model attends heavily to a single source-domain dimension labeled &quot;hour_of_watch.&quot; Is this transferring meaningful signal?</>}
+        title="P6 — Pick DSAM over MMoE"
+        scenario={<><em>Discriminating insight: DSAM&apos;s &quot;one backbone, N heads&quot; is preferred when serving cost matters; MMoE&apos;s N experts blow up serving compute.</em><br/>Your CDR serves 5 domains under a tight inference budget. Pick DSAM or MMoE.</>}
         options={[
-          {key:"a", text:"Likely a spurious shortcut &mdash; hour-of-watch is unlikely to causally predict grocery preference. Probe by ablating that dimension and checking target performance.", correct:true},
-          {key:"b", text:"Yes, the model is right."},
-          {key:"c", text:"Attention values are uninterpretable."},
-          {key:"d", text:"It means the model needs more training."},
+          {key:"a", text:"DSAM — single backbone shared across all 5 domains keeps inference cost flat; MMoE duplicates experts and serving compute scales with domain count.", correct:true},
+          {key:"b", text:"MMoE — more flexible, always worth the cost."},
+          {key:"c", text:"DSAM — but only when N is small."},
+          {key:"d", text:"Either; they have identical serving cost."},
         ]}
-        trap={<>(b) trusts the model. (c) gives up on interpretability that DSAM specifically buys you. (d) is a generic non-answer.</>}
-        lens={<>Use attention as a diagnostic, not a justification. Confirm via ablation; spurious shortcuts often dominate attention when the task lets them.</>}
-        stretch={<>How would you regularize the model away from spurious shortcuts?</>}
+        trap={<>(b)/(d) misstate. (c) reverses the scaling argument.</>}
+        lens={<>DSAM&apos;s structural advantage at serving: backbone shared, attention heads small.</>}
+        stretch={<>At what N (domain count) does DSAM beat MMoE most strongly?</>}
       />
 
+      {/* axis: B2 */}
       <VIS.TrapProblem
         id="dsam-p7" difficulty="hard"
-        multiSelect
-        title="P7 &mdash; Privacy when CDR crosses orgs"
-        scenario={<>You want CDR between your platform and a partner platform but cannot share raw user data. Which DSAM-compatible patterns help? Select all that apply.</>}
+        title="P7 — Sounds reasonable: more sharing = better transfer"
+        scenario={<><em>Discriminating insight: hard sharing transfers BAD features along with good; the win from DSAM is selective alignment.</em><br/>Engineer suggests &quot;If sharing the backbone helps, share more — make the shared encoder even deeper and skip the attention head.&quot; Why is this risky?</>}
         options={[
-          {key:"a", text:"Federated training: partner trains source encoder locally; you receive frozen embeddings for overlapping users via privacy-preserving join.", correct:true},
-          {key:"b", text:"Train DSAM mapping on the frozen source embeddings; never see raw partner data.", correct:true},
-          {key:"c", text:"Use differential-privacy noise on source embeddings before sharing.", correct:true},
-          {key:"d", text:"Just send all partner user data over."},
-          {key:"e", text:"Skip CDR; it&apos;s impossible without raw data."},
+          {key:"a", text:"More sharing without selective alignment forces BAD features to transfer too — leading to negative transfer in heterogeneous domains. The attention head is what makes sharing safe at depth.", correct:true},
+          {key:"b", text:"Deeper encoders always overfit."},
+          {key:"c", text:"More sharing helps but slows inference."},
+          {key:"d", text:"DSAM only works at fixed depth."},
         ]}
-        trap={<>(d) is a non-starter. (e) gives up. The three correct moves form the standard privacy-preserving CDR stack.</>}
-        lens={<>DSAM&apos;s architecture lends itself to federated patterns: the source encoder can be partner-trained and partner-frozen; only embeddings transit.</>}
-        stretch={<>What does differential-privacy noise cost in target metrics?</>}
+        trap={<>(b) is unrelated. (c) misattributes. (d) is wrong.</>}
+        lens={<>Sharing without selectivity is the problem DSAM exists to fix.</>}
+        stretch={<>What's the cheapest sanity check that sharing is helping vs hurting?</>}
       />
 
+      {/* axis: B3 */}
       <VIS.TrapProblem
         id="dsam-p8" difficulty="hard"
-        title="P8 &mdash; When DSAM is overkill"
-        scenario={<>An engineer wants to use DSAM for two domains that are very close (TV shows &rarr; movies). What is the most likely outcome?</>}
+        title="P8 — Pitch to the head of ML"
+        scenario={<><em>Discriminating insight: the pitch must hinge on shared backbone + per-domain attention — the unique mechanism. Strip &quot;DSAM&quot; and the pitch loses meaning.</em><br/>Head of ML asks why DSAM is worth a 6-month migration from independent per-domain models. Pick the strongest pitch.</>}
         options={[
-          {key:"a", text:"Hard parameter sharing or a simple shared embedding likely works as well or better &mdash; DSAM&apos;s selectivity has overhead that&apos;s wasted when most of the source representation usefully transfers.", correct:true},
-          {key:"b", text:"DSAM always wins."},
-          {key:"c", text:"DSAM cannot model similar domains."},
-          {key:"d", text:"Close domains have no transfer."},
+          {key:"a", text:"One trainable backbone (single inference graph, cheap to serve) with per-domain attention heads (selective transfer learned from data). Adding domain N+1 means adding ONE attention head, not retraining the backbone. The attention is the transfer policy, learned not hand-coded.", correct:true},
+          {key:"b", text:"DSAM is more accurate than independent models."},
+          {key:"c", text:"DSAM is faster to train."},
+          {key:"d", text:"DSAM has fewer hyperparameters."},
         ]}
-        trap={<>(b)/(c)/(d) all over-generalize. The pragmatic lesson is that algorithm choice depends on domain distance.</>}
-        lens={<>Pick the simplest method that handles the negative-transfer risk in your specific domain pair. DSAM shines when negative-transfer risk is high; vanilla sharing wins when it isn&apos;t.</>}
-        stretch={<>How would you measure domain distance ahead of time?</>}
+        trap={<>(b)/(c)/(d) could be said about almost any multi-task method. The shared-backbone-plus-attention-per-domain mechanism is uniquely DSAM.</>}
+        lens={<>The pitch hinges on the shared-backbone + per-domain-attention combination. Strip &quot;DSAM&quot; and the pitch loses meaning.</>}
+        stretch={<>Translate (a) into a 1-sentence executive summary.</>}
       />
 
+      {/* axis: B4 */}
       <VIS.TrapProblem
         id="dsam-p9" difficulty="hard"
-        title="P9 &mdash; Training stability"
-        scenario={<>DSAM training diverges intermittently &mdash; some seeds NaN at epoch 3; others converge to good target metrics. What is most likely the cause?</>}
+        title="P9 — When NOT to ship DSAM"
+        scenario={<><em>Discriminating insight: when one domain is data-sparse (under 100k interactions), the attention head will not train and DSAM degenerates to noise on that domain.</em><br/>You consider adding a tiny new domain (10k interactions) to your DSAM system. What's the risk?</>}
         options={[
-          {key:"a", text:"Joint multi-domain optimization is sensitive to LR and warmup; without LR warmup, the attentive mapping receives huge initial gradients before encoders stabilize.", correct:true},
-          {key:"b", text:"DSAM is fundamentally unstable."},
-          {key:"c", text:"Need more data."},
-          {key:"d", text:"The model is too small."},
+          {key:"a", text:"The new domain's attention head will not get enough gradient signal to learn meaningful selection; it'll regress to noise. Either pretrain on related domain first, share the attention head with a sibling domain, or wait until you have more data.", correct:true},
+          {key:"b", text:"DSAM handles any data size automatically."},
+          {key:"c", text:"10k is plenty; ship it."},
+          {key:"d", text:"Small domains help DSAM regularize."},
         ]}
-        trap={<>(b)/(c)/(d) all misdiagnose. The named issue is multi-domain joint training&apos;s sensitivity to warmup and LR scheduling.</>}
-        lens={<>Add LR warmup over the first few epochs; clip gradients on the attention layer; consider staged training (encoders first, then mapping).</>}
-        stretch={<>How would you design a staged training curriculum?</>}
+        trap={<>(b)/(c)/(d) miss the data-scale floor.</>}
+        lens={<>Attention heads need data to train. Below a data floor, DSAM doesn't help.</>}
+        stretch={<>What's the right minimum data threshold per domain?</>}
       />
 
+      {/* axis: C1 */}
       <VIS.TrapProblem
         id="dsam-p10" difficulty="hard"
-        title="P10 &mdash; Evaluation against single-domain baseline"
-        scenario={<>DSAM beats target-only baseline by 4% on a metric like NDCG@10. A reviewer says &quot;run the comparison with the same target-domain training compute, not the same wall-clock.&quot; Why does this matter?</>}
+        title="P10 — Why attention over OUTPUT of shared encoder?"
+        scenario={<><em>Discriminating insight: applying attention POST shared encoder isolates per-domain selectivity; attention INSIDE residual blocks leaks domain gradients into shared params via the residual path.</em><br/>Where does DSAM&apos;s attention head go in the architecture?</>}
         options={[
-          {key:"a", text:"DSAM uses extra parameters and source data; a target-only baseline trained for equal target-side compute (more epochs, larger model) often closes a chunk of the gap, isolating the genuine transfer benefit.", correct:true},
-          {key:"b", text:"Wall-clock comparison is fair."},
-          {key:"c", text:"Compute is irrelevant in CDR."},
-          {key:"d", text:"DSAM is provably faster."},
+          {key:"a", text:"After the shared encoder, as a single post-hoc layer. Interleaving A_k inside residual blocks accidentally lets gradients from domain k overwrite shared params via the residual path.", correct:true},
+          {key:"b", text:"Inside every residual block."},
+          {key:"c", text:"Before the shared encoder."},
+          {key:"d", text:"Replace the encoder entirely."},
         ]}
-        trap={<>(b)/(c)/(d) accept the original comparison. The reviewer&apos;s point is the standard CDR evaluation hygiene: equalize compute, not just runs.</>}
-        lens={<>The CDR community&apos;s standard hygiene: compute-matched baselines isolate the &quot;transfer&quot; effect from the &quot;more compute&quot; effect.</>}
-        stretch={<>How would you set up a compute-matched experiment?</>}
+        trap={<>(b) is the wire-as-residual bug. (c)/(d) miss the &quot;shared backbone, per-domain transform&quot; design.</>}
+        lens={<>Wire A_k as a post-hoc layer, not interleaved. Architecturally critical.</>}
+        stretch={<>What's the bug signal if you wire A_k inside residual blocks?</>}
+      />
+
+      {/* axis: C2 */}
+      <VIS.TrapProblem
+        id="dsam-p11" difficulty="hard"
+        title="P11 — Loss design: per-domain or joint?"
+        scenario={<><em>Discriminating insight: per-domain losses backprop through the shared backbone simultaneously; the gradient mixing is exactly the joint-training signal that drives shared learning.</em><br/>DSAM uses joint multi-task loss = sum_k L_k. Why not train each domain separately?</>}
+        options={[
+          {key:"a", text:"Joint training is what creates the shared backbone's transfer signal: gradients from all domains mix in the backbone. Per-domain training would give you independent models with no transfer.", correct:true},
+          {key:"b", text:"Joint training is faster on GPU."},
+          {key:"c", text:"Per-domain training would diverge."},
+          {key:"d", text:"They're equivalent."},
+        ]}
+        trap={<>(b)/(c)/(d) miss the joint-gradient-mixing argument.</>}
+        lens={<>Gradient mixing in the shared backbone IS the transfer mechanism.</>}
+        stretch={<>How does loss-weighting across domains affect the backbone?</>}
+      />
+
+      {/* axis: C3 */}
+      <VIS.TrapProblem
+        id="dsam-p12" difficulty="hard"
+        title="P12 — What DSAM drops vs hard sharing"
+        scenario={<><em>Discriminating insight: DSAM drops the GUARANTEE of transfer in exchange for the option of selective non-transfer when the attention head decides a feature does not fit.</em><br/>What does DSAM deliberately drop compared to hard sharing?</>}
+        options={[
+          {key:"a", text:"The guarantee of transfer. DSAM's attention head can learn to be near-identity, effectively suppressing transfer; hard sharing forces transfer. DSAM trades guaranteed transfer for selective transfer.", correct:true},
+          {key:"b", text:"Nothing — DSAM is strictly better."},
+          {key:"c", text:"Inference speed."},
+          {key:"d", text:"Reproducibility."},
+        ]}
+        trap={<>(b) is the &quot;costume&quot; trap. (c)/(d) are unrelated.</>}
+        lens={<>The deliberate sacrifice is &quot;always transfer&quot;; the gain is &quot;only transfer when helpful.&quot;</>}
+        stretch={<>When would you want guaranteed transfer back?</>}
+      />
+
+      {/* axis: C4 */}
+      <VIS.TrapProblem
+        id="dsam-p13" difficulty="hard"
+        title="P13 — Hyperparameter sensitivity: attention dropout"
+        scenario={<><em>Discriminating insight: too-low dropout lets attention collapse to identity (no selection); too-high makes attention noise. The optimum is narrow.</em><br/>You set attention dropout to 0.0. What happens?</>}
+        options={[
+          {key:"a", text:"Attention head collapses to near-identity — no selection happens, DSAM degenerates to hard sharing. Add moderate dropout (e.g., 0.1-0.3) on attention weights to prevent collapse.", correct:true},
+          {key:"b", text:"Attention works fine without dropout; dropout is for inference only."},
+          {key:"c", text:"Attention overfits and selection becomes random."},
+          {key:"d", text:"Attention dropout doesn't affect cross-domain transfer."},
+        ]}
+        trap={<>(b)/(c)/(d) misstate. Collapse-to-identity is the named failure mode in the paper.</>}
+        lens={<>Attention head needs regularization. Without dropout (or L1 sparsity), it picks the easy path: be identity, no selection.</>}
+        stretch={<>What's the right dropout starting value?</>}
+      />
+
+      {/* axis: C5 */}
+      <VIS.TrapProblem
+        id="dsam-p14" difficulty="hard"
+        title="P14 — Data assumption: user overlap"
+        scenario={<><em>Discriminating insight: DSAM assumes some user overlap between domains so the shared encoder sees positive transfer signal during training; with zero overlap, sharing has no anchor.</em><br/>Your two domains have zero user overlap (cold separation). Does DSAM still help?</>}
+        options={[
+          {key:"a", text:"Less than expected. DSAM benefits from user overlap as an alignment anchor in the shared encoder. With zero overlap, the backbone has nothing to anchor cross-domain transfer on; effectively two independent models with shared parameter init.", correct:true},
+          {key:"b", text:"Yes — DSAM doesn't require overlap."},
+          {key:"c", text:"No — DSAM strictly requires full overlap."},
+          {key:"d", text:"Yes — DSAM is content-based and doesn't use IDs."},
+        ]}
+        trap={<>(b)/(d) overstate independence. (c) overstates the requirement.</>}
+        lens={<>Some overlap is a soft prerequisite; zero overlap dramatically reduces transfer value.</>}
+        stretch={<>What's the minimum overlap percentage for meaningful transfer?</>}
+      />
+
+      {/* axis: D1 */}
+      <VIS.TrapProblem
+        id="dsam-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: attention is interpretable"
+        scenario={<><em>Discriminating insight: attention weights show which DIMENSIONS got emphasized, but those dimensions are themselves not human-readable unless the shared encoder was disentangled.</em><br/>An engineer claims &quot;DSAM is interpretable — just look at the attention weights.&quot; Why is this only partial?</>}
+        options={[
+          {key:"a", text:"Attention shows which dimensions of the shared embedding the domain head emphasizes. But the dimensions themselves are entangled features without human meaning unless the encoder was explicitly disentangled. You can see WHERE the head focuses, not WHAT got transferred.", correct:true},
+          {key:"b", text:"Attention is fully interpretable."},
+          {key:"c", text:"Attention values are not stable across re-training."},
+          {key:"d", text:"Attention is opaque by design."},
+        ]}
+        trap={<>(b) overclaims. (c) is true but secondary. (d) under-claims.</>}
+        lens={<>Attention gives partial interpretability; full interpretability needs disentangled shared dims, which DSAM doesn't enforce.</>}
+        stretch={<>How would you add disentanglement on top of DSAM?</>}
+      />
+
+      {/* axis: D2 */}
+      <VIS.TrapProblem
+        id="dsam-p16" difficulty="hard" multiSelect
+        title="P16 — Wrong-assumption cascade: no regularization needed"
+        scenario={<><em>Discriminating insight: assuming &quot;the attention head will figure it out&quot; cascades into collapse-to-identity, no transfer signal, and unexplained regression.</em><br/>You assume DSAM&apos;s attention head needs no regularization. Which downstream conclusions does this corrupt? Select all that apply.</>}
+        options={[
+          {key:"a", text:"Attention collapses to identity; DSAM degenerates to two independent models with shared init.", correct:true},
+          {key:"b", text:"You'll see no cross-domain transfer signal in training metrics.", correct:true},
+          {key:"c", text:"You'll attribute regressions to the data when they're a regularization-design failure.", correct:true},
+          {key:"d", text:"None — the assumption is harmless."},
+        ]}
+        trap={<>(d) is the cascade trigger.</>}
+        lens={<>DSAM&apos;s attention head needs explicit regularization (dropout, L1 sparsity). Without it, the architecture defeats its own purpose.</>}
+        stretch={<>What's the right monitoring signal for collapse?</>}
+      />
+
+      {/* axis: D3 */}
+      <VIS.TrapProblem
+        id="dsam-p17" difficulty="hard"
+        title="P17 — Junior vs senior: domain B regresses after adding C"
+        scenario={<><em>Discriminating insight: junior blames the new domain; senior inspects the attention weights of the existing domain to see if they shifted.</em><br/>Domain B's NDCG drops after you add domain C. Junior says &quot;negative transfer; remove C.&quot; What does senior do?</>}
+        options={[
+          {key:"a", text:"Inspect domain B's attention weights before and after adding C. If they shifted significantly, the shared encoder learned C-features that crowded out B-features; DSAM's selective alignment is supposed to prevent this but can fail with under-parameterized A_B.", correct:true},
+          {key:"b", text:"Roll back C immediately."},
+          {key:"c", text:"Train more epochs."},
+          {key:"d", text:"Re-balance the loss."},
+        ]}
+        trap={<>(b) is the junior move. (c)/(d) are blind tuning.</>}
+        lens={<>Attention weights are the diagnostic surface. Inspect before tuning.</>}
+        stretch={<>What's the attention-weight shift threshold that signals trouble?</>}
+      />
+
+      {/* axis: D4 */}
+      <VIS.TrapProblem
+        id="dsam-p18" difficulty="hard"
+        title="P18 — Plausible misattribution"
+        scenario={<><em>Discriminating insight: domain B&apos;s regression after adding C is often under-parameterized backbone, not bad domain C.</em><br/>Same setup as P17: B regresses after adding C. Three plausible causes: (i) C is genuinely incompatible, (ii) backbone is now under-parameterized for joint feature space, (iii) A_B has too few params for the bigger joint embedding. Which is often the real cause?</>}
+        options={[
+          {key:"a", text:"(ii) or (iii) — increase backbone width or A_B parameters before declaring C incompatible. The most common real cause is capacity, not data.", correct:true},
+          {key:"b", text:"(i) — always remove the new domain."},
+          {key:"c", text:"All three equally likely."},
+          {key:"d", text:"Domain B's data shifted."},
+        ]}
+        trap={<>(b) blames C without diagnostic. (c)/(d) miss the typical pattern.</>}
+        lens={<>Capacity is the usual culprit when adding a domain regresses an existing one; remove only after exhausting capacity fixes.</>}
+        stretch={<>How would you decide between increasing backbone width vs A_B width?</>}
+      />
+
+      {/* axis: D5 */}
+      <VIS.TrapProblem
+        id="dsam-p19" difficulty="hard"
+        title="P19 — Sounds reasonable: attention head should differ across domains"
+        scenario={<><em>Discriminating insight: nothing in DSAM&apos;s standard training forces A_k to differ from A_j; without an explicit domain-discriminator loss, attention heads can converge to near-duplicates.</em><br/>You inspect A_movies and A_groceries; they're 95% similar. Bug or feature?</>}
+        options={[
+          {key:"a", text:"Bug — without an explicit domain-discriminator loss or differentiation regularizer, attention heads can converge to near-duplicate matrices. Add a contrastive loss that encourages A_k to differ from siblings.", correct:true},
+          {key:"b", text:"Feature — similar domains should have similar attention."},
+          {key:"c", text:"Bug — re-train from scratch."},
+          {key:"d", text:"Feature — DSAM is designed to converge attention."},
+        ]}
+        trap={<>(b) might be true for VERY similar domains but in heterogeneous CDR pairs it indicates collapse. (d) misstates the design.</>}
+        lens={<>Diversification of attention heads needs explicit pressure for heterogeneous domains.</>}
+        stretch={<>What contrastive loss would you add?</>}
+      />
+
+      {/* axis: E1 */}
+      <VIS.TrapProblem
+        id="dsam-p20" difficulty="hard"
+        title="P20 — Production gotcha: attention collapse detection"
+        scenario={<><em>Discriminating insight: collapse can be silent; track effective rank or entropy of A_k during training.</em><br/>What's the cheapest production signal that attention head A_k has collapsed?</>}
+        options={[
+          {key:"a", text:"Track effective rank or entropy of A_k weights during training; alarm if entropy drops below a threshold or rank collapses to 1.", correct:true},
+          {key:"b", text:"Check training loss only — collapse shows up as loss spike."},
+          {key:"c", text:"Check validation NDCG — collapse causes NDCG to drop."},
+          {key:"d", text:"There's no observable signal; collapse is silent."},
+        ]}
+        trap={<>(b) often misses because loss still decreases. (c) is a lagging indicator. (d) is the false belief that prevents instrumentation.</>}
+        lens={<>Direct measurement of attention weights catches collapse early; downstream metrics catch it late.</>}
+        stretch={<>What's the right entropy threshold to alarm on?</>}
+      />
+
+      {/* axis: E2 */}
+      <VIS.TrapProblem
+        id="dsam-p21" difficulty="hard"
+        title="P21 — Failure-on-Friday: dominant domain drowns minor"
+        scenario={<><em>Discriminating insight: shared backbone over-fits to the dominant domain; minor domain&apos;s attention head can&apos;t disentangle the imported features fast enough.</em><br/>DSAM shipped Thursday for movies (10M interactions/day) + groceries (1M/day). Friday 3am: <strong>grocery NDCG -3%, movie NDCG +1%</strong>. Latency, util fine. Why does this hit DSAM specifically?</>}
+        options={[
+          {key:"a", text:"Shared backbone learns predominantly from movies (10x more data); grocery's attention head can't disentangle the movie-induced features fast enough. Fix: reweight loss per-domain by inverse data volume, increase grocery's attention dropout, or pretrain backbone on grocery first then unfreeze.", correct:true},
+          {key:"b", text:"Grocery domain is too small for DSAM."},
+          {key:"c", text:"Movies and groceries are too dissimilar."},
+          {key:"d", text:"Latency spike caused fallback."},
+        ]}
+        trap={<>(b) gives up. (c) blames the data. (d) misattributes.</>}
+        lens={<>Data-volume imbalance is a DSAM-specific failure mode; the shared backbone tilts toward the majority domain.</>}
+        stretch={<>How would you set the per-domain loss weights?</>}
+      />
+
+      {/* axis: E3 */}
+      <VIS.TrapProblem
+        id="dsam-p22" difficulty="hard"
+        title="P22 — Implementation gotcha: residual leakage"
+        scenario={<><em>Discriminating insight: applying A_k inside residual blocks lets gradients from domain k leak into shared params via the residual; wire A_k as a single post-hoc layer.</em><br/>You wire A_k inside the encoder&apos;s residual blocks. What happens?</>}
+        options={[
+          {key:"a", text:"Gradients from domain k leak into shared params via the residual path; the shared encoder accidentally specializes per-domain. Fix: wire A_k as a single post-hoc layer after the encoder, outside any residual.", correct:true},
+          {key:"b", text:"Performance improves because attention happens earlier."},
+          {key:"c", text:"The model fails to train."},
+          {key:"d", text:"No effect — residuals don't affect gradient flow."},
+        ]}
+        trap={<>(b) confuses earlier-attention with cleaner-attention. (c)/(d) misstate gradient flow.</>}
+        lens={<>DSAM&apos;s architectural rule: A_k AFTER the shared encoder, post-residual. Critical for keeping the backbone shared.</>}
+        stretch={<>Trace the gradient path for the buggy vs correct wiring.</>}
+      />
+
+      {/* axis: E4 */}
+      <VIS.TrapProblem
+        id="dsam-p23" difficulty="hard"
+        title="P23 — Rollout: which domain first?"
+        scenario={<><em>Discriminating insight: pretrain backbone on the dominant domain first; then add minor domains with frozen backbone; unfreeze for joint training. Avoids the dominant-drowns-minor trap.</em><br/>Order the rollout: (i) train backbone on dominant domain alone, (ii) add minor domains with frozen backbone, (iii) unfreeze backbone and joint-train. Which order?</>}
+        options={[
+          {key:"a", text:"(i) then (ii) then (iii). Backbone learns rich features from dominant data, then minor domains get a fair attention-head training on a stable backbone, then joint training fine-tunes.", correct:true},
+          {key:"b", text:"Joint training from scratch on all domains."},
+          {key:"c", text:"(iii) then (i) then (ii)."},
+          {key:"d", text:"Train all domains independently then average."},
+        ]}
+        trap={<>(b) is the trap that triggers P21. (c) is non-sensical. (d) gives no transfer.</>}
+        lens={<>Staged training avoids the dominant-drowns-minor failure mode.</>}
+        stretch={<>How long to stay in each phase?</>}
+      />
+
+      {/* axis: E5 */}
+      <VIS.TrapProblem
+        id="dsam-p24" difficulty="hard"
+        title="P24 — Reproducibility: attention init matters"
+        scenario={<><em>Discriminating insight: random init of A_k can lead to different attention solutions across runs; use seeded init for reproducible cross-domain comparisons.</em><br/>You re-run DSAM training; A_k matrices are very different from yesterday's run. Bug?</>}
+        options={[
+          {key:"a", text:"Not a bug. Attention solutions are non-unique; random init can lead the optimizer to different local optima. Use seeded init (e.g., Xavier with fixed seed) for reproducible cross-domain comparisons.", correct:true},
+          {key:"b", text:"DSAM is non-deterministic by design."},
+          {key:"c", text:"The training loop has a bug."},
+          {key:"d", text:"Attention solutions are unique; this is a data shift."},
+        ]}
+        trap={<>(b) overstates non-determinism. (c) misattributes. (d) misstates uniqueness.</>}
+        lens={<>Attention non-uniqueness is expected; reproducibility requires init seeding.</>}
+        stretch={<>What's the right init scheme for the attention head?</>}
+      />
+
+      {/* axis: E6 */}
+      <VIS.TrapProblem
+        id="dsam-p25" difficulty="hard"
+        title="P25 — Eval contamination: joint NDCG hides regression"
+        scenario={<><em>Discriminating insight: reporting joint NDCG across both domains hides per-domain regression; always report per-domain.</em><br/>You report &quot;joint NDCG@10 = 0.45, up from 0.42.&quot; A reviewer asks &quot;per-domain?&quot; You haven't tracked it. What's the risk?</>}
+        options={[
+          {key:"a", text:"Joint NDCG can rise while one domain regresses (the bigger domain's improvement masks the smaller one's loss). Always report per-domain NDCG separately; check for negative transfer.", correct:true},
+          {key:"b", text:"Joint NDCG is sufficient."},
+          {key:"c", text:"Per-domain reporting is for compliance only."},
+          {key:"d", text:"Joint is the canonical metric in cross-domain rec."},
+        ]}
+        trap={<>(b)/(c)/(d) accept hidden regression.</>}
+        lens={<>Negative transfer hides in aggregates. Per-domain reporting is mandatory.</>}
+        stretch={<>What's the smallest dashboard you'd add?</>}
+      />
+
+      {/* axis: F1 */}
+      <VIS.TrapProblem
+        id="dsam-p26" difficulty="hard"
+        title="P26 — Edge case: categorical vs continuous features"
+        scenario={<><em>Discriminating insight: shared encoder needs a type-aware embedding layer to handle heterogeneous feature types; otherwise attention has nothing to disentangle.</em><br/>Domain A has only categorical features; domain B has only continuous features. What's the architectural fix?</>}
+        options={[
+          {key:"a", text:"Add a type-aware embedding layer before the shared backbone: project categoricals via embedding tables, continuous via MLP. The shared encoder operates on the unified representation; the attention head can then disentangle by type.", correct:true},
+          {key:"b", text:"Run two independent DSAM systems."},
+          {key:"c", text:"Convert all features to categoricals."},
+          {key:"d", text:"DSAM cannot handle mixed types."},
+        ]}
+        trap={<>(b) abandons sharing. (c) destroys continuous information. (d) overstates.</>}
+        lens={<>Heterogeneous feature types need a unification layer before the shared backbone. Standard ML hygiene.</>}
+        stretch={<>What's the typical embedding dim for the unification layer?</>}
+      />
+
+      {/* axis: F2 */}
+      <VIS.TrapProblem
+        id="dsam-p27" difficulty="hard"
+        title="P27 — Adversarial: source-domain pollution"
+        scenario={<><em>Discriminating insight: adversary floods source domain with synthetic interactions; shared encoder learns those features; target domain&apos;s attention can mitigate but not eliminate the contamination.</em><br/>An adversary floods source domain with synthetic interactions matching a target user&apos;s profile. What happens?</>}
+        options={[
+          {key:"a", text:"Shared encoder learns the injected features; target domain's attention head A_target can suppress them only if it learns to. DSAM is partially defended (attention can filter) but not robust — depends on how well A_target learns to ignore those dimensions.", correct:true},
+          {key:"b", text:"DSAM is fully robust because of selective alignment."},
+          {key:"c", text:"Only adversarial training defends against this."},
+          {key:"d", text:"The attack is impossible because shared encoder normalizes."},
+        ]}
+        trap={<>(b) overstates. (c)/(d) misstate.</>}
+        lens={<>Selective alignment partially defends; not a substitute for upstream anomaly detection.</>}
+        stretch={<>What's the cheapest upstream defense?</>}
+      />
+
+      {/* axis: F3 */}
+      <VIS.TrapProblem
+        id="dsam-p28" difficulty="hard"
+        title="P28 — Symptom → cause mapping"
+        scenario={<><em>Discriminating insight: training loss for domain B keeps improving but offline NDCG plateaus — the encoder over-fits the dominant domain A; A_B is selecting from increasingly noisy shared features.</em><br/>Domain B's training loss decreases while offline NDCG@10 plateaus. Most likely cause?</>}
+        options={[
+          {key:"a", text:"Shared encoder is over-fitting to the dominant domain A; A_B has to select from increasingly noisy shared features. Track per-domain validation loss separately; if B's validation loss is rising while training loss falls, that's the diagnostic.", correct:true},
+          {key:"b", text:"B's labels are corrupted."},
+          {key:"c", text:"NDCG@10 is the wrong metric."},
+          {key:"d", text:"The model is under-parameterized."},
+        ]}
+        trap={<>(b)/(c)/(d) misattribute.</>}
+        lens={<>Per-domain validation loss is the diagnostic. Joint metrics hide per-domain over-fitting.</>}
+        stretch={<>What's the fix once you confirm the diagnosis?</>}
+      />
+
+      {/* axis: F4 */}
+      <VIS.TrapProblem
+        id="dsam-p29" difficulty="hard"
+        title="P29 — Paper-named limitation"
+        scenario={<><em>Discriminating insight: authors explicitly call out (i) DSAM gains shrink when domains are too similar (negative use case) and (ii) attention collapses if not regularized — both are paper-documented limitations.</em><br/>Which limitations does the DSAM paper itself flag?</>}
+        options={[
+          {key:"a", text:"(i) DSAM gains shrink when domains are too similar — selective alignment has nothing to select. (ii) Attention head collapses without regularization. Both are explicitly documented.", correct:true},
+          {key:"b", text:"DSAM has no documented limitations."},
+          {key:"c", text:"DSAM only works on user-id-aligned domains."},
+          {key:"d", text:"DSAM scales linearly in domain count."},
+        ]}
+        trap={<>(b) overclaims. (c)/(d) are not the paper's named limitations.</>}
+        lens={<>Read the paper's limitations section: similarity ceiling + collapse risk.</>}
+        stretch={<>How would you A/B against the similarity ceiling?</>}
+      />
+
+      {/* axis: F5 */}
+      <VIS.TrapProblem
+        id="dsam-p30" difficulty="hard"
+        title="P30 — Community follow-up: explicit domain discriminator"
+        scenario={<><em>Discriminating insight: 2025 follow-ups suggest adding a domain-discriminator loss to force A_k to genuinely differ; pure attention-without-pressure sometimes settles on near-duplicate heads.</em><br/>A follow-up paper suggests adding an explicit domain-discriminator loss to DSAM. What problem does this fix?</>}
+        options={[
+          {key:"a", text:"Attention heads converging to near-duplicate matrices across domains (the &quot;no pressure to differentiate&quot; failure). The discriminator loss explicitly forces A_k to differ from siblings, preserving selective alignment.", correct:true},
+          {key:"b", text:"Slow training."},
+          {key:"c", text:"Latency."},
+          {key:"d", text:"Joint NDCG."},
+        ]}
+        trap={<>(b)/(c)/(d) are unrelated.</>}
+        lens={<>Differentiation pressure is the missing piece; standard DSAM has no explicit force toward different attention solutions.</>}
+        stretch={<>What's the trade-off of adding the discriminator loss?</>}
       />
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://link.springer.com/article/10.1007/s11257-024-09416-y" target="_blank" rel="noopener"><strong>DSAM &mdash; Deep Shared Learning and Attentive Domain Mapping</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, UMUAI 2024)</span><br/>The reference paper. Architecture details and benchmark comparisons on multiple CDR datasets.</li>
-        <li><a href="https://arxiv.org/abs/2108.03357" target="_blank" rel="noopener"><strong>Zang et al. &mdash; Survey on Cross-Domain Recommendation</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper / survey)</span><br/>Best survey of CDR methods up to 2021; sets the context DSAM extends.</li>
-        <li><a href="https://eugeneyan.com/writing/transfer-learning/" target="_blank" rel="noopener"><strong>Eugene Yan &mdash; Transfer Learning Patterns</strong></a> <span style={{color:"#64748b",fontSize:14}}>(blog)</span><br/>Practitioner essay on transfer learning failure modes. The negative-transfer discussion directly motivates DSAM&apos;s design.</li>
-        <li><a href="https://ruder.io/multi-task/" target="_blank" rel="noopener"><strong>Sebastian Ruder &mdash; An Overview of Multi-Task Learning in Deep Neural Networks</strong></a> <span style={{color:"#64748b",fontSize:14}}>(blog)</span><br/>The canonical practitioner essay on hard vs soft sharing &mdash; the architectural decision DSAM addresses.</li>
-        <li><a href="https://www.youtube.com/watch?v=bAY7Pj6FwCE" target="_blank" rel="noopener"><strong>Cross-Domain Recommendation (tutorial)</strong></a> <span style={{color:"#64748b",fontSize:14}}>(video)</span><br/>A clean walkthrough of CDR taxonomy and where attentive-mapping methods fit.</li>
+        <li><a href="https://link.springer.com/article/10.1007/s11257-024-09416-y" target="_blank" rel="noopener"><strong>Deep shared learning and attentive domain mapping for cross-domain recommendation</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, UMUAI 2024)</span><br/>The DSAM reference paper. Attention-head design, ablations, and the named limitations.</li>
+        <li><a href="https://arxiv.org/abs/1907.05576" target="_blank" rel="noopener"><strong>Cao et al. — DARec: Deep Domain Adaptation for Cross-Domain Recommendation</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, IJCAI 2019)</span><br/>The adversarial-alignment sibling. Useful context for why DSAM&apos;s selective alignment is more stable than adversarial collapse.</li>
+        <li><a href="https://dl.acm.org/doi/10.1145/3219819.3220007" target="_blank" rel="noopener"><strong>Ma et al. — Modeling Task Relationships in Multi-task Learning with MMoE</strong></a> <span style={{color:"#64748b",fontSize:14}}>(paper, KDD 2018)</span><br/>The multi-task alternative DSAM is most often compared to. MMoE&apos;s gate-over-experts vs DSAM&apos;s attention-over-shared-encoder is the structural contrast.</li>
+        <li><a href="https://ruder.io/multi-task/" target="_blank" rel="noopener"><strong>Sebastian Ruder — An Overview of Multi-Task Learning</strong></a> <span style={{color:"#64748b",fontSize:14}}>(blog)</span><br/>Practitioner intro to multi-task learning, hard vs soft sharing, and negative transfer — the broader context DSAM sits in.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Attention_(machine_learning)" target="_blank" rel="noopener"><strong>Wikipedia — Attention (machine learning)</strong></a> <span style={{color:"#64748b",fontSize:14}}>(reference)</span><br/>Background on attention mechanics if needed; DSAM uses standard attention as the selective-alignment primitive.</li>
       </ul>
     </VIS.Section>
   </main>
