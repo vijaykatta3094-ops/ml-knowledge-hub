@@ -2002,17 +2002,17 @@ flowchart TB
       <VIS.TrapProblem
         id="lgnn-f5"
         difficulty="hard"
-        title="F5 — Edge case: teacher is much better in one slice than another"
-        scenario={<>Your teacher has 90% NDCG on warm items but 30% on cold. Student distilled from this teacher will...</>}
+        title="F5 — Bias amplification: confident-wrong teacher logits sharpen in the student"
+        scenario={<>You distill via KL on softened teacher scores (temperature τ=2). The teacher has a known head-bias: top-1% popular items get scores 3-4× higher than warranted by held-out CTR. After distillation, the student's <strong>head-bias is worse</strong> than the teacher's — popularity skew on production traffic grows by 18%. Why does the student amplify rather than copy?</>}
         options={[
-          {key:"a", text:"Inherit the warm/cold disparity (90% on warm, ~28% on cold post-distillation). Distillation transfers the teacher's strengths AND weaknesses faithfully. To improve cold, you'd need to fix the teacher first OR augment distillation with a cold-item-specific objective that doesn't come from the teacher (e.g. content-tower output).", correct:true},
-          {key:"b", text:"Student is uniformly 80%."},
-          {key:"c", text:"Student exceeds teacher on cold."},
-          {key:"d", text:"Random."},
+          {key:"a", text:"The student has lower capacity than the teacher and cannot fit the full softened distribution; under capacity pressure, the KL objective forces it to allocate representation budget to the *high-magnitude* logits (the popular head) and underfit the long tail. The teacher's high-confidence-wrong popularity scores get sharpened, not softened, because they dominate the loss. This is mode collapse via distillation: the student becomes a caricature of the teacher's biases. Defense: bias-corrected distillation targets (e.g. inverse-propensity-weighted KL) or temperature scheduling that flattens popular-item logits during distillation.", correct:true},
+          {key:"b", text:"Student copies teacher exactly, so bias is unchanged."},
+          {key:"c", text:"KL is symmetric, so bias cancels."},
+          {key:"d", text:"Distillation always reduces bias."},
         ]}
-        trap={<>(b)/(c)/(d) misread.</>}
-        lens={<>The student inherits teacher's strengths and weaknesses. Per-slice teacher quality determines per-slice student quality.</>}
-        stretch={<>How would you architecturally inject cold-item signal beyond the teacher?</>}
+        trap={<>(b) ignores the capacity-pressure effect. (c) factually wrong — KL is asymmetric. (d) inverted: distillation often amplifies the dominant signal.</>}
+        lens={<>Distillation is not a faithful copy under a capacity gap — it's a *projection* onto the student's representational subspace, and projections preserve dominant directions. Teacher biases that align with high-magnitude logits get amplified; nuances orthogonal to them get crushed. Engineering signature: head/tail metrics diverge more in the student than the teacher.</>}
+        stretch={<>What's the smallest change to the distillation loss that bounds head-bias amplification?</>}
       />
 
       <VIS.TrapProblem

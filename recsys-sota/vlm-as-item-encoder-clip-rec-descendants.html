@@ -1949,17 +1949,17 @@ flowchart LR
       <VIS.TrapProblem
         id="vlm-f2"
         difficulty="hard"
-        title="F2 — Symptom → architectural cause"
-        scenario={<>Customer complaint: "you recommended 5 red shoes but I returned the burgundy one yesterday and you should know they're different." Map to architectural cause.</>}
+        title="F2 — Text-image decoupling: per-SKU specificity collapses"
+        scenario={<>Apparel catalog: each SKU has a precise title ("Levi's 511 Slim Indigo Wash 32x30") but the product photo is reused across all sizes/washes of the 511 family (one hero shot for the line). CLIP embeddings for 40 distinct SKUs cluster at cosine &gt; 0.98. Diagnose the architectural cause.</>}
         options={[
-          {key:"a", text:"CLIP's embedding collapses color shades (burgundy and red have cosine 0.97 because alt-text rarely distinguishes them). Return-rate signal (which would teach 'these are different to the customer') is not in CLIP's training. The collapse is structural, not a tuning issue.", correct:true},
-          {key:"b", text:"Personalization is broken."},
-          {key:"c", text:"The retrieval index is corrupted."},
-          {key:"d", text:"GPU error."},
+          {key:"a", text:"CLIP fuses image and text into one joint embedding via a pooled head. When the image is identical across SKUs, the image branch contributes a near-constant vector; the text branch's small token-level differences (wash code, size) get averaged down by the pooling and cross-modal alignment. Per-SKU specificity that lives in the text is structurally suppressed because the joint encoder weights image and text together, not independently. Fix: store image and text embeddings separately, or use a text-dominant encoder (BGE, E5) for SKU-level discrimination.", correct:true},
+          {key:"b", text:"CLIP is broken on apparel."},
+          {key:"c", text:"The catalog has duplicate SKUs."},
+          {key:"d", text:"Embedding dim too small."},
         ]}
-        trap={<>(b)/(c)/(d) miss the structural cause.</>}
-        lens={<>Fine-grained collapse → fine-grained complaints. The fix is overlaying a return-rate-aware ranker on top of CLIP retrieval, not "fixing CLIP."</>}
-        stretch={<>What's the offline metric that tracks "fine-grained discrimination" specifically?</>}
+        trap={<>(b) over-attributes. (c) inverts cause and symptom — SKUs are distinct, images aren't. (d) unrelated; dim is fine.</>}
+        lens={<>Joint encoders trade per-modality specificity for cross-modal alignment. When one modality is shared across items (reused hero photos, boilerplate descriptions), the joint embedding inherits that sharing. The architectural lesson: "one embedding" is only as discriminative as the *least* discriminative modality.</>}
+        stretch={<>How would you detect this decoupling failure offline, before it shows up as duplicate retrievals?</>}
       />
 
       <VIS.TrapProblem
@@ -2014,17 +2014,17 @@ flowchart LR
       <VIS.TrapProblem
         id="vlm-f6"
         difficulty="hard"
-        title="F6 — Symptom: cluster-collapse on novel categories"
-        scenario={<>New product category (3D-printed accessories) launches. All 50k items have cosine similarity > 0.95 to each other. Diagnose.</>}
+        title="F6 — Community critique: temporal-split reproducibility"
+        scenario={<>A 2025 reproducibility study (Ferrari Dacrema-style critique applied to multimodal recsys) re-ran the major CLIP-Rec papers under a strict <strong>temporal split</strong> (train on interactions before T, test after T, no leakage). The reported +12-18% NDCG gains over ID-only baselines shrink to +1-3% — most of which is within noise. What does this imply?</>}
         options={[
-          {key:"a", text:"3D-printed accessories are outside CLIP's training distribution; the encoder lacks the visual vocabulary to distinguish them and collapses them to a single point in the embedding manifold. Recall within the category becomes uninformative. Fix is domain-adaptive fine-tuning OR a category-specific encoder.", correct:true},
-          {key:"b", text:"The category has very similar items."},
-          {key:"c", text:"GPU error."},
-          {key:"d", text:"Embedding dim is too small."},
+          {key:"a", text:"The original benchmarks used random splits, which leak future-item co-occurrence into training. CLIP's web-scale knowledge effectively memorizes which items get co-purchased in the test era, because that co-occurrence is encoded in the alt-text statistics CLIP was trained on. Under temporal split, CLIP can't see the future and its 'cold-start magic' collapses to a small text-prior gain. The paper's gains were a leakage artifact, not a multimodal-encoder win.", correct:true},
+          {key:"b", text:"Temporal split is unfair — CLIP should be allowed future data."},
+          {key:"c", text:"The reproducibility paper used the wrong CLIP variant."},
+          {key:"d", text:"Random splits are the industry standard, so the original results stand."},
         ]}
-        trap={<>(b) is a possible cause but doesn't explain 0.95 uniformly. (c)/(d) are unrelated.</>}
-        lens={<>OOD categories collapse. The diagnostic is "intra-cluster variance" — if it drops sharply when a new category lands, the encoder doesn't know that domain.</>}
-        stretch={<>How would you set up monitoring that alerts on category-level collapse within a week of launch?</>}
+        trap={<>(b) confuses methodology with model capability — fair eval is the test. (c) deflects without engaging the leakage argument. (d) appeals to convention; the convention is the problem.</>}
+        lens={<>Web-pretrained encoders trained on a corpus that postdates your test items leak future signal under random splits. The proper benchmark is temporal: CLIP frozen at time T, tested on items launched after T. Most published cold-start wins do not survive this.</>}
+        stretch={<>How would you design a temporal benchmark that's still fair to CLIP — i.e. uses only the CLIP checkpoint available at train time?</>}
       />
 
     </VIS.Section>
