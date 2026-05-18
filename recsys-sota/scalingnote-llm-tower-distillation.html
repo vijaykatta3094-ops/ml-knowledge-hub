@@ -1414,256 +1414,448 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 12
+// ScalingNote — LLM-tower distillation (industry writeups + ACM TOIS 2025 survey)
+// Unique mechanism: scale BOTH towers of a two-tower retriever with a 7B-LLM
+// backbone OFFLINE; then DISTILL the heavy query-tower into a small (~4-layer)
+// student for online serving. The doc-tower runs offline once and its
+// embeddings are precomputed and indexed. The LLM teaches; the student serves.
+// LLM-tower pair caution (LLMHNS vs ScalingNote):
+//   - LLMHNS    = LLM at TRAINING-DATA construction (offline labels for negatives)
+//   - ScalingNote = LLM as TEACHER during distillation; dropped at serving [THIS visual]
+// Anchor that survives §2a redaction: "LLM teaches a small student
+// query-tower via distillation; doc-tower embeddings are precomputed offline;
+// LLM is NOT in the serving path." This is NOT "LLM-as-retriever" and NOT
+// "two-tower with bigger encoders."
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · Distillation for serving"
-      title="ScalingNote — LLM-tower distillation"
-      subtitle="Scale both towers with a 7B-LLM backbone offline, then distill the query-tower into a 4-layer student for online serving. Doc-tower precomputed and indexed."
+      title="ScalingNote — LLM-tower distillation for two-tower retrieval"
+      subtitle="Scale both towers with a 7B-LLM backbone offline; distill the heavy query-tower into a 4-layer student for online; precompute doc-tower embeddings into the ANN index. The LLM is the teacher, not the server."
       byline={[
-        {label: "Source", value: "Industry writeups; ACM TOIS 2025 survey on retrieval methods"},
-        {label: "Domain", value: "Two-tower retrieval at scale (search and recs)"},
+        {label: "Paper", value: "Industry writeups + ACM TOIS 2025 retrieval survey"},
+        {label: "Surface", value: "Two-tower retrieval where the doc-tower is amortizable offline and only query-side needs cheap online encoding"},
+        {label: "Anchor that survives redaction", value: "LLM teaches small student query-tower via distillation; doc embeddings precomputed offline; LLM is NOT in the serving path"},
       ]}/>
 
     <VIS.TLDR>
-      Symmetric two-tower retrieval needs both towers online, capping how big either can be. ScalingNote breaks the symmetry: <strong>doc embeddings are precomputed offline with a 7B LLM</strong>, and the query tower is <strong>distilled into a 4-layer student</strong> that runs cheaply at request time. Trick: put the LLM compute where the user does not wait.
+      Standard two-tower retrieval treats the query-tower and the doc-tower symmetrically — both online, both about the same size. That symmetry is wasteful: documents change slowly (encode once, store in the ANN index) while queries arrive at 10k QPS and must be encoded in milliseconds. ScalingNote breaks the symmetry: a large 7B-LLM backbone trains BOTH towers offline; the doc-tower&apos;s embeddings are then PRECOMPUTED and indexed once; the query-tower is DISTILLED into a small 4-layer student for cheap online encoding. The senior trap: this is NOT &ldquo;LLM-as-retriever&rdquo; (the LLM is not in the serving path — that would cost orders of magnitude more). It is also NOT just &ldquo;asymmetric two-tower&rdquo; — the LLM teacher is what supplies the high-quality target embeddings the student is distilled toward.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        ScalingNote is an asymmetric two-tower architecture optimized for serving cost. Both towers see an LLM during training; only the query tower needs to be small at inference because the doc tower's outputs are precomputed.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  D["Docs and items"] --> DT["7B LLM doc-tower offline"]
-  DT --> IDX["Precomputed doc index"]
-  Q["User query at request time"] --> S["Distilled 4-layer query student"]
-  S --> R["ANN search vs index"]
-  IDX --> R
-  R --> O["Top-K results"]
-      `} />
+    <VIS.Section id="sec-what" title="What it is — offline LLM teacher, online distilled student">
+      <VIS.Mermaid chart={`flowchart TB
+  LLMQ["7B-LLM query tower (offline)"]
+  LLMD["7B-LLM doc tower (offline)"]
+  DOC["Doc corpus"]
+  IDX["Doc embeddings -> ANN index (offline, periodic refresh)"]
+  STU["Distilled 4-layer student query tower (online)"]
+  Q["Live user query"]
+  LLMD --> DOC
+  DOC --> IDX
+  LLMQ --> STU
+  Q --> STU
+  STU --> IDX`} />
       <ul>
-        <li><strong>Offline doc-tower</strong> — large LLM encodes every item once per refresh. Output: dense vectors stored in an ANN index.</li>
-        <li><strong>Teacher query-tower</strong> — same 7B LLM encodes queries during training. Used to produce embeddings for distillation targets.</li>
-        <li><strong>Student query-tower</strong> — a 4-layer transformer trained to match the teacher's query embeddings.</li>
-        <li><strong>Online path</strong> — only the student runs at request time. The doc tower never touches the request path.</li>
+        <li><strong>Offline training</strong> — both towers use a 7B-LLM backbone; query and doc embeddings are aligned on (query, positive-doc) pairs.</li>
+        <li><strong>Doc-tower precomputation</strong> — once the doc-tower is trained, ALL doc embeddings are encoded once and pushed into the ANN index. Refresh cadence is daily / weekly.</li>
+        <li><strong>Query-tower distillation</strong> — the heavy LLM query tower is the teacher; a small 4-layer student is distilled to match its embeddings.</li>
+        <li><strong>Online</strong> — only the student runs (milliseconds per query); ANN lookup is unchanged.</li>
       </ul>
+      <p>The LLM never sees a live query; the doc-tower never runs at serving time.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <p>
-        Symmetric two-tower assumes you need both towers online for fresh items or in-flight content. ScalingNote bets that doc embeddings can be precomputed and updated on a cadence, which lets the doc tower be arbitrarily large.
-      </p>
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Symmetric 2-tower</th><th style={{textAlign:"left",padding:8}}>ScalingNote</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from symmetric two-tower, LLM-as-retriever, LLMHNS">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Where LLM lives</th>
+          <th style={{textAlign:"left", padding:8}}>Online query encoder</th>
+          <th style={{textAlign:"left", padding:8}}>Doc encoder</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Doc-tower online</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Yes</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No — precomputed</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Query-tower size</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Constrained by latency</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Tiny student (4 layers)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>QPS at fixed cost</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>1x</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>~100x (reported)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Doc freshness</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Live</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Stale between refreshes</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Recall vs symmetric</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Baseline</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>~95% (claimed)</td></tr>
+          <tr><td style={{padding:8}}>Symmetric two-tower</td><td style={{padding:8}}>N/A</td><td style={{padding:8}}>Large, online</td><td style={{padding:8}}>Large, online or precomputed</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>LLM-as-retriever</td><td style={{padding:8}}>Serving path</td><td style={{padding:8}}>LLM</td><td style={{padding:8}}>Indexed (or in-context)</td></tr>
+          <tr><td style={{padding:8}}>LLMHNS</td><td style={{padding:8}}>Training-data construction</td><td style={{padding:8}}>Whatever recsys uses</td><td style={{padding:8}}>Whatever recsys uses</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>ScalingNote</strong></td><td style={{padding:8}}><strong>Offline teacher only</strong></td><td style={{padding:8}}><strong>4-layer distilled student</strong></td><td style={{padding:8}}><strong>Precomputed offline</strong></td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Catalog where doc embeddings can be amortized — items live long enough that batch indexing pays off.</li>
-        <li>High-QPS query side — millions of queries per second where query-tower compute dominates.</li>
-        <li>Settings where recall at the head is more important than freshness in the tail.</li>
-        <li>Teams with batch inference infra (Spark, Ray, Flink) for the offline LLM pass.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Stale doc embeddings</strong> — items that change (price, metadata, title) need re-encoding. Refresh cadence is a knob.</li>
-        <li><strong>Teacher-student drift</strong> — when you update the LLM teacher (new pretraining, new fine-tune), all doc embeddings and the student need to be re-derived together.</li>
-        <li><strong>Distillation gap</strong> — the student approximates the teacher; the 5% recall loss is real and depends on student capacity.</li>
-        <li><strong>Cold items</strong> — brand-new items are not in the index. Need a fallback retrieval path until the next refresh.</li>
-        <li><strong>Evaluation</strong> — head-only metrics overstate the win; tail items hurt most from staleness.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="sn-p1" difficulty="hard" multiSelect
-        title="P1 — ScalingNote preserves ~95% recall at 100x QPS. List assumptions that, if violated, invalidate this."
-        scenario={<>Select all that apply.</>}
+      {/* A1 */}
+      <VIS.TrapProblem id="sn-p1" difficulty="hard"
+        title="P1 — ScalingNote vs LLM-as-retriever: what is the load-bearing difference?"
+        scenario={<><em>Discriminating insight: LLM-as-retriever puts an LLM call into the serving path (every live query hits an LLM). ScalingNote uses the LLM ONLY offline as a teacher; the live serving path runs a small distilled student. The QPS profile is orders of magnitude different.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Doc embeddings can be amortized — items do not change so frequently that the index is constantly stale.", correct:true},
-          {key:"b", text:"The query-distillation gap stays under a few percent — the student successfully approximates the LLM teacher.", correct:true},
-          {key:"c", text:"The query distribution at inference is similar to training — student does not face out-of-distribution queries.", correct:true},
-          {key:"d", text:"The LLM teacher is stable and not re-pretrained mid-deployment.", correct:true},
-          {key:"e", text:"The catalog has fewer than 1000 items."},
+          {key:"a", text:"ScalingNote keeps the LLM strictly OFFLINE as a teacher; the live serving path runs only a small 4-layer distilled student. LLM-as-retriever puts the LLM IN the serving path. The QPS/latency profile is orders of magnitude different.", correct:true},
+          {key:"b", text:"They are equivalent at serving."},
+          {key:"c", text:"ScalingNote is a special case of LLM-as-retriever."},
+          {key:"d", text:"Both run the LLM at every query."},
         ]}
-        trap={<>(e) has the relationship inverted — small catalogs are easier, not the limiting case.</>}
-        lens={<>The four real assumptions: doc stability, distillation capacity, query distribution match, and teacher freeze. Each is a serving-cost / quality tradeoff. ScalingNote's 100x QPS number is a benchmark under these conditions; real deployments need to confirm each one holds.</>}
-        stretch={<>Which assumption is hardest to verify before launch?</>}
+        trap={<>(b)(c)(d) collapse the offline-vs-online distinction.</>}
+        lens={<>Where the LLM lives determines cost.</>}
+        stretch={<>What is the QPS limit of LLM-as-retriever vs ScalingNote?</>}
       />
 
-      <VIS.TrapProblem
-        id="sn-p2" difficulty="medium"
-        title="P2 — Why is asymmetric distillation a better design than 'use a smaller LLM on both sides'?"
-        scenario={<>Couldn't you just use a 1B LLM symmetrically? Pick the strongest reason.</>}
+      {/* A2 definitional */}
+      <VIS.TrapProblem id="sn-p2" difficulty="hard"
+        title="P2 — ScalingNote vs LLMHNS: anchor each"
+        scenario={<><em>Discriminating insight: cross-visual caution. LLMHNS uses the LLM to LABEL hard negatives offline (training-data construction). ScalingNote uses the LLM as a TEACHER for distillation (model construction). Different jobs at different phases.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Doc compute is amortized offline — you do not pay for it at request time, so the doc tower can be ARBITRARILY large without latency cost.", correct:true},
-          {key:"b", text:"Smaller LLMs have worse embeddings."},
-          {key:"c", text:"Symmetric is incompatible with ANN."},
-          {key:"d", text:"Distillation always beats smaller models."},
+          {key:"a", text:"LLMHNS uses the LLM at training-DATA construction (offline labels for hard negatives). ScalingNote uses the LLM as the TEACHER during model distillation (the LLM&apos;s output embeddings are the student&apos;s target). Different jobs at different phases of training.", correct:true},
+          {key:"b", text:"Both put the LLM at serving."},
+          {key:"c", text:"ScalingNote is a special case of LLMHNS."},
+          {key:"d", text:"They are mathematically identical."},
         ]}
-        trap={<>(b), (c), (d) miss the amortization win.</>}
-        lens={<>The architectural insight: where you put compute matters. Offline doc-tower compute is paid once per refresh; online query-tower compute is paid per request. Asymmetry lets you spend compute generously where users do not feel it. Symmetric small-LLM saves nothing on the offline side and loses online flexibility.</>}
-        stretch={<>What if doc refreshes happen every minute?</>}
+        trap={<>(b)(c)(d) collapse the distinction.</>}
+        lens={<>Labeling vs teaching are different roles for the LLM.</>}
+        stretch={<>Could you compose LLMHNS + ScalingNote?</>}
       />
 
-      <VIS.TrapProblem
-        id="sn-p3" difficulty="hard"
-        title="P3 — Doc-tower update without invalidating the student"
-        scenario={<>You want to update the LLM teacher. What is the right rollout strategy?</>}
+      {/* A3 counterfactual */}
+      <VIS.TrapProblem id="sn-p3" difficulty="medium"
+        title="P3 — Without ScalingNote, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: fallbacks are symmetric two-tower (both towers online, expensive), or LLM-as-retriever (LLM at serving — extreme cost), or a small two-tower from scratch (cheap but weaker recall). ScalingNote sits between cost extremes.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Re-index all docs with the new teacher AND re-distill a new student against the new teacher, then deploy both together. Old student against new index is broken.", correct:true},
-          {key:"b", text:"Update the LLM teacher and reindex; the old student still works."},
-          {key:"c", text:"Update only the query student."},
-          {key:"d", text:"Run both teachers in parallel."},
+          {key:"a", text:"Symmetric two-tower (both towers online, expensive) or LLM-as-retriever (LLM in serving path, extreme cost) or a small two-tower from scratch (cheap, weaker recall). ScalingNote sits in the middle: small student at serving, LLM-quality embeddings.", correct:true},
+          {key:"b", text:"Random retrieval is at parity."},
+          {key:"c", text:"You would skip retrieval."},
+          {key:"d", text:"FAQ replacement."},
         ]}
-        trap={<>(b) is the classic bug — embedding spaces are not transferable across LLM versions. (c), (d) miss the joint dependency.</>}
-        lens={<>The doc index and the query student are joined at the embedding-space level. Updating one without the other puts queries and docs in different spaces — retrieval collapses. The rollout must be all-or-nothing: re-index, re-distill, deploy as a unit.</>}
-        stretch={<>How would you A/B test this kind of joint rollout?</>}
+        trap={<>(b)(c)(d) under-shoot retrieval surface.</>}
+        lens={<>ScalingNote sits between symmetric and LLM-as-retriever on cost.</>}
+        stretch={<>What is the recall gap to LLM-as-retriever?</>}
       />
 
-      <VIS.TrapProblem
-        id="sn-p4" difficulty="medium"
-        title="P4 — Cold-start items"
-        scenario={<>A new item launches mid-day; the next doc-refresh runs at midnight. What happens to its retrievability?</>}
+      {/* A4 composition */}
+      <VIS.TrapProblem id="sn-p4" difficulty="hard"
+        title="P4 — Compose ScalingNote with LLMHNS"
+        scenario={<><em>Discriminating insight: LLMHNS labels hard negatives offline; ScalingNote distills the LLM&apos;s teacher embeddings into a student. They are orthogonal — LLMHNS labels feed the contrastive loss that defines the LLM teacher&apos;s embedding; the student then learns to mimic. Both LLM uses are offline; serving path remains small.</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"Until the refresh, the item is INVISIBLE to ScalingNote retrieval. Need a fallback path (lexical search, secondary index for new items) to surface it.", correct:true},
-          {key:"b", text:"The item is retrieved automatically."},
-          {key:"c", text:"The student infers an embedding on the fly."},
-          {key:"d", text:"Doc freshness does not affect retrieval."},
+          {key:"a", text:"LLMHNS provides high-quality hard negatives that train the LLM teacher; ScalingNote then distills that better teacher into the small student. Both LLM uses are offline; the serving path remains small. Compatible if you can afford two offline LLM passes.", correct:true},
+          {key:"b", text:"They cannot coexist."},
+          {key:"c", text:"They are identical."},
+          {key:"d", text:"Composition would put the LLM at serving."},
         ]}
-        trap={<>(b), (c), (d) misunderstand the offline-index design.</>}
-        lens={<>Cold-item handling is one of the main operational complications of ScalingNote. Solutions: (1) periodic mini-refresh for new items, (2) lexical fallback, (3) inline encoding for the first hour with a smaller online model. All cost something.</>}
-        stretch={<>What is the marginal cost of mini-refreshes every 10 minutes?</>}
+        trap={<>(b)(c)(d) confuse offline composition.</>}
+        lens={<>Both offline; the serving path stays small.</>}
+        stretch={<>What is the offline LLM-pass cost of stacking these?</>}
       />
 
-      <VIS.TrapProblem
-        id="sn-p5" difficulty="hard"
-        title="P5 — Distillation loss choice"
-        scenario={<>You distill the query-student. Choose the distillation loss.</>}
+      {/* A5 boundary */}
+      <VIS.TrapProblem id="sn-p5" difficulty="medium"
+        title="P5 — At what doc-update rate does ScalingNote stop helping?"
+        scenario={<><em>Discriminating insight: precomputed doc embeddings amortize when the doc corpus changes slowly. If docs change minute-by-minute (live news, social posts), the offline doc-tower index is permanently stale and the symmetric/streaming alternatives win.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Cosine similarity (or MSE on normalized embeddings) — the downstream task is dot-product retrieval, so match the metric you serve.", correct:true},
-          {key:"b", text:"Cross-entropy on the original training labels."},
-          {key:"c", text:"KL divergence on per-doc score distributions."},
-          {key:"d", text:"L2 on raw logits."},
+          {key:"a", text:"When docs change faster than the index refresh cadence (minute-by-minute updates, live news feeds). The precomputed embeddings are permanently stale; alternative architectures with online doc encoding win.", correct:true},
+          {key:"b", text:"ScalingNote always wins."},
+          {key:"c", text:"ScalingNote helps only for static corpora."},
+          {key:"d", text:"Update rate is irrelevant."},
         ]}
-        trap={<>(b) does not transfer teacher behavior. (c) is expensive — would require teacher scoring against all docs per query. (d) ignores the normalization that ANN uses.</>}
-        lens={<>Distill what you serve. The downstream is cosine similarity in ANN, so match it. KL-on-scores is theoretically richer but computationally prohibitive at corpus scale. MSE on normalized embeddings is the practical sweet spot.</>}
-        stretch={<>When would KL-on-scores actually be feasible?</>}
+        trap={<>(b)(c)(d) miss the staleness contract.</>}
+        lens={<>Doc-update rate gates ScalingNote&apos;s amortization.</>}
+        stretch={<>What refresh cadence balances cost and staleness?</>}
       />
 
-      <VIS.TrapProblem
-        id="sn-p6" difficulty="medium" multiSelect
-        title="P6 — Failure modes specific to ScalingNote (not standard 2-tower)"
-        scenario={<>Select all that apply.</>}
+      {/* B1 application */}
+      <VIS.TrapProblem id="sn-p6" difficulty="hard"
+        title="P6 — Pick the retrieval architecture"
+        scenario={<><em>Discriminating insight: a 50M-doc enterprise search at 5k QPS with daily doc updates and a strict 10ms query budget. Doc-tower precompute is feasible (50M is small enough). LLM at serving is excluded by cost. The 10ms budget rules out a heavy online query tower. ScalingNote is purpose-built.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Stale doc embeddings as catalog evolves.", correct:true},
-          {key:"b", text:"Teacher-student drift after LLM updates.", correct:true},
-          {key:"c", text:"Distillation gap on rare query types underrepresented in training.", correct:true},
-          {key:"d", text:"Random init failures."},
-          {key:"e", text:"Standard ANN recall loss."},
+          {key:"a", text:"ScalingNote — small online student fits 10ms budget; LLM teacher trains offline; doc-tower precomputed at daily cadence covers the update rate. LLM-as-retriever is excluded by cost; symmetric two-tower exceeds the latency budget.", correct:true},
+          {key:"b", text:"LLM-as-retriever — but cost is excluded."},
+          {key:"c", text:"Symmetric two-tower — exceeds 10ms latency."},
+          {key:"d", text:"BM25 only — leaves recall on the table."},
         ]}
-        trap={<>(d) and (e) afflict any retrieval system. We want the ScalingNote-specific surface.</>}
-        lens={<>The three ScalingNote-specific risks: doc staleness, joint teacher-student rollout, and OOD queries the student cannot handle. Standard recall loss and init failures exist in any retrieval system and are not differentiating.</>}
-        stretch={<>How would you monitor (c) in production?</>}
+        trap={<>(b) cost. (c) latency. (d) recall.</>}
+        lens={<>Daily docs + tight latency + cost ceiling = ScalingNote.</>}
+        stretch={<>What if QPS jumped to 100k?</>}
       />
 
-      <VIS.TrapProblem
-        id="sn-p7" difficulty="hard" mode="ordered"
-        title="P7 — Order your debugging steps when ScalingNote recall drops overnight"
-        scenario={<>You wake up to a 3% recall drop. No deploy. Order the diagnostics. Wrong moves do not get ranked.</>}
+      {/* B2 sounds reasonable */}
+      <VIS.TrapProblem id="sn-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just shrink the LLM with quantization&rdquo;"
+        scenario={<><em>Discriminating insight: quantization shrinks an LLM&apos;s parameter footprint but does not change its DEPTH; per-query latency remains dominated by sequential layer computation. ScalingNote&apos;s distilled student is a 4-layer transformer — depth shrunk, not just precision. The latency win is depth, not bits.</em><br/>Why is &ldquo;quantize the LLM&rdquo; insufficient?</>}
         options={[
-          {key:"a", text:"Check whether the doc-refresh job succeeded last night.", order:1},
-          {key:"b", text:"Compare the embedding-space norm distribution before and after refresh.", order:2},
-          {key:"c", text:"Roll back the student."},
-          {key:"d", text:"Diff student logits on a fixed query set against yesterday.", order:3},
-          {key:"e", text:"Page every engineer."},
+          {key:"a", text:"Quantization reduces memory and arithmetic precision but does not reduce DEPTH; per-query wall-clock is dominated by sequential layer computation. ScalingNote distills DEPTH (4 layers); quantization can stack on top, but distillation is the load-bearing latency reduction.", correct:true},
+          {key:"b", text:"Quantization solves the problem fully."},
+          {key:"c", text:"Quantization and distillation are equivalent."},
+          {key:"d", text:"Quantization always loses recall."},
         ]}
-        trap={<>(c) is destructive without diagnosis. (e) is premature.</>}
-        lens={<>The natural ladder for index-backed systems: refresh job status → embedding-space shift → student behavior. Most ScalingNote regressions are upstream index issues, not model bugs. Always check the offline job first.</>}
-        stretch={<>What signal would catch (a) before users do?</>}
+        trap={<>(b)(c) the seductive misreads. (d) overstates.</>}
+        lens={<>Latency reduction comes from depth, not precision.</>}
+        stretch={<>What latency does 4-bit 7B match vs distilled 4-layer?</>}
       />
 
-      <VIS.TrapProblem
-        id="sn-p8" difficulty="hard"
-        title="P8 — Query-student capacity"
-        scenario={<>You can afford a 4-layer student or an 8-layer student. The 8-layer recovers 99% recall vs 95% for 4-layer but at 1.7x latency. Which to pick?</>}
+      {/* B3 anchor */}
+      <VIS.TrapProblem id="sn-p8" difficulty="hard"
+        title="P8 — ScalingNote&apos;s anchor (LLM teacher, distilled student, precomputed docs): pitch it"
+        scenario={<><em>Discriminating insight: the anchor is &ldquo;LLM teaches a small student query-tower; doc embeddings precomputed offline; LLM is NOT in the serving path.&rdquo; The pitch should name all three.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Depends — if 95% recall meets product targets and 4-layer fits the latency budget at peak QPS, take the 4-layer. If recall is critical (search), invest in 8-layer.", correct:true},
-          {key:"b", text:"Always 8-layer — recall matters more than latency."},
-          {key:"c", text:"Always 4-layer — latency is sacred."},
-          {key:"d", text:"Use a 2-layer for both."},
+          {key:"a", text:"A 7B-LLM trains both towers offline, then we precompute all doc embeddings into the ANN index and distill the LLM query-tower into a small 4-layer student for online serving. The LLM never sees a live query; the doc-tower never runs at serving time. Users get LLM-quality embeddings at student-quality latency.", correct:true},
+          {key:"b", text:"We use a bigger LLM at serving for better recall."},
+          {key:"c", text:"We use the LLM as the ANN index."},
+          {key:"d", text:"We retrain weekly to fix staleness."},
         ]}
-        trap={<>(b), (c) are absolutes. (d) is a strawman.</>}
-        lens={<>This is the classic recall-latency Pareto curve. The right answer depends on product context. For e-commerce search, 4% recall loss costs measurable GMV. For a feed where the ranker compensates, the latency win is huge. Make it a product call backed by lift estimates.</>}
-        stretch={<>How would you estimate the GMV cost of 4% recall loss?</>}
+        trap={<>(b) serving-LLM misread. (c) nonsensical. (d) cadence misread.</>}
+        lens={<>Teacher offline, student online, docs indexed — all three.</>}
+        stretch={<>Which of the three is hardest to engineer well?</>}
       />
 
-      <VIS.TrapProblem
-        id="sn-p9" difficulty="medium"
-        title="P9 — Doc-tower drift across refreshes"
-        scenario={<>You re-index every 6 hours. Items that did not change still get re-encoded but their embeddings differ slightly across refreshes due to LLM randomness. What is the impact?</>}
+      {/* B4 not to use */}
+      <VIS.TrapProblem id="sn-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use ScalingNote. Select all that apply."
+        scenario={<><em>Discriminating insight: ScalingNote needs (i) doc-tower amortizability (docs change slowly), (ii) online cost ceiling that excludes LLM serving, (iii) recall budget that justifies the offline LLM cost. It is wrong for live-feed corpora, very small QPS, or recall-insensitive lookups.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Probably negligible if temperature is 0 and the LLM is deterministic; could matter if there is stochastic dropout or sampling — embeddings should be deterministic for retrievals.", correct:true},
-          {key:"b", text:"Embeddings always drift between refreshes."},
-          {key:"c", text:"It does not matter."},
-          {key:"d", text:"You must use a fixed random seed for everything."},
+          {key:"a", text:"Live news feed with minute-by-minute doc updates — doc embeddings are always stale.", correct:true},
+          {key:"b", text:"Very low QPS service where symmetric two-tower fits the latency budget anyway.", correct:true},
+          {key:"c", text:"Lookup task where exact-match SQL suffices (no semantic retrieval needed).", correct:true},
+          {key:"d", text:"50M-doc enterprise search with daily updates and 5k QPS (sweet spot)."},
+          {key:"e", text:"Adversarial setting where docs are frequently rewritten to break the index.", correct:true},
         ]}
-        trap={<>(b) overstates. (c) understates. (d) is part of the answer but generic.</>}
-        lens={<>Doc encoding should be a pure function: same input → same vector. Stochasticity in dropout, mixed precision, or batching can introduce drift. Test with a fixed canary set across refreshes — embeddings of unchanged items should be bit-identical (or within numerical noise).</>}
-        stretch={<>What is acceptable numerical drift before you call it a bug?</>}
+        trap={<>(d) is sweet spot.</>}
+        lens={<>ScalingNote needs slow docs + cost pressure + recall need.</>}
+        stretch={<>How would you detect adversarial doc rewrites?</>}
       />
 
-      <VIS.TrapProblem
-        id="sn-p10" difficulty="hard"
-        title="P10 — When NOT to use ScalingNote"
-        scenario={<>Pick the strongest case AGAINST ScalingNote.</>}
+      {/* C1 architectural */}
+      <VIS.TrapProblem id="sn-p10" difficulty="hard"
+        title="P10 — Why DISTILL the query-tower, not just train a small one from scratch?"
+        scenario={<><em>Discriminating insight: a small query-tower trained from scratch on the same data underperforms because the LLM&apos;s embedding space encodes structure the small model cannot learn from limited query-doc pairs alone. Distillation transfers the structure; from-scratch training cannot.</em><br/>Why distillation?</>}
         options={[
-          {key:"a", text:"Live-news platform where item taxonomy is volatile and items live for minutes — offline refresh cadence cannot keep up.", correct:true},
-          {key:"b", text:"E-commerce with stable catalog."},
-          {key:"c", text:"Music streaming."},
-          {key:"d", text:"Long-form video."},
+          {key:"a", text:"The LLM embedding space encodes semantic structure learned from massive pretraining; a small from-scratch query-tower has no access to that structure and underperforms on the same query-doc data. Distillation transfers the structure into the small student.", correct:true},
+          {key:"b", text:"Distillation is a latency optimization."},
+          {key:"c", text:"Distillation is a memory optimization."},
+          {key:"d", text:"Distillation is purely organizational."},
         ]}
-        trap={<>(b), (c), (d) all have stable enough catalogs to amortize the doc-tower.</>}
-        lens={<>ScalingNote needs catalog stability. When items live for minutes, the index is always stale and the asymmetry breaks. News, live commerce, and real-time content are the wrong fit. For everything else with daily-or-slower catalog churn, the architecture pays off.</>}
-        stretch={<>Could you make ScalingNote work for fast-churn catalogs with mini-refreshes?</>}
+        trap={<>(b)(c)(d) miss the knowledge transfer.</>}
+        lens={<>Distillation transfers pretraining structure that supervised training alone cannot recover.</>}
+        stretch={<>What loss does the distillation actually use?</>}
       />
 
-      <VIS.TrapProblem
-        id="sn-p11" difficulty="hard"
-        title="P11 — Symmetric vs asymmetric distillation"
-        scenario={<>Why not distill the doc-tower too, run both as students online?</>}
+      {/* C2 loss */}
+      <VIS.TrapProblem id="sn-p11" difficulty="hard"
+        title="P11 — Distillation loss composition"
+        scenario={<><em>Discriminating insight: the student is trained on a COMBINATION of (i) embedding-matching loss against the teacher (MSE or cosine on the embedding), (ii) standard contrastive loss on (query, doc) pairs. Either alone underperforms; the combination retains both teacher structure and task signal.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Doc-tower compute is offline — distillation buys nothing for it. You would lose the option to use a huge teacher offline for free quality.", correct:true},
-          {key:"b", text:"Doc-tower must always be small."},
-          {key:"c", text:"Distillation breaks docs."},
-          {key:"d", text:"Doc-tower already small."},
+          {key:"a", text:"L = alpha * L_distill(student vs teacher embedding) + (1 - alpha) * L_contrastive(student query vs positive doc vs negatives). Distillation alone overfits to teacher; contrastive alone loses pretraining structure.", correct:true},
+          {key:"b", text:"Distillation loss alone."},
+          {key:"c", text:"Contrastive loss alone."},
+          {key:"d", text:"Adversarial loss between teacher and student."},
         ]}
-        trap={<>(b), (c), (d) misunderstand the cost structure.</>}
-        lens={<>The asymmetry is the design. Doc-tower runs offline so you can pay any size you want — distilling it down would mean throwing away quality with no latency win. Only the query-tower needs to be small because only it is in the request path.</>}
-        stretch={<>Would your answer change if the index itself becomes a memory bottleneck?</>}
+        trap={<>(b) loses task signal. (c) loses pretraining structure. (d) wrong family.</>}
+        lens={<>Both losses are load-bearing; their balance is alpha.</>}
+        stretch={<>How does alpha behave over training? Anneal or fixed?</>}
       />
+
+      {/* C3 dropped */}
+      <VIS.TrapProblem id="sn-p12" difficulty="hard"
+        title="P12 — What does ScalingNote deliberately drop vs symmetric two-tower?"
+        scenario={<><em>Discriminating insight: symmetric two-tower can re-encode docs online if the doc-tower is fast enough. ScalingNote forfeits this: the doc-tower is offline, so any doc that changed since the last index refresh is served with a stale embedding.</em><br/>What does ScalingNote forfeit?</>}
+        options={[
+          {key:"a", text:"Doc freshness within the refresh cadence. The doc-tower is offline; any doc that changed between refreshes is served with a stale embedding. The gain is online cost; the loss is real-time doc updates.", correct:true},
+          {key:"b", text:"ScalingNote forfeits the use of an LLM."},
+          {key:"c", text:"ScalingNote forfeits the ANN index."},
+          {key:"d", text:"ScalingNote forfeits online queries."},
+        ]}
+        trap={<>(b)(c)(d) miss the dropped property.</>}
+        lens={<>Doc freshness is the deliberate sacrifice.</>}
+        stretch={<>How would partial-incremental refresh work?</>}
+      />
+
+      {/* C4 hyperparameter */}
+      <VIS.TrapProblem id="sn-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: the distillation temperature dominates. Too sharp: student over-fits to teacher&apos;s argmax and loses semantic structure. Too soft: student averages too widely and loses discrimination. Student depth and alpha are secondary.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"Distillation temperature is most fragile; alpha (loss mixing) is next; student depth is least. Temperature controls how the teacher&apos;s softmax distribution is softened for the student; mis-set destroys the knowledge-transfer premise.", correct:true},
+          {key:"b", text:"Student depth is most fragile."},
+          {key:"c", text:"Alpha is most fragile."},
+          {key:"d", text:"Batch size is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) miss the temperature mechanism.</>}
+        lens={<>Temperature is the distillation control knob.</>}
+        stretch={<>What does the optimal temperature curve look like?</>}
+      />
+
+      {/* C5 data assumption */}
+      <VIS.TrapProblem id="sn-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: ScalingNote assumes doc embeddings produced by the offline LLM tower remain valid until the next refresh. Doc content drift (descriptions edited, products discontinued) silently invalidates embeddings before the refresh.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Doc content drift between refreshes (descriptions edited, products discontinued). The precomputed embedding no longer reflects the current doc; the student matches against the wrong representation.", correct:true},
+          {key:"b", text:"Off-by-one in doc-id indexing."},
+          {key:"c", text:"Different tokenizer."},
+          {key:"d", text:"Mismatched batch sizes."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Doc-content drift is the staleness contract violation.</>}
+        stretch={<>What monitor catches doc drift early?</>}
+      />
+
+      {/* D1 intuitive but wrong */}
+      <VIS.TrapProblem id="sn-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;the LLM tower&apos;s capacity is wasted&rdquo;"
+        scenario={<><em>Discriminating insight: the LLM tower&apos;s capacity is &ldquo;baked into&rdquo; the doc embeddings (computed once, served forever) and into the student via distillation. It is not wasted; it is amortized.</em><br/>Why is &ldquo;wasted&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"The LLM&apos;s capacity is amortized in two places: (i) baked into the doc embeddings that are precomputed once and served forever, (ii) transferred into the small student via distillation. The LLM does not need to run at serving for its capacity to be present.", correct:true},
+          {key:"b", text:"The LLM capacity is genuinely wasted."},
+          {key:"c", text:"The LLM is only useful at serving."},
+          {key:"d", text:"Distillation does not transfer capacity."},
+        ]}
+        trap={<>(b)(c)(d) miss the amortization mechanism.</>}
+        lens={<>Capacity is transferred, not discarded.</>}
+        stretch={<>What is the rate at which capacity &ldquo;leaks&rdquo; if the LLM changes after distillation?</>}
+      />
+
+      {/* D2 wrong-assumption cascade */}
+      <VIS.TrapProblem id="sn-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: &ldquo;ScalingNote is just distillation&rdquo; cascades into (i) skipping the doc-tower offline precompute (re-introduces serving cost), (ii) putting the LLM in the serving path for query encoding (defeats the purpose), (iii) evaluating only on offline recall (misses online cost wins).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: doc precompute, query-tower distillation, and the cost-aware evaluation. Each is load-bearing; remove any one and ScalingNote regresses toward symmetric two-tower or LLM-as-retriever.", correct:true},
+          {key:"b", text:"Only the doc precompute."},
+          {key:"c", text:"Only the evaluation."},
+          {key:"d", text:"Nothing — ScalingNote IS just distillation."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>The three pieces — precompute, distill, cost-aware eval — are inseparable.</>}
+        stretch={<>What does the cost-vs-recall curve look like?</>}
+      />
+
+      {/* D3 senior vs junior */}
+      <VIS.TrapProblem id="sn-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior responds to recall regression by increasing student depth. A senior measures the teacher-student recall GAP first: if the gap is large, distillation is mis-tuned; if the gap is small, the teacher itself regressed (LLM upgrade?). The diagnostic is teacher vs student, not student in isolation.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Measure teacher recall and student recall side-by-side. If the gap is large, distillation is mis-tuned (temperature, alpha, training time). If the gap is small but both regressed, the teacher LLM changed (e.g., the LLM was upgraded upstream). The right lever depends on the gap.", correct:true},
+          {key:"b", text:"Increase student depth."},
+          {key:"c", text:"Increase embedding size."},
+          {key:"d", text:"Switch to LLM-as-retriever."},
+        ]}
+        trap={<>(b)(c) miss the teacher-vs-student diagnostic. (d) abandons ScalingNote.</>}
+        lens={<>Teacher-student gap is the ScalingNote-specific diagnostic.</>}
+        stretch={<>What dashboard panel shows teacher-vs-student recall over time?</>}
+      />
+
+      {/* D4 plausible-misattribution */}
+      <VIS.TrapProblem id="sn-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution"
+        scenario={<><em>Discriminating insight: recall regression looks like student degradation but is actually doc-index staleness. The student is fine; the index it queries has drifted from current docs.</em><br/>Most likely cause?</>}
+        options={[
+          {key:"a", text:"Doc index staleness. The student is unchanged; the index it queries has drifted from current doc content. Diagnostic: refresh the index against current docs and compare recall pre/post-refresh. If recall recovers, staleness was the cause.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Student model regressed independently."},
+          {key:"d", text:"Cache invalidation."},
+        ]}
+        trap={<>(b)(c)(d) miss the staleness diagnostic.</>}
+        lens={<>Refresh the index before suspecting the student.</>}
+        stretch={<>What metric measures staleness directly without a full refresh?</>}
+      />
+
+      {/* E1 production gotcha */}
+      <VIS.TrapProblem id="sn-p19" difficulty="hard"
+        title="P19 — Production gotcha: teacher-student version skew"
+        scenario={<><em>Discriminating insight: doc embeddings are indexed against a SPECIFIC teacher version. If the teacher is retrained but the doc index is not refreshed, the student (trained against the new teacher) will mismatch against the old doc embeddings.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Version-pin the teacher LLM that produced doc embeddings; bump the index only when both the teacher and the student are retrained together. Mismatched teacher-student versions silently mismatch the embedding space.", correct:true},
+          {key:"b", text:"Teacher version does not matter."},
+          {key:"c", text:"Refresh the index continuously."},
+          {key:"d", text:"Skip versioning entirely."},
+        ]}
+        trap={<>(b)(c)(d) miss the version-pinning discipline.</>}
+        lens={<>Teacher and doc index must move together.</>}
+        stretch={<>How would a CI test catch version skew?</>}
+      />
+
+      {/* E2 failure on Friday */}
+      <VIS.TrapProblem id="sn-p20" difficulty="hard"
+        title="P20 — Failure on Friday: recall cratered after teacher LLM upgrade"
+        scenario={<><em>Discriminating insight: the teacher LLM was upgraded; the student was redistilled against the new teacher; the doc index was NOT refreshed. Student now operates in a new embedding space; the indexed doc embeddings are still in the OLD space. Recall craters.</em><br/>3am page: recall down 25% after teacher upgrade. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Teacher upgrade redistilled the student into a new embedding space, but the doc index was not refreshed and still holds old-space embeddings. Student and index disagree. Re-encode docs through the new teacher (or roll back student until docs catch up).", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Index disk full."},
+        ]}
+        trap={<>(b)(c)(d) miss the version-skew mechanism.</>}
+        lens={<>Teacher upgrades imply re-indexing.</>}
+        stretch={<>What runbook entry covers this exact scenario?</>}
+      />
+
+      {/* E3 implementation specifics */}
+      <VIS.TrapProblem id="sn-p21" difficulty="medium"
+        title="P21 — Library default that bites: student initialized randomly"
+        scenario={<><em>Discriminating insight: many distillation libraries default to random student init. For a 4-layer student aiming to match a 32-layer LLM, random init makes distillation slow and unstable. Initialize from a pretrained small model (e.g., MiniLM) and distill from there.</em><br/>Where does the default break ScalingNote?</>}
+        options={[
+          {key:"a", text:"Default random init makes the student start far from the teacher manifold; distillation converges slowly and unstably. Initialize the student from a pretrained small model (e.g., MiniLM) and distill from a much closer starting point.", correct:true},
+          {key:"b", text:"Default LR is wrong."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Student init choice is load-bearing.</>}
+        stretch={<>How big should the small-pretrained student be?</>}
+      />
+
+      {/* E4 rollout */}
+      <VIS.TrapProblem id="sn-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) train LLM teacher offline, (2) precompute doc embeddings, (3) distill student, (4) shadow-score student against teacher, (5) traffic ramp on student with doc index. Starting with the student before the teacher is the classic mistake.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"LLM teacher trained offline → precompute doc embeddings into ANN index → distill student → shadow-score student vs teacher → traffic ramp", correct:true},
+          {key:"b", text:"Train the student first."},
+          {key:"c", text:"Skip doc precompute."},
+          {key:"d", text:"Ramp traffic first."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Teacher → docs → student → eval → ramp.</>}
+        stretch={<>Why teacher before student?</>}
+      />
+
+      {/* F1 edge case */}
+      <VIS.TrapProblem id="sn-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks ScalingNote&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: a corpus where every doc&apos;s content changes hourly eliminates the precompute amortization that justifies ScalingNote. The offline doc-tower becomes a perpetual bottleneck; you would be better off with online encoding.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A corpus where every doc changes hourly (live news, social feed). Precomputed doc embeddings are permanently stale; the offline doc-tower becomes a perpetual bottleneck instead of an amortization. ScalingNote&apos;s premise is violated.", correct:true},
+          {key:"b", text:"Static corpus with daily updates (sweet spot)."},
+          {key:"c", text:"100M users."},
+          {key:"d", text:"Catalog of 50M items."},
+        ]}
+        trap={<>(b) sweet spot. (c)(d) scale.</>}
+        lens={<>ScalingNote needs doc amortizability.</>}
+        stretch={<>What hybrid approach covers fast-changing slices?</>}
+      />
+
+      {/* F4 paper-named failure */}
+      <VIS.TrapProblem id="sn-p24" difficulty="hard"
+        title="P24 — Paper-named failure: stale doc embeddings"
+        scenario={<><em>Discriminating insight: the paper itself calls out stale doc embeddings as the dominant failure mode — the LLM teacher updates faster than the doc index can refresh, and student-vs-index diverge. The fix is version-pinned refresh policy.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Stale doc embeddings under teacher updates. The teacher and the doc index must be version-pinned together; otherwise the student (trained against the new teacher) and the index (built by the old teacher) diverge silently. The fix is policy, not architecture.", correct:true},
+          {key:"b", text:"Latency is the dominant failure."},
+          {key:"c", text:"Cost is the dominant failure."},
+          {key:"d", text:"There are no failures."},
+        ]}
+        trap={<>(b)(c)(d) miss the named failure.</>}
+        lens={<>Staleness under teacher updates is the long-tail bug.</>}
+        stretch={<>What refresh policy bounds the drift?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://dl.acm.org/doi/pdf/10.1145/3771925" target="_blank" rel="noopener">ACM TOIS — <em>A Comprehensive Survey on Retrieval Methods in Recommender Systems</em> (2025, survey)</a> — places ScalingNote in the broader retrieval landscape.</li>
-        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener">Eugene Yan — <em>System Design for Discovery</em> (blog)</a> — practitioner guide on the role of offline indexing in two-tower retrieval.</li>
-        <li><a href="https://www.pinecone.io/learn/series/nlp/dense-vector-embeddings-nlp/" target="_blank" rel="noopener">Pinecone — <em>Dense Vector Embeddings for NLP</em> (blog)</a> — beginner-friendly walkthrough of how doc/query asymmetric pipelines are deployed.</li>
-        <li><a href="https://arxiv.org/abs/2206.14858" target="_blank" rel="noopener">Ren et al. — <em>RocketQAv2: A Joint Training Method for Dense Passage Retrieval</em> (paper)</a> — related distillation-for-retrieval lineage.</li>
-        <li><a href="https://blog.research.google/2020/07/announcing-scann-efficient-vector.html" target="_blank" rel="noopener">Google Research — <em>ScaNN</em> (blog)</a> — the ANN serving primitive ScalingNote relies on. Useful for sizing the index half of the system.</li>
+        <li><a href="https://dl.acm.org/doi/pdf/10.1145/3771925" target="_blank" rel="noopener">Wang et al., <em>A Comprehensive Survey on Retrieval Methods in Recommender Systems</em> (ACM TOIS 2025)</a> — primary survey that situates ScalingNote.</li>
+        <li><a href="https://arxiv.org/abs/2002.10957" target="_blank" rel="noopener">Wang et al., <em>MiniLM: Deep Self-Attention Distillation</em> (NeurIPS 2020)</a> — practitioner reference for transformer distillation that ScalingNote builds on.</li>
+        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener">Eugene Yan — <em>System Design for Discovery</em> (blog)</a> — practitioner framing of two-tower retrieval and amortization.</li>
+        <li><a href="https://jalammar.github.io/illustrated-bert/" target="_blank" rel="noopener">Jay Alammar — <em>The Illustrated BERT</em> (blog)</a> — background on the encoders the towers use.</li>
+        <li><a href="https://lilianweng.github.io/posts/2021-05-31-contrastive/" target="_blank" rel="noopener">Lilian Weng — <em>Contrastive Representation Learning</em> (blog)</a> — background on the contrastive objective that aligns the towers.</li>
       </ul>
     </VIS.Section>
   </main>

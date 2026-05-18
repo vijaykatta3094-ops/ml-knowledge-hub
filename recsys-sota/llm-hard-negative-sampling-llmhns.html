@@ -1414,254 +1414,454 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 12
+// LLMHNS — LLM Hard Negative Sampling (arXiv 2504.04726, 2025)
+// Unique mechanism: an LLM, working OFFLINE on the catalog with rich text,
+// REASONS about which items are semantically close to a positive but
+// behaviorally inappropriate ("best false-positives"), and labels them as
+// hardest negatives for downstream contrastive training. The LLM is at
+// TRAINING-DATA CONSTRUCTION time, not at serving. It scores by SEMANTIC
+// REASONING over text, not by embedding distance.
+// Cross-visual caution (negative-sampling trio):
+//   - MixGCF  = SYNTHESIZES via embedding-mix in GCN latent space (label-free)
+//   - LLMHNS  = LLM scores real candidates by semantic reasoning (label-aware text) [THIS visual]
+//   - AHNS    = ADAPTIVE difficulty per user across training (curriculum)
+// LLM-tower pair caution (LLMHNS vs ScalingNote):
+//   - LLMHNS    = LLM at TRAINING-DATA construction (offline labels) [THIS visual]
+//   - ScalingNote = LLM as teacher during distillation; dropped at serving
+// Anchor that survives §2a redaction: "LLM reasons over text to label
+// semantically-close-but-behaviorally-inappropriate items as hardest
+// negatives" — NOT generic hard-negative mining and NOT LLM-as-retriever.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Negative sampling"
+      pill="RecSys SOTA · Negative sampling (LLM-labeled)"
       title="LLMHNS — LLM Hard Negative Sampling"
-      subtitle="Use an LLM to identify items that are semantically close to positives but behaviorally inappropriate — the best false-positives as the hardest negatives."
+      subtitle="An LLM reads textual descriptions of (positive, candidate) item pairs and identifies the candidates that are semantically close to the positive but behaviorally inappropriate — &lsquo;best false-positives&rsquo; — and labels them as hardest negatives for downstream contrastive training."
       byline={[
-        {label: "Paper", value: "Wang et al., arXiv 2504.04726 (2025)"},
-        {label: "Domain", value: "Catalogs with rich textual / multimodal content"},
+        {label: "Paper", value: "arXiv 2504.04726 (2025) — Hard Negative Sampling via Large Language Models for Recommendation"},
+        {label: "Surface", value: "Catalogs with rich textual content where in-batch hard negatives plateau"},
+        {label: "Anchor that survives redaction", value: "LLM reasons about text to label items as best-false-positives — external semantic judgment, not embedding distance"},
       ]}/>
 
     <VIS.TLDR>
-      Standard hard-negative mining uses the model's own scores to pick hard examples — which entrenches the model's existing biases. LLMHNS instead asks an LLM "of these candidates, which ones LOOK like the positive but a user with this preference would NOT pick?" The LLM acts as an external semantic judge, supplying negatives the recommender has never confused itself about.
+      Standard hard-negative mining picks the model&apos;s top-scored REAL items as negatives, which entrenches its own confusions (a model already wrong about an item keeps using that wrong item to train itself). LLMHNS replaces the model&apos;s self-score with an EXTERNAL judge: an LLM reads the textual description of the positive and a candidate pool and flags candidates that are semantically close but behaviorally inappropriate (the user would NOT click despite similarity). These &ldquo;best false-positives&rdquo; are then used as the hardest negatives in contrastive training. The senior trap: LLMHNS is NOT &ldquo;LLM-as-retriever&rdquo; (a serving-time concept) and NOT &ldquo;embedding distance in an LLM space&rdquo; — it is OFFLINE LABELING by REASONING over text. The recsys model itself is unchanged at serving; only the training data is improved.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        LLMHNS is an offline pipeline that uses an LLM to label hard negatives for a downstream recommender. The recipe:
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  P["Positive item p"] --> C["Retrieve K candidate items"]
-  C --> L["LLM judge: which look like p but mismatch user intent"]
-  L --> H["Hard negatives"]
-  H --> R["Train recommender with BPR or contrastive loss"]
-      `} />
+    <VIS.Section id="sec-what" title="What it is — LLM as offline label-producer">
+      <VIS.Mermaid chart={`flowchart TB
+  C["Catalog with item text"]
+  P["Per-user positive item"]
+  K["Candidate pool (e.g., top-N by embedding)"]
+  L["LLM prompt: which are semantically close but behaviorally inappropriate?"]
+  H["LLM-labeled hardest negatives"]
+  T["Contrastive training (positive vs LLM-labeled negatives)"]
+  M["Standard recsys model at serving (no LLM)"]
+  C --> K
+  P --> L
+  K --> L
+  L --> H
+  H --> T
+  T --> M`} />
       <ul>
-        <li><strong>Candidate retrieval</strong> — for each (user, positive) pair, retrieve K candidates by embedding similarity or category match.</li>
-        <li><strong>LLM labeling</strong> — feed candidates and the positive's description to an LLM, ask it to pick the most plausible false-positives based on user intent.</li>
-        <li><strong>Hard-negative pool</strong> — labeled negatives are stored offline; the downstream recommender consumes them like any other negative.</li>
-        <li><strong>Training</strong> — standard BPR or InfoNCE loss, just with LLM-curated negatives instead of self-mined ones.</li>
+        <li><strong>Offline</strong> — the LLM call is part of training-data construction, not serving.</li>
+        <li><strong>Text-based reasoning</strong> — the LLM reads textual descriptions; it does not compute embeddings as the scoring signal.</li>
+        <li><strong>External judgment</strong> — the recsys model under training does NOT score its own negatives.</li>
+        <li><strong>Standard recsys model at serving</strong> — the downstream model is whatever you would have shipped (DLRM, two-tower, GCN); LLMHNS only changes which examples it sees as negatives.</li>
       </ul>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <p>
-        Self-mined hard negatives are everywhere — pick the top-scoring non-positives under your current model and treat them as negatives. The well-known problem: this entrenches whatever biases the current model has. LLMHNS sidesteps this by getting the labels from a model that is independent of the recommender.
-      </p>
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Self-mined hard negs</th><th style={{textAlign:"left",padding:8}}>LLMHNS</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from sibling negative-sampling techniques">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Negative source</th>
+          <th style={{textAlign:"left", padding:8}}>Bias risk</th>
+          <th style={{textAlign:"left", padding:8}}>When the LLM runs</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Negative source</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Current model's top errors</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>External LLM judgment</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Bias feedback</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Entrenches model bias</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Breaks the loop</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Cost</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Cheap (model forward)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Expensive (LLM call per pair)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Coverage</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Pure embedding space</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Semantic and content-rich</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Failure mode</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Self-confirmation</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>LLM bias inherited</td></tr>
+          <tr><td style={{padding:8}}>Standard hard mining</td><td style={{padding:8}}>Model-self top-K</td><td style={{padding:8}}>Entrenches model bias</td><td style={{padding:8}}>N/A</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>MixGCF</td><td style={{padding:8}}>Synthesized latent mix</td><td style={{padding:8}}>None (synth)</td><td style={{padding:8}}>N/A</td></tr>
+          <tr><td style={{padding:8}}>AHNS</td><td style={{padding:8}}>Scheduled by epoch</td><td style={{padding:8}}>Depends on inner method</td><td style={{padding:8}}>N/A</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>LLMHNS</strong></td><td style={{padding:8}}><strong>LLM-labeled false-positives</strong></td><td style={{padding:8}}><strong>LLM bias; not model self-bias</strong></td><td style={{padding:8}}><strong>Offline at training-data construction</strong></td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Catalogs with rich textual or multimodal content the LLM can reason over.</li>
-        <li>When in-batch and self-mined hard negatives have plateaued.</li>
-        <li>Budget allows an offline LLM-curation pass on the training corpus.</li>
-        <li>You suspect the recommender has entrenched biases (popularity, category collapse).</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Offline cost</strong> — one LLM call per positive (or batch). Cost scales with corpus size; usually only feasible periodically.</li>
-        <li><strong>LLM bias</strong> — you swap recommender bias for LLM bias. Pretraining-data prejudices leak into the negative set.</li>
-        <li><strong>Stale negatives</strong> — the LLM-labeled pool ages. New items not in the labeling pass are unseen by the negative set.</li>
-        <li><strong>Prompt sensitivity</strong> — the LLM's judgment depends on the prompt. Two prompts can produce non-overlapping hard-negative sets.</li>
-        <li><strong>Eval contamination</strong> — if the LLM has seen the eval items in pretraining, its judgment may indirectly leak the answer.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="ln-p1" difficulty="hard"
-        title="P1 — Self-mined hard negatives entrench model bias. Why are LLM-mined negatives LESS prone to this?"
-        scenario={<>The classic worry with self-mined hard negatives: the model picks its own "near misses," which are exactly the kind of items it already confuses. Train on those, get better at distinguishing those, but the residual bias direction never gets corrected. Why does an LLM judge avoid this trap?</>}
+      {/* A1 */}
+      <VIS.TrapProblem id="llmhns-p1" difficulty="hard"
+        title="P1 — LLMHNS vs standard hard mining: what is the load-bearing difference?"
+        scenario={<><em>Discriminating insight: standard hard mining uses the model&apos;s own scores (self-mining), which entrenches its current confusions. LLMHNS uses an EXTERNAL LLM judge based on text reasoning; the recsys model under training does not score its own negatives.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"The LLM has different pretraining and produces hard-negative labels that are orthogonal to the recommender's bias direction.", correct:true},
-          {key:"b", text:"LLMs are unbiased."},
-          {key:"c", text:"LLMs produce only random negatives."},
-          {key:"d", text:"LLMs are exempt from the bias-feedback loop by definition."},
+          {key:"a", text:"LLMHNS uses an EXTERNAL LLM judge (semantic reasoning over text) to label hardest negatives; standard hard mining uses the recsys model&apos;s OWN scores, which entrenches its existing confusions. The judge-vs-self-judge distinction is what reduces bias entrenchment.", correct:true},
+          {key:"b", text:"LLMHNS replaces the recsys model with an LLM at serving."},
+          {key:"c", text:"LLMHNS uses embedding distance in an LLM space."},
+          {key:"d", text:"LLMHNS is identical to MixGCF."},
         ]}
-        trap={<>(b) is false. (c) misunderstands LLMHNS. (d) is hand-wavy.</>}
-        lens={<>The key insight: bias entrenchment is a CLOSED-LOOP problem — the model picks its own errors as training data. The LLM's bias direction is different from the recommender's, so its labels OPEN the loop. The LLM still has biases (popularity, English-language items, named brands), but they are different biases and thus less self-reinforcing.</>}
-        stretch={<>What signal would you use to check that LLM bias and recommender bias are actually decorrelated?</>}
+        trap={<>(b) LLM-as-retriever misread. (c) embedding-distance misread. (d) confuses families.</>}
+        lens={<>External judge vs self-judge is the bias mechanism.</>}
+        stretch={<>Why does self-judging entrench bias?</>}
       />
 
-      <VIS.TrapProblem
-        id="ln-p2" difficulty="medium" multiSelect
-        title="P2 — Which catalog types benefit MOST from LLMHNS?"
-        scenario={<>Select all that apply.</>}
+      {/* A2 definitional */}
+      <VIS.TrapProblem id="llmhns-p2" difficulty="hard"
+        title="P2 — LLMHNS vs LLM-as-retriever vs LLM-as-reranker"
+        scenario={<><em>Discriminating insight: LLM-as-retriever uses the LLM at serving to fetch candidates; LLM-as-reranker uses the LLM at serving to rerank a candidate list. LLMHNS uses the LLM OFFLINE to label training data; the recsys model at serving is unchanged.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Books with rich title, blurb, and review text.", correct:true},
-          {key:"b", text:"Movies with cast, genre tags, and synopsis.", correct:true},
-          {key:"c", text:"Fashion items with detailed product descriptions.", correct:true},
-          {key:"d", text:"Anonymous user IDs in a pure collaborative-filtering setup."},
-          {key:"e", text:"Clicks on an image-only video feed."},
+          {key:"a", text:"LLMHNS is OFFLINE labeling at training-data construction; the recsys model at serving is unchanged. LLM-as-retriever and LLM-as-reranker put the LLM into the serving path. Cost and latency profiles differ accordingly.", correct:true},
+          {key:"b", text:"All three put the LLM in the serving path."},
+          {key:"c", text:"LLMHNS is a special case of LLM-as-reranker."},
+          {key:"d", text:"They are equivalent at inference."},
         ]}
-        trap={<>(d) and (e) lack the semantic signal the LLM needs to make a judgment.</>}
-        lens={<>LLMHNS needs the LLM to reason over content. Rich text catalogs play to its strengths. Pure collaborative filtering or image-only feeds give the LLM nothing to chew on — it would end up labeling by item ID, which is meaningless.</>}
-        stretch={<>Could you adapt LLMHNS to image-only feeds with a vision-language model?</>}
+        trap={<>(b)(c)(d) confuse offline labeling with serving-time LLM use.</>}
+        lens={<>Offline label generation is the load-bearing distinction.</>}
+        stretch={<>How does this affect online cost?</>}
       />
 
-      <VIS.TrapProblem
-        id="ln-p3" difficulty="hard"
-        title="P3 — Prompt design for the LLM judge"
-        scenario={<>You write a prompt: "Given positive item p, pick the 5 most similar items from this list that a user who liked p would NOT pick." Initial results are poor. What is most likely wrong?</>}
+      {/* A3 counterfactual */}
+      <VIS.TrapProblem id="llmhns-p3" difficulty="medium"
+        title="P3 — Without LLMHNS, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: realistic fallbacks are hard mining (entrenches bias), random/in-batch (saturates), or human-labeled hard negatives (very expensive at scale). LLMHNS sits between &ldquo;cheap but self-biased&rdquo; and &ldquo;expensive human label.&rdquo;</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"The prompt does not give the LLM the USER's preference signal — only the positive. The LLM is judging item-similarity, not user-intent mismatch.", correct:true},
-          {key:"b", text:"The prompt is too long."},
-          {key:"c", text:"The LLM does not know what 'similar' means."},
-          {key:"d", text:"You need a fine-tuned LLM."},
+          {key:"a", text:"Hard mining (cheap but self-biased), in-batch (saturates), or human labels (expensive). LLMHNS sits between: external judgment at scale, paid in offline LLM cost.", correct:true},
+          {key:"b", text:"LLMHNS is at parity with random negatives."},
+          {key:"c", text:"You would always have human labels at scale for free."},
+          {key:"d", text:"You would skip negatives entirely."},
         ]}
-        trap={<>(b), (c), (d) are generic. The actual bug is missing user context.</>}
-        lens={<>The whole pitch of LLMHNS is "user-intent-aware false positives." Without the user's preference profile in the prompt, the LLM falls back to plain similarity ranking — useless. Add user history, demographics, or recent behavior to the prompt.</>}
-        stretch={<>How would you compress user history into a prompt-fitting summary?</>}
+        trap={<>(b)(c)(d) under-shoot.</>}
+        lens={<>Position LLMHNS on the bias-vs-cost frontier.</>}
+        stretch={<>Where does the cost crossover with human labels?</>}
       />
 
-      <VIS.TrapProblem
-        id="ln-p4" difficulty="medium"
-        title="P4 — Offline labeling cost"
-        scenario={<>Your training set has 100M (user, positive) pairs. One LLM call costs $0.005 and labels 10 hard negatives. Total cost is $500K, which is too much. What is the right move?</>}
+      {/* A4 composition */}
+      <VIS.TrapProblem id="llmhns-p4" difficulty="hard"
+        title="P4 — Compose LLMHNS with MixGCF"
+        scenario={<><em>Discriminating insight: LLMHNS produces labeled REAL hard negatives; MixGCF produces SYNTHESIZED latent negatives. They are orthogonal — you can use LLMHNS-labeled real items as positives in a contrastive batch AND use MixGCF synthesis for additional negatives within that batch.</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"Label hard negatives for a stratified sample (e.g., 5M pairs) and mix with cheap random negatives for the rest.", correct:true},
-          {key:"b", text:"Use a smaller LLM with worse judgment."},
-          {key:"c", text:"Skip LLMHNS entirely."},
-          {key:"d", text:"Use the same LLM-labeled negatives for every pair."},
+          {key:"a", text:"LLMHNS supplies labeled real hard negatives; MixGCF synthesizes additional boundary-adjacent negatives in latent space. The two combine: LLMHNS provides label quality, MixGCF provides density of hard examples near the decision boundary.", correct:true},
+          {key:"b", text:"LLMHNS replaces MixGCF entirely."},
+          {key:"c", text:"They cannot be combined."},
+          {key:"d", text:"They are mathematically identical."},
         ]}
-        trap={<>(b) trades cost for quality wholesale. (c) abandons the technique. (d) destroys the per-pair specificity.</>}
-        lens={<>Labeling everything is wasteful — most pairs do not need LLM-grade negatives. Stratified sampling (focus on tail users or near-miss items) gets most of the gain at 5% the cost. This is the same logic as active learning: spend label budget where it matters most.</>}
-        stretch={<>How would you decide which pairs to stratify-sample for LLM labeling?</>}
+        trap={<>(b)(c)(d) miss the orthogonality.</>}
+        lens={<>External label + synthetic density compose.</>}
+        stretch={<>How would you weight LLMHNS-labeled vs MixGCF-synthesized negatives?</>}
       />
 
-      <VIS.TrapProblem
-        id="ln-p5" difficulty="hard" multiSelect
-        title="P5 — LLM judge failure modes you should expect"
-        scenario={<>Select modes the LLM judge can fail in.</>}
+      {/* A5 boundary */}
+      <VIS.TrapProblem id="llmhns-p5" difficulty="medium"
+        title="P5 — At what catalog text richness does LLMHNS stop helping?"
+        scenario={<><em>Discriminating insight: LLMHNS needs rich textual content for the LLM to reason over. With sparse text (item name only, no description, no tags), the LLM has nothing to reason about and degrades to noisy random.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Popularity bias — LLM favors well-known items even as negatives, suppressing tail items.", correct:true},
-          {key:"b", text:"Language bias — non-English items get sparser labeling.", correct:true},
-          {key:"c", text:"Pretraining contamination — the LLM has seen the items and their popularity.", correct:true},
-          {key:"d", text:"Prompt instability — different rewordings yield different negatives.", correct:true},
-          {key:"e", text:"LLM cannot read item text at all."},
+          {key:"a", text:"When items have only a name and no description / tags / structured attributes, the LLM has nothing to reason about — its labels degrade to noisy random and the offline cost is wasted. Use LLMHNS only where item text is genuinely informative.", correct:true},
+          {key:"b", text:"LLMHNS always wins."},
+          {key:"c", text:"LLMHNS only helps for items with images."},
+          {key:"d", text:"Text richness is irrelevant."},
         ]}
-        trap={<>(e) is false unless the prompt is broken.</>}
-        lens={<>All four real failure modes are operationally important. Detect them with: distributional checks on the negative set vs the catalog (popularity skew), language coverage audits, prompt-A/B comparisons, and per-segment label-quality spot checks. None of this is automatic — LLM judges need monitoring like any other label source.</>}
-        stretch={<>Which of these is hardest to detect in production?</>}
+        trap={<>(b)(c)(d) miss the text-richness contract.</>}
+        lens={<>Text richness is LLMHNS&apos;s precondition.</>}
+        stretch={<>How would you measure &ldquo;item text richness&rdquo; before paying the LLM cost?</>}
       />
 
-      <VIS.TrapProblem
-        id="ln-p6" difficulty="medium"
-        title="P6 — Refresh cadence"
-        scenario={<>You labeled hard negatives for the corpus in January. The catalog grows by 20% by June. What is the right refresh policy?</>}
+      {/* B1 application */}
+      <VIS.TrapProblem id="llmhns-p6" difficulty="hard"
+        title="P6 — Pick a negative-sampling strategy for this scenario"
+        scenario={<><em>Discriminating insight: an e-commerce catalog has 10M items with rich descriptions and 200M users. Hard-mining baseline plateaued. Budget allows nightly offline LLM passes. The constraint is &ldquo;rich text + can afford offline LLM cost,&rdquo; which is LLMHNS&apos;s sweet spot.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Label only the new items against existing positives; re-label existing pairs only when retraining the recommender from scratch.", correct:true},
-          {key:"b", text:"Re-label everything monthly."},
-          {key:"c", text:"Never refresh — LLM labels are eternal."},
-          {key:"d", text:"Label new pairs as random instead of LLM."},
+          {key:"a", text:"LLMHNS — rich text, offline LLM cost is amortizable nightly, the hard-mining plateau matches LLMHNS&apos;s motivating problem (entrenched model bias).", correct:true},
+          {key:"b", text:"MixGCF — but the system is two-tower, not a GCN."},
+          {key:"c", text:"AHNS — schedules difficulty but does not fix the entrenchment problem on its own."},
+          {key:"d", text:"Random negatives — saturated."},
         ]}
-        trap={<>(b) is expensive. (c) is wrong as the catalog drifts. (d) loses the LLM benefit on the new pool.</>}
-        lens={<>The marginal cost of LLM labels is in new items, not old ones. Incremental labeling (new items only) gets you most of the value at a fraction of the cost. Full re-label only when you retrain from scratch or detect significant drift.</>}
-        stretch={<>What drift signal would trigger a full re-label?</>}
+        trap={<>(b) wrong architecture. (c) orthogonal. (d) saturated.</>}
+        lens={<>Rich text + entrenched bias = LLMHNS&apos;s sweet spot.</>}
+        stretch={<>How would you allocate LLM budget per user?</>}
       />
 
-      <VIS.TrapProblem
-        id="ln-p7" difficulty="hard" mode="ordered"
-        title="P7 — Order your debugging steps when LLMHNS DEGRADES offline NDCG"
-        scenario={<>You switch from self-mined hard negatives to LLMHNS and offline NDCG drops by 1.2%. Order the diagnostics. Wrong moves do not get ranked.</>}
+      {/* B2 sounds reasonable */}
+      <VIS.TrapProblem id="llmhns-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just embed both with the same LLM and pick nearest by cosine&rdquo;"
+        scenario={<><em>Discriminating insight: LLMHNS is REASONING-based, not embedding-distance-based. Embedding distance in an LLM space is just a different similarity metric and does NOT distinguish &ldquo;semantically close but behaviorally inappropriate.&rdquo; The LLM&apos;s reasoning step is load-bearing.</em><br/>Why is &ldquo;LLM embeddings + cosine&rdquo; wrong?</>}
         options={[
-          {key:"a", text:"Check the LLM-negative distribution vs the eval-positive distribution for mismatch.", order:1},
-          {key:"b", text:"Audit the LLM prompt for missing user context.", order:2},
-          {key:"c", text:"Roll back to self-mined."},
-          {key:"d", text:"Mix LLM and self-mined negatives 50:50 as a fallback.", order:3},
-          {key:"e", text:"Re-fine-tune the LLM judge."},
+          {key:"a", text:"Cosine in LLM embedding space measures semantic similarity. LLMHNS asks the LLM to REASON about which items are similar AND behaviorally inappropriate — a different question. An embedding-cosine pipeline returns the most similar items, including duplicates and obvious near-matches, not best-false-positives.", correct:true},
+          {key:"b", text:"LLM embeddings are mathematically equivalent to LLM reasoning."},
+          {key:"c", text:"Cosine is always the correct metric."},
+          {key:"d", text:"The LLM&apos;s reasoning step adds no signal."},
         ]}
-        trap={<>(c) abandons without diagnosis. (e) is premature.</>}
-        lens={<>The natural ladder: distribution mismatch → prompt audit → mix as fallback. NDCG drops with LLMHNS often trace to the LLM negatives being TOO HARD or too off-distribution. Mixing with self-mined acts as a curriculum that recovers the recommender's discrimination on easy negatives.</>}
-        stretch={<>What is the signal that says the LLM negatives are too hard?</>}
+        trap={<>(b) the seductive misread. (c)(d) miss the reasoning contribution.</>}
+        lens={<>Reasoning over text vs distance in latent space are different operations.</>}
+        stretch={<>What would a duplicate-detector look like that exposes this gap?</>}
       />
 
-      <VIS.TrapProblem
-        id="ln-p8" difficulty="medium"
-        title="P8 — Cold-start items"
-        scenario={<>A new item just launched with no interactions. Can LLMHNS produce hard negatives for THIS new item as a positive?</>}
+      {/* B3 anchor */}
+      <VIS.TrapProblem id="llmhns-p8" difficulty="hard"
+        title="P8 — LLMHNS&apos;s anchor (LLM reasoning to label best-false-positives): pitch it"
+        scenario={<><em>Discriminating insight: the anchor is &ldquo;LLM reasons over text to identify items that LOOK like the positive but should not be clicked.&rdquo; The pitch should name reasoning-over-text and the false-positive framing.</em><br/>Pick the pitch.</>}
         options={[
-          {key:"a", text:"Yes — the LLM only needs the item's text and description, not interaction history.", correct:true},
-          {key:"b", text:"No — LLMHNS requires interaction data."},
-          {key:"c", text:"Only if the item has reviews."},
-          {key:"d", text:"Only if the catalog is small."},
+          {key:"a", text:"Instead of letting the model pick its own hard negatives (which entrenches its current confusions), we hand the catalog to an LLM and ask it to read item descriptions and flag &ldquo;items that look very similar to the positive but a user would actually NOT click.&rdquo; That EXTERNAL judgment becomes our hard-negative pool.", correct:true},
+          {key:"b", text:"We use a larger recsys model."},
+          {key:"c", text:"We use the LLM as the retriever at serving."},
+          {key:"d", text:"We use random negatives more aggressively."},
         ]}
-        trap={<>(b), (c), (d) misunderstand the cold-start advantage.</>}
-        lens={<>This is a real advantage of content-based labeling — it works on day 1. Self-mined hard negatives REQUIRE the new item to have appeared in scoring (which requires interactions). LLMHNS bootstraps cold-start hard-negative sets.</>}
-        stretch={<>How would you validate that LLM-labeled negatives for cold items actually help retrieval?</>}
+        trap={<>(b) capacity misread. (c) serving-LLM misread. (d) baseline.</>}
+        lens={<>External reasoning judge is the anchor.</>}
+        stretch={<>What property of the LLM is doing the work — knowledge or reasoning?</>}
       />
 
-      <VIS.TrapProblem
-        id="ln-p9" difficulty="hard"
-        title="P9 — LLM judge fine-tuning"
-        scenario={<>Would fine-tuning the LLM judge on a small set of human-labeled hard negatives help?</>}
+      {/* B4 not to use */}
+      <VIS.TrapProblem id="llmhns-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use LLMHNS. Select all that apply."
+        scenario={<><em>Discriminating insight: LLMHNS needs rich text, offline budget, and that the current bottleneck is &ldquo;hard-mining bias entrenchment.&rdquo; It is misapplied for low-text catalogs, real-time training, or already-fine baseline.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Often yes — fine-tuning aligns the judge with your domain's notion of 'plausible false positive', but adds complexity and another model to manage.", correct:true},
-          {key:"b", text:"No — fine-tuning destroys LLM judgment."},
-          {key:"c", text:"Only if you fine-tune on the entire catalog."},
-          {key:"d", text:"It does not matter — base LLMs are already optimal judges."},
+          {key:"a", text:"Items have only structured IDs and no description text — the LLM cannot reason.", correct:true},
+          {key:"b", text:"Real-time online training where the negative pool must be refreshed each minute — offline LLM cost not amortizable.", correct:true},
+          {key:"c", text:"Catalog with rich descriptions and overnight offline budget — sweet spot."},
+          {key:"d", text:"A baseline using random negatives that has not yet hit a hard-mining plateau — LLMHNS does not solve a problem you do not have.", correct:true},
+          {key:"e", text:"Domain where item content is heavily adversarial / SEO-spam, causing the LLM to be fooled.", correct:true},
         ]}
-        trap={<>(b), (c), (d) are absolutes. The honest answer is "sometimes, with cost."</>}
-        lens={<>Fine-tuning helps in domains where the LLM has no pretraining experience (industrial parts, niche music genres) or where "hard negative" has a non-obvious meaning (medical contraindications). It does not help when your domain is well-covered (consumer e-commerce). The cost of maintaining a fine-tuned judge is non-trivial.</>}
-        stretch={<>How would you measure whether fine-tuning is worth it before committing?</>}
+        trap={<>(c) is the sweet spot.</>}
+        lens={<>LLMHNS needs text + offline budget + entrenchment as the active problem.</>}
+        stretch={<>How would you detect adversarial item text?</>}
       />
 
-      <VIS.TrapProblem
-        id="ln-p10" difficulty="hard"
-        title="P10 — Eval contamination"
-        scenario={<>Your eval set is held out from training. Reviewer asks if LLMHNS contaminates eval. Why might it?</>}
+      {/* C1 architectural */}
+      <VIS.TrapProblem id="llmhns-p10" difficulty="hard"
+        title="P10 — Why a SEPARATE LLM, not fine-tune the recsys model end-to-end?"
+        scenario={<><em>Discriminating insight: end-to-end fine-tuning lets the model influence its own training signal again — same bias entrenchment problem. The separation (LLM judge, recsys student) is what breaks the loop.</em><br/>Why separate?</>}
         options={[
-          {key:"a", text:"If the LLM has seen the eval items in pretraining, its judgment about them is informed by data the recommender will not have at inference — overstating offline metric gains.", correct:true},
-          {key:"b", text:"Contamination is impossible because eval is held out from RECOMMENDER training."},
-          {key:"c", text:"LLM never sees eval items."},
-          {key:"d", text:"Contamination only happens with random negatives."},
+          {key:"a", text:"A separate LLM provides judgment that is not derived from the recsys model&apos;s current weights; end-to-end fine-tuning would have the model influence its own negatives and re-introduce the entrenchment LLMHNS was designed to fix. The judge-student separation is load-bearing.", correct:true},
+          {key:"b", text:"Separation is a latency optimization."},
+          {key:"c", text:"End-to-end fine-tuning would be equivalent."},
+          {key:"d", text:"Separation is purely organizational."},
         ]}
-        trap={<>(b), (c), (d) ignore the indirect leakage path through the LLM.</>}
-        lens={<>This is a real and underappreciated risk. The recommender trains on LLM-curated labels; the LLM's labels are informed by its pretraining; if eval items appear in pretraining, you have indirect leakage. Mitigation: use temporal splits where eval items postdate the LLM's pretraining cutoff.</>}
-        stretch={<>How would you certify your eval is contamination-free?</>}
+        trap={<>(b)(c)(d) miss the bias-decoupling.</>}
+        lens={<>Decoupling judgment from learning is the architectural payoff.</>}
+        stretch={<>What about distilling the LLM judge into a smaller scorer?</>}
       />
 
-      <VIS.TrapProblem
-        id="ln-p11" difficulty="medium"
-        title="P11 — Combining LLMHNS with MixGCF or self-mining"
-        scenario={<>You can afford LLMHNS for 10% of pairs, self-mining for 50%, random for the rest. Best blending?</>}
+      {/* C2 loss */}
+      <VIS.TrapProblem id="llmhns-p11" difficulty="hard"
+        title="P11 — Loss composition with LLMHNS labels"
+        scenario={<><em>Discriminating insight: LLMHNS supplies (positive, hard-negative) triples; downstream loss is standard contrastive (BPR or InfoNCE). The LLM is NOT in the loss; it is in the data.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Use LLMHNS for tail users or rare items where bias entrenchment matters most; self-mine for the head; random as default.", correct:true},
-          {key:"b", text:"Apply LLMHNS uniformly at 10% sampling."},
-          {key:"c", text:"Random everywhere."},
-          {key:"d", text:"Self-mining only — drop LLMHNS."},
+          {key:"a", text:"Standard contrastive loss (BPR or InfoNCE) on (user, positive, LLMHNS-labeled negative) triples. The LLM does not appear in the loss — it appears in the training-data construction.", correct:true},
+          {key:"b", text:"A distillation loss against the LLM&apos;s soft scores."},
+          {key:"c", text:"A new LLM-specific loss term."},
+          {key:"d", text:"Adversarial loss against the LLM."},
         ]}
-        trap={<>(b) wastes the targeted advantage. (c), (d) abandon the technique.</>}
-        lens={<>LLMHNS's marginal value is highest where the recommender is most biased — the tail. Spend the limited budget on the head's negatives gives the smallest lift. This is the same logic as active learning: spend budget where the model is most uncertain or wrong.</>}
-        stretch={<>How would you operationalize "tail user" vs "head user" for routing?</>}
+        trap={<>(b) confuses with ScalingNote. (c)(d) wrong family.</>}
+        lens={<>LLM enters the data pipeline, not the loss.</>}
+        stretch={<>What if you added a distillation term on LLM soft labels?</>}
       />
+
+      {/* C3 dropped */}
+      <VIS.TrapProblem id="llmhns-p12" difficulty="hard"
+        title="P12 — What does LLMHNS deliberately drop vs self-mining?"
+        scenario={<><em>Discriminating insight: self-mining is FAST (the recsys model already scores items) and CHEAP. LLMHNS drops the speed/cost benefit (offline LLM pass costs real money and wall-clock) to buy unbiased judgment.</em><br/>What does LLMHNS forfeit?</>}
+        options={[
+          {key:"a", text:"Speed and cost: offline LLM passes over the catalog cost money and wall-clock; self-mining is free because the recsys model is already running. LLMHNS buys unbiased judgment at offline-LLM cost.", correct:true},
+          {key:"b", text:"LLMHNS forfeits the use of contrastive loss."},
+          {key:"c", text:"LLMHNS forfeits the use of a recsys model."},
+          {key:"d", text:"LLMHNS forfeits online serving."},
+        ]}
+        trap={<>(b)(c)(d) miss the cost tradeoff.</>}
+        lens={<>Offline LLM cost is the deliberate sacrifice.</>}
+        stretch={<>How would you batch LLM calls to amortize?</>}
+      />
+
+      {/* C4 hyperparameter */}
+      <VIS.TrapProblem id="llmhns-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: the LLM prompt template (especially the &ldquo;behaviorally inappropriate&rdquo; framing) dominates. A poorly framed prompt elicits semantic-similarity labels (so LLMHNS becomes &ldquo;LLM-as-embedding-distance&rdquo;) and the bias-reduction premise collapses.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"LLM prompt template is most fragile; LLM choice is next; downstream LR is least. A poorly framed prompt collapses LLMHNS to semantic-similarity labeling and loses the bias-reduction premise.", correct:true},
+          {key:"b", text:"Downstream LR is most fragile."},
+          {key:"c", text:"LLM model size is most fragile."},
+          {key:"d", text:"Catalog batch size is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) miss the prompt mechanism.</>}
+        lens={<>Prompt template is the contract with the LLM judge.</>}
+        stretch={<>What concrete prompt phrasing distinguishes &ldquo;similar&rdquo; from &ldquo;behaviorally inappropriate&rdquo;?</>}
+      />
+
+      {/* C5 data assumption */}
+      <VIS.TrapProblem id="llmhns-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: LLMHNS assumes the LLM&apos;s training distribution covers the catalog&apos;s domain (so reasoning is informed). Niche domains (technical instruments, regional products) outside the LLM&apos;s training give noisy labels.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Catalog domain is outside the LLM&apos;s training distribution (specialty instruments, regional brands). The LLM hallucinates plausible-sounding reasoning that is not grounded; labels are noisy.", correct:true},
+          {key:"b", text:"Off-by-one in item-id indexing."},
+          {key:"c", text:"Different tokenizer."},
+          {key:"d", text:"Mismatched batch sizes."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>LLM domain coverage is the labeling contract.</>}
+        stretch={<>How would you spot a niche-domain failure in LLM labels?</>}
+      />
+
+      {/* D1 intuitive but wrong */}
+      <VIS.TrapProblem id="llmhns-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;LLM labels are gold because LLMs are smart&rdquo;"
+        scenario={<><em>Discriminating insight: LLMs introduce their own biases — training-data overrepresentation, instruction-tuning preferences, popularity skew. LLMHNS is &ldquo;LLM-bias instead of model-self-bias,&rdquo; not &ldquo;no bias.&rdquo; The choice is which bias is more tolerable.</em><br/>Why is &ldquo;LLM = gold&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"LLMs carry their own biases (training-data overrepresentation, instruction-tuning preferences, popularity skew). LLMHNS swaps model-self-bias for LLM-bias; the choice is which bias is more tolerable, not whether bias exists.", correct:true},
+          {key:"b", text:"LLM labels are bias-free."},
+          {key:"c", text:"LLM labels are strictly worse than model-self."},
+          {key:"d", text:"LLM bias is irrelevant if the LLM is large enough."},
+        ]}
+        trap={<>(b) the seductive misread. (c)(d) extremes.</>}
+        lens={<>Choose the better bias, do not pretend there is none.</>}
+        stretch={<>Which bias is acceptable in which domain?</>}
+      />
+
+      {/* D2 wrong-assumption cascade */}
+      <VIS.TrapProblem id="llmhns-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: &ldquo;LLMHNS is just hard mining with a fancy scorer&rdquo; cascades into (i) using the SAME recsys-model embedding as the candidate pool (re-introduces self-bias), (ii) skipping the &ldquo;behaviorally inappropriate&rdquo; framing in the prompt (becomes semantic-similarity), (iii) evaluating only against the LLM&apos;s own held-out labels (circular).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: candidate pool selection, prompt framing, and evaluation. Each is load-bearing; remove any one and you regress to either self-mining or semantic-similarity matching.", correct:true},
+          {key:"b", text:"Only the candidate pool."},
+          {key:"c", text:"Only the prompt."},
+          {key:"d", text:"Nothing — &ldquo;fancy scorer&rdquo; is accurate."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Pool + prompt + eval are inseparable.</>}
+        stretch={<>How would you build a non-circular eval?</>}
+      />
+
+      {/* D3 senior vs junior */}
+      <VIS.TrapProblem id="llmhns-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior tunes the recsys model when LLMHNS&apos;s NDCG stalls. A senior audits LLM label quality first: sample 50 LLM-labeled negatives, ask &ldquo;would a human have labeled this as a false-positive?&rdquo; If the LLM&apos;s precision is low, no amount of recsys tuning rescues it.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Audit LLM label quality (sample 50, compare with human judgment). If LLM precision on the labeling task is below threshold, fix the prompt or change the LLM before touching the recsys model — the downstream tuning cannot rescue bad labels.", correct:true},
+          {key:"b", text:"Tune the recsys model first."},
+          {key:"c", text:"Increase recsys embedding size."},
+          {key:"d", text:"Switch to MixGCF."},
+        ]}
+        trap={<>(b)(c)(d) skip the label-quality audit.</>}
+        lens={<>Label quality gates downstream tuning.</>}
+        stretch={<>What size sample audit is sufficient?</>}
+      />
+
+      {/* D4 plausible-misattribution */}
+      <VIS.TrapProblem id="llmhns-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution"
+        scenario={<><em>Discriminating insight: NDCG@10 regresses after LLMHNS rollout — looks like recsys-model regression, but is actually LLM popularity bias. The LLM consistently labels popular items as &ldquo;hard negatives&rdquo; (because they are well-known and salient), and the recsys model learns to demote them.</em><br/>Most likely root cause?</>}
+        options={[
+          {key:"a", text:"LLM popularity bias: the LLM labels popular items as hard negatives because they are salient in its training distribution. The recsys model learns to demote popular items, causing NDCG@10 to drop on the head of the catalog. Diagnostic: compare LLM-negative popularity distribution to overall popularity.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Recsys model overfitted."},
+          {key:"d", text:"Cache invalidation."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>LLM bias on popularity is a documented failure mode of LLMHNS.</>}
+        stretch={<>How would you de-bias the LLM&apos;s popularity skew?</>}
+      />
+
+      {/* E1 production gotcha */}
+      <VIS.TrapProblem id="llmhns-p19" difficulty="hard"
+        title="P19 — Production gotcha: stale LLM labels under catalog drift"
+        scenario={<><em>Discriminating insight: LLM-labeled negatives are computed once offline; if the catalog drifts (new items, retired items, changed descriptions), the label pool ages. A common bug: training continues against an old label pool while catalog drifted.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Re-run the LLM labeling pass on catalog deltas (new + changed items) and refresh the label pool. Without this, training drifts: negatives that no longer match the current catalog produce noisy gradients.", correct:true},
+          {key:"b", text:"LLM labels are static; never refresh."},
+          {key:"c", text:"Refresh only on full retrains."},
+          {key:"d", text:"Label drift is impossible."},
+        ]}
+        trap={<>(b)(c)(d) miss the refresh contract.</>}
+        lens={<>Catalog drift implies label drift.</>}
+        stretch={<>What cadence of LLM-labeling pass is needed?</>}
+      />
+
+      {/* E2 failure on Friday */}
+      <VIS.TrapProblem id="llmhns-p20" difficulty="hard"
+        title="P20 — Failure on Friday: NDCG cratered after an LLM upgrade"
+        scenario={<><em>Discriminating insight: routine upgrade swapped the LLM from one version to another with a different instruction-tuning recipe. The new LLM&apos;s notion of &ldquo;behaviorally inappropriate&rdquo; differs systematically; labels shifted; downstream training distribution changed; NDCG cratered.</em><br/>3am page: NDCG down 8% after LLM upgrade. Diagnosis?</>}
+        options={[
+          {key:"a", text:"LLM upgrade changed the labeling distribution. Diagnostic: compare LLM-labeled negative distributions pre- and post-upgrade (popularity, category coverage, semantic-similarity). Either roll back the LLM or re-tune the prompt for the new model.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Recsys model regressed independently."},
+          {key:"d", text:"Cache TTL changed."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>LLM upgrades change labels; treat the LLM as a versioned data dependency.</>}
+        stretch={<>What CI assertion guards LLM label distribution drift?</>}
+      />
+
+      {/* E3 implementation specifics */}
+      <VIS.TrapProblem id="llmhns-p21" difficulty="medium"
+        title="P21 — Library default that bites: zero-temperature sampling"
+        scenario={<><em>Discriminating insight: many LLM SDKs default to temperature 1.0 for sampling. For labeling tasks you want temperature 0 (deterministic) so that the same item-pair always gets the same label.</em><br/>Where does the default break LLMHNS?</>}
+        options={[
+          {key:"a", text:"Sampling temperature default of 1.0 makes labels non-deterministic — the same (positive, candidate) pair can be flipped across runs. Set temperature to 0 (or low) for labeling tasks; non-determinism is noise in the label channel.", correct:true},
+          {key:"b", text:"Default token-limit is wrong."},
+          {key:"c", text:"Default API endpoint is wrong."},
+          {key:"d", text:"Default batch size is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Determinism is required for labels; nondeterminism is data noise.</>}
+        stretch={<>What about adding self-consistency over multiple samples?</>}
+      />
+
+      {/* E4 rollout */}
+      <VIS.TrapProblem id="llmhns-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) reproduce hard-mining baseline, (2) run LLMHNS on a small slice of the catalog and audit label quality vs human, (3) scale to full catalog with the validated prompt, (4) shadow-score downstream model, (5) traffic ramp. Building the full pipeline before auditing labels is the classic mistake.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Hard-mining baseline → LLMHNS on small slice + human audit → scale to full catalog → shadow-score downstream model → traffic ramp", correct:true},
+          {key:"b", text:"Run LLMHNS on full catalog from day 1."},
+          {key:"c", text:"Skip the human audit."},
+          {key:"d", text:"Ramp traffic first."},
+        ]}
+        trap={<>(b)(c)(d) skip label audits.</>}
+        lens={<>Audit label quality before scaling LLM cost.</>}
+        stretch={<>What metric on the human audit decides whether to scale?</>}
+      />
+
+      {/* F1 edge case */}
+      <VIS.TrapProblem id="llmhns-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks LLMHNS&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: a catalog with only structured numeric fields (item_id, price, category_id) and no descriptions reduces the LLM&apos;s reasoning input to a few integers. The LLM has nothing to reason over; labels are arbitrary.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"An item catalog with only structured numeric fields (id, price, category) and no descriptions. The LLM has nothing to reason about; labels reduce to noise. LLMHNS&apos;s text-reasoning premise is violated.", correct:true},
+          {key:"b", text:"Catalog with rich descriptions (sweet spot)."},
+          {key:"c", text:"10M items with descriptions."},
+          {key:"d", text:"100M users."},
+        ]}
+        trap={<>(b) sweet spot. (c)(d) scale.</>}
+        lens={<>Text is the LLM&apos;s reasoning substrate.</>}
+        stretch={<>What is the minimum description length to make LLMHNS viable?</>}
+      />
+
+      {/* F4 paper-named failure */}
+      <VIS.TrapProblem id="llmhns-p24" difficulty="hard"
+        title="P24 — Paper-named failure: offline cost and LLM bias"
+        scenario={<><em>Discriminating insight: the paper names (i) offline LLM cost, (ii) LLM bias. Which is the more limiting in production?</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"LLM bias dominates practice. Offline cost is engineering-bounded (batch + cache + cheaper LLMs). LLM bias requires prompt-engineering vigilance and human auditing — these scale poorly with catalog size and domain coverage.", correct:true},
+          {key:"b", text:"Offline cost dominates; bias is rare."},
+          {key:"c", text:"Both are negligible."},
+          {key:"d", text:"LLMHNS has no failure modes."},
+        ]}
+        trap={<>(b) reverses the practical risk. (c)(d) deny reality.</>}
+        lens={<>LLM bias is the long-tail bug; cost is solvable.</>}
+        stretch={<>What audit cadence catches LLM bias drift over time?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/html/2504.04726v2" target="_blank" rel="noopener">Wang et al. — <em>Hard Negative Sampling via Large Language Models for Recommendation</em> (arXiv 2025, paper)</a> — primary source. Ablations on prompt design are the most useful sections.</li>
-        <li><a href="https://arxiv.org/abs/2409.07237" target="_blank" rel="noopener">Lai et al. — <em>Negative Sampling in Recommendation: A Survey</em> (arXiv 2024, survey)</a> — places LLMHNS in the broader negative-sampling landscape.</li>
-        <li><a href="https://eugeneyan.com/writing/llm-patterns/" target="_blank" rel="noopener">Eugene Yan — <em>Patterns for Building LLM-based Systems</em> (blog)</a> — section on LLM-as-judge applies directly to LLMHNS.</li>
-        <li><a href="https://lilianweng.github.io/posts/2024-07-07-hallucination/" target="_blank" rel="noopener">Lilian Weng — <em>Hallucinations and Bias in LLM Judges</em> (blog)</a> — failure modes of LLM-as-judge that map onto LLM-as-negative-labeler.</li>
-        <li><a href="https://arxiv.org/abs/2305.06474" target="_blank" rel="noopener">Hou et al. — <em>Large Language Models are Zero-Shot Rankers for Recommender Systems</em> (arXiv 2023, paper)</a> — related "LLM as evaluator" line of work for context.</li>
+        <li><a href="https://arxiv.org/html/2504.04726v2" target="_blank" rel="noopener">Hard Negative Sampling via Large Language Models for Recommendation (arXiv 2504.04726, 2025)</a> — primary source for LLMHNS.</li>
+        <li><a href="https://arxiv.org/abs/2409.07237" target="_blank" rel="noopener">Lai et al., <em>Negative Sampling in Recommendation: A Survey and Future Directions</em> (arXiv 2409.07237, 2024)</a> — sibling techniques (MixGCF, AHNS).</li>
+        <li><a href="https://eugeneyan.com/writing/llm-patterns/" target="_blank" rel="noopener">Eugene Yan — <em>Patterns for Building LLM-Based Systems &amp; Products</em> (blog)</a> — practitioner framing of offline LLM use vs serving-time LLM use.</li>
+        <li><a href="https://lilianweng.github.io/posts/2021-05-31-contrastive/" target="_blank" rel="noopener">Lilian Weng — <em>Contrastive Representation Learning</em> (blog)</a> — background on contrastive losses LLMHNS feeds.</li>
+        <li><a href="https://huyenchip.com/2023/05/02/rlhf.html" target="_blank" rel="noopener">Chip Huyen — <em>RLHF: Reinforcement Learning from Human Feedback</em> (blog)</a> — adjacent practice of LLMs as judges / labelers.</li>
       </ul>
     </VIS.Section>
   </main>

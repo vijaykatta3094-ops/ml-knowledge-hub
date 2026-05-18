@@ -1414,254 +1414,449 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 12
+// MixGCF (Huang et al., KDD 2021; survey arXiv 2409.07237, 2024)
+// Unique mechanism: SYNTHESIZES hard negatives by MIXING graph-neighborhood
+// embeddings. Takes the positive item embedding, samples K candidate negatives,
+// and INTERPOLATES (linearly combines) them in the GCN latent space at a layer-
+// wise mixing factor to produce a synthetic hard negative that does not
+// correspond to any real item. The point: hardness is CONSTRUCTED in latent
+// space, not MINED from existing items.
+// Cross-visual caution (negative-sampling trio):
+//   - MixGCF  = SYNTHESIZES via embedding-mix in GCN latent space (no labels needed) [THIS visual]
+//   - LLMHNS  = LLM reasons about candidate-positive similarity (label-aware text)
+//   - AHNS    = ADAPTIVE difficulty per user as their embedding converges (curriculum)
+// Anchor that survives §2a redaction: "synthetic hard negatives via layer-wise
+// embedding interpolation in a GCN" — NOT generic hard-negative mining.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Negative sampling"
-      title="MixGCF"
-      subtitle="Synthesize hard negatives by mixing neighborhood embeddings in graph recsys — interpolate user-side and item-side neighbors to produce items that do not exist but train better."
+      pill="RecSys SOTA · Negative sampling (graph)"
+      title="MixGCF — Synthetic hard negatives by embedding-mixing in GCN latent space"
+      subtitle="Samples K candidate negatives from the graph, then INTERPOLATES (linearly mixes) their embeddings with the positive at each GCN layer to fabricate a synthetic hard negative. The synthetic item never exists in the catalog — and that is the point."
       byline={[
-        {label: "Paper", value: "Huang et al., KDD 2021; survey arXiv 2409.07237 (2024)"},
-        {label: "Domain", value: "GNN-based retrieval and ranking"},
+        {label: "Paper", value: "Huang et al., MixGCF (KDD 2021); survey arXiv 2409.07237 (2024)"},
+        {label: "Surface", value: "GNN-based retrieval (LightGCN, NGCF) where in-batch hard negatives plateau"},
+        {label: "Anchor that survives redaction", value: "Synthesis-by-mixing in GCN latent space, not mining from real items"},
       ]}/>
 
     <VIS.TLDR>
-      Random negatives are too easy for a strong <VIS.Term def="A graph neural network applied to user-item interaction graphs for recommendation.">graph recommender</VIS.Term>; in-batch negatives miss structural signal. MixGCF samples a few candidate items from the positive item's graph neighborhood and <strong>linearly interpolates their embeddings</strong> with a noise vector, picking the synthetic point that the current model scores highest. Result: hard negatives that exploit the graph structure without any new items in the catalog.
+      Standard <VIS.Term def="Training examples drawn to be examples of the &lsquo;not-clicked&rsquo; outcome. Random negatives are typically far too easy for a converged model.">negative samples</VIS.Term> in graph recsys are too easy: a converged GCN already separates random pairs with high margin, so the gradient vanishes. MixGCF makes hard negatives by <strong>synthesizing</strong> them: at each GCN layer it samples K candidate negatives, computes per-layer mixing coefficients via an inner-product hardness score, and linearly combines the candidate embeddings with the positive&apos;s. The resulting embedding does NOT correspond to any item in the catalog — it is a <em>fabricated</em> latent point that sits on the decision boundary. That is the load-bearing claim: <em>hardness is CONSTRUCTED in latent space, not MINED from existing items</em>. The sibling concepts (LLMHNS, AHNS) work very differently — see the cross-visual caution at the top of this file.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        MixGCF generates synthetic hard negatives by mixing embeddings from the positive's graph neighborhood. The recipe per (user, positive item) pair:
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  P["Positive item p"] --> N["Neighborhood items n1..nk"]
-  N --> M["Mix embeddings with random weights"]
-  M --> S["Synthetic candidates"]
-  S --> H["Pick the one model scores highest"]
-  H --> L["Use as hard negative in BPR loss"]
-      `} />
+    <VIS.Section id="sec-what" title="What it is — layer-wise embedding interpolation">
+      <VIS.Mermaid chart={`flowchart TB
+  P["Positive item embedding (per-layer)"]
+  N["K sampled candidate negatives (per-layer)"]
+  S["Hardness score (inner product with user)"]
+  M["Layer-wise mixing coefficient alpha_l"]
+  Z["Synthetic negative embedding (linear combo at each layer)"]
+  L["BPR or InfoNCE loss vs synthetic negative"]
+  P --> Z
+  N --> S
+  S --> M
+  M --> Z
+  Z --> L`} />
       <ul>
-        <li><strong>Step 1 — Neighborhood sample</strong>: draw a small set of items reachable from the positive in the user-item graph.</li>
-        <li><strong>Step 2 — Embedding mix</strong>: linearly combine the neighborhood embeddings using random weights summing to 1.</li>
-        <li><strong>Step 3 — Hardness selection</strong>: among several synthetic points, pick the one with the highest score under the current model.</li>
-        <li><strong>Step 4 — BPR update</strong>: use this synthetic vector as the negative in the pairwise BPR loss.</li>
+        <li><strong>Per-layer sampling</strong> — at each GCN layer L, sample K candidate negatives independently; this exploits the multi-hop neighborhood structure unique to GCN-based retrieval.</li>
+        <li><strong>Hardness score</strong> — inner product of each candidate with the user (or positive) embedding; harder candidates score higher.</li>
+        <li><strong>Layer-wise mixing</strong> — coefficient alpha_l per layer; the harder the candidate at layer L, the more weight it gets.</li>
+        <li><strong>Synthetic embedding</strong> — output is a linear combination at each layer; the negative item DOES NOT exist in the catalog.</li>
       </ul>
+      <p>The synthetic negative is consumed by the standard BPR / InfoNCE loss as if it were a real item embedding.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <p>
-        Most negative sampling for graph recsys either draws random items (too easy) or mines hard negatives by scoring real candidates (entrenches model bias). MixGCF synthesizes negatives in embedding space, which sidesteps both problems.
-      </p>
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Random negs</th><th style={{textAlign:"left",padding:8}}>Self-mined hard negs</th><th style={{textAlign:"left",padding:8}}>MixGCF</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from in-batch and standard hard-negative mining">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Negative source</th>
+          <th style={{textAlign:"left", padding:8}}>Hardness</th>
+          <th style={{textAlign:"left", padding:8}}>Exists in catalog?</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Hardness</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Low</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High and structured</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Bias entrenchment</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Lower (synthetic)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Real-item constraint</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Yes</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Yes</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No (mixed embeddings)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Cost</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Cheap</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Medium</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Medium (a few mixes per pair)</td></tr>
+          <tr><td style={{padding:8}}>Random / uniform</td><td style={{padding:8}}>Whole catalog</td><td style={{padding:8}}>Too easy</td><td style={{padding:8}}>Yes</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>In-batch</td><td style={{padding:8}}>Same minibatch</td><td style={{padding:8}}>Medium</td><td style={{padding:8}}>Yes</td></tr>
+          <tr><td style={{padding:8}}>Standard hard mining</td><td style={{padding:8}}>Top-scored real items</td><td style={{padding:8}}>Hard</td><td style={{padding:8}}>Yes — entrenches model bias</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>MixGCF</strong></td><td style={{padding:8}}><strong>SYNTHESIZED (latent-space mix)</strong></td><td style={{padding:8}}><strong>Boundary-tunable</strong></td><td style={{padding:8}}><strong>NO — fabricated</strong></td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>GNN-based retrieval where in-batch negatives have plateaued.</li>
-        <li>Dense graphs with rich neighborhood structure — mixing is meaningful when neighbors are not random.</li>
-        <li>Training from scratch, where hard negatives accelerate convergence.</li>
-        <li>Settings where you cannot afford to score the full catalog to mine real hard negatives.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Mixing weight sensitivity</strong> — the distribution of random weights matters more than people expect. Beta(1,1) vs Beta(0.2,0.2) gives different hardness regimes.</li>
-        <li><strong>Non-existent compositions</strong> — synthetic negatives can correspond to "items" that have no real referent. Usually fine but can pull embeddings off-manifold.</li>
-        <li><strong>Neighborhood quality</strong> — if the graph is sparse or noisy, the neighborhood for mixing is bad and synthetic negatives drift.</li>
-        <li><strong>Loss-landscape impact</strong> — the hardest synthetic point can be too hard (gradient explodes); clip or anneal.</li>
-        <li><strong>Eval gotcha</strong> — offline NDCG can over-credit MixGCF because hard negatives align with the harder evaluation pairs.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="mx-p1" difficulty="hard"
-        title="P1 — Synthetic negatives are 'items that do not exist.' Why is this not catastrophic?"
-        scenario={<>You worry that BPR loss minimization against fictional items pulls the user embedding toward a meaningless point. A coworker says "it works fine, ship it." Who is right and why?</>}
+      {/* A1 */}
+      <VIS.TrapProblem id="mixgcf-p1" difficulty="hard"
+        title="P1 — MixGCF vs standard hard-negative mining: what is the load-bearing difference?"
+        scenario={<><em>Discriminating insight: hard-negative MINING picks the top-scored REAL items (entrenches model bias because the model picks its own confusions); MixGCF SYNTHESIZES a latent point by interpolating embeddings (no real item is required).</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Coworker — what BPR cares about is the local gradient on the user embedding pulling away from a HARD direction in embedding space; whether the negative corresponds to a real item is irrelevant to that gradient.", correct:true},
-          {key:"b", text:"You — embedding-space negatives violate the i.i.d. assumption."},
-          {key:"c", text:"You — only real items can produce valid BPR gradients."},
-          {key:"d", text:"Coworker — but only when the mixing weight is uniform."},
+          {key:"a", text:"MixGCF SYNTHESIZES hard negatives by linearly mixing embeddings of sampled candidates with the positive at each GCN layer — the resulting embedding corresponds to no real item. Hard-negative mining picks the top-scored real items, which entrenches the model&apos;s existing confusions.", correct:true},
+          {key:"b", text:"MixGCF and hard mining both pick top-scored real items."},
+          {key:"c", text:"MixGCF uses an LLM to score candidates."},
+          {key:"d", text:"MixGCF is metric-based meta-learning."},
         ]}
-        trap={<>(b) appeals to i.i.d. — BPR does not assume i.i.d. negatives. (c) misunderstands what BPR optimizes. (d) overspecifies.</>}
-        lens={<>BPR's gradient on the user embedding is determined by the direction of the negative in embedding space, not by whether that point corresponds to a real catalog item. As long as the synthetic point is on or near the data manifold (which mixing neighbors approximately guarantees), the gradient is informative. This is the same intuition behind mixup augmentation in image classification.</>}
-        stretch={<>When would synthetic negatives become problematic — what manifold property would have to fail?</>}
+        trap={<>(b) collapses the distinction. (c) confuses with LLMHNS. (d) wrong family.</>}
+        lens={<>Synthesis (latent mix) is qualitatively different from mining (real top-K).</>}
+        stretch={<>Why does mining entrench bias but synthesis does not?</>}
       />
 
-      <VIS.TrapProblem
-        id="mx-p2" difficulty="medium" multiSelect
-        title="P2 — Why MIX (interpolate) rather than just SAMPLE the hardest neighbor?"
-        scenario={<>Select all reasons the mixing step beats picking the single hardest neighbor.</>}
+      {/* A2 definitional */}
+      <VIS.TrapProblem id="mixgcf-p2" difficulty="hard"
+        title="P2 — MixGCF vs LLMHNS vs AHNS: anchor each"
+        scenario={<><em>Discriminating insight: this is the cross-visual caution. MixGCF = synthesizes (embedding-mix in GCN latent space). LLMHNS = LLM scores real candidates by semantic similarity. AHNS = adaptive curriculum on hardness per user/epoch.</em><br/>Pick the correct triple.</>}
         options={[
-          {key:"a", text:"Mixing creates a continuous distribution of hardness; sampling jumps in discrete steps.", correct:true},
-          {key:"b", text:"Mixing reduces the variance of the negative gradient direction.", correct:true},
-          {key:"c", text:"Mixing keeps the negative off any single real item, reducing model overfitting to specific competitors.", correct:true},
-          {key:"d", text:"Mixing is required for BPR convergence."},
-          {key:"e", text:"Mixing is faster than nearest-neighbor lookup."},
+          {key:"a", text:"MixGCF synthesizes by layer-wise embedding interpolation in a GCN; LLMHNS uses an LLM to score real candidates by semantic similarity; AHNS adapts the difficulty schedule of negatives across training. Mechanism, source, and schedule are all different.", correct:true},
+          {key:"b", text:"They are the same family with different names."},
+          {key:"c", text:"MixGCF uses an LLM; LLMHNS uses a curriculum."},
+          {key:"d", text:"All three pick the top-scored real item."},
         ]}
-        trap={<>(d) is false. (e) is false — you still need to score the mixes.</>}
-        lens={<>The three real wins: smoother hardness curriculum, lower variance, and reduced item-specific overfitting. The mixup analogy from image classification holds. (d) and (e) are commonly assumed but wrong — BPR converges with any negatives, and mixing adds a tiny scoring cost.</>}
-        stretch={<>What if you mixed beyond the neighborhood — random items globally?</>}
+        trap={<>(b)(c)(d) collapse distinctions central to the trio.</>}
+        lens={<>SYNTHESIZE vs SCORE vs SCHEDULE — the three anchors.</>}
+        stretch={<>Which of the three would you stack with which?</>}
       />
 
-      <VIS.TrapProblem
-        id="mx-p3" difficulty="hard"
-        title="P3 — Choosing the mixing weight distribution"
-        scenario={<>Should you use Beta(1,1) (uniform), Beta(0.2,0.2) (U-shaped, mostly near 0 or 1), or Beta(2,2) (bell-shaped around 0.5)?</>}
+      {/* A3 counterfactual */}
+      <VIS.TrapProblem id="mixgcf-p3" difficulty="medium"
+        title="P3 — Without MixGCF, what is the realistic GCN retrieval fallback?"
+        scenario={<><em>Discriminating insight: in-batch negatives plateau in GCN retrieval (as the model converges, batch-mates become too easy); random negatives are even worse. The realistic alternative is hard-negative mining, which entrenches bias.</em><br/>Pick the realistic gap.</>}
         options={[
-          {key:"a", text:"Beta(0.2,0.2) — most mixes are close to a single neighbor, giving a curriculum that mostly looks like the hardest single negative with rare mid-mixes.", correct:true},
-          {key:"b", text:"Beta(1,1) — uniform is always safe."},
-          {key:"c", text:"Beta(2,2) — the geometric mean is most informative."},
-          {key:"d", text:"It does not matter."},
+          {key:"a", text:"In-batch or hard-negative mining. In-batch saturates as the model converges; hard mining entrenches the model&apos;s own confusions. MixGCF&apos;s synthesis side-steps both by fabricating boundary-adjacent latents.", correct:true},
+          {key:"b", text:"Random uniform negatives are at parity with MixGCF."},
+          {key:"c", text:"Hard mining strictly dominates MixGCF."},
+          {key:"d", text:"You would not need negatives."},
         ]}
-        trap={<>(b) sacrifices curriculum shape. (c) gives the BLANDEST mixes. (d) is empirically false.</>}
-        lens={<>U-shaped mixing concentrates mass near the actual neighbors (which are real, on-manifold), with occasional interpolations for diversity. This mirrors the image-mixup finding that Beta(0.2, 0.2) outperforms uniform — the "near pure samples" regime is what you want most of the time.</>}
-        stretch={<>How would you adapt the Beta parameters during training?</>}
+        trap={<>(b) too easy. (c) reverses the paper&apos;s finding. (d) wrong family.</>}
+        lens={<>Both fallbacks have characteristic failure modes that synthesis avoids.</>}
+        stretch={<>What does &ldquo;saturate&rdquo; look like in the loss curve?</>}
       />
 
-      <VIS.TrapProblem
-        id="mx-p4" difficulty="medium"
-        title="P4 — Sparse graph"
-        scenario={<>Your platform is in cold-launch — most items have under 5 interactions. Should you use MixGCF?</>}
+      {/* A4 composition */}
+      <VIS.TrapProblem id="mixgcf-p4" difficulty="hard"
+        title="P4 — Compose MixGCF with AHNS curriculum"
+        scenario={<><em>Discriminating insight: MixGCF controls the spatial difficulty (where in latent space the negative sits); AHNS controls the temporal difficulty (when in training to make negatives hard). They are orthogonal — AHNS can schedule MixGCF&apos;s mixing coefficient over epochs.</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"No or with care — neighborhood is too small or random to give useful mixes; revert to random or in-batch negatives until graph density grows.", correct:true},
-          {key:"b", text:"Yes — MixGCF helps most on sparse graphs."},
-          {key:"c", text:"Yes — synthetic negatives substitute for the missing edges."},
-          {key:"d", text:"Yes — MixGCF works on any graph."},
+          {key:"a", text:"AHNS schedules MixGCF&apos;s mixing coefficient (alpha) across epochs: small alpha early (easy synthetic negatives), large alpha late (boundary-adjacent synthetic negatives). Spatial mechanism (MixGCF) and temporal schedule (AHNS) are orthogonal.", correct:true},
+          {key:"b", text:"AHNS and MixGCF are mutually exclusive."},
+          {key:"c", text:"AHNS replaces MixGCF."},
+          {key:"d", text:"The stack is identical to LLMHNS."},
         ]}
-        trap={<>(b), (c), (d) all hand-wave away the requirement that the neighborhood actually contains structural signal.</>}
-        lens={<>MixGCF's power comes from the graph neighborhood being informative. In a sparse graph, neighbors are essentially random items — mixing them is no better than random negatives, with extra compute. Wait for graph density before switching.</>}
-        stretch={<>What density threshold is "enough" for MixGCF to pay off?</>}
+        trap={<>(b)(c) mistake the orthogonality. (d) confuses families.</>}
+        lens={<>Spatial vs temporal control composes.</>}
+        stretch={<>What if the AHNS schedule mis-paces alpha?</>}
       />
 
-      <VIS.TrapProblem
-        id="mx-p5" difficulty="hard" multiSelect
-        title="P5 — Why might MixGCF generalize BETTER than mining real hard negatives?"
-        scenario={<>In their KDD 2021 ablation, MixGCF beats top-K self-mined real hard negatives. Pick the plausible mechanisms.</>}
+      {/* A5 boundary */}
+      <VIS.TrapProblem id="mixgcf-p5" difficulty="medium"
+        title="P5 — At what catalog size does MixGCF stop helping?"
+        scenario={<><em>Discriminating insight: with very small catalogs (≤500 items), random and in-batch negatives are already informative — synthesis adds little and risks creating off-manifold latents. The advantage grows with catalog size.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Synthetic negatives are not specific real items, so the model cannot memorize them as 'competitors'.", correct:true},
-          {key:"b", text:"Self-mining entrenches the current model's bias; synthesis breaks the feedback loop.", correct:true},
-          {key:"c", text:"Synthesis acts as an embedding-space regularizer.", correct:true},
-          {key:"d", text:"Synthesis makes the loss convex."},
-          {key:"e", text:"Synthesis removes the need for any positives."},
+          {key:"a", text:"Very small catalogs (a few hundred items). In-batch already covers most of the space; synthesis adds noise rather than signal. MixGCF&apos;s advantage scales with catalog size, where random/in-batch becomes hopelessly easy.", correct:true},
+          {key:"b", text:"MixGCF always wins."},
+          {key:"c", text:"MixGCF only helps under 100 items."},
+          {key:"d", text:"Catalog size is irrelevant."},
         ]}
-        trap={<>(d) and (e) are nonsense.</>}
-        lens={<>Self-mining = the model picks its own hard negatives, which means it keeps reinforcing its current errors. Synthesis breaks this loop by producing points the model has never seen, and the mixup-style regularization smooths the loss surface.</>}
-        stretch={<>How would you test whether (a) or (b) is the dominant driver?</>}
+        trap={<>(b)(c)(d) miss the scale dependence.</>}
+        lens={<>Synthesis pays off where the real-item space is too sparse to mine well.</>}
+        stretch={<>What threshold for catalog size would you pick?</>}
       />
 
-      <VIS.TrapProblem
-        id="mx-p6" difficulty="medium"
-        title="P6 — Hardness selection step"
-        scenario={<>The original paper picks the SINGLE highest-scoring synthetic point per pair. Why not use all synthetic points as negatives?</>}
+      {/* B1 application */}
+      <VIS.TrapProblem id="mixgcf-p6" difficulty="hard"
+        title="P6 — Pick the negative-sampling strategy for this scenario"
+        scenario={<><em>Discriminating insight: a 50M-item LightGCN retrieval system has plateaued NDCG with in-batch negatives. The user is GNN-shaped, embeddings are in a GCN latent space, hard mining would entrench the model&apos;s confusions. MixGCF&apos;s synthesis is purpose-built.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"BPR pairwise loss expects one negative per positive per step; using multiple changes the gradient scale and the implicit class balance.", correct:true},
-          {key:"b", text:"It does not matter — all synthetic points are equivalent."},
-          {key:"c", text:"Using multiple negatives lowers training compute."},
-          {key:"d", text:"BPR cannot handle more than one negative."},
+          {key:"a", text:"MixGCF — GCN latent space, in-batch saturated, hard mining would entrench bias. Synthesis at the layer level uses the GCN structure that already exists.", correct:true},
+          {key:"b", text:"LLMHNS — adds an offline LLM cost but no textual signal is given as a constraint here."},
+          {key:"c", text:"AHNS — schedules difficulty but does not change the negative source."},
+          {key:"d", text:"Random negatives — already saturated."},
         ]}
-        trap={<>(b) is false (different synthetics give different gradients). (c) is wrong (more = more compute). (d) is false (BPR can be generalized).</>}
-        lens={<>BPR's pairwise formulation is sensitive to the implicit positive-to-negative ratio. Adding multiple synthetic negatives per positive without rescaling the loss tilts the balance and changes the effective regularization. Pick-the-hardest is also computationally cheaper.</>}
-        stretch={<>Could you generalize to a softmax over all synthetics?</>}
+        trap={<>(b) needs textual content. (c) orthogonal. (d) the saturated baseline.</>}
+        lens={<>GCN + in-batch saturation = MixGCF&apos;s sweet spot.</>}
+        stretch={<>If text were available, when would LLMHNS dominate MixGCF?</>}
       />
 
-      <VIS.TrapProblem
-        id="mx-p7" difficulty="hard" mode="ordered"
-        title="P7 — Order your debugging steps when MixGCF training diverges"
-        scenario={<>Loss goes to NaN around step 5000. Order the diagnostics. Wrong moves do not get ranked.</>}
+      {/* B2 sounds reasonable */}
+      <VIS.TrapProblem id="mixgcf-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;synthetic negatives are catastrophic — they don&apos;t exist&rdquo;"
+        scenario={<><em>Discriminating insight: many engineers reject MixGCF on the grounds that &ldquo;the negative is a fake item.&rdquo; The reason it is NOT catastrophic: BPR / InfoNCE only require an embedding to push the user away from; it does not need to be a real item. The synthetic embedding sits where the model is currently confused, which is exactly the gradient signal you want.</em><br/>Why is the objection wrong?</>}
         options={[
-          {key:"a", text:"Check the magnitude of synthetic-negative embeddings vs real embeddings.", order:1},
-          {key:"b", text:"Inspect the mixing-weight distribution for degenerate values.", order:2},
-          {key:"c", text:"Drop MixGCF and revert to random negs."},
-          {key:"d", text:"Clip the score gap to a maximum value before BPR.", order:3},
-          {key:"e", text:"Decrease learning rate by 10x."},
+          {key:"a", text:"The loss does not require negatives to be real items — it requires embeddings to push away from. The synthetic embedding lives where the model is currently confused; that is the right gradient signal. The catalog constraint is a serving concept, not a training one.", correct:true},
+          {key:"b", text:"Synthetic negatives ARE catastrophic; MixGCF only works by accident."},
+          {key:"c", text:"BPR cannot handle synthetic negatives."},
+          {key:"d", text:"Synthetic and real negatives are mathematically identical."},
         ]}
-        trap={<>(c) abandons the technique without diagnosis. (e) is a generic LR-fix that masks the root cause.</>}
-        lens={<>The natural ladder: embedding magnitude → mixing weights → score clipping. Most NaNs trace to one extreme synthetic point dominating the BPR loss. Clipping the score margin is the targeted fix; LR drop is the band-aid.</>}
-        stretch={<>What signal would catch (a) before a NaN?</>}
+        trap={<>(b) the seductive misread. (c) false. (d) ignores the construction.</>}
+        lens={<>Loss operates on embeddings, not items; that decoupling is what enables synthesis.</>}
+        stretch={<>How would you sanity check that the synthetic latent is on-manifold?</>}
       />
 
-      <VIS.TrapProblem
-        id="mx-p8" difficulty="medium"
-        title="P8 — Eval set leakage"
-        scenario={<>You evaluate retrieval recall on a held-out set and MixGCF lifts recall by 8%. A reviewer says the lift is inflated. Why?</>}
+      {/* B3 anchor */}
+      <VIS.TrapProblem id="mixgcf-p8" difficulty="hard"
+        title="P8 — MixGCF&apos;s anchor (synthesize via embedding-mix in GCN latent space): pitch it"
+        scenario={<><em>Discriminating insight: the anchor is &ldquo;hardness is CONSTRUCTED via per-layer interpolation in GCN latent space, not MINED from real items.&rdquo;</em><br/>Pick the pitch that names the anchor.</>}
         options={[
-          {key:"a", text:"If the eval set contains items that are graph-neighbors of training positives, MixGCF effectively trains the model to discriminate exactly those items.", correct:true},
-          {key:"b", text:"MixGCF is incompatible with held-out evaluation."},
-          {key:"c", text:"The eval set is too small."},
-          {key:"d", text:"Recall is the wrong metric."},
+          {key:"a", text:"Instead of picking the top-scored REAL item as the hard negative (which entrenches the model&apos;s own confusions), MixGCF FABRICATES a hard negative by linearly mixing candidate embeddings with the positive at each GCN layer. The latent point sits on the current decision boundary; it does not need to be a real item.", correct:true},
+          {key:"b", text:"We use a bigger embedding table."},
+          {key:"c", text:"We add an LLM to score candidates."},
+          {key:"d", text:"We use random negatives more aggressively."},
         ]}
-        trap={<>(b), (c), (d) miss the leakage point.</>}
-        lens={<>The eval set must be drawn so that test items are not graph-neighbors of training positives, otherwise you measure neighborhood-discrimination rather than recommendation. Strict user-temporal splits help; random splits leak structural signal.</>}
-        stretch={<>How would you construct an eval that isolates MixGCF's true contribution?</>}
+        trap={<>(b) capacity misread. (c) confuses with LLMHNS. (d) the baseline.</>}
+        lens={<>Synthesis-by-mix is the unique mechanism.</>}
+        stretch={<>What property of the GCN makes per-layer mixing tractable?</>}
       />
 
-      <VIS.TrapProblem
-        id="mx-p9" difficulty="hard"
-        title="P9 — Hardest-mix selection cost"
-        scenario={<>Per pair you draw 10 synthetic points and pick the hardest. With 100M pairs per epoch, that is 1B extra forward passes. How to reduce cost without hurting performance?</>}
+      {/* B4 not to use */}
+      <VIS.TrapProblem id="mixgcf-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use MixGCF. Select all that apply."
+        scenario={<><em>Discriminating insight: MixGCF needs a GCN (per-layer embeddings to mix), enough catalog size for in-batch to saturate, and an inner-product compatible loss (BPR/InfoNCE). It is misapplied in non-graph retrieval or sequential rec models.</em><br/>Pick the do-not-use cases.</>}
         options={[
-          {key:"a", text:"Draw fewer mixes (e.g., 3) but pick the hardest among them — empirically most of the gain comes from being above random, not from large pool size.", correct:true},
-          {key:"b", text:"Score against only the user-tower embedding, skipping item-tower forward."},
-          {key:"c", text:"Skip the selection step and use all mixes."},
-          {key:"d", text:"Distill MixGCF into a simpler procedure offline."},
+          {key:"a", text:"Non-graph retrieval (two-tower MLP) — no per-layer GCN structure to mix.", correct:true},
+          {key:"b", text:"Sequential rec (SASRec, BERT4Rec) — different embedding structure; layer-wise mix is undefined.", correct:true},
+          {key:"c", text:"Tiny catalogs (few hundred items) where in-batch is already informative.", correct:true},
+          {key:"d", text:"50M-item LightGCN retrieval — sweet spot."},
+          {key:"e", text:"Pointwise classification with a sigmoid loss (no negative pairing in the loss form).", correct:true},
         ]}
-        trap={<>(b) breaks the score semantics. (c) and (d) abandon the technique.</>}
-        lens={<>The marginal value of pool size flattens fast. K=3 captures most of the K=10 gain at 30% the cost. This is a generic pattern in hard-negative mining: bigger pools have diminishing returns past a small constant.</>}
-        stretch={<>How would you decide K=3 vs K=5 in production?</>}
+        trap={<>(d) is the sweet spot.</>}
+        lens={<>MixGCF needs GCN + pairwise loss + non-trivial catalog.</>}
+        stretch={<>How would you adapt the mixing idea to sequential models?</>}
       />
 
-      <VIS.TrapProblem
-        id="mx-p10" difficulty="hard"
-        title="P10 — Combining MixGCF with in-batch negatives"
-        scenario={<>You currently use in-batch negatives. Should you add MixGCF on top, replace, or skip?</>}
+      {/* C1 architectural */}
+      <VIS.TrapProblem id="mixgcf-p10" difficulty="hard"
+        title="P10 — Why mix at each GCN LAYER, not just at the final embedding?"
+        scenario={<><em>Discriminating insight: mixing at the final layer only is one choice; mixing per-layer interpolates along the graph aggregation path so that the synthetic negative inherits hard structure at multiple receptive-field sizes. This is the GCN-specific knob — only graph models have layer-wise embeddings.</em><br/>Why per-layer?</>}
         options={[
-          {key:"a", text:"Add MixGCF as an additional source of hard negatives, with a small mixing weight — they hit different regions of the loss surface (in-batch is global, MixGCF is local-neighborhood).", correct:true},
-          {key:"b", text:"Replace in-batch with MixGCF only."},
-          {key:"c", text:"Skip MixGCF — in-batch is sufficient."},
-          {key:"d", text:"They are equivalent."},
+          {key:"a", text:"Per-layer mixing produces synthetic negatives hard at multiple receptive-field sizes (1-hop, 2-hop, 3-hop). Final-layer-only mixing produces one mixed point; per-layer mixing uses the GCN&apos;s aggregation structure that already exists.", correct:true},
+          {key:"b", text:"Per-layer mixing is mathematically equivalent to final-layer mixing."},
+          {key:"c", text:"Per-layer mixing is a latency optimization."},
+          {key:"d", text:"Per-layer mixing is a fallback."},
         ]}
-        trap={<>(b) loses the global hardness coverage in-batch provides. (c) and (d) miss complementarity.</>}
-        lens={<>In-batch and MixGCF are complementary: in-batch covers items the user might confuse with the positive globally, MixGCF covers items the user might confuse locally in the graph. Combining them outperforms either alone in most ablations.</>}
-        stretch={<>What is the right mixing ratio between the two?</>}
+        trap={<>(b)(c)(d) miss the receptive-field structure.</>}
+        lens={<>The GCN&apos;s multi-hop structure is what makes per-layer mixing meaningful.</>}
+        stretch={<>What if all layers had the same receptive field?</>}
       />
 
-      <VIS.TrapProblem
-        id="mx-p11" difficulty="medium"
-        title="P11 — MixGCF on non-graph recsys?"
-        scenario={<>Your team is a pure two-tower system with no graph. Can you still use the MixGCF idea?</>}
+      {/* C2 loss */}
+      <VIS.TrapProblem id="mixgcf-p11" difficulty="hard"
+        title="P11 — Which loss compositions are compatible with MixGCF?"
+        scenario={<><em>Discriminating insight: MixGCF feeds the synthetic embedding into a standard pairwise loss (BPR or InfoNCE). It is NOT compatible with pointwise sigmoid (no negative pairing), and it interacts subtly with sampled-softmax (the partition function expects real items).</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Partially — you can mix item embeddings from cluster-neighbors or co-clicked items, but you lose the graph-structural guarantee.", correct:true},
-          {key:"b", text:"Yes — MixGCF is graph-agnostic."},
-          {key:"c", text:"No — MixGCF requires the GNN message-passing step."},
-          {key:"d", text:"Only if you build a graph first."},
+          {key:"a", text:"BPR or InfoNCE: the loss takes an explicit (user, positive, negative) triple, and the negative is just an embedding to push away from. Pointwise sigmoid has no negative pairing; sampled-softmax assumes negatives index real items.", correct:true},
+          {key:"b", text:"Pointwise sigmoid is fully compatible."},
+          {key:"c", text:"Sampled-softmax requires no adaptation."},
+          {key:"d", text:"Only adversarial loss works."},
         ]}
-        trap={<>(b) overgeneralizes. (c) is too strict. (d) is one option among several.</>}
-        lens={<>The mixing idea generalizes to any "neighborhood" definition — graph, cluster, co-click. The empirical sweet spot depends on whether your neighborhood definition encodes meaningful structure. Without a graph, the analog is co-click neighborhoods or KNN in embedding space.</>}
-        stretch={<>What neighborhood definition would you pick for a cold-launch product?</>}
+        trap={<>(b)(c) are the seductive misreads.</>}
+        lens={<>Pairwise loss is required; partition-function losses need adaptation.</>}
+        stretch={<>How would you adapt sampled-softmax for synthetic negatives?</>}
       />
+
+      {/* C3 dropped */}
+      <VIS.TrapProblem id="mixgcf-p12" difficulty="hard"
+        title="P12 — What does MixGCF deliberately give up vs hard-negative mining?"
+        scenario={<><em>Discriminating insight: hard mining gives you a REAL item you can also analyze (look up its features, debug why it was confused). MixGCF gives you a LATENT POINT — no item-level interpretability. The gain is unbiased boundary-adjacency; the loss is debuggability of individual negatives.</em><br/>What does MixGCF forfeit?</>}
+        options={[
+          {key:"a", text:"Item-level interpretability of individual negatives. The synthetic embedding does not correspond to a real item, so you cannot look up its features when debugging. The gain is unbiased boundary-adjacency; the loss is the &ldquo;which item is the model confused with?&rdquo; diagnostic.", correct:true},
+          {key:"b", text:"MixGCF forfeits the use of a GCN."},
+          {key:"c", text:"MixGCF forfeits BPR loss."},
+          {key:"d", text:"MixGCF forfeits training speed."},
+        ]}
+        trap={<>(b)(c)(d) miss the dropped diagnostic.</>}
+        lens={<>You trade interpretability for unbiased synthesis.</>}
+        stretch={<>How would you recover an &ldquo;effective real item&rdquo; from the synthetic latent for debugging?</>}
+      />
+
+      {/* C4 hyperparameter */}
+      <VIS.TrapProblem id="mixgcf-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: the layer-wise mixing coefficient alpha dominates. Too small: synthetic ≈ positive, loss is too easy. Too large: synthetic ≈ averaged-negatives, loss is unstable. K (number of candidates) is robust within a range.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"alpha (mixing coefficient) is most fragile; K (candidates per layer) is next; learning rate is least. alpha is the spatial difficulty knob; mis-set destroys the synthesis premise.", correct:true},
+          {key:"b", text:"K is the most fragile knob."},
+          {key:"c", text:"Learning rate is the most fragile knob."},
+          {key:"d", text:"Number of GCN layers is the most fragile knob."},
+        ]}
+        trap={<>(b)(c)(d) miss the mixing-coefficient mechanism.</>}
+        lens={<>alpha sets where the synthetic negative sits relative to the decision boundary.</>}
+        stretch={<>What does the optimal alpha schedule look like over training?</>}
+      />
+
+      {/* C5 data assumption */}
+      <VIS.TrapProblem id="mixgcf-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: MixGCF assumes the embedding space is locally linear enough that mid-point interpolation lands on a useful latent. Highly clustered embedding spaces with deep clusters break this — the mid-point falls in a void between clusters.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Highly clustered embedding space with empty regions between clusters. Linear interpolation between embeddings from different clusters lands in the void; the synthetic negative is off-manifold and gives a noisy gradient.", correct:true},
+          {key:"b", text:"Off-by-one in user-id indexing."},
+          {key:"c", text:"Different tokenizer."},
+          {key:"d", text:"Mismatched batch sizes."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Local linearity is the contract of the mix.</>}
+        stretch={<>How would you measure local linearity of the embedding space?</>}
+      />
+
+      {/* D1 intuitive but wrong */}
+      <VIS.TrapProblem id="mixgcf-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;synthetic negatives are essentially data augmentation&rdquo;"
+        scenario={<><em>Discriminating insight: data augmentation operates in input space (image rotations, text dropouts). MixGCF operates in LATENT space at a specific layer of a specific model. It is NOT generic augmentation; the embedding space and the loss form are load-bearing.</em><br/>Why is &ldquo;just augmentation&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"MixGCF operates in the model&apos;s LATENT space at specific GCN layers, not in the input space. It depends on the embedding space being locally linear and on the loss form (pairwise). Generic data augmentation in input space has neither property; the analogy hides the load-bearing pieces.", correct:true},
+          {key:"b", text:"MixGCF IS just standard data augmentation."},
+          {key:"c", text:"Data augmentation requires no embedding space."},
+          {key:"d", text:"MixGCF and augmentation are unrelated families."},
+        ]}
+        trap={<>(b) the seductive misread. (c)(d) miss the latent-space claim.</>}
+        lens={<>Latent space mix and input-space augmentation are different in mechanism and assumptions.</>}
+        stretch={<>What is the closest input-space analog of MixGCF?</>}
+      />
+
+      {/* D2 wrong-assumption cascade */}
+      <VIS.TrapProblem id="mixgcf-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: &ldquo;MixGCF is hard-negative mining + a trick&rdquo; cascades into (i) using top-scored real items as the &ldquo;candidate&rdquo; pool (re-introduces mining bias), (ii) treating alpha as a regularizer rather than a difficulty knob, (iii) evaluating only on AUC instead of NDCG@K (where boundary-tuning shows up).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: the candidate sampling becomes biased, alpha is tuned wrong, and the metric does not show the boundary-tuning gain. MixGCF&apos;s candidates should be sampled WITHOUT model-self bias; alpha is a spatial-difficulty knob; NDCG@K is the eval surface.", correct:true},
+          {key:"b", text:"Only the metric."},
+          {key:"c", text:"Only the candidate sampling."},
+          {key:"d", text:"Nothing — &ldquo;mining + trick&rdquo; is accurate."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>The three pieces — sampling, alpha, eval — are each load-bearing.</>}
+        stretch={<>What does the AUC vs NDCG@K gap look like for MixGCF vs hard mining?</>}
+      />
+
+      {/* D3 senior vs junior */}
+      <VIS.TrapProblem id="mixgcf-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior debugs MixGCF regressions by tuning learning rate and embedding size. A senior plots the loss-on-synthetic vs loss-on-real curves separately and inspects alpha&apos;s effective range.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Plot loss-on-synthetic and loss-on-real separately. If the gap is closing too fast, alpha is too small (synthetic is too easy). If loss-on-synthetic stays high while loss-on-real falls, alpha is too large (synthetic is off-manifold). Tune alpha before LR or embedding size.", correct:true},
+          {key:"b", text:"Tune learning rate first."},
+          {key:"c", text:"Tune embedding size first."},
+          {key:"d", text:"Switch to LLMHNS."},
+        ]}
+        trap={<>(b)(c) miss the alpha diagnostic. (d) wrong family.</>}
+        lens={<>The synthetic-vs-real loss split is the MixGCF-specific diagnostic.</>}
+        stretch={<>What does &ldquo;optimal&rdquo; look like on these two curves?</>}
+      />
+
+      {/* D4 plausible-misattribution */}
+      <VIS.TrapProblem id="mixgcf-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution"
+        scenario={<><em>Discriminating insight: NDCG@10 regresses but loss-on-real continues to fall — looks like overfitting, but is actually alpha drift. Loss-on-synthetic stops decreasing, indicating the synthetic latents have wandered off-manifold; the gradient on real items diverges from the gradient on synthetic ones.</em><br/>Most likely cause?</>}
+        options={[
+          {key:"a", text:"alpha drifted high; synthetic latents are now off-manifold and the gradient signal is decorrelated from the real-item gradient. NDCG@10 regresses on real items even though the loss-on-real continues to fall. Fix: cap alpha or anneal.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache invalidation."},
+          {key:"d", text:"Overfitting to the entire training set."},
+        ]}
+        trap={<>(b)(c) generic. (d) seductive but does not explain the synthetic-vs-real loss divergence.</>}
+        lens={<>alpha drift is the MixGCF-specific failure that looks like overfitting.</>}
+        stretch={<>How would alpha&apos;s schedule prevent this?</>}
+      />
+
+      {/* E1 production gotcha */}
+      <VIS.TrapProblem id="mixgcf-p19" difficulty="hard"
+        title="P19 — Production gotcha: synthetic negatives at INFERENCE? No."
+        scenario={<><em>Discriminating insight: MixGCF is a TRAINING-time technique. At inference, you score real items only. A common bug is to leak the synthetic-latent code path into the inference pipeline, causing nonsensical scores for non-items.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"MixGCF&apos;s synthesis path is training-only. At inference, you score real items from the embedding table; the per-layer mix code path must be guarded behind a training flag. A common bug is to leak the synthesis into the inference graph.", correct:true},
+          {key:"b", text:"Synthetic items are scored at inference too."},
+          {key:"c", text:"Inference uses a different model entirely."},
+          {key:"d", text:"MixGCF requires no inference changes; the path is identical."},
+        ]}
+        trap={<>(b) is the bug. (c) overstates. (d) ignores the leak risk.</>}
+        lens={<>Synthesis is a training-time gradient trick, not an inference operation.</>}
+        stretch={<>What test catches the leak?</>}
+      />
+
+      {/* E2 failure on Friday */}
+      <VIS.TrapProblem id="mixgcf-p20" difficulty="hard"
+        title="P20 — Failure on Friday: NDCG@10 cratered after a routine commit"
+        scenario={<><em>Discriminating insight: a refactor swapped the per-layer mixing order so the synthetic embedding now uses the WRONG layer&apos;s alpha. The synthetic latents are off the intended manifold; NDCG cratered while loss-on-real looks normal.</em><br/>3am page: NDCG@10 down 15%, loss-on-real unchanged. Diagnosis?</>}
+        options={[
+          {key:"a", text:"A layer-mixing-order refactor mis-applied alpha at the wrong layers; synthetic latents are off-manifold and decorrelated from real-item gradients. Diagnostic: compare loss-on-synthetic and loss-on-real curves pre- and post-commit.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Embedding table corrupted."},
+          {key:"d", text:"Cache TTL changed."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Layer-mixing order is MixGCF-specific; the synthetic-loss curve catches it.</>}
+        stretch={<>What CI assertion guards layer-mixing order?</>}
+      />
+
+      {/* E3 implementation specifics */}
+      <VIS.TrapProblem id="mixgcf-p21" difficulty="medium"
+        title="P21 — Library default that bites: alpha shared across layers"
+        scenario={<><em>Discriminating insight: some implementations default alpha to a single scalar shared across all GCN layers. This breaks the layer-wise structure that motivated MixGCF — you have collapsed it to final-layer-mix.</em><br/>Where does the default break MixGCF?</>}
+        options={[
+          {key:"a", text:"alpha shared across all layers collapses MixGCF to a final-layer mix and loses the multi-hop receptive-field benefit. alpha should be a per-layer vector (or per-layer schedule), not a global scalar.", correct:true},
+          {key:"b", text:"Default LR is wrong."},
+          {key:"c", text:"Default weight decay is wrong."},
+          {key:"d", text:"Default batch size is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Per-layer alpha is the load-bearing implementation detail.</>}
+        stretch={<>How would you initialize the per-layer alpha vector?</>}
+      />
+
+      {/* E4 rollout */}
+      <VIS.TrapProblem id="mixgcf-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) reproduce baseline with in-batch on the GCN, (2) add MixGCF with small alpha (close to baseline behavior), (3) anneal alpha to target, (4) compare loss-on-synthetic vs loss-on-real curves, (5) shadow-score, (6) traffic ramp.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"GCN baseline with in-batch negatives → MixGCF with small alpha → anneal alpha → compare synthetic-vs-real loss curves → shadow-score → traffic ramp", correct:true},
+          {key:"b", text:"Large alpha from day 1."},
+          {key:"c", text:"Skip the in-batch baseline."},
+          {key:"d", text:"Ramp traffic first."},
+        ]}
+        trap={<>(b) over-aggressive. (c) loses the baseline. (d) backwards.</>}
+        lens={<>Anneal alpha; verify each phase.</>}
+        stretch={<>Why small alpha first, not large?</>}
+      />
+
+      {/* F1 edge case */}
+      <VIS.TrapProblem id="mixgcf-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks MixGCF&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: with a one-layer GCN (no multi-hop), the per-layer mixing collapses to a single-layer mix, and MixGCF&apos;s receptive-field benefit disappears. You retain the &ldquo;synthesize not mine&rdquo; benefit but lose the GCN-specific structural payoff.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A one-layer GCN. Per-layer mixing collapses to single-layer mix; the multi-hop receptive-field benefit disappears. You keep the synthesis benefit but the GCN-specific layer-wise structure no longer carries information.", correct:true},
+          {key:"b", text:"A 3-layer GCN with diverse receptive fields (sweet spot)."},
+          {key:"c", text:"10M items."},
+          {key:"d", text:"100M users."},
+        ]}
+        trap={<>(b) sweet spot. (c)(d) describe scale.</>}
+        lens={<>MixGCF needs multi-hop GCN structure to be GCN-specific.</>}
+        stretch={<>For a one-layer GCN, what is the closest equivalent of MixGCF?</>}
+      />
+
+      {/* F4 paper-named failure */}
+      <VIS.TrapProblem id="mixgcf-p24" difficulty="hard"
+        title="P24 — Paper-named failure: mixing-factor sensitivity and non-existent compositions"
+        scenario={<><em>Discriminating insight: the paper names two failure modes: (i) mixing-factor (alpha) sensitivity — mis-set destabilizes training, (ii) the synthetic embedding may correspond to a non-existent (off-manifold) composition. Which is the bigger practical risk?</em><br/>Which dominates practice?</>}
+        options={[
+          {key:"a", text:"alpha sensitivity dominates practice. Off-manifold synthetic embeddings are mitigated by sampling candidates from the user&apos;s neighborhood (already close in the GCN graph). alpha&apos;s mis-set is the long-tail bug.", correct:true},
+          {key:"b", text:"Off-manifold is the dominant practical risk."},
+          {key:"c", text:"Both are negligible."},
+          {key:"d", text:"Only catalog size matters."},
+        ]}
+        trap={<>(b) reverses practical risk. (c)(d) deny the paper&apos;s account.</>}
+        lens={<>alpha is the practical risk; off-manifold is partly mitigated by neighborhood-aware sampling.</>}
+        stretch={<>What sampling restriction would further bound off-manifold risk?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/2409.07237" target="_blank" rel="noopener">Lai et al. — <em>Negative Sampling in Recommendation: A Survey</em> (arXiv 2024, survey)</a> — comprehensive map of negative-sampling techniques including MixGCF. Read this first.</li>
-        <li><a href="https://dl.acm.org/doi/10.1145/3447548.3467408" target="_blank" rel="noopener">Huang et al. — <em>MixGCF</em> (KDD 2021, paper)</a> — original method paper. Ablation tables on mixing weights are the most useful pages.</li>
-        <li><a href="https://arxiv.org/abs/1710.09412" target="_blank" rel="noopener">Zhang et al. — <em>mixup: Beyond Empirical Risk Minimization</em> (ICLR 2018, paper)</a> — the image-classification predecessor of MixGCF's interpolation idea.</li>
-        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener">Eugene Yan — <em>System Design for Discovery</em> (blog)</a> — practitioner overview of where negative sampling fits in retrieval pipelines.</li>
-        <li><a href="https://www.pinecone.io/learn/series/nlp/contrastive-learning/" target="_blank" rel="noopener">Pinecone — <em>Contrastive Learning</em> (blog)</a> — accessible walkthrough of why hard negatives matter, with examples.</li>
+        <li><a href="https://arxiv.org/abs/2409.07237" target="_blank" rel="noopener">Lai et al., <em>Negative Sampling in Recommendation: A Survey and Future Directions</em> (arXiv 2409.07237, 2024)</a> — survey that situates MixGCF among siblings.</li>
+        <li><a href="https://dl.acm.org/doi/10.1145/3447548.3467408" target="_blank" rel="noopener">Huang et al., <em>MixGCF: An Improved Training Method for Graph Neural Network-based Recommender Systems</em> (KDD 2021)</a> — primary source.</li>
+        <li><a href="https://arxiv.org/abs/2002.02126" target="_blank" rel="noopener">He et al., <em>LightGCN</em> (SIGIR 2020)</a> — the GCN baseline MixGCF is most often paired with.</li>
+        <li><a href="https://lilianweng.github.io/posts/2021-05-31-contrastive/" target="_blank" rel="noopener">Lilian Weng — <em>Contrastive Representation Learning</em> (blog)</a> — practitioner intuition for hard-negative mining and synthesis.</li>
+        <li><a href="https://eugeneyan.com/writing/recsys2022/" target="_blank" rel="noopener">Eugene Yan — <em>RecSys 2022 notes</em> (blog)</a> — practitioner framing of negative sampling tradeoffs.</li>
       </ul>
     </VIS.Section>
   </main>

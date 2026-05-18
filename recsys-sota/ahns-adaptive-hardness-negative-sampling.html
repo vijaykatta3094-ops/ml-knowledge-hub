@@ -1414,254 +1414,453 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 12
+// AHNS — Adaptive Hardness Negative Sampling (AAAI 2024; survey arXiv 2409.07237)
+// Unique mechanism: PER-USER ADAPTIVE CURRICULUM on negative hardness. Each
+// user has their own embedding that converges at its own pace; AHNS measures
+// the user&apos;s embedding confidence and feeds easier negatives when the user
+// model is uncertain, harder negatives as it converges. The hardness schedule
+// is NOT global (one global epoch -> one global hardness); it is per-user.
+// Cross-visual caution (negative-sampling trio):
+//   - MixGCF  = SYNTHESIZES via embedding-mix in GCN latent space (label-free)
+//   - LLMHNS  = LLM scores real candidates by semantic reasoning (label-aware text)
+//   - AHNS    = PER-USER ADAPTIVE difficulty as their embedding converges [THIS visual]
+// B3 anchor for AHNS: per-user adaptive curriculum — easier negatives early,
+// harder as user model converges. NOT a global epoch-based schedule (that is
+// vanilla curriculum learning); NOT a global hardness setting (that is
+// fixed-hardness mining).
+// Anchor that survives §2a redaction: "per-user adaptive hardness driven by
+// user-embedding convergence" — not a global schedule.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Negative sampling"
+      pill="RecSys SOTA · Negative sampling (curriculum)"
       title="AHNS — Adaptive Hardness Negative Sampling"
-      subtitle="Dynamically adjust negative-sample hardness through training — easy negatives early, hard negatives later. Curriculum learning applied to recsys retrieval."
+      subtitle="Per-user adaptive curriculum: each user&apos;s negative-hardness schedule is driven by THAT user&apos;s embedding convergence — easier negatives while the user model is uncertain, harder as it converges. Not a global epoch-based schedule."
       byline={[
-        {label: "Paper", value: "AAAI 2024"},
-        {label: "Domain", value: "From-scratch retrieval model training"},
+        {label: "Paper", value: "AHNS (AAAI 2024); survey arXiv 2409.07237 (2024)"},
+        {label: "Surface", value: "From-scratch retrieval models where fixed-hardness underfits or stalls"},
+        {label: "Anchor that survives redaction", value: "Per-user adaptive hardness driven by user-embedding convergence — not global curriculum"},
       ]}/>
 
     <VIS.TLDR>
-      Hard negatives are great for a model that already discriminates well, but lethal for one that does not. AHNS schedules hardness over training: <strong>easy random negatives in early epochs</strong> when the model is unstable, transitioning to <strong>hard mined negatives later</strong> when the model can use them. The curriculum mirrors how humans learn — concepts before edge cases.
+      Fixed-hardness mining either gives the model negatives that are too easy (saturates: gradient vanishes, model underfits) or too hard (the model has not yet learned enough to distinguish them: gradient explodes or stalls). Vanilla curriculum learning solves this with a GLOBAL epoch schedule — easy early, hard late — but a global schedule does not respect that different users have different amounts of interaction data and their embeddings converge at very different rates. AHNS makes the curriculum <strong>per-user</strong>: each user&apos;s hardness is a function of THAT user&apos;s embedding confidence. The senior trap: AHNS is NOT &ldquo;LLM-labeled negatives,&rdquo; NOT &ldquo;synthesized embeddings,&rdquo; and NOT &ldquo;a global epoch schedule.&rdquo; It is a control-loop on hardness, keyed by per-user signal.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        AHNS is a training-time scheduler that controls how hard the negatives are at each epoch. The mechanism is a single hardness parameter $\alpha$ that anneals from low (random) to high (top-K mined):
-      </p>
-      <VIS.Equation tex="\text{hardness}(t) = \alpha_{\min} + (\alpha_{\max} - \alpha_{\min}) \cdot \sigma\left(\frac{t - t_{\text{mid}}}{\tau}\right)" display />
-      <VIS.Mermaid chart={`
-flowchart TB
-  T["Training epoch t"] --> H["Hardness alpha t"]
-  H --> S["Sample negatives at this hardness"]
-  S --> L["BPR or InfoNCE loss"]
-  L --> M["Model update"]
-  M --> T
-      `} />
+    <VIS.Section id="sec-what" title="What it is — per-user hardness control loop">
+      <VIS.Mermaid chart={`flowchart TB
+  U["User u with current embedding"]
+  C["Embedding-confidence signal (e.g., loss-on-recent-batch, grad-norm)"]
+  S["Per-user hardness target h_u"]
+  P["Candidate pool (real items, scored by recsys model)"]
+  N["Negative sampled at hardness h_u"]
+  L["BPR / InfoNCE loss"]
+  U --> C
+  C --> S
+  S --> N
+  P --> N
+  N --> L
+  L --> U`} />
       <ul>
-        <li><strong>Hardness schedule</strong> — a sigmoidal or linear curve over epochs.</li>
-        <li><strong>Sampling step</strong> — at hardness $\alpha$, pick the negative whose score-percentile equals $\alpha$ among a candidate pool.</li>
-        <li><strong>Training loop</strong> — standard contrastive or BPR, just with curriculum-controlled negatives.</li>
+        <li><strong>Per-user signal</strong> — embedding-confidence (e.g., recent loss, embedding norm-of-update, gradient size).</li>
+        <li><strong>Per-user hardness target h_u</strong> — a function of the signal; high when the user is converged, low when uncertain.</li>
+        <li><strong>Sampling at hardness h_u</strong> — pick a negative from the candidate pool whose model-score is at the quantile implied by h_u.</li>
+        <li><strong>Feedback</strong> — as training progresses, h_u drifts upward for users whose embedding has stabilized.</li>
       </ul>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <p>
-        Fixed-hardness mining either underfits (too easy) or stalls (too hard early). AHNS removes the fixed-hardness assumption.
-      </p>
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Random negs</th><th style={{textAlign:"left",padding:8}}>Fixed hard negs</th><th style={{textAlign:"left",padding:8}}>AHNS</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from fixed-hardness, global curriculum, MixGCF, LLMHNS">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Schedule unit</th>
+          <th style={{textAlign:"left", padding:8}}>Signal</th>
+          <th style={{textAlign:"left", padding:8}}>Negative source</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Early-epoch stability</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Stable</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Unstable</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Stable (starts easy)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Late-epoch discrimination</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Weak</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Strong</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Strong (ends hard)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Hyperparameter count</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>0</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>1 (hardness level)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>3+ (schedule params)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Convergence speed</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Slow</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Variable</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Fast</td></tr>
+          <tr><td style={{padding:8}}>Fixed hardness</td><td style={{padding:8}}>None</td><td style={{padding:8}}>None</td><td style={{padding:8}}>Real items</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Global curriculum</td><td style={{padding:8}}>Per-epoch global</td><td style={{padding:8}}>Epoch index</td><td style={{padding:8}}>Real items</td></tr>
+          <tr><td style={{padding:8}}>MixGCF</td><td style={{padding:8}}>None</td><td style={{padding:8}}>None</td><td style={{padding:8}}>Synthesized latent mix</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>LLMHNS</td><td style={{padding:8}}>None</td><td style={{padding:8}}>None</td><td style={{padding:8}}>LLM-labeled real items</td></tr>
+          <tr><td style={{padding:8}}><strong>AHNS</strong></td><td style={{padding:8}}><strong>Per-USER</strong></td><td style={{padding:8}}><strong>User-embedding confidence</strong></td><td style={{padding:8}}><strong>Real items at user-specific hardness</strong></td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>From-scratch retrieval models that need both stability early and discrimination late.</li>
-        <li>Pretrained-then-finetuned settings where you start strong — less win from AHNS.</li>
-        <li>Settings where you have a quick-and-dirty hardness signal (popularity, embedding distance, dot-product score).</li>
-        <li>Teams comfortable tuning schedule hyperparameters.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Schedule sensitivity</strong> — too aggressive a transition destabilizes mid-training; too slow wastes the late phase.</li>
-        <li><strong>Hyperparameter overhead</strong> — start, end, midpoint, slope. Four knobs added.</li>
-        <li><strong>Continuing training</strong> — if you are warm-starting from a strong checkpoint, the schedule should start at high hardness, not low.</li>
-        <li><strong>Eval inconsistency</strong> — early-epoch checkpoints look weak because they trained on easy negatives — comparable only at end.</li>
-        <li><strong>Diminishing returns</strong> — if your fixed-hardness baseline already converges, AHNS saves time but does not necessarily improve final metric.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="ah-p1" difficulty="hard"
-        title="P1 — Why mirror the curriculum-learning pattern from supervised classification?"
-        scenario={<>AHNS borrows the curriculum-learning idea (easy examples first). In supervised classification, curriculum learning gives mixed results. Why does it work cleaner in retrieval?</>}
+      {/* A1 */}
+      <VIS.TrapProblem id="ahns-p1" difficulty="hard"
+        title="P1 — AHNS vs vanilla curriculum learning: what is the load-bearing difference?"
+        scenario={<><em>Discriminating insight: vanilla curriculum learning schedules hardness per GLOBAL EPOCH (easy in epoch 1, hard in epoch 50). AHNS schedules per USER — a user with little data stays on easy negatives while a user with lots of data progresses to hard ones, even in the same epoch.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"In retrieval, the model's score function is what produces the negative pool — easy negatives early prevent the model from chasing its own bad gradients.", correct:true},
-          {key:"b", text:"Retrieval losses are convex."},
-          {key:"c", text:"Curriculum learning always works."},
-          {key:"d", text:"Retrieval has no notion of difficulty."},
+          {key:"a", text:"AHNS schedules hardness PER-USER based on that user&apos;s embedding-confidence signal; vanilla curriculum schedules globally per epoch. In AHNS two users in the same epoch can be at very different hardness levels — the user is the unit of curriculum.", correct:true},
+          {key:"b", text:"AHNS and vanilla curriculum are identical."},
+          {key:"c", text:"AHNS uses a global schedule that decays over epochs."},
+          {key:"d", text:"AHNS is curriculum learning re-branded for marketing."},
         ]}
-        trap={<>(b) is false (BPR is non-convex). (c) is overgeneralization. (d) is the opposite of true.</>}
-        lens={<>The discriminating insight is that in retrieval, the model is the labeler of hardness — early epochs the labels are noise, so hard negatives are essentially adversarial. In classification, hardness is determined by the data and label, independent of the model state. Curriculum learning shines exactly when the model-defined hardness is unreliable early.</>}
-        stretch={<>What would be the analogous fix in classification where you have a noisy teacher labeler?</>}
+        trap={<>(b)(d) collapse the distinction. (c) the seductive misread.</>}
+        lens={<>The schedule UNIT is the per-user signal, not the global epoch.</>}
+        stretch={<>What is the analogy in supervised classification?</>}
       />
 
-      <VIS.TrapProblem
-        id="ah-p2" difficulty="medium" multiSelect
-        title="P2 — Which schedules are valid hardness curves?"
-        scenario={<>Select all that apply.</>}
+      {/* A2 definitional */}
+      <VIS.TrapProblem id="ahns-p2" difficulty="hard"
+        title="P2 — AHNS vs MixGCF vs LLMHNS: anchor each"
+        scenario={<><em>Discriminating insight: cross-visual caution. AHNS = PER-USER schedule on real-item hardness. MixGCF = SYNTHESIZES via embedding-mix. LLMHNS = LLM SCORES candidates by semantic reasoning. Three different mechanisms.</em><br/>Pick the correct triple.</>}
         options={[
-          {key:"a", text:"Linear ramp from easy to hard over T epochs.", correct:true},
-          {key:"b", text:"Sigmoidal: stay easy, switch sharply at mid-training, stay hard.", correct:true},
-          {key:"c", text:"Step: easy for first half, hard for second half.", correct:true},
-          {key:"d", text:"Inverse: start hard, end easy (anti-curriculum)."},
-          {key:"e", text:"Constant: same hardness throughout."},
+          {key:"a", text:"AHNS is a per-user adaptive schedule on real-item hardness; MixGCF synthesizes negatives in GCN latent space; LLMHNS uses an LLM to label items as hard negatives by semantic reasoning. Schedule, synthesis, and labeling are the three different mechanisms.", correct:true},
+          {key:"b", text:"They are the same family with different names."},
+          {key:"c", text:"AHNS uses an LLM; LLMHNS uses a curriculum."},
+          {key:"d", text:"All three synthesize embeddings."},
         ]}
-        trap={<>(d) and (e) ARE valid curves but contradict the AHNS principle — (d) is anti-curriculum, (e) is fixed-hardness baseline.</>}
-        lens={<>The first three are AHNS variants — sigmoidal is most common. The interesting cases are (d) and (e) — both run counter to AHNS but exist as baselines. (d) "anti-curriculum" can help when you want to filter out noisy positives early. (e) is the fixed-hardness baseline AHNS competes with.</>}
-        stretch={<>When would anti-curriculum (d) outperform AHNS?</>}
+        trap={<>(b)(c)(d) collapse distinctions.</>}
+        lens={<>Schedule, synthesize, score — three orthogonal mechanisms.</>}
+        stretch={<>Which pair composes best, and how?</>}
       />
 
-      <VIS.TrapProblem
-        id="ah-p3" difficulty="hard"
-        title="P3 — Continuing training from a pretrained checkpoint"
-        scenario={<>You start from a pretrained recommender that already discriminates well. Should you still start AHNS at easy negatives?</>}
+      {/* A3 counterfactual */}
+      <VIS.TrapProblem id="ahns-p3" difficulty="medium"
+        title="P3 — Without AHNS, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: realistic fallbacks are fixed-hardness mining (one global hardness, ignores user variation) or global epoch-curriculum (one global schedule, ignores user variation). Both miss the per-user variance that AHNS exploits.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"No — start at high hardness because the model is already past the unstable easy-negative phase; starting easy wastes epochs.", correct:true},
-          {key:"b", text:"Yes — always start easy to be safe."},
-          {key:"c", text:"Doesn't matter — schedule self-corrects."},
-          {key:"d", text:"Skip AHNS in this regime."},
+          {key:"a", text:"Fixed hardness or global epoch-curriculum. Both ignore that users converge at very different rates. AHNS exploits this variance with a per-user schedule.", correct:true},
+          {key:"b", text:"AHNS provides no benefit over fixed hardness."},
+          {key:"c", text:"Random negatives are at parity with AHNS."},
+          {key:"d", text:"You would skip negative sampling."},
         ]}
-        trap={<>(b) is overcautious. (c) is wrong (schedule does not self-correct). (d) loses the late-phase win.</>}
-        lens={<>The schedule is a function of "where is the model now," not "what wall-clock epoch is it." Pretrained models start at the equivalent of late-AHNS, so the schedule should too. People miss this and waste compute on easy-negative epochs the model does not need.</>}
-        stretch={<>How would you operationalize "where is the model now" as a hardness initializer?</>}
+        trap={<>(b)(c)(d) under-shoot.</>}
+        lens={<>Per-user variance is the gap that AHNS closes.</>}
+        stretch={<>How would you quantify the user-rate variance?</>}
       />
 
-      <VIS.TrapProblem
-        id="ah-p4" difficulty="medium"
-        title="P4 — Hardness as percentile vs hardness as score"
-        scenario={<>AHNS samples the negative at "the alpha-th hardest" position. Should alpha index a fixed embedding distance, a fixed score, or a percentile of the candidate pool?</>}
+      {/* A4 composition */}
+      <VIS.TrapProblem id="ahns-p4" difficulty="hard"
+        title="P4 — Compose AHNS with MixGCF"
+        scenario={<><em>Discriminating insight: AHNS controls WHEN negatives become hard (the schedule); MixGCF controls WHERE in latent space (the synthesis). They are temporal vs spatial — orthogonal. AHNS can schedule MixGCF&apos;s alpha per-user.</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"Percentile — score distributions shift across training, but the percentile rank stays comparable epoch-to-epoch.", correct:true},
-          {key:"b", text:"Fixed distance — easier to interpret."},
-          {key:"c", text:"Fixed score threshold — most stable."},
-          {key:"d", text:"They are equivalent."},
+          {key:"a", text:"AHNS schedules MixGCF&apos;s mixing coefficient alpha per user: when user u&apos;s embedding is uncertain, alpha is small (synthetic ≈ positive, easy); as user u converges, alpha increases (synthetic moves toward sampled negatives, harder). Temporal schedule (AHNS) drives spatial mechanism (MixGCF).", correct:true},
+          {key:"b", text:"AHNS and MixGCF are incompatible."},
+          {key:"c", text:"AHNS replaces MixGCF."},
+          {key:"d", text:"The stack is identical to LLMHNS."},
         ]}
-        trap={<>(b), (c), (d) ignore distribution shift over training.</>}
-        lens={<>As training proceeds the score and distance distributions shift; a fixed threshold becomes increasingly stale. Percentile rank is the invariant — alpha=0.95 means "top 5% hardest in the current model's view" regardless of when in training. This is the same logic as percentile-based learning-rate schedules.</>}
-        stretch={<>Could you adaptively pick alpha based on observed gradient magnitude?</>}
+        trap={<>(b)(c) miss orthogonality. (d) confuses families.</>}
+        lens={<>Temporal schedule + spatial synthesis compose.</>}
+        stretch={<>What if AHNS&apos;s schedule outpaces MixGCF&apos;s mixing range?</>}
       />
 
-      <VIS.TrapProblem
-        id="ah-p5" difficulty="hard" multiSelect
-        title="P5 — When does AHNS fail to outperform fixed-hardness?"
-        scenario={<>Select all the cases.</>}
+      {/* A5 boundary */}
+      <VIS.TrapProblem id="ahns-p5" difficulty="medium"
+        title="P5 — At what user-rate variance does AHNS stop helping?"
+        scenario={<><em>Discriminating insight: AHNS&apos;s payoff scales with the spread of user convergence rates. If all users converge at roughly the same rate (uniform interaction volume), per-user schedule reduces to global schedule and AHNS&apos;s benefit shrinks.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Small dataset where the model converges fast enough that the curriculum has no time to matter.", correct:true},
-          {key:"b", text:"Pretrained from a strong checkpoint with similar data distribution.", correct:true},
-          {key:"c", text:"Fixed-hardness already converges to the same loss given enough epochs (just slower).", correct:true},
-          {key:"d", text:"Models with very deep architectures."},
-          {key:"e", text:"Catalogs with many items."},
+          {key:"a", text:"When all users have similar interaction volumes and converge at similar rates, AHNS&apos;s per-user schedule reduces to a global schedule and the benefit shrinks. The benefit scales with the spread of user convergence rates.", correct:true},
+          {key:"b", text:"AHNS always wins."},
+          {key:"c", text:"AHNS only helps in cold-start."},
+          {key:"d", text:"User-rate variance is irrelevant."},
         ]}
-        trap={<>(d) and (e) are not by themselves reasons AHNS fails — model depth and catalog size do not affect curriculum efficacy directly.</>}
-        lens={<>AHNS's advantage shows when (1) you train from scratch, (2) you have enough data and time that early epochs matter, and (3) hard negatives would be lethal early. Take any of these away and the win shrinks or vanishes. This is honest tradeoff territory — AHNS is not "always better."</>}
-        stretch={<>How would you a priori predict whether AHNS will help on a new project?</>}
+        trap={<>(b)(c)(d) miss the variance dependence.</>}
+        lens={<>Per-user schedule is only valuable under per-user variance.</>}
+        stretch={<>How would you measure user-rate variance?</>}
       />
 
-      <VIS.TrapProblem
-        id="ah-p6" difficulty="medium"
-        title="P6 — Schedule slope tuning"
-        scenario={<>You set tau (sigmoid slope) too sharp. What is the most likely failure mode?</>}
+      {/* B1 application */}
+      <VIS.TrapProblem id="ahns-p6" difficulty="hard"
+        title="P6 — Pick the negative-sampling strategy"
+        scenario={<><em>Discriminating insight: from-scratch retrieval on a long-tail user base (some users with 5 interactions, some with 5000). Fixed hardness misses both — too hard for the cold users, too easy for the warm ones. AHNS&apos;s per-user schedule is purpose-built.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Loss spikes at the transition epoch — model goes from easy regime to hard regime instantly, gradient explodes.", correct:true},
-          {key:"b", text:"Training converges normally."},
-          {key:"c", text:"Final metric is unchanged."},
-          {key:"d", text:"Easy phase becomes useless."},
+          {key:"a", text:"AHNS — long-tail user variance means per-user schedule wins over a global schedule. Fixed hardness fails both ends of the variance distribution.", correct:true},
+          {key:"b", text:"Fixed hardness — at parity with AHNS for long-tail."},
+          {key:"c", text:"MixGCF — but the user-variance is the active problem."},
+          {key:"d", text:"Random — saturated."},
         ]}
-        trap={<>(b), (c), (d) ignore the transition shock.</>}
-        lens={<>Sharp transitions in any curriculum are dangerous. Loss spikes at the transition because the model suddenly faces examples 10x harder than what it was just trained on. Soften the slope or add a warmup ramp around the midpoint.</>}
-        stretch={<>What signal indicates tau is too sharp?</>}
+        trap={<>(b) ignores variance. (c) addresses wrong axis. (d) baseline.</>}
+        lens={<>Long-tail user-rate variance is AHNS&apos;s sweet spot.</>}
+        stretch={<>What metric tracks per-user under/over-fitting separately?</>}
       />
 
-      <VIS.TrapProblem
-        id="ah-p7" difficulty="hard" mode="ordered"
-        title="P7 — Order your debugging steps when AHNS training STALLS in late phase"
-        scenario={<>Loss is flat from epoch 30 onward, despite the schedule reaching peak hardness. Order the diagnostics. Wrong moves do not get ranked.</>}
+      {/* B2 sounds reasonable */}
+      <VIS.TrapProblem id="ahns-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;use a global epoch schedule, it&apos;s simpler&rdquo;"
+        scenario={<><em>Discriminating insight: a global schedule respects only the global epoch, not the per-user state. Two users at the same global epoch can be at very different convergence states; a global &ldquo;hard&rdquo; signal will overshoot for cold users and undershoot for warm ones.</em><br/>Why is global insufficient?</>}
         options={[
-          {key:"a", text:"Check gradient magnitude — saturated near zero means hard negatives all score similarly to positives.", order:1},
-          {key:"b", text:"Inspect the candidate pool size — too small a pool means no truly hard examples to find.", order:2},
-          {key:"c", text:"Roll back to fixed-hardness."},
-          {key:"d", text:"Soften the slope on the next run.", order:3},
-          {key:"e", text:"Drop the learning rate."},
+          {key:"a", text:"A global schedule sets hardness by epoch, not by per-user state. At the same epoch, a cold user (few interactions, unstable embedding) is forced into hard negatives that exceed its current capacity; a warm user is starved of hard examples. AHNS reads per-user convergence.", correct:true},
+          {key:"b", text:"Global schedule works equally well."},
+          {key:"c", text:"Global schedule is strictly better."},
+          {key:"d", text:"Per-user schedule is mathematically equivalent."},
         ]}
-        trap={<>(c) abandons without diagnosis. (e) is generic.</>}
-        lens={<>Late-phase stalls in AHNS typically mean either gradient saturation or pool exhaustion. Diagnose those before changing schedules. Lowering LR is a generic patch that does not address either.</>}
-        stretch={<>What is the right candidate pool size for late-phase hardness?</>}
+        trap={<>(b)(c)(d) the seductive misreads.</>}
+        lens={<>Schedule unit must match the user variance.</>}
+        stretch={<>What does the empirical loss curve look like for cold-user-under-hard?</>}
       />
 
-      <VIS.TrapProblem
-        id="ah-p8" difficulty="medium"
-        title="P8 — Should AHNS run per user or globally?"
-        scenario={<>Per-user schedules (each user has their own curriculum based on their training progress) vs global schedules. Which is right?</>}
+      {/* B3 anchor */}
+      <VIS.TrapProblem id="ahns-p8" difficulty="hard"
+        title="P8 — AHNS&apos;s anchor (per-user adaptive curriculum): pitch it"
+        scenario={<><em>Discriminating insight: the anchor is &ldquo;per-user hardness driven by THAT user&apos;s embedding convergence — easier early for that user, harder as that user&apos;s embedding stabilizes.&rdquo; Not a global schedule.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Global — per-user adds enormous complexity for little gain in batched training.", correct:true},
-          {key:"b", text:"Per-user — users have different learnability."},
-          {key:"c", text:"Per-item."},
-          {key:"d", text:"Per-batch."},
+          {key:"a", text:"Instead of one global hardness schedule applied to all users, AHNS gives each user their OWN curriculum. While a cold user&apos;s embedding is still moving, they see easy negatives; once that user&apos;s embedding stabilizes, they see harder ones. Cold and warm users live at different points of the curriculum at the same wall-clock time.", correct:true},
+          {key:"b", text:"We use a bigger embedding table."},
+          {key:"c", text:"We use an LLM to score candidates."},
+          {key:"d", text:"We use random negatives more aggressively."},
         ]}
-        trap={<>(b), (c), (d) add complexity without proportional benefit.</>}
-        lens={<>The curriculum is about the model's overall maturity, not per-user progress. Global hardness is sufficient and far simpler. Per-user curriculum would require per-user hardness state and complicates batching — rarely worth it.</>}
-        stretch={<>When could per-user actually help?</>}
+        trap={<>(b) capacity misread. (c) confuses LLMHNS. (d) baseline.</>}
+        lens={<>Per-user schedule is the anchor.</>}
+        stretch={<>What is the analog to per-student tutoring in education?</>}
       />
 
-      <VIS.TrapProblem
-        id="ah-p9" difficulty="hard"
-        title="P9 — Combining AHNS with in-batch negatives"
-        scenario={<>You use in-batch negatives by default. How does AHNS plug in?</>}
+      {/* B4 not to use */}
+      <VIS.TrapProblem id="ahns-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use AHNS. Select all that apply."
+        scenario={<><em>Discriminating insight: AHNS needs (i) per-user variance, (ii) from-scratch or early-stage training (the gap between cold/warm is largest there), (iii) a usable per-user signal. Continuing from a converged checkpoint, or in pure cold-start with no signal yet, it does not pay.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"AHNS adds explicit hard negatives ALONGSIDE in-batch — in-batch gives global cheap negatives, AHNS adds curriculum-controlled hard ones.", correct:true},
-          {key:"b", text:"Replace in-batch entirely with AHNS."},
-          {key:"c", text:"AHNS subsumes in-batch."},
-          {key:"d", text:"They are incompatible."},
+          {key:"a", text:"Continuing training from an already-converged checkpoint — all users are in the late stage; per-user variance has shrunk.", correct:true},
+          {key:"b", text:"All users have similar interaction volumes — global schedule is sufficient.", correct:true},
+          {key:"c", text:"Pure cold-start with no per-user signal yet — AHNS has nothing to read.", correct:true},
+          {key:"d", text:"From-scratch retrieval on long-tail user base (sweet spot)."},
+          {key:"e", text:"Adversarial users that intentionally confuse the per-user signal.", correct:true},
         ]}
-        trap={<>(b), (c) lose in-batch's free coverage. (d) is false.</>}
-        lens={<>In-batch and AHNS are complementary. In-batch provides cheap negatives at no extra cost; AHNS adds a curriculum-controlled hard negative on top. Most strong recipes use both.</>}
-        stretch={<>What is the right relative weight on in-batch vs AHNS losses?</>}
+        trap={<>(d) is sweet spot.</>}
+        lens={<>AHNS needs variance, signal, and an early-enough training stage.</>}
+        stretch={<>How would you detect that variance has decayed?</>}
       />
 
-      <VIS.TrapProblem
-        id="ah-p10" difficulty="hard"
-        title="P10 — Eval consistency"
-        scenario={<>Early checkpoints of AHNS look worse than fixed-hardness baselines at the same epoch. Reviewer says "AHNS underperforms." What is the right rebuttal?</>}
+      {/* C1 architectural */}
+      <VIS.TrapProblem id="ahns-p10" difficulty="hard"
+        title="P10 — Why a PER-USER signal, not per-batch?"
+        scenario={<><em>Discriminating insight: a per-batch signal (mean loss of a batch) averages across users with very different states and erases the variance AHNS is designed to exploit. The signal must be per-user (loss-on-recent-batch for THIS user, embedding-norm-of-update for THIS user) to drive a per-user schedule.</em><br/>Why per-user?</>}
         options={[
-          {key:"a", text:"AHNS checkpoints early-train on easy negatives by design; only end-of-training metrics are comparable. Show the convergence curve, not a mid-training snapshot.", correct:true},
-          {key:"b", text:"AHNS only works at the end."},
-          {key:"c", text:"Early checkpoints do not matter."},
-          {key:"d", text:"Fixed-hardness is wrong."},
+          {key:"a", text:"A per-batch signal averages across users with very different convergence states and erases the variance. The signal MUST be per-user (recent-loss for that user, embedding-update norm for that user) to drive a per-user schedule. Per-batch collapses to global.", correct:true},
+          {key:"b", text:"Per-batch is faster."},
+          {key:"c", text:"Per-batch is more accurate."},
+          {key:"d", text:"No functional difference."},
         ]}
-        trap={<>(b), (c), (d) are dismissive.</>}
-        lens={<>This is a real review trap. Comparing AHNS to fixed-hardness at a mid-training checkpoint is unfair — AHNS is intentionally easier early. The honest comparison is end-of-training metrics with both methods trained to convergence on the same compute budget.</>}
-        stretch={<>What compute-budget-matched protocol would be fairest?</>}
+        trap={<>(b)(c)(d) miss the averaging-erases-variance mechanism.</>}
+        lens={<>Granularity of the signal must match the schedule unit.</>}
+        stretch={<>What is the cheapest per-user signal you can compute?</>}
       />
 
-      <VIS.TrapProblem
-        id="ah-p11" difficulty="medium"
-        title="P11 — Self-paced learning vs AHNS"
-        scenario={<>Self-paced learning lets the model pick which examples to train on based on its current loss. Is AHNS a special case?</>}
+      {/* C2 loss */}
+      <VIS.TrapProblem id="ahns-p11" difficulty="hard"
+        title="P11 — How does AHNS appear in the loss?"
+        scenario={<><em>Discriminating insight: AHNS does NOT appear in the loss form. It appears in the SAMPLER that produces the negatives that feed the standard contrastive loss. The downstream BPR/InfoNCE is unchanged.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"AHNS is a related but simpler scheme — it externally schedules hardness, while self-paced learning lets the model self-select. AHNS is more controllable, less adaptive.", correct:true},
-          {key:"b", text:"They are identical."},
-          {key:"c", text:"AHNS is more general."},
-          {key:"d", text:"They are unrelated."},
+          {key:"a", text:"Standard contrastive loss (BPR or InfoNCE) on (user, positive, AHNS-sampled negative) triples. AHNS does not appear in the loss; it appears in the SAMPLER that produces the negative.", correct:true},
+          {key:"b", text:"A new AHNS-specific loss term."},
+          {key:"c", text:"A distillation loss against the schedule."},
+          {key:"d", text:"Adversarial loss between hard and easy negatives."},
         ]}
-        trap={<>(b), (c), (d) miss the controllable-vs-adaptive distinction.</>}
-        lens={<>The tradeoff is control vs adaptivity. AHNS gives you reproducible hardness curves you can tune. Self-paced is adaptive but harder to debug. In production recsys, reproducibility usually wins.</>}
-        stretch={<>When would you prefer self-paced over AHNS?</>}
+        trap={<>(b)(c)(d) miss the sampler-vs-loss distinction.</>}
+        lens={<>AHNS is a sampler; the loss is standard.</>}
+        stretch={<>What if you tried to fold the schedule into the loss?</>}
       />
+
+      {/* C3 dropped */}
+      <VIS.TrapProblem id="ahns-p12" difficulty="hard"
+        title="P12 — What does AHNS deliberately give up vs fixed hardness?"
+        scenario={<><em>Discriminating insight: fixed hardness is REPRODUCIBLE (deterministic sampling for a fixed seed). AHNS&apos;s schedule depends on user-state, which means runs starting from different seeds may produce slightly different per-user trajectories.</em><br/>What does AHNS forfeit?</>}
+        options={[
+          {key:"a", text:"Reproducibility of exact negative samples across runs. The schedule depends on the per-user convergence state, which itself depends on the random initialization. Two runs may have very similar aggregate metrics but very different per-user negative trajectories.", correct:true},
+          {key:"b", text:"AHNS forfeits BPR loss."},
+          {key:"c", text:"AHNS forfeits embeddings."},
+          {key:"d", text:"AHNS forfeits training speed."},
+        ]}
+        trap={<>(b)(c)(d) miss the dropped property.</>}
+        lens={<>State-dependent sampling forfeits seed-level reproducibility.</>}
+        stretch={<>How would you make AHNS more reproducible?</>}
+      />
+
+      {/* C4 hyperparameter */}
+      <VIS.TrapProblem id="ahns-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: the function mapping per-user signal -> hardness (the &ldquo;schedule shape&rdquo;) dominates. Too steep: cold users jump to hard too fast (collapse). Too flat: schedule is effectively fixed-hardness.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"Hardness-schedule shape (signal -> hardness mapping) is most fragile; signal smoothing window is next; initial hardness is least. The shape controls how fast hardness escalates per user; mis-set destroys the per-user benefit.", correct:true},
+          {key:"b", text:"Signal smoothing window is most fragile."},
+          {key:"c", text:"Initial hardness is most fragile."},
+          {key:"d", text:"Embedding dim is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) miss the schedule-shape mechanism.</>}
+        lens={<>Schedule shape is the load-bearing knob.</>}
+        stretch={<>What does the optimal shape look like?</>}
+      />
+
+      {/* C5 data assumption */}
+      <VIS.TrapProblem id="ahns-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: AHNS assumes the per-user signal is a reliable convergence proxy. Noisy signal (small batch sizes, bot users) gives spurious hardness jumps and destabilizes the per-user schedule.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Noisy per-user signal (tiny batches per user, bot users with erratic behavior). The signal is dominated by noise rather than convergence; the schedule oscillates and per-user negative trajectories destabilize.", correct:true},
+          {key:"b", text:"Off-by-one in user-id indexing."},
+          {key:"c", text:"Different tokenizer."},
+          {key:"d", text:"Mismatched batch sizes."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Signal noise is the contract violation.</>}
+        stretch={<>What smoothing strategy bounds signal noise?</>}
+      />
+
+      {/* D1 intuitive but wrong */}
+      <VIS.TrapProblem id="ahns-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;always feed harder negatives, it&apos;s strictly better&rdquo;"
+        scenario={<><em>Discriminating insight: feeding negatives that are too hard before the user embedding can support them produces a noisy gradient that destabilizes the embedding. The per-user adaptive part exists because monotonic hard-only is provably worse for cold users.</em><br/>Why is &ldquo;always hard&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"Hard negatives are only informative once the user embedding can support them. Before that, they produce a noisy gradient that destabilizes the embedding. The per-user schedule prevents this; monotonic hard-only is worse than fixed-medium for cold users.", correct:true},
+          {key:"b", text:"Always-hard is strictly better."},
+          {key:"c", text:"Always-easy is strictly better."},
+          {key:"d", text:"Hardness is irrelevant."},
+        ]}
+        trap={<>(b)(c)(d) the seductive misreads.</>}
+        lens={<>Hardness must match the model&apos;s current capacity for that user.</>}
+        stretch={<>What does &ldquo;destabilize embedding&rdquo; look like in metrics?</>}
+      />
+
+      {/* D2 wrong-assumption cascade */}
+      <VIS.TrapProblem id="ahns-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: &ldquo;AHNS is just curriculum learning&rdquo; cascades into (i) using a GLOBAL schedule (loses per-user variance), (ii) using only EPOCH index as signal (no per-user info), (iii) evaluating only aggregate NDCG (per-user benefit hidden).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: schedule unit, signal source, evaluation. Each is load-bearing; remove any one and AHNS regresses to vanilla curriculum learning.", correct:true},
+          {key:"b", text:"Only the schedule."},
+          {key:"c", text:"Only the evaluation."},
+          {key:"d", text:"Nothing — AHNS IS just curriculum learning."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Schedule unit + signal source + per-user eval are inseparable.</>}
+        stretch={<>What metric exposes the per-user benefit?</>}
+      />
+
+      {/* D3 senior vs junior */}
+      <VIS.TrapProblem id="ahns-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior tunes the global initial hardness when NDCG stalls. A senior bucket-evaluates by user-interaction-volume (cold / medium / warm) and finds the schedule misfits in one bucket — fixing that bucket, not the global knob.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Bucket users by interaction volume (cold / medium / warm) and evaluate NDCG per bucket. If one bucket regresses, the schedule shape for that bucket is wrong. Tune the schedule for that bucket before the global knob.", correct:true},
+          {key:"b", text:"Tune global initial hardness."},
+          {key:"c", text:"Increase embedding size."},
+          {key:"d", text:"Switch to LLMHNS."},
+        ]}
+        trap={<>(b)(c)(d) miss the per-bucket diagnostic.</>}
+        lens={<>Per-bucket eval is the AHNS-specific diagnostic.</>}
+        stretch={<>How would you choose the bucket boundaries?</>}
+      />
+
+      {/* D4 plausible-misattribution */}
+      <VIS.TrapProblem id="ahns-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution"
+        scenario={<><em>Discriminating insight: NDCG regresses on cold users but is fine on warm users — looks like recsys-model failing on cold users, but is actually AHNS&apos;s schedule shape too steep for cold users (forcing hard negatives too early).</em><br/>Most likely cause?</>}
+        options={[
+          {key:"a", text:"AHNS schedule shape is too steep at the low end: cold users see hard negatives before their embedding can support them, destabilizing the cold-user embeddings. Diagnostic: per-bucket NDCG (cold drops, warm stable) plus per-bucket hardness trace.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cold-start data dropped from the dataset."},
+          {key:"d", text:"Cache invalidation."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Cold-only regression points to schedule shape, not data.</>}
+        stretch={<>What plot best shows schedule-vs-bucket misfit?</>}
+      />
+
+      {/* E1 production gotcha */}
+      <VIS.TrapProblem id="ahns-p19" difficulty="hard"
+        title="P19 — Production gotcha: per-user state in the sampler"
+        scenario={<><em>Discriminating insight: AHNS needs to remember per-user signal state across batches. A common bug is to recompute the signal from scratch each batch (state-less sampler), which collapses AHNS to per-batch and erases the per-user benefit.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"The sampler must STORE per-user signal state across batches (e.g., a running average of per-user loss). A state-less sampler that recomputes from scratch collapses AHNS to a per-batch schedule and loses the per-user benefit.", correct:true},
+          {key:"b", text:"The sampler should be stateless."},
+          {key:"c", text:"The state should be global, not per-user."},
+          {key:"d", text:"State management is irrelevant."},
+        ]}
+        trap={<>(b)(c)(d) miss the per-user state requirement.</>}
+        lens={<>The sampler is stateful, keyed by user.</>}
+        stretch={<>How big is the per-user state in memory?</>}
+      />
+
+      {/* E2 failure on Friday */}
+      <VIS.TrapProblem id="ahns-p20" difficulty="hard"
+        title="P20 — Failure on Friday: cold-user NDCG cratered"
+        scenario={<><em>Discriminating insight: a routine refactor stored per-user signal in a shared dict keyed by HASH of user_id (not the user_id itself); collisions caused warm-user state to leak into cold-user records, AHNS escalated cold users prematurely.</em><br/>3am page: cold NDCG down 18%, warm NDCG unchanged. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Per-user state collision: hashed user-ids collide, warm-user state leaks into cold-user records, AHNS escalates cold users prematurely. Diagnostic: instrument the sampler to log (user_id, current hardness) and look for cold users at warm-hardness levels.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cold data dropped."},
+          {key:"d", text:"Cache TTL changed."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>State-key collisions are AHNS-specific bugs.</>}
+        stretch={<>What test catches hash collisions?</>}
+      />
+
+      {/* E3 implementation specifics */}
+      <VIS.TrapProblem id="ahns-p21" difficulty="medium"
+        title="P21 — Library default that bites: signal smoothing window"
+        scenario={<><em>Discriminating insight: many AHNS implementations default to a 1-batch signal window. This is too noisy; per-user signal needs smoothing (e.g., exponential moving average over 5-10 batches) to be stable.</em><br/>Where does the default break AHNS?</>}
+        options={[
+          {key:"a", text:"Default 1-batch signal window is too noisy: the schedule oscillates per user, hardness jumps and falls erratically. Use an EMA over 5-10 batches to smooth.", correct:true},
+          {key:"b", text:"Default LR is wrong."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Signal smoothing is load-bearing.</>}
+        stretch={<>What window does the paper recommend?</>}
+      />
+
+      {/* E4 rollout */}
+      <VIS.TrapProblem id="ahns-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) fixed-hardness baseline, (2) AHNS with very flat schedule (close to fixed), (3) sharpen schedule, (4) per-bucket NDCG diagnostic, (5) shadow-score, (6) traffic ramp.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Fixed-hardness baseline → AHNS with flat schedule → sharpen schedule → per-bucket NDCG → shadow-score → traffic ramp", correct:true},
+          {key:"b", text:"Sharp schedule from day 1."},
+          {key:"c", text:"Skip the fixed-hardness baseline."},
+          {key:"d", text:"Ramp traffic first."},
+        ]}
+        trap={<>(b) over-aggressive. (c) loses the baseline. (d) backwards.</>}
+        lens={<>Anneal schedule sharpness; verify per-bucket.</>}
+        stretch={<>Why flat first, not sharp?</>}
+      />
+
+      {/* F1 edge case */}
+      <VIS.TrapProblem id="ahns-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks AHNS&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: a population where every user has the same interaction volume and converges at the same rate eliminates the per-user variance that AHNS exploits. Per-user reduces to global.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A user population where every user has the same interaction volume and converges at the same rate. The per-user signal is the same across users; per-user schedule collapses to global schedule; AHNS provides no benefit over global curriculum.", correct:true},
+          {key:"b", text:"Long-tail population with high variance (sweet spot)."},
+          {key:"c", text:"10M users."},
+          {key:"d", text:"100M items."},
+        ]}
+        trap={<>(b) sweet spot. (c)(d) scale.</>}
+        lens={<>AHNS needs per-user variance.</>}
+        stretch={<>How would you measure &ldquo;converges at the same rate&rdquo;?</>}
+      />
+
+      {/* F4 paper-named failure */}
+      <VIS.TrapProblem id="ahns-p24" difficulty="hard"
+        title="P24 — Paper-named failure: hardness-schedule sensitivity"
+        scenario={<><em>Discriminating insight: the paper names hardness-schedule sensitivity as the dominant failure mode. Mis-set values destabilize training. This is more disruptive than schedule shape per se, because the schedule is also a function of the per-user signal.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Hardness schedule sensitivity dominates: mis-set values destabilize training, with cold users hit hardest. The fix is sensitivity analysis (sweep schedule slope) and per-bucket evaluation, not adding more hyperparameters.", correct:true},
+          {key:"b", text:"Schedule is irrelevant."},
+          {key:"c", text:"Signal smoothing is irrelevant."},
+          {key:"d", text:"AHNS has no failure modes."},
+        ]}
+        trap={<>(b)(c)(d) deny reality.</>}
+        lens={<>Schedule sensitivity is the long-tail bug; cold users feel it first.</>}
+        stretch={<>What sweep strategy bounds the search?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/2409.07237" target="_blank" rel="noopener">Lai et al. — <em>Negative Sampling in Recommendation: A Survey</em> (arXiv 2024, survey)</a> — places AHNS alongside other adaptive sampling schemes. Single best starting point.</li>
-        <li><a href="https://arxiv.org/abs/2305.18373" target="_blank" rel="noopener">Wang et al. — <em>Curriculum Learning for Recommendation</em> (arXiv 2023, paper)</a> — broader curriculum-learning view of which AHNS is a specific case.</li>
-        <li><a href="https://www.cs.toronto.edu/~hinton/absps/curriculum.pdf" target="_blank" rel="noopener">Bengio et al. — <em>Curriculum Learning</em> (ICML 2009, paper)</a> — the foundational curriculum-learning paper. Read for intuition; AHNS is a recsys flavor.</li>
-        <li><a href="https://lilianweng.github.io/posts/2021-05-31-contrastive/" target="_blank" rel="noopener">Lilian Weng — <em>Contrastive Representation Learning</em> (blog)</a> — overview of negative-sampling tradeoffs that map onto AHNS choices.</li>
-        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener">Eugene Yan — <em>System Design for Discovery</em> (blog)</a> — practitioner guide on where curriculum sampling fits in retrieval pipelines.</li>
+        <li><a href="https://arxiv.org/abs/2409.07237" target="_blank" rel="noopener">Lai et al., <em>Negative Sampling in Recommendation: A Survey and Future Directions</em> (arXiv 2409.07237, 2024)</a> — survey including AHNS.</li>
+        <li><a href="https://lilianweng.github.io/posts/2020-04-07-curriculum-learning/" target="_blank" rel="noopener">Lilian Weng — <em>Curriculum for Reinforcement Learning</em> (blog)</a> — curriculum-learning intuition for adaptive difficulty.</li>
+        <li><a href="https://arxiv.org/abs/2104.08821" target="_blank" rel="noopener">Gao et al., <em>SimCSE: Simple Contrastive Learning of Sentence Embeddings</em> (EMNLP 2021)</a> — adjacent practitioner reference for contrastive negatives and curriculum effects.</li>
+        <li><a href="https://eugeneyan.com/writing/recsys2022/" target="_blank" rel="noopener">Eugene Yan — <em>RecSys 2022 notes</em> (blog)</a> — practitioner framing of negative sampling.</li>
+        <li><a href="https://arxiv.org/abs/2002.02126" target="_blank" rel="noopener">He et al., <em>LightGCN</em> (SIGIR 2020)</a> — common retrieval backbone where AHNS is applied.</li>
       </ul>
     </VIS.Section>
   </main>

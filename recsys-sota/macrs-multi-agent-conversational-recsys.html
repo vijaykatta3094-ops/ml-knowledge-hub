@@ -1414,257 +1414,442 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 12
+// MACRS — Multi-Agent Conversational RecSys (Fang et al., arXiv 2402.01135, 2024)
+// Unique mechanism: SPLIT a CRS into FOUR LLM agents, each owning a distinct
+// dialogue sub-skill (planner, asker, recommender, explainer), with an
+// act-planning controller deciding which agent speaks next. The point is not
+// "use an LLM for dialog" or "add retrieval" — it is the DECOMPOSITION of the
+// CRS into specialized agents that prevents a single LLM from confusing asking
+// with recommending.
+// B3 anchor: multi-agent dialog where each agent owns a sub-skill — NOT a
+// single LLM with retrieval.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · Conversational recommendation"
       title="MACRS — Multi-Agent Conversational RecSys"
-      subtitle="Split the conversational recommender into four cooperating LLM agents (planner, asker, recommender, explainer) with an act-planning framework controlling dialogue flow."
+      subtitle="Split the CRS into four cooperating LLM agents (planner, asker, recommender, explainer) with an act-planning controller deciding which agent speaks each turn."
       byline={[
         {label: "Paper", value: "Fang et al., arXiv 2402.01135 (2024)"},
-        {label: "Domain", value: "Conversational recsys — books, movies, e-commerce dialog"},
+        {label: "Surface", value: "Multi-turn conversational recsys — books, movies, e-commerce dialog"},
+        {label: "Anchor that survives redaction", value: "Per-agent sub-skill specialization controlled by an act planner — not a single LLM with retrieval"},
       ]}/>
 
     <VIS.TLDR>
-      A single LLM running a <VIS.Term def="A recommender system that drives a conversation with the user to elicit preferences and refine suggestions, instead of one-shot scoring.">conversational recommender</VIS.Term> tends to blur two jobs: asking clarifying questions and producing recommendations. MACRS gives each job its own agent — a <strong>planner</strong> decides the next dialogue act, an <strong>asker</strong> elicits preferences, a <strong>recommender</strong> proposes items, and an <strong>explainer</strong> justifies them. The act-planning loop chooses which agent speaks next.
+      A single LLM running a <VIS.Term def="A recommender system that drives a multi-turn conversation with the user to elicit preferences and refine suggestions, rather than scoring items in one shot.">conversational recommender</VIS.Term> tends to blur two jobs — asking clarifying questions and producing recommendations — because both compete for the same prompt budget and the same generation. MACRS gives each job its OWN agent: a <strong>planner</strong> picks the next dialogue act, an <strong>asker</strong> elicits preferences, a <strong>recommender</strong> proposes items, an <strong>explainer</strong> justifies them. The act-planning controller chooses which agent speaks each turn. The architectural payoff is auditability and separation of concerns — when something regresses, you know <em>which</em> agent broke. The senior trap: this is NOT &ldquo;LLM + RAG.&rdquo; The four agents are functionally distinct sub-skills, not redundant LLM calls.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        MACRS decomposes a conversational recsys into four specialized LLM-backed agents orchestrated by an act-planning controller. Each agent has a focused prompt and a narrow output contract, which keeps prompts short and behavior auditable.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  U["User turn"] --> P["Planner agent"]
-  P -->|"ask"| A["Asker agent"]
-  P -->|"recommend"| R["Recommender agent"]
-  P -->|"explain"| E["Explainer agent"]
+    <VIS.Section id="sec-what" title="What it is — four agents and an act planner">
+      <VIS.Mermaid chart={`flowchart TB
+  U["User turn"] --> P["Planner agent (act selector)"]
+  P -->|ask| A["Asker agent (preference elicitation)"]
+  P -->|recommend| R["Recommender agent (item proposal)"]
+  P -->|explain| E["Explainer agent (justification)"]
   A --> O["System response"]
   R --> O
   E --> O
-  O --> U
-      `} />
+  O --> U`} />
       <ul>
-        <li><strong>Planner</strong> — looks at dialogue history and a user-state summary, then picks the next dialogue act (ask / recommend / explain / end).</li>
-        <li><strong>Asker</strong> — generates a clarifying question grounded in slots still missing from user-state.</li>
-        <li><strong>Recommender</strong> — produces a ranked item list from a candidate set conditioned on the current preference summary.</li>
-        <li><strong>Explainer</strong> — turns the chosen item plus evidence into a natural-language justification.</li>
+        <li><strong>Planner</strong> — given dialogue state, picks the next act: ASK, RECOMMEND, or EXPLAIN.</li>
+        <li><strong>Asker</strong> — owns preference elicitation. Generates clarifying questions targeting unfilled preference slots.</li>
+        <li><strong>Recommender</strong> — owns item proposal. Reads the (partial) preference slots and proposes items.</li>
+        <li><strong>Explainer</strong> — owns justification. Given a proposed item, generates a faithful rationale.</li>
       </ul>
+      <p>Each agent has a focused prompt and a narrow output contract — short prompts, auditable behavior, and a single regression signal per agent.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <p>
-        Single-LLM <VIS.Term def="An end-to-end LLM-based conversational recsys where one model handles all dialogue acts in a single prompt.">monolithic CRS</VIS.Term> systems often confuse asking and recommending — they slip in a recommendation when they should be eliciting, or keep asking when the user is ready for a pick. The planner agent in MACRS is the explicit referee.
-      </p>
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Single-LLM CRS</th><th style={{textAlign:"left",padding:8}}>MACRS</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from sibling CRS designs">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Decomposition</th>
+          <th style={{textAlign:"left", padding:8}}>Act control</th>
+          <th style={{textAlign:"left", padding:8}}>Failure attribution</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Dialogue act control</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Implicit, prompted</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Explicit planner agent</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Prompt size per agent</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Large, multi-role</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Small, single-role</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Failure mode</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Premature recommends, missed slots</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Inter-agent latency, plan loops</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Debuggability</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Hard — one trace</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Easier — per-agent logs</td></tr>
+          <tr><td style={{padding:8}}>Single-LLM CRS</td><td style={{padding:8}}>None — one prompt does it all</td><td style={{padding:8}}>Implicit in generation</td><td style={{padding:8}}>Opaque</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>HRL-based CRS</td><td style={{padding:8}}>Policy levels</td><td style={{padding:8}}>RL policy</td><td style={{padding:8}}>Per-policy</td></tr>
+          <tr><td style={{padding:8}}>Graph-based CRS</td><td style={{padding:8}}>KG over items</td><td style={{padding:8}}>Heuristic</td><td style={{padding:8}}>Per-edge</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>MACRS</strong></td><td style={{padding:8}}><strong>Four sub-skill agents</strong></td><td style={{padding:8}}><strong>Act planner</strong></td><td style={{padding:8}}><strong>Per-agent</strong></td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Domains that need explicit slot-filling combined with free-form preference talk (travel, complex e-commerce, real estate).</li>
-        <li>Teams that need per-act auditability for safety, fairness, or compliance reasons.</li>
-        <li>Catalogs where explanation quality drives trust (medical, financial, expensive purchases).</li>
-        <li>Engineering orgs comfortable orchestrating multiple LLM calls per turn.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Stacked latency</strong> — each agent is one LLM call. Worst case the planner reroutes mid-turn and you pay two or three calls per response.</li>
-        <li><strong>Coordination bugs</strong> — planner can oscillate between ask and recommend if user-state thresholds are mis-tuned.</li>
-        <li><strong>Cost</strong> — token spend per turn is roughly the agent-call multiplier vs a single-LLM CRS.</li>
-        <li><strong>Eval drift</strong> — improvements come from the planner, the recommender, or the explainer; ablating them is non-trivial.</li>
-        <li><strong>Hand-off context</strong> — each agent re-reads dialogue history; the prompt-engineering surface area is large.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="ma-p1" difficulty="hard"
-        title="P1 — Why does adding an explainer agent often raise user trust MORE than improving the recommender?"
-        scenario={<>You ship MACRS in a wine recommendation product. Adding the explainer agent (no change to the recommender) lifts user-rated trust by 22% and follow-through purchases by 9%. Improving the recommender's offline NDCG by 4% lifted trust by under 3%. Why?</>}
+      {/* A1 */}
+      <VIS.TrapProblem id="macrs-p1" difficulty="hard"
+        title="P1 — MACRS vs single-LLM CRS: what is the load-bearing difference?"
+        scenario={<><em>Discriminating insight: a single LLM is forced to choose, within one generation, whether to ASK or RECOMMEND; this conflation is the documented failure mode. MACRS factors the choice into a planner agent before the content agent runs.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Trust is bottlenecked by perceived intent transparency, not list quality — once users can SEE the why, mediocre picks feel acceptable.", correct:true},
-          {key:"b", text:"The explainer secretly improves the recommender's logits."},
-          {key:"c", text:"NDCG and trust are uncorrelated metrics in any setting."},
-          {key:"d", text:"Users skip the recommendation entirely when an explanation is shown."},
+          {key:"a", text:"MACRS factors the act decision (ASK / RECOMMEND / EXPLAIN) into a dedicated planner agent that runs BEFORE the content agent. A single-LLM CRS conflates act choice with content generation in one prompt, which is why it asks when it should recommend and vice versa.", correct:true},
+          {key:"b", text:"MACRS uses a larger LLM than single-LLM CRS."},
+          {key:"c", text:"MACRS uses retrieval; single-LLM CRS does not."},
+          {key:"d", text:"MACRS uses RL; single-LLM CRS uses supervised."},
         ]}
-        trap={<>(b) misattributes — agents are independent. (c) overgeneralizes. (d) is empirically false in CRS studies.</>}
-        lens={<>The senior-MLE intuition: in conversational systems, the gap between "good list" and "user acts on the list" is mediated by perceived intent. The explainer closes that gap directly. This is why a 4% NDCG bump often shows up as a sub-1% downstream lift while a good explanation moves the needle visibly.</>}
-        stretch={<>How would you A/B test whether the explainer's lift is real or just placebo from added text?</>}
+        trap={<>(b) confuses scale with structure. (c) is the &ldquo;LLM + RAG&rdquo; misread. (d) orthogonal.</>}
+        lens={<>The decomposition itself is the architectural payoff, not the model size or retrieval.</>}
+        stretch={<>What metric quantifies the &ldquo;asking when should recommend&rdquo; failure?</>}
       />
 
-      <VIS.TrapProblem
-        id="ma-p2" difficulty="medium" multiSelect
-        title="P2 — Which failure modes are SPECIFIC to multi-agent CRS (not single-LLM CRS)?"
-        scenario={<>Select all that apply.</>}
+      {/* A2 */}
+      <VIS.TrapProblem id="macrs-p2" difficulty="hard"
+        title="P2 — MACRS vs a chatbot with RAG"
+        scenario={<><em>Discriminating insight: a RAG chatbot is one LLM with retrieval — still a single content agent. MACRS&apos;s point is per-act specialization (asker vs recommender vs explainer), each with its own prompt contract.</em><br/>Which is correct?</>}
         options={[
-          {key:"a", text:"Planner oscillation between ask and recommend acts.", correct:true},
-          {key:"b", text:"Inter-agent prompt-context drift — what asker thinks user said differs from what recommender thinks.", correct:true},
-          {key:"c", text:"Per-turn latency stacking from multiple LLM calls.", correct:true},
-          {key:"d", text:"Hallucinated item attributes."},
-          {key:"e", text:"User repeating preferences because system forgot earlier turns."},
+          {key:"a", text:"A RAG chatbot is a single content agent with a retrieval tool; the act decision and the content generation share one prompt. MACRS is four agents with separate prompts and a planner over them — RAG is orthogonal and can be added inside the recommender agent.", correct:true},
+          {key:"b", text:"They are equivalent."},
+          {key:"c", text:"RAG eliminates the need for MACRS."},
+          {key:"d", text:"MACRS is just RAG with more retrievers."},
         ]}
-        trap={<>(d) and (e) afflict any LLM-based CRS. The point is the agent-specific failure surface.</>}
-        lens={<>Multi-agent introduces three new failure modes: planner instability, cross-agent state mismatch, and stacked latency. Hallucination and forgetting exist everywhere — they are not the discriminator.</>}
-        stretch={<>How would you detect planner oscillation in production logs?</>}
+        trap={<>(b)(c)(d) miss the per-act specialization.</>}
+        lens={<>Specialization across agents is not retrieval inside one agent.</>}
+        stretch={<>Where would RAG sit inside the MACRS recommender?</>}
       />
 
-      <VIS.TrapProblem
-        id="ma-p3" difficulty="hard"
-        title="P3 — Planner picks 'recommend' too early"
-        scenario={<>Offline eval shows the planner recommends an item before all required slots (e.g., price band) are filled in 18% of dialogues. What's the right fix?</>}
+      {/* A3 counterfactual */}
+      <VIS.TrapProblem id="macrs-p3" difficulty="medium"
+        title="P3 — Without MACRS, what is your fallback CRS?"
+        scenario={<><em>Discriminating insight: realistic fallbacks are single-LLM CRS (conflates acts), HRL-based CRS (heavy training + reward design), or rule-based slot-filler (rigid, no free-form). None achieve MACRS&apos;s per-agent auditability with low marginal engineering.</em><br/>Pick the realistic gap.</>}
         options={[
-          {key:"a", text:"Add a slot-coverage gate: planner cannot emit 'recommend' until required slots are filled or user explicitly skips them.", correct:true},
-          {key:"b", text:"Increase the recommender's temperature."},
-          {key:"c", text:"Train a bigger planner."},
-          {key:"d", text:"Drop the planner; have asker and recommender vote."},
+          {key:"a", text:"Single-LLM CRS or HRL-based CRS. Single-LLM is cheap but conflates acts; HRL needs reward shaping. MACRS sits between: per-agent decomposition without RL machinery.", correct:true},
+          {key:"b", text:"A pure popularity ranker is at parity."},
+          {key:"c", text:"You would skip CRS entirely."},
+          {key:"d", text:"A static FAQ would suffice."},
         ]}
-        trap={<>(b) makes recommendations worse, not better. (c) is a hammer when a rule will do. (d) regresses to the single-LLM problem.</>}
-        lens={<>The planner is a control surface. A small deterministic gate (slot coverage threshold) on top of the LLM planner often beats prompt-engineering for control problems. Use LLMs for judgment, rules for invariants.</>}
-        stretch={<>What if the user explicitly says they do not want to share a slot?</>}
+        trap={<>(b)(c)(d) under-shoot CRS surface area.</>}
+        lens={<>The realistic gap is auditability vs RL engineering.</>}
+        stretch={<>How does HRL&apos;s reward shaping compare with MACRS&apos;s planner prompt?</>}
       />
 
-      <VIS.TrapProblem
-        id="ma-p4" difficulty="medium"
-        title="P4 — Latency budget allocation"
-        scenario={<>Total per-turn budget is 1.2 seconds. A single agent call costs about 400 ms. How should you allocate?</>}
+      {/* A4 composition */}
+      <VIS.TrapProblem id="macrs-p4" difficulty="hard"
+        title="P4 — Compose MACRS with a knowledge-graph item index"
+        scenario={<><em>Discriminating insight: a KG over items naturally lives INSIDE the recommender agent (proposes items by graph walk over filled slots). It does not replace the planner or the asker.</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"Run planner first (400 ms), then the selected single downstream agent (400 ms). Skip the others. 800 ms total.", correct:true},
-          {key:"b", text:"Run all four agents in parallel and pick the planner's choice at the end."},
-          {key:"c", text:"Run planner, asker, and recommender always, drop explainer."},
-          {key:"d", text:"Use a smaller model for everything."},
+          {key:"a", text:"The KG lives inside the recommender agent and proposes items by walks over filled preference slots. The planner, asker, and explainer remain unchanged. MACRS&apos;s decomposition stays intact; only the recommender&apos;s internals change.", correct:true},
+          {key:"b", text:"The KG replaces the planner."},
+          {key:"c", text:"The KG eliminates the asker agent."},
+          {key:"d", text:"MACRS and KG are incompatible."},
         ]}
-        trap={<>(b) wastes three agent calls per turn. (c) wastes one agent and harms trust. (d) regresses single-LLM CRS.</>}
-        lens={<>Sequential planner-then-act is the right architecture: pay one routing call, then exactly one act call. Parallel speculative execution wastes tokens; smaller models trade quality for marginal latency savings.</>}
-        stretch={<>When would parallel speculative execution actually pay off?</>}
+        trap={<>(b)(c)(d) miss agent boundaries.</>}
+        lens={<>Each agent&apos;s internals are swappable; the decomposition is the API.</>}
+        stretch={<>What does the KG do for the EXPLAINER agent?</>}
       />
 
-      <VIS.TrapProblem
-        id="ma-p5" difficulty="hard" multiSelect
-        title="P5 — Why split asker and recommender?"
-        scenario={<>Select reasons that justify two separate agents over one prompt with two roles.</>}
+      {/* A5 boundary */}
+      <VIS.TrapProblem id="macrs-p5" difficulty="medium"
+        title="P5 — At what dialog depth does MACRS stop paying for itself?"
+        scenario={<><em>Discriminating insight: MACRS&apos;s overhead is the planner call and prompt-template maintenance for four agents. For very short dialogs (2 turns or fewer), per-turn planner latency dominates the budget.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Smaller prompts per agent — cheaper inference and less role bleed.", correct:true},
-          {key:"b", text:"Independent ablation — you can swap the recommender for a retrieval-only baseline.", correct:true},
-          {key:"c", text:"Asker can be a smaller model than recommender — different latency profile.", correct:true},
-          {key:"d", text:"Multi-agent guarantees higher offline NDCG."},
-          {key:"e", text:"Splitting is required to use any LLM."},
+          {key:"a", text:"For very short dialogs (two turns or fewer) per-turn planner latency dominates; single-LLM CRS wins on wall-clock. MACRS&apos;s payoff is in 4+ turn dialogs where the asker/recommender confusion in single-LLM costs more than the planner overhead.", correct:true},
+          {key:"b", text:"MACRS always wins."},
+          {key:"c", text:"MACRS only wins below 1B parameters."},
+          {key:"d", text:"Dialog length is irrelevant."},
         ]}
-        trap={<>(d) and (e) are wishful thinking. (d) confuses architecture with metric improvement.</>}
-        lens={<>The wins are engineering, not metric — prompt clarity, ablatability, and model-size flexibility per role. Whether MACRS beats a strong single-LLM CRS on NDCG depends on the prompt and data, not on the architecture name.</>}
-        stretch={<>Which agent would you swap first for a smaller model?</>}
+        trap={<>(b)(c) over-claim. (d) ignores the cost model.</>}
+        lens={<>Decomposition pays off with dialog depth, not breadth.</>}
+        stretch={<>How would you measure the &ldquo;act-confusion&rdquo; rate in single-LLM CRS?</>}
       />
 
-      <VIS.TrapProblem
-        id="ma-p6" difficulty="medium"
-        title="P6 — Conversation termination"
-        scenario={<>The planner has no explicit 'end' act. Users complain dialogues drag on. What's the right fix?</>}
+      {/* B1 application */}
+      <VIS.TrapProblem id="macrs-p6" difficulty="hard"
+        title="P6 — Pick a CRS architecture for this scenario"
+        scenario={<><em>Discriminating insight: a travel-booking domain needs both slot-filling (dates, destinations) AND free-form preference talk (&ldquo;something quiet&rdquo;). Slot-filling alone misses free-form; pure LLM dialog conflates the two. MACRS is purpose-built for this mix.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Add 'end' as a planner act with a learned trigger (slot-confidence high + user satisfaction signal).", correct:true},
-          {key:"b", text:"Hard cap at five turns."},
-          {key:"c", text:"Always end after the first recommendation."},
-          {key:"d", text:"Let the explainer decide."},
+          {key:"a", text:"MACRS — the planner can interleave slot-targeted ASK acts with free-form RECOMMEND acts, and the explainer covers &ldquo;why this hotel?&rdquo; questions naturally.", correct:true},
+          {key:"b", text:"A rigid slot-filler — fails the free-form preferences."},
+          {key:"c", text:"Single-LLM CRS — will keep recommending before slots are filled."},
+          {key:"d", text:"Pure FAQ retrieval."},
         ]}
-        trap={<>(b) ignores conversation diversity. (c) misses the iterate-then-end pattern. (d) muddles the agent contracts.</>}
-        lens={<>End is a first-class dialogue act in CRS. Hard caps frustrate users mid-elicitation; first-rec termination misses iterative refinement. The planner is the right place because it already sees the user state.</>}
-        stretch={<>What features would you condition the 'end' gate on?</>}
+        trap={<>(b)(c)(d) each fail one of the two requirements.</>}
+        lens={<>MACRS&apos;s sweet spot is mixed slot + free-form.</>}
+        stretch={<>What metric measures &ldquo;recommended before slots filled&rdquo;?</>}
       />
 
-      <VIS.TrapProblem
-        id="ma-p7" difficulty="hard" mode="ordered"
-        title="P7 — Order your debugging steps when 'recommend' acts get rejected by users"
-        scenario={<>User rejection rate on recommendation turns climbs from 30% to 55% overnight. No deploy. Order the diagnostics. Wrong moves do not get ranked.</>}
+      {/* B2 sounds reasonable */}
+      <VIS.TrapProblem id="macrs-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just use a bigger LLM&rdquo;"
+        scenario={<><em>Discriminating insight: bigger LLMs do not solve act-confusion — they make it more confident. The decomposition is the architectural fix; capability is not the constraint, control over WHICH job runs WHEN is.</em><br/>Why is &ldquo;use GPT-4&rdquo; insufficient?</>}
         options={[
-          {key:"a", text:"Check planner act distribution — did 'recommend' frequency jump?", order:1},
-          {key:"b", text:"Inspect recommender candidate pool for an upstream catalog or index change.", order:2},
-          {key:"c", text:"Roll back the planner."},
-          {key:"d", text:"Compare slot-coverage at recommend time before and after midnight.", order:3},
-          {key:"e", text:"Page every engineer in the org."},
+          {key:"a", text:"Capability is not the bottleneck; act-control is. A larger LLM still has to decide ASK vs RECOMMEND within one generation, and a more capable model just executes the wrong choice more fluently. MACRS&apos;s planner externalizes the act choice.", correct:true},
+          {key:"b", text:"GPT-4 cannot do conversation."},
+          {key:"c", text:"Bigger LLMs solve the problem."},
+          {key:"d", text:"Latency is the only difference."},
         ]}
-        trap={<>(c) is destructive without diagnosis. (e) is premature.</>}
-        lens={<>Plan distribution drift → candidate pool change → slot-coverage at recommend time is the natural ladder for MACRS regressions. Most are upstream catalog changes that flood the candidate pool with stale items, not planner bugs.</>}
-        stretch={<>What signal would catch (b) before users do?</>}
+        trap={<>(b) false. (c) the seductive misread. (d) shifts to latency.</>}
+        lens={<>Externalize the act choice; do not hope the LLM picks correctly.</>}
+        stretch={<>How would you test &ldquo;more confident wrong&rdquo; experimentally?</>}
       />
 
-      <VIS.TrapProblem
-        id="ma-p8" difficulty="medium"
-        title="P8 — Cold-start dialogue (no user history)"
-        scenario={<>A brand-new user opens MACRS. The planner should...</>}
+      {/* B3 — anchor pitch */}
+      <VIS.TrapProblem id="macrs-p8" difficulty="hard"
+        title="P8 — MACRS&apos;s anchor (multi-agent sub-skill split): pitch it"
+        scenario={<><em>Discriminating insight: the anchor is &ldquo;each agent owns ONE dialogue sub-skill — preference elicitation, item proposal, justification — and a planner picks which one speaks.&rdquo;</em><br/>Pick the pitch that names the anchor.</>}
         options={[
-          {key:"a", text:"Pick 'ask' first to elicit at least one preference, with a wide-net opener.", correct:true},
-          {key:"b", text:"Pick 'recommend' with most-popular items immediately."},
-          {key:"c", text:"Pick 'explain' on a placeholder item."},
-          {key:"d", text:"End the conversation."},
+          {key:"a", text:"Instead of one LLM trying to ask, recommend, and explain in the same generation, MACRS gives each sub-skill its own agent with a focused prompt, and a planner picks which agent speaks. When something regresses we know which agent caused it; single-LLM CRS gives us a black box.", correct:true},
+          {key:"b", text:"We use a bigger LLM for better recommendations."},
+          {key:"c", text:"We add retrieval to a chatbot."},
+          {key:"d", text:"We fine-tune nightly."},
         ]}
-        trap={<>(b) recommends from priors with zero personalization. (c) and (d) are absurd at turn 0.</>}
-        lens={<>Cold-start is the cleanest case FOR a CRS: you have no signal, so you ask. The asker can be templated and small. The whole point of conversational recsys is to handle this case better than one-shot retrieval.</>}
-        stretch={<>How would you design the first asker question across diverse domains?</>}
+        trap={<>(b) capability misread. (c) RAG misread. (d) cadence misread.</>}
+        lens={<>Per-agent sub-skill is the anchor, not retrieval or scale.</>}
+        stretch={<>Name a sub-skill not in the four-agent split that could become an agent.</>}
       />
 
-      <VIS.TrapProblem
-        id="ma-p9" difficulty="hard"
-        title="P9 — Cross-agent state mismatch"
-        scenario={<>Logs show the asker logged 'user wants budget under $50' while the recommender filtered for under $200. Where is the bug most likely?</>}
+      {/* B4 not to use */}
+      <VIS.TrapProblem id="macrs-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use MACRS. Select all that apply."
+        scenario={<><em>Discriminating insight: MACRS needs multi-turn dialog AND mixed asking+recommending. It is overkill for one-shot recs, for purely structured Q&amp;A, or when there is no asking phase.</em><br/>Pick the do-not-use cases.</>}
         options={[
-          {key:"a", text:"The user-state summary passed between agents lost or mis-parsed the budget slot.", correct:true},
-          {key:"b", text:"The recommender hallucinated the budget."},
-          {key:"c", text:"The user said both numbers in different turns."},
-          {key:"d", text:"The planner is at fault."},
+          {key:"a", text:"One-shot home-page recommendation (no conversation).", correct:true},
+          {key:"b", text:"Purely structured Q&amp;A with a fixed answer set (FAQ bot).", correct:true},
+          {key:"c", text:"Domain where preferences are pre-collected at signup (no in-session asking phase).", correct:true},
+          {key:"d", text:"Travel-booking with mixed slot-fill + free-form preferences."},
+          {key:"e", text:"Pure cold-start with no dialog interface."},
         ]}
-        trap={<>(b) is possible but rarer than (a). (c) is a content issue, not an architecture bug. (d) misdirects.</>}
-        lens={<>Inter-agent state mismatch is the canonical MACRS bug. The fix is a typed user-state object with explicit slot fields, not free-form JSON or a re-summarized dialogue history. Treat the state object like a schema, not like a prompt.</>}
-        stretch={<>What schema validation would catch this at the agent boundary?</>}
+        trap={<>(d) is sweet spot. (e) generic; cold-start can still benefit if dialog is present.</>}
+        lens={<>MACRS needs both asking AND recommending in-session.</>}
+        stretch={<>If signup pre-collects preferences, what becomes of the asker?</>}
       />
 
-      <VIS.TrapProblem
-        id="ma-p10" difficulty="hard"
-        title="P10 — Explainer drift"
-        scenario={<>The explainer occasionally invents an attribute the item does not have ("wine has a citrus finish" when no notes mention citrus). What is the cleanest fix?</>}
+      {/* C1 architectural */}
+      <VIS.TrapProblem id="macrs-p10" difficulty="hard"
+        title="P10 — Why a separate planner agent? Why not let agents self-route?"
+        scenario={<><em>Discriminating insight: self-routing forces every content agent to first decide &ldquo;is it my turn?&rdquo; — recreating the original act-confusion inside each agent. A SEPARATE planner makes the decision once, with the full dialogue context.</em><br/>Why externalize?</>}
         options={[
-          {key:"a", text:"Ground the explainer on a structured attribute list extracted from the catalog; reject explanations whose claims are not in the list.", correct:true},
-          {key:"b", text:"Make the explainer smaller."},
-          {key:"c", text:"Drop the explainer."},
-          {key:"d", text:"Use a higher temperature."},
+          {key:"a", text:"Self-routing forces each content agent to spend prompt budget deciding whether to act, re-introducing act-confusion at agent level. A separate planner makes the decision once with the full dialogue state, then the chosen agent runs with full prompt budget on content.", correct:true},
+          {key:"b", text:"Self-routing is faster."},
+          {key:"c", text:"Self-routing is more accurate."},
+          {key:"d", text:"There is no functional difference."},
         ]}
-        trap={<>(b) does not fix grounding. (c) loses the trust lift from P1. (d) makes hallucination worse.</>}
-        lens={<>Hallucination in the explainer is an attribute-grounding problem. Pass the catalog row, restrict the prompt to "use only these attributes," and add a post-hoc claim-verification step. This is the same pattern as RAG-with-citation in any LLM product.</>}
-        stretch={<>What if the catalog itself is sparsely populated?</>}
+        trap={<>(b)(c)(d) miss the prompt-budget mechanism.</>}
+        lens={<>The planner is a control-plane abstraction, not a UI gimmick.</>}
+        stretch={<>What state does the planner need that content agents do not?</>}
       />
 
-      <VIS.TrapProblem
-        id="ma-p11" difficulty="medium"
-        title="P11 — When is single-LLM CRS the better pick over MACRS?"
-        scenario={<>Pick the strongest case for a monolithic LLM CRS.</>}
+      {/* C2 loss */}
+      <VIS.TrapProblem id="macrs-p11" difficulty="hard"
+        title="P11 — Training signal: how is the planner supervised?"
+        scenario={<><em>Discriminating insight: the planner learns from human-labeled act traces (turn → act) or from offline RL on dialogue success. The content agents are trained / prompted on their per-act objective.</em><br/>Pick the correct loss decomposition.</>}
         options={[
-          {key:"a", text:"A 3-turn shopping dialogue where conversation length is bounded and per-turn latency must stay under 600 ms.", correct:true},
-          {key:"b", text:"Travel planning with many slots."},
-          {key:"c", text:"Medical triage with safety constraints."},
-          {key:"d", text:"Real estate matching with a structured catalog."},
+          {key:"a", text:"Planner: act-classification loss over human-labeled dialogue traces (or offline RL with dialog-success reward). Asker / recommender / explainer: per-agent objectives (slot-coverage, ranking, faithfulness). Each agent has its own loss signal.", correct:true},
+          {key:"b", text:"All four agents share a single end-to-end loss."},
+          {key:"c", text:"Only the recommender is trained."},
+          {key:"d", text:"All agents are trained adversarially against each other."},
         ]}
-        trap={<>(b), (c), (d) all benefit from MACRS's auditability and slot control.</>}
-        lens={<>Short, low-latency, low-stakes dialogues favor monolithic LLM CRS — overhead of orchestration is not worth the marginal control. MACRS pays off when conversations are long, slots are many, or compliance matters.</>}
-        stretch={<>At what conversation length does MACRS overhead amortize?</>}
+        trap={<>(b) collapses MACRS to single-LLM. (c) ignores three agents. (d) wrong family.</>}
+        lens={<>Per-agent loss yields per-agent regression diagnostics.</>}
+        stretch={<>How does the planner&apos;s reward shape differ from HRL CRS?</>}
       />
+
+      {/* C3 dropped */}
+      <VIS.TrapProblem id="macrs-p12" difficulty="hard"
+        title="P12 — What does MACRS deliberately drop vs single-LLM CRS?"
+        scenario={<><em>Discriminating insight: MACRS drops the implicit joint-optimization of asking and recommending (no &ldquo;blended&rdquo; turn). Gain: auditability. Loss: cross-act fluidity. The paper accepts the tradeoff.</em><br/>What does MACRS forfeit?</>}
+        options={[
+          {key:"a", text:"MACRS forfeits the ability for a single utterance to BLEND asking and recommending (&ldquo;Do you prefer thrillers or comedies? If thrillers, you might like Heat&rdquo;). Each turn now does one act. The gain is per-agent debuggability and act-control.", correct:true},
+          {key:"b", text:"MACRS forfeits the use of LLMs."},
+          {key:"c", text:"MACRS forfeits retrieval."},
+          {key:"d", text:"MACRS forfeits multi-turn dialog."},
+        ]}
+        trap={<>(b)(c)(d) miss the dropped fluidity.</>}
+        lens={<>Cross-act fluidity is the deliberate sacrifice.</>}
+        stretch={<>Can the planner emit a &ldquo;hybrid&rdquo; act and call two agents in one turn?</>}
+      />
+
+      {/* C4 hyperparameter */}
+      <VIS.TrapProblem id="macrs-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: the planner&apos;s act-policy temperature dominates. Too sharp: it loops on one act (always-ASK). Too soft: it bounces between acts erratically.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"Planner act-policy temperature is most fragile; recommender LR next; explainer max-tokens least. Temperature controls how decisive the planner is per turn; mis-set causes act looping or thrash.", correct:true},
+          {key:"b", text:"Explainer max-tokens is the most fragile knob."},
+          {key:"c", text:"Recommender LR is the most fragile knob."},
+          {key:"d", text:"Asker top-k is the most fragile knob."},
+        ]}
+        trap={<>(b)(c)(d) tweak content-agent details and miss the planner.</>}
+        lens={<>The planner is the control plane; its temperature is the control gain.</>}
+        stretch={<>How would you measure act looping?</>}
+      />
+
+      {/* C5 data assumption */}
+      <VIS.TrapProblem id="macrs-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: MACRS assumes act-labeled dialogue traces are available for planner supervision. Domains without act labels must bootstrap with rules or weak supervision and inherit single-LLM confusions.</em><br/>What violation is most direct?</>}
+        options={[
+          {key:"a", text:"No act-labeled traces. The planner cannot be supervised; you must bootstrap with rules (e.g., &ldquo;if last user turn contains a question, ASK&rdquo;) or weakly supervised LLM-derived labels — which inherit the single-LLM confusions you were trying to fix.", correct:true},
+          {key:"b", text:"Off-by-one in turn indexing."},
+          {key:"c", text:"Different tokenizer."},
+          {key:"d", text:"Mismatched batch sizes."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Act labels are the planner&apos;s contract.</>}
+        stretch={<>How would you bootstrap act labels cheaply?</>}
+      />
+
+      {/* D1 intuitive but wrong */}
+      <VIS.TrapProblem id="macrs-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;four agents equals 4x latency&rdquo;"
+        scenario={<><em>Discriminating insight: per-turn, only TWO agents typically run (planner + chosen content agent). Latency is ~2x single-LLM, not 4x. The four-agent count is the design surface, not the per-turn call graph.</em><br/>Why is 4x wrong?</>}
+        options={[
+          {key:"a", text:"Per turn only the planner and one content agent run — about 2x single-LLM latency, not 4x. The four-agent figure counts agents in the SYSTEM, not calls per turn. With prompt caching the planner call is also small.", correct:true},
+          {key:"b", text:"All four agents run every turn."},
+          {key:"c", text:"Latency is unchanged."},
+          {key:"d", text:"Latency is 10x."},
+        ]}
+        trap={<>(b) the seductive misread. (c)(d) extremes.</>}
+        lens={<>Design surface is not the per-turn call graph.</>}
+        stretch={<>When would more than 2 agents run per turn?</>}
+      />
+
+      {/* D2 wrong-assumption cascade */}
+      <VIS.TrapProblem id="macrs-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: &ldquo;MACRS is just a fancy chatbot&rdquo; cascades into (i) skipping the planner (acts confuse again), (ii) merging asker+recommender prompts to save tokens (re-introduces act-confusion), (iii) evaluating only end-to-end success (loses per-agent diagnostic).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: the planner, the per-agent prompt boundaries, and the per-agent evaluation. Each is a load-bearing piece of the decomposition; remove any one and you regress toward single-LLM CRS.", correct:true},
+          {key:"b", text:"Only the planner."},
+          {key:"c", text:"Only the evaluation."},
+          {key:"d", text:"Nothing — &ldquo;fancy chatbot&rdquo; is accurate."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Planner + agent boundaries + per-agent eval are inseparable.</>}
+        stretch={<>How would you A/B test &ldquo;merge asker+recommender&rdquo; safely?</>}
+      />
+
+      {/* D3 senior vs junior */}
+      <VIS.TrapProblem id="macrs-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior debugs MACRS regressions by tuning prompts of all four agents in lockstep. A senior isolates the regressing agent first via per-agent metrics, then tunes only that one.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Isolate via per-agent metrics: planner act-accuracy, asker slot-coverage, recommender NDCG, explainer faithfulness. Tune ONLY the regressing agent. The per-agent diagnostic IS the architectural payoff of MACRS.", correct:true},
+          {key:"b", text:"Tune all four prompts in lockstep."},
+          {key:"c", text:"Switch to single-LLM CRS."},
+          {key:"d", text:"Increase model size."},
+        ]}
+        trap={<>(b)(c)(d) waste the decomposition.</>}
+        lens={<>Use the per-agent attribution; it is the whole point.</>}
+        stretch={<>What single dashboard panel best shows per-agent health?</>}
+      />
+
+      {/* D4 plausible-misattribution */}
+      <VIS.TrapProblem id="macrs-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution"
+        scenario={<><em>Discriminating insight: a drop in NDCG looks like a recommender-agent problem but is actually an asker-agent problem: under-elicited slots leave the recommender ranking against an incomplete preference. Slot-coverage drops first, NDCG drops second.</em><br/>Most likely root cause?</>}
+        options={[
+          {key:"a", text:"Asker slot-coverage dropped first; recommender NDCG follows because the recommender ranks against an incomplete preference. Fix the asker (or the planner&apos;s preference for ASK) before touching the recommender.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Recommender model degraded."},
+          {key:"d", text:"Cache invalidation."},
+        ]}
+        trap={<>(b)(d) generic. (c) seductive but downstream symptom.</>}
+        lens={<>Trace failures upstream along the planner → asker → recommender chain.</>}
+        stretch={<>What canary metric catches under-elicitation first?</>}
+      />
+
+      {/* E1 production gotcha */}
+      <VIS.TrapProblem id="macrs-p19" difficulty="hard"
+        title="P19 — Production gotcha: inter-agent latency stacking"
+        scenario={<><em>Discriminating insight: even at two agents per turn, sequential dependence (planner&apos;s output is the routing key) means latency stacks; you cannot parallelize them without speculatively running multiple content agents.</em><br/>What is the practical discipline?</>}
+        options={[
+          {key:"a", text:"Speculatively run the most likely content agent in parallel with the planner; if the planner picks differently, discard the speculative output. The planner&apos;s decision is the routing key, so without speculation latency stacks sequentially.", correct:true},
+          {key:"b", text:"Always run all four content agents in parallel and pick one."},
+          {key:"c", text:"Run the planner and content agent in parallel without speculation."},
+          {key:"d", text:"Latency stacking is not solvable; accept it."},
+        ]}
+        trap={<>(b) over-spends. (c) violates dependency. (d) defeatist.</>}
+        lens={<>Speculative execution is the standard trick under sequential dependence.</>}
+        stretch={<>What is the break-even point between speculation cost and latency savings?</>}
+      />
+
+      {/* E2 Failure on Friday */}
+      <VIS.TrapProblem id="macrs-p20" difficulty="hard"
+        title="P20 — Failure on Friday: planner stuck on ASK"
+        scenario={<><em>Discriminating insight: a routine prompt update lowered the planner&apos;s confidence threshold to switch from ASK to RECOMMEND; the system asks indefinitely. NDCG looks fine (no items are ranked) but session abandonment spikes.</em><br/>3am page: abandonment up 30%, NDCG unchanged. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Planner is looping on ASK because its switch-to-RECOMMEND threshold was lowered; the system never recommends. NDCG is unchanged because no items are ranked. Per-agent dashboards would show act-distribution shifted heavily toward ASK.", correct:true},
+          {key:"b", text:"GPU OOM."},
+          {key:"c", text:"Recommender model degraded."},
+          {key:"d", text:"Cache TTL changed."},
+        ]}
+        trap={<>(b)(c)(d) generic; do not explain &ldquo;NDCG unchanged.&rdquo;</>}
+        lens={<>Act-distribution drift is the diagnostic; planner is the suspect.</>}
+        stretch={<>What CI assertion gates planner act-distribution drift?</>}
+      />
+
+      {/* E3 implementation specifics */}
+      <VIS.TrapProblem id="macrs-p21" difficulty="medium"
+        title="P21 — Library default that bites: shared system prompt"
+        scenario={<><em>Discriminating insight: many CRS frameworks default to a single shared system prompt across all agents. This dilutes per-agent specialization — every agent inherits the global &ldquo;you are a helpful conversational recommender&rdquo; framing.</em><br/>Where does the default break MACRS?</>}
+        options={[
+          {key:"a", text:"A shared system prompt across all four agents inherits one generic role and dilutes per-agent specialization. Each MACRS agent should have its OWN system prompt naming its specific sub-skill and its output contract.", correct:true},
+          {key:"b", text:"Default temperature is wrong."},
+          {key:"c", text:"Default top-k is wrong."},
+          {key:"d", text:"Default max-tokens is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Per-agent system prompts are the specialization knob.</>}
+        stretch={<>What does each agent&apos;s system prompt name explicitly?</>}
+      />
+
+      {/* E4 rollout */}
+      <VIS.TrapProblem id="macrs-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout sequence: (1) build the planner alone and shadow-evaluate act decisions against human labels, (2) add asker + recommender behind the planner, (3) add explainer, (4) shadow-score full pipeline, (5) traffic ramp.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Planner alone → planner + asker + recommender → add explainer → shadow-score full pipeline → traffic ramp", correct:true},
+          {key:"b", text:"Build all four agents at once and ship."},
+          {key:"c", text:"Build the recommender first; add the planner last."},
+          {key:"d", text:"Ramp traffic first."},
+        ]}
+        trap={<>(b)(c)(d) lose the per-stage diagnostic.</>}
+        lens={<>Build the control plane first; layer content agents.</>}
+        stretch={<>Why planner before content?</>}
+      />
+
+      {/* F1 edge case */}
+      <VIS.TrapProblem id="macrs-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks MACRS&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: a one-turn dialog with a fully specified user query has no asking phase and no act ambiguity. MACRS&apos;s planner has nothing to decide; overhead is pure cost.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A one-turn dialog with a fully-specified user query — no asking phase, no act ambiguity. The planner&apos;s act decision is trivial (always RECOMMEND). MACRS&apos;s decomposition does not save anything; single-LLM CRS does the same work cheaper.", correct:true},
+          {key:"b", text:"Multi-turn dialog with mixed slot + free-form preferences (sweet spot, not edge case)."},
+          {key:"c", text:"Catalog of 10M items."},
+          {key:"d", text:"User base of 100M."},
+        ]}
+        trap={<>(b) sweet spot. (c)(d) describe scale.</>}
+        lens={<>MACRS needs act-decision ambiguity to pay off.</>}
+        stretch={<>How would you A/B route &ldquo;simple&rdquo; sessions to single-LLM?</>}
+      />
+
+      {/* F4 paper-named failure */}
+      <VIS.TrapProblem id="macrs-p24" difficulty="hard"
+        title="P24 — Paper-named failure: inter-agent latency and coordination bugs"
+        scenario={<><em>Discriminating insight: the paper names (i) inter-agent latency stacking and (ii) coordination bugs (planner picks an act the chosen content agent cannot fulfill). Which dominates practice?</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Coordination bugs dominate practice: the planner picks ASK, the asker returns no question (all slots filled), no recovery path. Latency is engineering-solvable via speculation/caching; coordination requires fallback policies in the planner.", correct:true},
+          {key:"b", text:"Latency dominates; coordination is rare."},
+          {key:"c", text:"Both are negligible."},
+          {key:"d", text:"Coordination bugs are a myth."},
+        ]}
+        trap={<>(b) reverses paper&apos;s finding. (c)(d) deny reality.</>}
+        lens={<>Coordination is the planner&apos;s fallback policy; latency is solvable.</>}
+        stretch={<>What fallback should the planner have when the chosen agent declines?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/html/2402.01135" target="_blank" rel="noopener">Fang et al. — <em>A Multi-Agent Conversational Recommender System</em> (arXiv 2024, paper)</a> — primary source. The act-planning ablation in section 5 is the most useful part.</li>
-        <li><a href="https://eugeneyan.com/writing/llm-patterns/" target="_blank" rel="noopener">Eugene Yan — <em>Patterns for Building LLM-based Systems</em> (blog)</a> — practitioner taxonomy of agent decomposition tradeoffs that map onto MACRS.</li>
-        <li><a href="https://arxiv.org/abs/2306.06031" target="_blank" rel="noopener">Friedman et al. — <em>Leveraging LLMs in Conversational Recommendation</em> (arXiv 2023, paper)</a> — Google paper on RecLLM; useful baseline for single-LLM CRS.</li>
-        <li><a href="https://lilianweng.github.io/posts/2023-06-23-agent/" target="_blank" rel="noopener">Lilian Weng — <em>LLM-Powered Autonomous Agents</em> (blog)</a> — why planner-controller patterns work, with deep-dive on planning failure modes.</li>
-        <li><a href="https://arxiv.org/abs/2010.04125" target="_blank" rel="noopener">Gao et al. — <em>Advances and Challenges in Conversational Recommender Systems</em> (survey, 2021)</a> — the slot-filling vs free-form dichotomy MACRS sits inside.</li>
+        <li><a href="https://arxiv.org/html/2402.01135" target="_blank" rel="noopener">Fang et al., <em>A Multi-Agent Conversational Recommender System</em> (arXiv 2402.01135, 2024)</a> — primary source for MACRS.</li>
+        <li><a href="https://lilianweng.github.io/posts/2023-06-23-agent/" target="_blank" rel="noopener">Lilian Weng — <em>LLM-Powered Autonomous Agents</em> (blog)</a> — planner / content-agent decomposition intuition.</li>
+        <li><a href="https://eugeneyan.com/writing/llm-patterns/" target="_blank" rel="noopener">Eugene Yan — <em>Patterns for Building LLM-Based Systems &amp; Products</em> (blog)</a> — practitioner framing of multi-agent vs single-LLM tradeoffs.</li>
+        <li><a href="https://arxiv.org/abs/2004.00646" target="_blank" rel="noopener">Gao et al., <em>Advances and Challenges in Conversational Recommender Systems</em> (survey, 2020)</a> — sibling CRS designs (HRL, KG-based, slot-filling).</li>
+        <li><a href="https://jalammar.github.io/illustrated-transformer/" target="_blank" rel="noopener">Jay Alammar — <em>The Illustrated Transformer</em> (blog)</a> — background on the LLMs each agent runs.</li>
       </ul>
     </VIS.Section>
   </main>
