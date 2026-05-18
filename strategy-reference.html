@@ -1435,6 +1435,45 @@ const App = () => (
       The whole strategy is one sentence: <strong>every problem must hinge on the specific concept being taught, in a scenario rich enough that the discriminating answer requires reading the brief.</strong> Recipes are not enough at the senior bar — every option in every MCQ should be defensible in <em>some</em> world; the trap is identifying which world the scenario describes.
     </VIS.TLDR>
 
+    {/* ============== Main mottos — pin to the top so they're impossible to miss ============== */}
+    <VIS.Section id="sec-mottos" title="🪧 Main mottos (these override everything else)">
+      <div style={{background:"#fef3c7", borderLeft:"6px solid #d97706", padding:"16px 20px", margin:"12px 0", borderRadius:"0 10px 10px 0"}}>
+        <h3 style={{margin:"0 0 6px", color:"#78350f", fontSize:17}}>① Only ship problems that are <em>special to this concept</em></h3>
+        <p style={{margin:"4px 0 8px"}}>
+          Every problem in a visual MUST pass the <strong>redaction litmus test (§2a)</strong>: replace the concept name (HSTU, FraudGT, conformal prediction...) with "Model X." If the candidate can still answer correctly using generic ML knowledge, the problem is <strong>concept-as-costume</strong> — rewrite to hinge on the concept's unique mechanism, OR drop. <strong>No exceptions.</strong>
+        </p>
+        <p style={{margin:"4px 0 0", color:"#78350f"}}>
+          <strong>Filler is the enemy.</strong> A 12-problem visual with every problem concept-specific beats a 30-problem visual with 15 generic-recsys fillers wearing the concept's name. Reviewers stop trusting the corpus the first time they hit a costume problem.
+        </p>
+      </div>
+
+      <div style={{background:"#dbeafe", borderLeft:"6px solid #2563eb", padding:"16px 20px", margin:"12px 0", borderRadius:"0 10px 10px 0"}}>
+        <h3 style={{margin:"0 0 6px", color:"#1e3a8a", fontSize:17}}>② Problem count = concept complexity, not a fixed number</h3>
+        <p style={{margin:"4px 0 8px"}}>
+          Range: <strong>10 to 100 problems per visual</strong>. Pick the count by how much there is genuinely to cover. Narrow technique → 10-15. Standard SOTA → 20-35. Deep concept with siblings + follow-ups + production reality → 40-60. Foundational / must-know-cold concept → up to 100. Detail in <a href="#sec-8">§8</a>.
+        </p>
+        <p style={{margin:"4px 0 0", color:"#1e3a8a"}}>
+          <strong>If a concept needs 100 problems to cover it, ship 100.</strong> Don't artificially cap for tidiness. Don't artificially pad to hit a number.
+        </p>
+      </div>
+
+      <div style={{background:"#dcfce7", borderLeft:"6px solid #16a34a", padding:"16px 20px", margin:"12px 0", borderRadius:"0 10px 10px 0"}}>
+        <h3 style={{margin:"0 0 6px", color:"#14532d", fontSize:17}}>③ Validate before pushing — always</h3>
+        <p style={{margin:"4px 0 8px"}}>
+          Before any visual ships:
+        </p>
+        <ul style={{margin:"4px 0 0 20px", color:"#14532d"}}>
+          <li>Every problem passes the redaction litmus test (motto ①)</li>
+          <li>At least 4 of the 6 taxonomy categories (A-F in <a href="#sec-8b">§8b</a>) are represented</li>
+          <li><code>see_web</code> at 1280 AND 390 (mobile) — both return <code>errors: []</code></li>
+          <li>Option lengths normalized (no length leakage)</li>
+          <li>No raw <code>&lt;N</code> JSX gotchas; no <code>{`{var}`}</code> template surprises</li>
+          <li>Every jargon term wrapped in <code>&lt;VIS.Term&gt;</code></li>
+          <li>Trap + lens + stretch revealed only after submit</li>
+        </ul>
+      </div>
+    </VIS.Section>
+
     {/* ============== 0. Canonical format reference ============== */}
     <VIS.Section id="sec-0" title="0. Canonical format reference">
       <p>
@@ -1637,14 +1676,32 @@ const App = () => (
       </VIS.Callout>
     </VIS.Section>
 
-    {/* ============== 8. Twenty problems per visual ============== */}
-    <VIS.Section id="sec-8" title="8. Twenty problems per visual (NEW floor — was 10)">
+    {/* ============== 8. Problem count = complexity, not a fixed number ============== */}
+    <VIS.Section id="sec-8" title="8. Problem count = concept complexity, NOT a fixed floor">
       <p>
-        Ten problems per visual was the prior floor. The new floor is <strong>20 problems</strong>, every one of which hinges on a different facet of the concept. This forces the author to find <em>twenty</em> concept-specific angles, which is what makes the visual genuinely deep.
+        No hard floor or ceiling. Range is <strong>10 to 100 problems per visual</strong>. Pick the count by <em>how much there is to genuinely cover</em>, not by hitting a target.
       </p>
-      <p>
-        If you can't find 20 facets that pass the <strong>redaction litmus test (§2a)</strong>, you don't have 20 problems. You have N concept-specific problems + filler. Ship fewer real problems instead.
-      </p>
+      <table style={{width:"100%", borderCollapse:"collapse", margin:"10px 0", fontSize:14}}>
+        <thead>
+          <tr style={{background:"#1f3a5f", color:"#fff"}}>
+            <th style={{padding:"8px 10px", textAlign:"left", width:"22%"}}>Problem count</th>
+            <th style={{padding:"8px 10px", textAlign:"left", width:"32%"}}>When it's the right count</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Example concept</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style={{padding:"8px 10px"}}><strong>10-15</strong></td><td style={{padding:"8px 10px"}}>Narrow technique, one architectural surface, few production gotchas. The concept simply doesn't have more facets.</td><td style={{padding:"8px 10px"}}>SMMR (sampled MMR diversity reranker), DCN-V2's specific cross-layer.</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:"8px 10px"}}><strong>20-35</strong></td><td style={{padding:"8px 10px"}}>Standard SOTA technique with clear paper claims, identifiable failure modes, and 1-2 sibling techniques to compare against.</td><td style={{padding:"8px 10px"}}>TIGER, FraudGT, conformal prediction for ranker, CARE-GNN.</td></tr>
+          <tr><td style={{padding:"8px 10px"}}><strong>40-60</strong></td><td style={{padding:"8px 10px"}}>Concept with deep mechanism + production reality + multiple sibling techniques + community-found failure modes + active research follow-ups.</td><td style={{padding:"8px 10px"}}>HSTU (architectural variant + dropped crosses + calibration delta + MTGR/OneRec follow-ups + scaling claims + speculative decoding interactions).</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:"8px 10px"}}><strong>60-100</strong></td><td style={{padding:"8px 10px"}}>Foundational concepts with broad surface — taught in many ways, attacked from many angles, prerequisite for ten other concepts. The "must-know cold" tier.</td><td style={{padding:"8px 10px"}}>Bias-variance, HSTU (if treated as the canonical generative-recs anchor), Stripe Radar v2 (the production exemplar), GADBench (the GBDT-baseline-rivals-GNN landmark).</td></tr>
+        </tbody>
+      </table>
+      <VIS.Callout kind="ok" title="The rigor rule (non-negotiable)">
+        <strong>Rigor &gt; volume.</strong> Better to ship 12 deep concept-specific problems than 30 with 15 of them being filler. Apply the §2a redaction litmus test to every problem. If it passes, keep. If not, rewrite or drop. <strong>Validate before pushing</strong> — run <code>see_web</code> at 1280 + 390 mobile widths, count <code>VIS.TrapProblem</code> instances, scan for option-length leakage, scan for <code>&lt;N</code> JSX gotchas, confirm at least 4 of the 6 taxonomy categories (A-F in §8b) are represented.
+      </VIS.Callout>
+      <VIS.Callout kind="info" title="Cover all important concepts, even if it takes 100 problems">
+        If a concept genuinely has 100 facets worth interview-bar coverage (HSTU, two-stage retrieval, Stripe Radar at the company level), do the 100. Don't artificially cap. The corpus's value is in being the place to drill the concept exhaustively, not in being skimmable. Skimmability is a §1 (rich-context) concern; depth is a §8 concern.
+      </VIS.Callout>
     </VIS.Section>
 
     {/* ============== 8b. The full question-pattern taxonomy ============== */}
