@@ -1414,249 +1414,426 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 13
+// Efficient-FedRec — federated news recommendation (Yi et al., EMNLP 2021)
+// Unique mechanism: SPLIT the recommender into a SERVER-side news encoder and
+// a CLIENT-side user encoder. The server holds the heavy text encoder (BERT-like)
+// for news titles; clients hold the small user-modelling head and the user's
+// click history. Only TITLE-EMBEDDING gradients (and a small set of user-encoder
+// params) traverse the network — not the full model and not raw clicks.
+// Anchor that survives §2a redaction: "Server trains the news encoder
+// centrally; clients train a tiny user encoder locally; the only thing federated
+// is the title-embedding gradients (and the user-encoder params)."
+// Federated trio caution: this is NEWS-SPECIFIC — news titles are NON-private
+// catalog content, so the heavy text tower can stay centralized. Privacy is
+// about user CLICK SEQUENCES, which never leave the device. Generic "federated
+// rec" averages all params; Efficient-FedRec deliberately does not.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Federated recs"
-      title="Efficient-FedRec (news recommendation)"
-      subtitle="Decouple item and user towers — train the heavy content model centrally, federate only the lightweight user model, slashing federation cost."
+      pill="RecSys SOTA · Federated recs (news)"
+      title="Efficient-FedRec — server/client split for news recommendation"
+      subtitle="The news titles are not private; the click sequences are. Train the heavy text encoder on the server with all titles in the clear; train a tiny user encoder on each device with that user's clicks. Only title-embedding gradients are federated."
       byline={[
-        {label: "Paper", value: "Yi et al., 'Efficient-FedRec' (EMNLP 2021); production extensions through 2024"},
-        {label: "Domain", value: "Text/news federated recommendation"},
+        {label: "Paper", value: "Yi et al., \"Efficient-FedRec\" (EMNLP 2021) + production-deployed extensions through 2024"},
+        {label: "Surface", value: "News / text recommendation where item content is public but user behavior is private"},
+        {label: "Anchor that survives redaction", value: "Server-side news encoder (heavy, centralized) + client-side user encoder (tiny, on-device); only title-embedding gradients cross the network"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="Efficient-FedRec: a hybrid federated recommender where the item-side content model is trained centrally on public news text and only the user-side personalization model is federated across devices.">Efficient-FedRec</VIS.Term>&apos;s key idea: news articles are public, but reading behavior is private. So put the expensive language tower in the cloud and federate only the cheap personalization head. Federation cost drops 10 to 100&times; vs full FedRec, with comparable accuracy.
+      Vanilla <VIS.Term def="Federated Recommendation. Each user&apos;s device trains a copy of the full recommendation model on local data; a server averages weights (FedAvg) and broadcasts back. Raw data never leaves the device.">FedRec</VIS.Term> federates everything: both the user model and the item model are replicated on every device, trained on local clicks, then FedAvg-aggregated. For news, that is wasteful and slow — news titles are PUBLIC catalog content, so encoding them on millions of devices duplicates work. Efficient-FedRec exploits this asymmetry: the heavy text encoder lives on the SERVER (sees all titles in the clear), and only a small user encoder lives on each DEVICE (sees that user&apos;s clicks). The only thing federated is the title-embedding gradient and the user-encoder parameters. The senior trap: this is NOT &ldquo;just federated NRMS&rdquo; — it is a deliberate ARCHITECTURAL SPLIT that is only legal because news content is non-private. The same split breaks in healthcare where the item itself (diagnosis, drug) is sensitive.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        Standard <VIS.Term def="Federated Learning: model training across many devices that each keep their data local; only model updates (gradients or weight deltas) leave the device.">federated</VIS.Term> recommendation puts the entire model on each user&apos;s device and federates every parameter. That is expensive: a news recommender contains a large text encoder (BERT-scale) for the item side, and replicating its training across millions of phones means millions of gradient broadcasts per round. Efficient-FedRec observes that news content is not private — the headlines are public — so the content tower can be trained centrally. Only the user model (which mixes the user&apos;s click history) needs to stay on-device.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  C["Cloud: news content encoder"]
-  D1["Device 1: user model + history"]
-  D2["Device 2: user model + history"]
-  DN["Device N: user model + history"]
-  E["News embeddings (broadcast)"]
-  G["Aggregated user-model gradients"]
-  C --> E
-  E --> D1
-  E --> D2
-  E --> DN
-  D1 --> G
-  D2 --> G
-  DN --> G
-  G --> C
-      `} />
-      <p>
-        Each round the server publishes the latest news embeddings to all devices; each device computes a user-model gradient using its private click history and the public news embeddings; the server aggregates only those user-model gradients (small) plus, optionally, anonymized news-embedding update signals.
-      </p>
-      <VIS.Equation display tex="\hat{y}_{u,n} = \langle f_{\theta_u}(\text{hist}_u),\; g_{\phi}(n) \rangle, \quad \theta_u\text{ federated},\; \phi\text{ central}" />
+    <VIS.Section id="sec-what" title="What it is — server holds the heavy news tower; clients hold the user tower">
+      <VIS.Mermaid chart={`flowchart TB
+  S["Server: news encoder + all news titles (public)"]
+  C1["Client 1: user encoder + click history (private)"]
+  C2["Client 2: user encoder + click history (private)"]
+  CN["... Client N"]
+  G["Title-embedding gradients only"]
+  S --> C1
+  S --> C2
+  S --> CN
+  C1 --> G
+  C2 --> G
+  CN --> G
+  G --> S`} />
+      <ul>
+        <li><strong>Server side</strong> — holds the full news catalog and the heavy text encoder (BERT-like). Computes title embeddings centrally and pushes them to clients.</li>
+        <li><strong>Client side</strong> — holds the user&apos;s click history and a small user encoder that aggregates clicked-news embeddings into a user vector. Scoring (dot product) happens on-device.</li>
+        <li><strong>Federated channel</strong> — only the gradient with respect to title embeddings (and the small user-encoder parameters) is uploaded; click sequences never leave the device.</li>
+        <li><strong>Sampled news</strong> — to bound upload size, each client only uploads gradients for the titles it actually engaged with in this round.</li>
+      </ul>
+      <p>The privacy contract: news titles are catalog content, public; click sequences are private, on-device. The split aligns the architecture with the privacy gradient.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from vanilla FedRec">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Aspect</th><th style={{textAlign:"left",padding:8}}>Vanilla FedRec</th><th style={{textAlign:"left",padding:8}}>Efficient-FedRec</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from vanilla FedRec, central NRMS, and on-device-only">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>News encoder</th>
+          <th style={{textAlign:"left", padding:8}}>User encoder</th>
+          <th style={{textAlign:"left", padding:8}}>Click data leaves device?</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Item-side training</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Federated across all devices</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Centralized on public content</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Per-round bandwidth</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>All model params</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>User model only (10 to 100&times; smaller)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Privacy of user behavior</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Protected</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Protected</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Privacy of item content</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Protected (assumed)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}><strong>NOT protected — assumed public</strong></td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Convergence speed</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Slow (large per-round comm)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Fast</td></tr>
+          <tr><td style={{padding:8}}>Central NRMS</td><td style={{padding:8}}>Server</td><td style={{padding:8}}>Server</td><td style={{padding:8}}>Yes</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Vanilla FedRec (FedAvg full model)</td><td style={{padding:8}}>Every device</td><td style={{padding:8}}>Every device</td><td style={{padding:8}}>No (but full model uploaded)</td></tr>
+          <tr><td style={{padding:8}}>On-device only</td><td style={{padding:8}}>Device</td><td style={{padding:8}}>Device</td><td style={{padding:8}}>No (no collaboration)</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>Efficient-FedRec</strong></td><td style={{padding:8}}><strong>Server (heavy)</strong></td><td style={{padding:8}}><strong>Device (tiny)</strong></td><td style={{padding:8}}><strong>No — only title gradients</strong></td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>News, blog, public-content recommendation where items are non-sensitive.</li>
-        <li>Mobile apps with strict bandwidth budgets — round size matters as much as round count.</li>
-        <li>Cases where you have a large public text corpus to pretrain the content encoder centrally before federation begins.</li>
-        <li>Production deployments aiming for daily federated updates rather than weekly batches.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Item privacy assumption.</strong> Breaks immediately if items themselves are sensitive (medical articles, health screenings, private notes).</li>
-        <li><strong>Embedding broadcast is still bandwidth.</strong> Pushing news embeddings down is small per item but multiplied across thousands of items per day.</li>
-        <li><strong>User-model staleness.</strong> If news content updates faster than user-model federation rounds, embeddings drift out of alignment.</li>
-        <li><strong>Membership inference.</strong> Even with user data local, the gradient updates can leak whether a specific article was clicked unless DP noise is added.</li>
-        <li><strong>Cold-start users.</strong> A new device has no history; the user model is degenerate until enough clicks accrue.</li>
-      </ul>
-      <VIS.Callout kind="gotcha" title="The 'item content is public' trap">
-        Efficient-FedRec works in news because headlines and bodies are non-private. The moment you point this architecture at a domain where items themselves are sensitive — e.g., a federated recommender for mental-health resources, where the article topic reveals a diagnosis — the central content tower becomes the privacy hole. The architecture has no remedy for this without adding item-side DP or moving the content encoder back on-device.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="ef-p1" difficulty="hard"
-        title="P1 — What is the implicit privacy assumption that breaks for health recs?"
-        scenario={<>You deploy Efficient-FedRec for a federated health-article recommender. The central content tower trains on the article corpus. Why is this a privacy failure even though user clicks never leave the device?</>}
+      <VIS.TrapProblem id="efr-p1" difficulty="hard"
+        title="P1 — Efficient-FedRec vs vanilla FedRec: what is the load-bearing difference?"
+        scenario={<><em>Discriminating insight: vanilla FedRec replicates the FULL model (news encoder + user encoder) on every device and FedAvg-aggregates everything. Efficient-FedRec keeps the heavy news encoder centralized because news content is non-private; only the small user encoder and title-embedding gradients are federated.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"The architecture assumes items themselves are public; for health, the article topics being recommended can reveal a user&apos;s condition even if clicks are local, because the candidate set served to each device is observable to the server.", correct:true},
-          {key:"b", text:"User clicks leak through gradient updates."},
-          {key:"c", text:"The server can read the device&apos;s click log directly."},
-          {key:"d", text:"Federated learning is not really federated in this case."},
+          {key:"a", text:"Efficient-FedRec keeps the heavy news encoder centrally on the server (legal because news titles are public catalog content) and only federates the small user encoder + title-embedding gradients. Vanilla FedRec replicates the full model on every device, paying full encoding cost and full upload bandwidth per round.", correct:true},
+          {key:"b", text:"They are equivalent."},
+          {key:"c", text:"Efficient-FedRec is a special case of vanilla FedRec with smaller batch sizes."},
+          {key:"d", text:"They differ only in the optimizer."},
         ]}
-        trap={<>(b) is a separate, real concern but not the architecture-specific failure. (c)(d) misrepresent the design.</>}
-        lens={<>Efficient-FedRec&apos;s split says: items public, user behavior private. In health, items ARE private — being shown an article on bipolar disorder is itself a signal. The server learns which candidate set each device receives, which functions as a side-channel. The architecture cannot patch this; the fix is to push the content encoder back on-device or to use private information retrieval for candidates.</>}
-        stretch={<>How would you redesign Efficient-FedRec for medical content?</>}
+        trap={<>(b)(c)(d) collapse the architectural split.</>}
+        lens={<>The split is legal only because news content is public; that is the load-bearing asymmetry.</>}
+        stretch={<>What is the upload bandwidth ratio Efficient-FedRec vs vanilla FedRec per round?</>}
       />
 
-      <VIS.TrapProblem
-        id="ef-p2" difficulty="medium" multiSelect
-        title="P2 — Where does Efficient-FedRec save cost?"
-        scenario={<>Pick the components whose cost is reduced vs vanilla FedRec.</>}
+      <VIS.TrapProblem id="efr-p2" difficulty="hard"
+        title="P2 — Efficient-FedRec vs central NRMS: what does federation buy?"
+        scenario={<><em>Discriminating insight: central NRMS sees raw click sequences in the clear on the server — a privacy violation under news-tracking regulations and a single point of breach. Efficient-FedRec keeps click sequences on-device; only the title-embedding gradient (an aggregate signal across many clicks) crosses the network.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Per-round upload bandwidth (only user-model gradients).", correct:true},
-          {key:"b", text:"Compute on each device (no large content encoder forward/backward).", correct:true},
-          {key:"c", text:"Battery use during training rounds.", correct:true},
-          {key:"d", text:"Cloud storage of user click history."},
-          {key:"e", text:"Number of distinct items in the catalog."},
+          {key:"a", text:"Privacy. Central NRMS sees raw click sequences in plain text on the server (single breach point, regulatory exposure). Efficient-FedRec keeps click sequences on-device and only crosses title-embedding gradients — an aggregate signal that is harder to invert into individual user behavior.", correct:true},
+          {key:"b", text:"Latency — federation is faster."},
+          {key:"c", text:"Cost — federation is cheaper."},
+          {key:"d", text:"Nothing — they are equivalent."},
         ]}
-        trap={<>(d) is wrong — user data still stays local in both designs. (e) is unrelated.</>}
-        lens={<>The savings concentrate on the device: smaller upload, lighter forward/backward, less battery. Cloud-side, the content encoder still trains on the public corpus at whatever cost a centralized model would have. The catalog size is unchanged.</>}
-        stretch={<>What is the upload size ratio between the two designs for a BERT-base content encoder?</>}
+        trap={<>(b)(c) wrong axis. (d) denies the contract.</>}
+        lens={<>The federation buys per-user data containment; news content remains shared.</>}
+        stretch={<>What attacks can still recover click history from title-embedding gradients?</>}
       />
 
-      <VIS.TrapProblem
-        id="ef-p3" difficulty="hard"
-        title="P3 — Debugging staleness between news embeddings and user model"
-        scenario={<>Devices get fresh news embeddings every hour but the user model federates once per day. Engagement drops on breaking-news clusters. Most likely cause?</>}
+      <VIS.TrapProblem id="efr-p3" difficulty="medium"
+        title="P3 — Without Efficient-FedRec, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: fallbacks are (i) central NRMS — best recall, worst privacy; (ii) vanilla FedRec — full privacy, expensive bandwidth and on-device compute; (iii) on-device-only — full privacy, no collaboration, weak cold-start; (iv) DP-SGD on central — adds noise but does not move data. Efficient-FedRec is the news-specific sweet spot.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"User-model parameters were trained against older embeddings; the new embeddings live in a slightly drifted space, and the score function is mis-aligned for fresh items.", correct:true},
-          {key:"b", text:"The new embeddings are corrupted."},
-          {key:"c", text:"Breaking news is inherently un-recommendable."},
-          {key:"d", text:"Battery throttling on devices."},
+          {key:"a", text:"Central NRMS (best recall, click data in the clear), vanilla FedRec (full privacy, full bandwidth), on-device-only (full privacy, no collaboration), or DP-SGD on central (noise but still central data). Efficient-FedRec is the news-specific sweet spot because the heavy news tower can legally stay central.", correct:true},
+          {key:"b", text:"Random retrieval is at parity."},
+          {key:"c", text:"Skip the recommendation."},
+          {key:"d", text:"FAQ replacement."},
         ]}
-        trap={<>(b)(c)(d) miss the embedding/model version-mismatch root cause.</>}
-        lens={<>The user model implicitly fits a particular representation of the content encoder. When the encoder updates faster than the federation round, the dot-product alignment degrades. Fix: either federate the user model more often, freeze content embeddings between user-model rounds, or train the user model with a robustness penalty for small encoder perturbations.</>}
-        stretch={<>What metric would you log to detect this mis-alignment early?</>}
+        trap={<>(b)(c)(d) under-shoot the surface.</>}
+        lens={<>Efficient-FedRec sits at the privacy/bandwidth sweet spot for news.</>}
+        stretch={<>What recall gap to central NRMS is typical?</>}
       />
 
-      <VIS.TrapProblem
-        id="ef-p4" difficulty="hard" multiSelect
-        title="P4 — Privacy attacks that still threaten Efficient-FedRec"
-        scenario={<>Which attacks remain effective against Efficient-FedRec even though user histories never leave the device?</>}
+      <VIS.TrapProblem id="efr-p4" difficulty="hard"
+        title="P4 — Compose Efficient-FedRec with DP noise on uploaded gradients"
+        scenario={<><em>Discriminating insight: even title-embedding gradients leak some click signal (which titles a user engaged with). Adding DP noise to the gradient upload bounds this leakage at the cost of utility. The two are compatible: Efficient-FedRec shrinks the surface; DP-noise on top quantifies the residual.</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"Gradient-inversion / membership-inference on user-model updates.", correct:true},
-          {key:"b", text:"Side-channel through which candidate set is served to which device.", correct:true},
-          {key:"c", text:"Timing of click events leaking through up-link patterns.", correct:true},
-          {key:"d", text:"Reading the raw click log from the device."},
-          {key:"e", text:"Centralizing news content."},
+          {key:"a", text:"Efficient-FedRec already restricts what crosses the wire to title-embedding gradients; DP-SGD adds calibrated noise to those gradients to give a formal (epsilon, delta) bound on per-user click inference. Compatible — architectural shrink + formal noise = stronger guarantee than either alone.", correct:true},
+          {key:"b", text:"They cannot coexist."},
+          {key:"c", text:"DP makes the architecture irrelevant."},
+          {key:"d", text:"DP must be applied centrally only."},
         ]}
-        trap={<>(d) is by definition impossible if federation is implemented correctly. (e) is the design choice, not an attack.</>}
-        lens={<>The federation primitive protects only the click log itself. Gradients still leak under inversion attacks; the candidate set served to a device is a server-observable side-channel; up-link timing can correlate with user activity. Mitigations: DP noise on user-model gradients, oblivious candidate retrieval, batching uploads at fixed cadence.</>}
-        stretch={<>What is the minimum DP epsilon to protect against gradient inversion in this setup?</>}
+        trap={<>(b)(c)(d) deny composition.</>}
+        lens={<>Architectural privacy (split) + formal privacy (DP noise) are orthogonal layers.</>}
+        stretch={<>What epsilon is realistic for Efficient-FedRec + DP-SGD without recall collapse?</>}
       />
 
-      <VIS.TrapProblem
-        id="ef-p5" difficulty="medium"
-        title="P5 — Why pre-train the content encoder centrally?"
-        scenario={<>The paper recommends pre-training the news content encoder on a public corpus BEFORE federation starts. Why?</>}
+      <VIS.TrapProblem id="efr-p5" difficulty="medium"
+        title="P5 — When does the server/client split STOP being legal?"
+        scenario={<><em>Discriminating insight: the split assumes ITEM content is non-private. For news titles this holds. For HEALTH recommendations (the item is a diagnosis or a drug) the item itself reveals user state — placing it on the server breaks the privacy story. Efficient-FedRec is genuinely news-specific.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"A pre-trained encoder gives stable embeddings on day one, so the user model has a meaningful target before federation rounds accumulate.", correct:true},
-          {key:"b", text:"It is required by FedAvg."},
-          {key:"c", text:"It eliminates the need for federated rounds entirely."},
-          {key:"d", text:"It satisfies a regulatory requirement."},
+          {key:"a", text:"When item content is itself sensitive — health (diagnosis, drug), financial products (loan terms), or any context where merely seeing which item the system surfaced to a user reveals private user state. The server-side item tower becomes a privacy violation, not a privacy enabler.", correct:true},
+          {key:"b", text:"Efficient-FedRec always works."},
+          {key:"c", text:"Efficient-FedRec only works for movies."},
+          {key:"d", text:"Item privacy is irrelevant to recsys."},
         ]}
-        trap={<>(b)(c)(d) are false.</>}
-        lens={<>The user model is trained against the content embeddings. If those embeddings are themselves changing rapidly at the start of federation, the user model never gets a stable target. Pre-training the content encoder on public news (or transfer-learning from a general LM) gives a warm-start that accelerates joint convergence.</>}
-        stretch={<>What public corpora would you use to pre-train a news encoder?</>}
+        trap={<>(b)(c)(d) miss the item-privacy precondition.</>}
+        lens={<>The split exploits a specific privacy gradient (private user, public item) — if items are private too, the split is illegal.</>}
+        stretch={<>How does this map to healthcare federated rec architectures?</>}
       />
 
-      <VIS.TrapProblem
-        id="ef-p6" difficulty="hard"
-        title="P6 — Cold-start users in Efficient-FedRec"
-        scenario={<>A new device has zero click history. The on-device user model is degenerate. How do you bootstrap?</>}
+      <VIS.TrapProblem id="efr-p6" difficulty="hard"
+        title="P6 — Pick the architecture"
+        scenario={<><em>Discriminating insight: a regional news aggregator with 50M devices, GDPR-strict region, and tight mobile data budgets. News titles are public; click sequences cannot leave the device. Vanilla FedRec exceeds mobile bandwidth; central NRMS violates GDPR; on-device-only loses collaborative signal. Efficient-FedRec is purpose-built.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Serve a popularity-based or trend-based candidate set until the user has enough clicks for the on-device user model to specialize, then switch to personalized scoring.", correct:true},
-          {key:"b", text:"Synchronously train the user model on a public user&apos;s history."},
-          {key:"c", text:"Skip the user model and use only the content encoder."},
-          {key:"d", text:"Refuse to recommend anything until 100 clicks accrue."},
+          {key:"a", text:"Efficient-FedRec — server holds the heavy news encoder (cheap because titles are public); clients hold the tiny user encoder and click history; only title-embedding gradients (a few KB per round) traverse the network. Hits the GDPR constraint AND the bandwidth budget.", correct:true},
+          {key:"b", text:"Central NRMS — violates GDPR."},
+          {key:"c", text:"Vanilla FedRec — exceeds mobile bandwidth."},
+          {key:"d", text:"On-device-only — loses collaborative signal."},
         ]}
-        trap={<>(b) leaks public user data; (c) gives zero personalization; (d) is hostile UX.</>}
-        lens={<>Cold start in federation is the same as cold start anywhere: fall back to a non-personalized signal (popularity, trend, geo) and switch to personalized once enough on-device signal accrues. Some implementations also distill a generic user-model prior centrally and ship it as initialization.</>}
-        stretch={<>How would you A/B test the cold-start handoff point?</>}
+        trap={<>(b) regulation. (c) bandwidth. (d) recall.</>}
+        lens={<>News + GDPR + mobile bandwidth = Efficient-FedRec.</>}
+        stretch={<>What changes if the carrier offers free federated-learning bandwidth?</>}
       />
 
-      <VIS.TrapProblem
-        id="ef-p7" difficulty="medium"
-        title="P7 — Why is the user model 'cheap' but content model 'expensive'?"
-        scenario={<>What architectural fact makes the user side cheap to federate?</>}
+      <VIS.TrapProblem id="efr-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just hash-anonymize click history and send to the server&rdquo;"
+        scenario={<><em>Discriminating insight: hashing news IDs is reversible if the attacker knows the catalog (which is public). Hashed click sequences are pseudonymized, not anonymized; the news ID space is small enough to brute-force hashes per article. Efficient-FedRec avoids this by never sending the sequence at all.</em><br/>Why is &ldquo;hash-anonymize&rdquo; insufficient?</>}
         options={[
-          {key:"a", text:"User models are typically lightweight attention/pooling over a fixed-length history, while content encoders are large language models with hundreds of millions of params.", correct:true},
-          {key:"b", text:"The user model has no parameters."},
-          {key:"c", text:"User histories are tiny compared to article corpora."},
-          {key:"d", text:"User models are quantized to 1 bit."},
+          {key:"a", text:"Hashing news IDs is reversible: the news catalog is public, so the attacker hashes every catalog ID and joins to the uploaded hashes. Pseudonymization, not anonymization. Efficient-FedRec sidesteps the problem by keeping click sequences on-device entirely.", correct:true},
+          {key:"b", text:"Hashing is mathematically equivalent to federation."},
+          {key:"c", text:"Hashes always provide cryptographic privacy."},
+          {key:"d", text:"Hashing is preferred to federation."},
         ]}
-        trap={<>(b) is false. (c)(d) are unrelated.</>}
-        lens={<>The user model is a function over the user&apos;s clicked-item embeddings — pooling, attention, or a small MLP. It might be 1 to 10M parameters. The content encoder is a BERT-class transformer at 100M+ parameters. Federating the smaller side is dramatically cheaper.</>}
-        stretch={<>What is the typical FLOP ratio between the two towers in news recsys?</>}
+        trap={<>(b)(c)(d) misread hash privacy.</>}
+        lens={<>Hashing a small public-key space is brute-forceable; click sequences must not be uploaded.</>}
+        stretch={<>What would salted-hash buy here, and what would it cost?</>}
       />
 
-      <VIS.TrapProblem
-        id="ef-p8" difficulty="hard" mode="ordered"
-        title="P8 — Deployment sequence for Efficient-FedRec"
-        scenario={<>Order the steps to deploy Efficient-FedRec in production. Wrong moves unranked.</>}
+      <VIS.TrapProblem id="efr-p8" difficulty="hard"
+        title="P8 — Efficient-FedRec anchor (server news tower + client user tower + title-gradient-only upload): pitch it"
+        scenario={<><em>Discriminating insight: the anchor is &ldquo;heavy news encoder on the server, tiny user encoder on the client, only title-embedding gradients federated.&rdquo; The pitch must name all three: where the news tower lives, where the user tower lives, and what crosses the wire.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Pre-train the content encoder on a public news corpus.", order:1},
-          {key:"b", text:"Define the user-model architecture; small attention or pooling over history.", order:2},
-          {key:"c", text:"Push initial content embeddings + user-model init to all devices.", order:3},
-          {key:"d", text:"Begin federated rounds: aggregate user-model gradients, refresh content embeddings.", order:4},
-          {key:"e", text:"Skip the DP noise; gradient inversion attacks are theoretical."},
-          {key:"f", text:"Monitor per-device drift and re-init or retrain user models that diverge.", order:5},
+          {key:"a", text:"The heavy news encoder lives on the server with the public catalog. A tiny user encoder lives on each device with that user&apos;s click history. The only thing federated is the gradient with respect to title embeddings (and the small user-encoder params). Click sequences never leave the device; the server never sees individual user behavior.", correct:true},
+          {key:"b", text:"We FedAvg the whole model."},
+          {key:"c", text:"We send hashed click sequences centrally."},
+          {key:"d", text:"We do not collaborate across users."},
         ]}
-        trap={<>(e) is the classic ignore-the-paper-attack-section mistake; gradient inversion is well-demonstrated in practice.</>}
-        lens={<>Sequence: pre-train, define small user model, push warm-start, federate rounds with DP, monitor drift. Skipping DP and assuming gradients are safe is a real shipping mistake; the attack is documented in the FedSGD literature.</>}
-        stretch={<>What metric tells you a per-device user model is diverging?</>}
+        trap={<>(b) vanilla FedRec. (c) pseudonymization. (d) on-device-only.</>}
+        lens={<>News tower server-side, user tower client-side, gradients only — all three.</>}
+        stretch={<>Which of the three pieces is hardest to engineer well?</>}
       />
 
-      <VIS.TrapProblem
-        id="ef-p9" difficulty="medium" multiSelect
-        title="P9 — Which domains fit Efficient-FedRec well?"
-        scenario={<>Select the domains where the &apos;item is public&apos; assumption holds and Efficient-FedRec is a good fit.</>}
+      <VIS.TrapProblem id="efr-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use Efficient-FedRec. Select all that apply."
+        scenario={<><em>Discriminating insight: Efficient-FedRec needs (i) non-private item content, (ii) a clearly private user signal worth federating, (iii) catalog small enough that per-round title sampling makes sense. It is wrong for health/finance items, for fully public usage, or for catalogs so large that title-gradient uploads explode.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"News article recommendation.", correct:true},
-          {key:"b", text:"Public blog or article recommendation.", correct:true},
-          {key:"c", text:"Open-catalog music streaming (public artist/track metadata).", correct:true},
-          {key:"d", text:"Mental-health resource recommendation."},
-          {key:"e", text:"Personal-notes search within a private workspace."},
+          {key:"a", text:"Healthcare recsys where the item itself (diagnosis, drug) is private — placing it on the server defeats the privacy goal.", correct:true},
+          {key:"b", text:"Fully public usage logs (no privacy need) — central NRMS is simpler and equivalent.", correct:true},
+          {key:"c", text:"Mobile news app with 50M users, GDPR region, mobile bandwidth (sweet spot)."},
+          {key:"d", text:"Long-tail catalog of 10^9 items where per-round title-gradient uploads explode — need sampling/sketching first.", correct:true},
+          {key:"e", text:"Adversarial setting where the server is fully compromised — the split alone is not enough, need DP on top.", correct:true},
         ]}
-        trap={<>(d)(e) violate the item-public assumption.</>}
-        lens={<>The assumption that item content is public is what unlocks the central content encoder. News, public blogs, and open-catalog media fit. Mental health and private workspaces do not — the candidate set itself reveals user state and the architecture leaks via the server&apos;s view of which items it serves to whom.</>}
-        stretch={<>How would you adapt Efficient-FedRec for a mixed-sensitivity catalog (some public, some private items)?</>}
+        trap={<>(c) is sweet spot.</>}
+        lens={<>Item privacy + user privacy + catalog tractability gate Efficient-FedRec.</>}
+        stretch={<>What sketching makes 10^9-item catalogs tractable?</>}
       />
 
-      <VIS.TrapProblem
-        id="ef-p10" difficulty="hard"
-        title="P10 — Comparing communication cost to vanilla FedRec"
-        scenario={<>Vanilla FedRec uploads ~400MB per device per round (full content encoder + user model). Efficient-FedRec uploads ~4MB. What is the dominant remaining cost?</>}
+      <VIS.TrapProblem id="efr-p10" difficulty="hard"
+        title="P10 — Why must the news encoder stay on the server, not be cached client-side?"
+        scenario={<><em>Discriminating insight: caching the news encoder on every client (so clients can encode titles locally) DUPLICATES the heavy work across N devices and bloats the on-device app. The server-side encoder is the entire engineering win — clients only need to look up title embeddings, not compute them. Also it means a single encoder update reaches all users instantly.</em><br/>Why server-side?</>}
         options={[
-          {key:"a", text:"The DOWNLINK — pushing fresh content embeddings to every device, since the catalog churns daily.", correct:true},
-          {key:"b", text:"Storage on device."},
-          {key:"c", text:"Encryption overhead on the gradient upload."},
-          {key:"d", text:"Compute on the cloud aggregator."},
+          {key:"a", text:"Caching the heavy encoder on each device duplicates the BERT-size computation across millions of clients (wasted compute, large app binary). Server-side encoding lets the heavy work happen once per title, with embeddings pushed down to clients. Encoder updates also propagate instantly.", correct:true},
+          {key:"b", text:"Client-side encoding is mathematically equivalent."},
+          {key:"c", text:"Client-side encoding is more private."},
+          {key:"d", text:"There is no difference."},
         ]}
-        trap={<>(b)(c)(d) are real but not dominant in this regime.</>}
-        lens={<>Once uplink shrinks 100&times;, downlink becomes the bottleneck — especially in news where the catalog turns over daily. Mitigations: ship only candidate-set embeddings per device based on coarse personalization, or use compressed/quantized embeddings on the wire.</>}
-        stretch={<>How would you design a personalized downlink that does not leak user state to the server?</>}
+        trap={<>(b)(c)(d) miss the duplication cost.</>}
+        lens={<>Server-side encoder amortizes the heavy compute once per title.</>}
+        stretch={<>What client-side caching of title embeddings makes sense for offline use?</>}
       />
+
+      <VIS.TrapProblem id="efr-p11" difficulty="hard"
+        title="P11 — Loss composition under the split"
+        scenario={<><em>Discriminating insight: the loss is contrastive (positive = clicked title, negatives = sampled non-clicked from current session) computed ENTIRELY on-device, using server-supplied title embeddings. The gradient with respect to title embeddings is what is uploaded; user-encoder params are updated locally and synced via FedAvg over the small user encoder.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Contrastive loss between user vector and clicked title (positive) vs sampled non-clicked titles (negatives) — all computed on-device using server-supplied title embeddings. Title-embedding gradients are uploaded; user-encoder params are FedAvg-aggregated. Click sequences never leave the device.", correct:true},
+          {key:"b", text:"Pointwise CE on raw click sequences uploaded to the server."},
+          {key:"c", text:"Server-only loss with no client computation."},
+          {key:"d", text:"Adversarial loss between server and clients."},
+        ]}
+        trap={<>(b) violates the split. (c)(d) misread.</>}
+        lens={<>Loss runs on-device against server-supplied title embeddings; gradients to titles are uploaded.</>}
+        stretch={<>How are negatives sampled on a device with limited memory?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p12" difficulty="hard"
+        title="P12 — What does Efficient-FedRec deliberately drop vs central NRMS?"
+        scenario={<><em>Discriminating insight: central NRMS can perform global hard-negative mining across all users (e.g., titles that look similar across the population). Efficient-FedRec cannot — each device only sees its own positives and a sampled local negative pool. Some collaborative-filtering signal is lost.</em><br/>What does it forfeit?</>}
+        options={[
+          {key:"a", text:"Global hard-negative mining and full cross-user collaborative signal. Each device only has its own session; the server cannot mine hard negatives across users without seeing their clicks. Efficient-FedRec trades some recall for the privacy contract.", correct:true},
+          {key:"b", text:"Efficient-FedRec forfeits the news encoder."},
+          {key:"c", text:"Efficient-FedRec forfeits the user encoder."},
+          {key:"d", text:"Efficient-FedRec forfeits gradients."},
+        ]}
+        trap={<>(b)(c)(d) miss the dropped property.</>}
+        lens={<>Global hard-negative mining is the privacy cost.</>}
+        stretch={<>What partial hard-negative mining is privacy-safe?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: per-round client sampling rate dominates. Too low: title-gradient signal is too sparse to update the server-side encoder; too high: bandwidth budget breaks. User-encoder learning rate and per-device negative count come next; FedAvg round count last.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"Per-round client sampling rate is most fragile (gradient signal vs bandwidth tradeoff); user-encoder LR (drift across clients with non-IID data) next; negative count per device (recall) after; FedAvg round count last.", correct:true},
+          {key:"b", text:"FedAvg round count is most fragile."},
+          {key:"c", text:"News encoder depth is most fragile."},
+          {key:"d", text:"Batch size is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) miss the sampling-rate dynamic.</>}
+        lens={<>Sampling rate trades gradient signal against bandwidth.</>}
+        stretch={<>How would you auto-tune sampling per device class?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: Efficient-FedRec assumes click streams are non-IID (each user has a personal taste) but the news encoder is shared. If clicks are HIGHLY non-IID and clusters of users are correlated geographically, the title-gradient signal averages out genuine local interest. The user encoder must carry the personalization.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Strong client clustering (e.g., regional taste blocks). Title-gradient signal averages over the mix; the global news encoder learns a flatter mean. Mitigation: per-cluster news heads or stronger client personalization layers on top of the global encoder.", correct:true},
+          {key:"b", text:"Off-by-one in click timestamps."},
+          {key:"c", text:"Tokenizer mismatch."},
+          {key:"d", text:"Wrong batch size."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Strong clustering averages out local taste in the global encoder.</>}
+        stretch={<>How does the user encoder carry personalization?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;the server still sees user clicks via gradients&rdquo;"
+        scenario={<><em>Discriminating insight: title-embedding gradients are AGGREGATE signals — they tell the server &ldquo;these titles got more positive gradient this round across the cohort&rdquo;, not which user clicked what. Without DP, gradient inversion attacks can recover bits — but the surface is dramatically narrower than uploading raw clicks. Add DP and it shrinks further.</em><br/>Why is &ldquo;the server still sees clicks&rdquo; an overstatement?</>}
+        options={[
+          {key:"a", text:"Title-embedding gradients are aggregate per round across many users; without DP, gradient-inversion attacks recover SOME bits but the signal is far narrower than uploading raw click sequences. With DP-noise on top, the (epsilon, delta) bound formalizes the leakage. The split shrinks the surface; DP quantifies what is left.", correct:true},
+          {key:"b", text:"The server reconstructs perfect click histories from gradients."},
+          {key:"c", text:"There is no privacy gain."},
+          {key:"d", text:"The split is purely cosmetic."},
+        ]}
+        trap={<>(b)(c)(d) overstate or deny the privacy gain.</>}
+        lens={<>Aggregated gradient is a much smaller attack surface than raw uploads; DP closes the residual.</>}
+        stretch={<>What inversion attacks specifically target news-title gradients?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: &ldquo;news titles are public&rdquo; cascades into (i) server-side encoder is privacy-safe (true for news, FALSE for health), (ii) title-embedding gradients are safe to upload (only true with DP for adversarial servers), (iii) per-round sampling is fine (only true if the catalog is small enough). Each assumption is news-specific.</em><br/>What breaks if the assumptions fail?</>}
+        options={[
+          {key:"a", text:"All three: server-side encoder leaks user state if items are private, gradient uploads leak bits without DP, and per-round title sampling explodes for huge catalogs. Each is news-specific; transferring Efficient-FedRec to another domain requires re-checking every assumption.", correct:true},
+          {key:"b", text:"Only the encoder placement matters."},
+          {key:"c", text:"Only the gradient upload matters."},
+          {key:"d", text:"Nothing — the architecture is universal."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Three news-specific preconditions; transferring requires re-checking all of them.</>}
+        stretch={<>Which assumption fails first in podcast recommendation?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior responds to recall regression by increasing FedAvg rounds. A senior measures the gradient SNR at the server (variance vs mean of uploaded title gradients) first. If SNR is low, clients are either too few per round or the sampling is too aggressive — different fixes than &ldquo;more rounds&rdquo;.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Measure gradient SNR at the server: per-title gradient mean vs variance across the cohort. If SNR is low, increase per-round client count OR per-client positive sampling — not just round count. Round count helps after the gradient is actually informative.", correct:true},
+          {key:"b", text:"Increase FedAvg rounds blindly."},
+          {key:"c", text:"Drop federation and go central."},
+          {key:"d", text:"Make the user encoder larger."},
+        ]}
+        trap={<>(b)(c)(d) miss the SNR diagnostic.</>}
+        lens={<>Gradient SNR is the federated-system diagnostic.</>}
+        stretch={<>What dashboard panel exposes gradient SNR per round?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: NDCG dropped after a news category was added"
+        scenario={<><em>Discriminating insight: NDCG drops 3% after adding a new category (e.g., crypto news). The server-side news encoder picks up the new titles instantly; clients still have a stale user encoder (FedAvg lags by N rounds). The user vector under-weights the new category until the user encoder catches up — symptom looks like ranking bug but cause is FedAvg latency.</em><br/>Most likely cause?</>}
+        options={[
+          {key:"a", text:"User-encoder FedAvg lag. The server-side news encoder learns the new category instantly because it sees all titles; the user encoder updates only via FedAvg rounds. Until enough rounds pass, the user vector under-weights the new category. Fix: faster user-encoder rounds for transition periods, or category-aware cold-start head.", correct:true},
+          {key:"b", text:"GPU thermal throttling on the server."},
+          {key:"c", text:"Random init seed changed."},
+          {key:"d", text:"Disk full on the server."},
+        ]}
+        trap={<>(b)(c)(d) generic infra suspects.</>}
+        lens={<>FedAvg latency on the user encoder is the federated-system-specific cause.</>}
+        stretch={<>What category-aware cold-start head bridges the FedAvg lag?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p19" difficulty="hard"
+        title="P19 — Production gotcha: title-gradient upload becomes the bandwidth bottleneck"
+        scenario={<><em>Discriminating insight: catalogs that grew from 50k to 5M titles also grew the per-round title-gradient upload by 100×. The privacy story is fine; the engineering breaks. Mitigation is per-client per-round title sampling: each client only uploads gradients for titles in its current session window.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Per-client per-round title sampling: each client only uploads gradients for the small set of titles it actually engaged with this round. Bandwidth scales with sessions, not with the global catalog. Catalog-wide aggregation happens server-side across clients.", correct:true},
+          {key:"b", text:"Send all title gradients every round."},
+          {key:"c", text:"Eliminate gradient uploads."},
+          {key:"d", text:"Move everything back to central."},
+        ]}
+        trap={<>(b)(c)(d) miss the per-session sampling.</>}
+        lens={<>Per-session title sampling bounds bandwidth with catalog growth.</>}
+        stretch={<>What sketching reduces the title-gradient payload further?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p20" difficulty="hard"
+        title="P20 — Failure on Friday: recall craters after server-side encoder upgrade"
+        scenario={<><em>Discriminating insight: the server-side news encoder was upgraded (BERT-base to BERT-large). Title embeddings now live in a higher-dim, different-distribution space. Client-side user encoders trained against the old embedding space now produce vectors that no longer align. Recall craters until user encoders catch up via FedAvg.</em><br/>3am page: recall down 25% after news-encoder upgrade. Diagnose.</>}
+        options={[
+          {key:"a", text:"News-encoder upgrade changed the embedding space dimensionality / distribution; client user encoders are still trained against the OLD space. User vectors no longer align with new title embeddings. Either reset the user encoder and re-run FedAvg, or roll back the news encoder until clients catch up.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Disk full."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Server-encoder upgrade implies user-encoder reset/migration.</>}
+        stretch={<>What runbook covers atomic news-encoder + user-encoder migration?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p21" difficulty="medium"
+        title="P21 — Library default that bites: default FedAvg aggregates ALL params"
+        scenario={<><em>Discriminating insight: many federated-learning libraries default to FedAvg over EVERY parameter the client touches. In Efficient-FedRec, the user encoder is FedAvg-aggregated but the news encoder lives on the server and gets gradient-step updates from uploaded title-grads. Mixing them in one FedAvg pool flattens both. Configure the aggregation to be split.</em><br/>Where does the default break?</>}
+        options={[
+          {key:"a", text:"Default FedAvg pools all client-touched params; the news encoder ends up averaged with user-encoder params, flattening both. Configure two aggregation channels: FedAvg over user-encoder params, gradient-accumulation over title-embedding gradients with a server-side optimizer step.", correct:true},
+          {key:"b", text:"Default LR is wrong."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>The split needs two aggregation channels, not one FedAvg pool.</>}
+        stretch={<>What does the server-side optimizer step do differently for title grads vs user-encoder params?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) central NRMS baseline for offline recall ceiling, (2) shadow-deploy server-side news encoder to a small client pool, (3) FedAvg the user encoder + title-gradient aggregation, (4) measure recall and bandwidth, (5) ramp to full population. Starting the federation before the baseline exists destroys the diagnostic.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Central NRMS baseline → shadow server-side news encoder on small client pool → enable FedAvg on user encoder + title-gradient aggregation → measure recall vs bandwidth → ramp.", correct:true},
+          {key:"b", text:"Federate first, baseline later."},
+          {key:"c", text:"Skip the shadow stage."},
+          {key:"d", text:"Ramp before measurement."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Baseline → shadow → federate → measure → ramp.</>}
+        stretch={<>What does the shadow stage specifically catch?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks the claimed advantage"
+        scenario={<><em>Discriminating insight: a single user with a uniquely diverse click pattern (e.g., a power user who reads 100 distinct categories) makes the title-gradient upload approach the full-FedAvg upload. The bandwidth saving collapses for that user. For most users with narrow interests, sampling helps; power users break the assumption.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A power user who clicks across hundreds of distinct titles per round. The per-round title-gradient upload approaches the full-FedAvg upload because the sampling step provides no compression. The bandwidth advantage collapses for that user.", correct:true},
+          {key:"b", text:"A typical user with 5–10 clicks per session (sweet spot)."},
+          {key:"c", text:"GDPR mobile region (sweet spot)."},
+          {key:"d", text:"Public news catalog (sweet spot)."},
+        ]}
+        trap={<>(b)(c)(d) sweet spots.</>}
+        lens={<>Per-user diversity bounds the bandwidth saving from sampling.</>}
+        stretch={<>What per-user cap on title-gradient upload mitigates power-user spikes?</>}
+      />
+
+      <VIS.TrapProblem id="efr-p24" difficulty="hard"
+        title="P24 — Named failure: membership inference on uploaded gradients"
+        scenario={<><em>Discriminating insight: even with the split, an attacker who controls the server can perform a membership-inference attack on uploaded title gradients — &ldquo;did this title appear in user X&apos;s gradient upload this round?&rdquo; — by comparing the gradient sign to a target. The fix is DP-noise on the gradient and/or secure aggregation.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Membership inference on uploaded title gradients: a malicious server can probe whether a given title&apos;s gradient came from a specific user. Defenses: DP-SGD on the gradient with calibrated noise, secure aggregation so the server only sees the sum across clients (not per-client gradient), or both.", correct:true},
+          {key:"b", text:"Uploaded gradients are unconditionally private."},
+          {key:"c", text:"There is no inference attack on gradients."},
+          {key:"d", text:"There are no failures."},
+        ]}
+        trap={<>(b)(c)(d) deny the well-named attack.</>}
+        lens={<>The split shrinks the surface but does not zero it; DP + secure aggregation close the residual.</>}
+        stretch={<>What aggregation protocol (SecAgg) is practical at 50M clients?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/2109.05446" target="_blank" rel="noopener">Yi, Wu, et al. — <em>Efficient-FedRec: Efficient Federated Learning Framework for Privacy-Preserving News Recommendation</em> (EMNLP 2021, paper)</a> — the canonical reference.</li>
-        <li><a href="https://federated.withgoogle.com/" target="_blank" rel="noopener">Google &mdash; <em>Federated Learning: An Online Comic</em> (blog/comic)</a> — gentle intro to FL primitives that Efficient-FedRec builds on.</li>
-        <li><a href="https://arxiv.org/abs/1912.04977" target="_blank" rel="noopener">Kairouz et al. — <em>Advances and Open Problems in Federated Learning</em> (2019, survey)</a> — taxonomy of attacks (gradient inversion, membership inference) the architecture must defend against.</li>
-        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener">Eugene Yan — <em>System Design for Discovery</em> (blog)</a> — two-tower retrieval, the model family Efficient-FedRec federates.</li>
-        <li><a href="https://www.tensorflow.org/federated" target="_blank" rel="noopener">TensorFlow Federated (docs)</a> — production framework for implementing FedAvg-style aggregation used in Efficient-FedRec.</li>
+        <li><a href="https://arxiv.org/abs/2109.05446" target="_blank" rel="noopener">Yi et al., <em>Efficient-FedRec: Efficient Federated Learning Framework for Privacy-Preserving News Recommendation</em> (EMNLP 2021)</a> — the original paper.</li>
+        <li><a href="https://arxiv.org/abs/2003.00295" target="_blank" rel="noopener">Wu et al., <em>NRMS: Neural News Recommendation with Multi-Head Self-Attention</em> (EMNLP 2019)</a> — the central news-rec baseline Efficient-FedRec federates.</li>
+        <li><a href="https://ai.googleblog.com/2017/04/federated-learning-collaborative.html" target="_blank" rel="noopener">Google AI Blog — <em>Federated Learning: Collaborative Machine Learning without Centralized Training Data</em> (blog)</a> — practitioner intro to FedAvg.</li>
+        <li><a href="https://www.cleverhans.io/privacy/2018/04/29/privacy-and-machine-learning.html" target="_blank" rel="noopener">Papernot &amp; Goodfellow — <em>Privacy and Machine Learning: Two Unexpected Allies?</em> (blog)</a> — practitioner framing for DP + federated tradeoffs.</li>
+        <li><a href="https://arxiv.org/abs/1611.04482" target="_blank" rel="noopener">Bonawitz et al., <em>Practical Secure Aggregation for Privacy-Preserving Machine Learning</em> (CCS 2017)</a> — the SecAgg protocol referenced in P24.</li>
       </ul>
     </VIS.Section>
   </main>

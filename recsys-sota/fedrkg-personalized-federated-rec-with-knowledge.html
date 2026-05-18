@@ -1414,248 +1414,428 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 13
+// FedRKG — Personalized Federated Recommendation with Knowledge Guidance
+// Unique mechanism: a SHARED global knowledge graph (item-side entities,
+// relations) acts as a SEMANTIC BRIDGE across clients that DO NOT share users.
+// Vanilla cross-client collaboration requires user overlap (or proxies of it);
+// FedRKG replaces that requirement with a public KG whose entities give
+// per-item global signal. Clients keep user embeddings LOCAL; only KG entity
+// embeddings + relation embeddings are federated.
+// Anchor that survives §2a redaction: "KG entities are the cross-client bridge
+// that replaces user-overlap; user embeddings stay strictly local; the federated
+// payload is KG embeddings, not user-model weights."
+// Federated trio caution: this is DIFFERENT from Efficient-FedRec (which keeps
+// the item tower CENTRAL and federates user-encoder + title gradients).
+// FedRKG federates the KG (item-side structural prior) and keeps user
+// embeddings LOCAL.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Federated recs"
-      title="FedRKG — Personalized Federated Rec with Knowledge Guidance"
-      subtitle="Keep user embeddings strictly local; share only a global item-side knowledge graph that fuses into each user&apos;s personalized scoring."
+      pill="RecSys SOTA · Federated recs (knowledge-guided)"
+      title="FedRKG — KG as the cross-client semantic bridge"
+      subtitle="Most federated recs assume users overlap across clients (or use a proxy). FedRKG drops that assumption: a shared knowledge graph over items supplies the cross-client structural signal. User embeddings stay strictly local; only KG entity and relation embeddings are federated."
       byline={[
-        {label: "Paper", value: "arXiv 2511.12959 (2025) — Personalized Federated Recommendation with Knowledge Guidance"},
-        {label: "Domain", value: "On-device personalization with shared item KG"},
+        {label: "Paper", value: "\"Personalized Federated Recommendation with Knowledge Guidance\" (arXiv 2511.12959, 2025)"},
+        {label: "Surface", value: "Federated recsys with disjoint user populations across clients but shareable item-side knowledge"},
+        {label: "Anchor that survives redaction", value: "KG entity / relation embeddings = federated payload (cross-client bridge); user embeddings = strictly local; no user-overlap assumption"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="FedRKG: a federated recommender that averages only an item-side knowledge graph encoder across devices, while keeping each user&apos;s personalized embeddings strictly on-device.">FedRKG</VIS.Term> separates what is sharable (item-side structural knowledge) from what must stay personal (user embeddings). Vanilla FedAvg destroys personalization by averaging user representations; FedRKG never touches them.
+      Vanilla <VIS.Term def="Federated Recommendation. Each client trains a local copy of the rec model on its data; a server averages weights and broadcasts. Implicitly assumes user populations are comparable (same task) and often that users overlap across clients.">FedRec</VIS.Term> implicitly leans on user overlap (or comparable user populations) to make cross-client collaboration meaningful. Many real deployments do not have that overlap — different hospitals, different banks, different regional retailers. FedRKG replaces the overlap assumption with a SHARED KNOWLEDGE GRAPH over ITEMS: every client&apos;s items map into the same KG entity space (artists, ingredients, drug classes); federating the KG entity and relation embeddings transfers structural signal across clients without ever touching user data. User embeddings stay strictly local, so personalization is preserved. The senior trap: this is NOT &ldquo;just federated GNN&rdquo; — the choice to federate the KG specifically (and to keep user embeddings local) is the load-bearing design that lets disjoint user populations collaborate.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        In standard <VIS.Term def="Federated Averaging: the standard FL algorithm where the server averages client model weights after each round of local training.">FedAvg</VIS.Term>-based recommenders, every parameter — including per-user embeddings — gets averaged across clients. That averaging is fatal for personalization: my embedding gets pulled toward your embedding, and the model collapses toward a population-mean recommender. FedRKG resolves this by partitioning parameters into two groups: <strong>shared</strong> (an item-side knowledge-graph encoder, fused with item content) and <strong>local</strong> (each user&apos;s own user embedding and personalization layer). Only the shared group federates; the local group is never uploaded.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  KG["Global item KG (shared)"]
-  E["KG encoder &phi; (federated)"]
-  U1["User 1: local embedding &theta;1"]
-  U2["User 2: local embedding &theta;2"]
-  UN["User N: local embedding &thetaN"]
-  S["Score: f(&theta;u, &phi;(i))"]
-  KG --> E
-  E --> U1
-  E --> U2
-  E --> UN
-  U1 --> S
-  U2 --> S
-  UN --> S
-      `} />
-      <VIS.Equation display tex="\hat{y}_{u,i} = \langle \theta_u,\; \phi(\text{KG}, i) \rangle, \quad \theta_u\text{ local},\; \phi\text{ federated}" />
-      <p>
-        Each round: the server publishes the latest KG encoder &phi;; each device uses it to compute item embeddings, scores its private interactions, updates BOTH &theta;<sub>u</sub> (locally, kept) and &phi; (uploaded). The server averages only the &phi; updates.
-      </p>
+    <VIS.Section id="sec-what" title="What it is — federate the KG, keep users local">
+      <VIS.Mermaid chart={`flowchart TB
+  KG["Shared global KG (items, entities, relations)"]
+  S["Server: KG embedding aggregation"]
+  C1["Client A — local users, local user embeddings"]
+  C2["Client B — local users, local user embeddings"]
+  CN["... Client N"]
+  KG --> C1
+  KG --> C2
+  KG --> CN
+  C1 --> S
+  C2 --> S
+  CN --> S
+  S --> KG`} />
+      <ul>
+        <li><strong>Shared global KG</strong> — all clients agree on the same KG schema and entity IDs (artists, ingredients, drug classes, product categories). Items at each client map into this entity space.</li>
+        <li><strong>Federated payload</strong> — only KG entity embeddings and relation embeddings are uploaded / aggregated. User embeddings and the user-side model layers stay 100% on the client.</li>
+        <li><strong>Local personalization head</strong> — each client trains a local user encoder that consumes KG-augmented item representations to score candidates.</li>
+        <li><strong>Aggregation</strong> — server averages KG embeddings (or uses a more careful entity-wise aggregator) and broadcasts the updated KG back.</li>
+      </ul>
+      <p>No user-overlap assumption is needed — clients agree on what an &ldquo;artist&rdquo; or a &ldquo;drug class&rdquo; means, not on who their users are.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from vanilla FedRec">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Aspect</th><th style={{textAlign:"left",padding:8}}>Vanilla FedRec (FedAvg)</th><th style={{textAlign:"left",padding:8}}>FedRKG</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from vanilla FedRec, Efficient-FedRec, and central KG-rec">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Cross-client bridge</th>
+          <th style={{textAlign:"left", padding:8}}>User embeddings</th>
+          <th style={{textAlign:"left", padding:8}}>User-overlap required?</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>User embeddings</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Averaged across clients</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Strictly local — never uploaded</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Item-side signal</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Averaged item embeddings</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Global KG encoder fused with content</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Personalization quality</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Degrades toward population mean</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Preserved per user</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Cold-start user</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Inherits average embedding</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Needs warm-up locally</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Knowledge source</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None explicit</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Global item KG required</td></tr>
+          <tr><td style={{padding:8}}>Vanilla FedRec (FedAvg full model)</td><td style={{padding:8}}>FedAvg over all weights</td><td style={{padding:8}}>Averaged across clients</td><td style={{padding:8}}>Implicit (same task)</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Efficient-FedRec (news)</td><td style={{padding:8}}>Server-side item tower</td><td style={{padding:8}}>Tiny, on-device, FedAvg</td><td style={{padding:8}}>No (news catalog is public)</td></tr>
+          <tr><td style={{padding:8}}>Central KG-rec (KGAT)</td><td style={{padding:8}}>Central KG + central training</td><td style={{padding:8}}>Server-side</td><td style={{padding:8}}>N/A (single-tenant)</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>FedRKG</strong></td><td style={{padding:8}}><strong>Federated KG entity / relation embeddings</strong></td><td style={{padding:8}}><strong>Strictly local — never federated</strong></td><td style={{padding:8}}><strong>No — KG entity overlap replaces user overlap</strong></td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>On-device personalization where users insist their preferences not leave their device.</li>
-        <li>Domains with a high-quality global knowledge graph: products with category/brand/attribute graphs, movies with cast/genre graphs, articles with entity/topic graphs.</li>
-        <li>Heterogeneous user populations where the average-user model is much worse than a personalized one.</li>
-        <li>Scenarios where item content alone is insufficient — KG relations add structural signal not captured by content.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>KG quality dominates.</strong> A noisy or sparse global KG limits the entire system; FedRKG cannot personalize past a weak item-side signal.</li>
-        <li><strong>Local warm-up.</strong> A fresh device has a random &theta;<sub>u</sub>; it needs several local epochs of interaction before scoring is meaningful.</li>
-        <li><strong>Gradient inversion still possible.</strong> Even though &theta;<sub>u</sub> is local, &phi; gradients uploaded from a single device can leak user-specific patterns without DP noise.</li>
-        <li><strong>KG encoder size.</strong> If &phi; is a large GNN, the federation round is still expensive — the savings come from not federating user embeddings, not from a small &phi;.</li>
-        <li><strong>Local-only updates can overfit.</strong> Without regularization, &theta;<sub>u</sub> can overfit a tiny history; needs early stopping or a prior pulled from population statistics.</li>
-      </ul>
-      <VIS.Callout kind="gotcha" title="The 'local embeddings = private' fallacy">
-        Keeping &theta;<sub>u</sub> on-device does NOT make user preferences private. The &phi; gradients each device uploads carry user-specific information: a device that clicks heavily on KG nodes related to a sensitive topic produces a gradient that pulls &phi; in a distinguishable direction. Without DP noise on the upload, a curious server can perform gradient-attribution attacks even when user embeddings never leave the device.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="frk-p1" difficulty="hard"
-        title="P1 — FedRKG keeps user embeddings local. What attack still recovers user preferences?"
-        scenario={<>You verify that &theta;<sub>u</sub> never leaves any device. A curious server still wants to learn user preferences. What attack works?</>}
+      <VIS.TrapProblem id="frkg-p1" difficulty="hard"
+        title="P1 — FedRKG vs vanilla FedRec: what is the load-bearing difference?"
+        scenario={<><em>Discriminating insight: vanilla FedRec FedAvgs the entire model (item + user). User embeddings get averaged across clients — destroying personalization when client populations are disjoint. FedRKG inverts the choice: federate the KG (cross-client signal lives in shared item entities), keep user embeddings strictly LOCAL.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Gradient-attribution on the &phi; updates: a device whose interactions emphasize certain KG nodes produces a &phi; gradient with distinguishable direction, leaking topical preferences without leaking &theta;u.", correct:true},
-          {key:"b", text:"Reading the device&apos;s local storage directly."},
-          {key:"c", text:"Recomputing &theta;u from public data."},
-          {key:"d", text:"Brute-forcing the user embedding from the recommended item list."},
+          {key:"a", text:"FedRKG federates ONLY KG entity and relation embeddings (the shared cross-client signal). User embeddings stay strictly local — never averaged. Vanilla FedRec averages everything, which destroys personalization when client user populations are disjoint and have no natural overlap.", correct:true},
+          {key:"b", text:"They are equivalent."},
+          {key:"c", text:"FedRKG averages everything including users."},
+          {key:"d", text:"They differ only in batch size."},
         ]}
-        trap={<>(b)(d) are not architecture-level attacks; (c) is impossible without user-side observations.</>}
-        lens={<>The privacy boundary in FedRKG is &theta;<sub>u</sub>, not the full gradient stream. Each upload of &Delta;&phi; from a device carries the signal of that device&apos;s loss surface. Mitigation: differentially-private gradient clipping + Gaussian noise on every &phi; upload; secure aggregation so individual &Delta;&phi; values are masked.</>}
-        stretch={<>What DP epsilon makes the gradient-attribution attack infeasible?</>}
+        trap={<>(b)(c)(d) collapse the choice of what to federate.</>}
+        lens={<>What you federate is what gets averaged; keep what should remain personal local.</>}
+        stretch={<>What does FedAvg over user embeddings DO to personalization on disjoint clients?</>}
       />
 
-      <VIS.TrapProblem
-        id="frk-p2" difficulty="medium" multiSelect
-        title="P2 — Why does vanilla FedAvg destroy personalization?"
-        scenario={<>Select the reasons FedAvg-style recommenders lose personalization.</>}
+      <VIS.TrapProblem id="frkg-p2" difficulty="hard"
+        title="P2 — FedRKG vs Efficient-FedRec: who federates what?"
+        scenario={<><em>Discriminating insight: Efficient-FedRec (news) keeps the item tower CENTRAL on the server (item content is public) and federates the small user encoder + title gradients. FedRKG federates the KG (item-side structural prior) and keeps user embeddings LOCAL on clients. Opposite axis of federation.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Averaging user embeddings pulls each user toward the population centroid.", correct:true},
-          {key:"b", text:"Variance across users is large, so the averaged model fits no individual well.", correct:true},
-          {key:"c", text:"Federation rounds erase per-user learning between rounds.", correct:true},
-          {key:"d", text:"The optimizer converges too fast."},
-          {key:"e", text:"Federation requires a centralized validation set."},
+          {key:"a", text:"Efficient-FedRec keeps the item TOWER central on the server and federates the user-encoder + title-gradients. FedRKG keeps user EMBEDDINGS local on clients and federates the KG (item-side structural prior). They federate opposite halves of the recommender.", correct:true},
+          {key:"b", text:"They both federate everything."},
+          {key:"c", text:"They are equivalent."},
+          {key:"d", text:"FedRKG is a special case of Efficient-FedRec."},
         ]}
-        trap={<>(d)(e) misattribute the failure mode.</>}
-        lens={<>FedAvg implicitly assumes parameters describe a SHARED model. Per-user parameters violate that assumption: averaging across users destroys exactly the parameter that should differ. FedRKG&apos;s split — average the shared part, leave the personal part local — is the architectural fix.</>}
-        stretch={<>Name two other algorithms (besides FedRKG) that handle personalization in FL.</>}
+        trap={<>(b)(c)(d) collapse the distinction.</>}
+        lens={<>The federation axis is the design choice; each method federates opposite halves.</>}
+        stretch={<>Can you compose them — federated KG + central item tower?</>}
       />
 
-      <VIS.TrapProblem
-        id="frk-p3" difficulty="hard"
-        title="P3 — What if the global KG is wrong?"
-        scenario={<>Your item KG mis-categorizes 15&#37; of items (mistakes a romance novel as crime fiction). FedRKG accuracy is below a baseline that ignores the KG. Why?</>}
+      <VIS.TrapProblem id="frkg-p3" difficulty="medium"
+        title="P3 — Without FedRKG, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: fallbacks for federated rec WITHOUT user overlap are (i) vanilla FedRec — averages users, kills personalization; (ii) central KG-rec — best signal, requires moving user data; (iii) local-only — full privacy, no collaboration; (iv) federated GNN over a shared item graph (no semantics) — weaker than KG-guided. FedRKG sits between central and local, exploiting the shared KG.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"&phi; propagates structural errors uniformly to every user; local &theta;u cannot override a global mis-categorization of items it has not personally seen.", correct:true},
-          {key:"b", text:"FedAvg should be used instead."},
-          {key:"c", text:"KGs always reduce accuracy."},
-          {key:"d", text:"The personalization is too aggressive."},
+          {key:"a", text:"Vanilla FedRec (kills personalization), central KG-rec (requires user data on the server), local-only (no collaboration), or federated GNN over a plain item graph (no semantic guidance). FedRKG sits between central and local by exploiting the shared KG as the cross-client bridge.", correct:true},
+          {key:"b", text:"Random recommendations at parity."},
+          {key:"c", text:"Skip recsys."},
+          {key:"d", text:"Just use BM25."},
         ]}
-        trap={<>(b)(c)(d) misdiagnose the dependence on KG quality.</>}
-        lens={<>FedRKG&apos;s value proposition rests on the KG carrying useful structural signal. A noisy KG is a propagated error: every device&apos;s scoring uses &phi;(KG, i) and inherits the categorization mistakes. Mitigations: KG cleaning, edge-confidence weighting in the GNN, or hybrid scoring that down-weights the KG branch when local signal is strong.</>}
-        stretch={<>How would you measure KG quality before committing to FedRKG?</>}
+        trap={<>(b)(c)(d) under-shoot.</>}
+        lens={<>FedRKG occupies a specific slot where users do not overlap but item knowledge does.</>}
+        stretch={<>What is the recall gap to central KG-rec on typical benchmarks?</>}
       />
 
-      <VIS.TrapProblem
-        id="frk-p4" difficulty="medium"
-        title="P4 — Cold-start user with a strong global KG"
-        scenario={<>A new device joins with zero interactions. The global KG encoder &phi; is fully trained. Recommendations are still poor. Why?</>}
+      <VIS.TrapProblem id="frkg-p4" difficulty="hard"
+        title="P4 — Compose FedRKG with on-device personalization head"
+        scenario={<><em>Discriminating insight: FedRKG already keeps user embeddings local; stacking a local personalization HEAD (e.g., a small per-user transformer over KG-augmented item embeddings) gives even tighter personalization without changing the federation contract. Both pieces remain client-side.</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"&theta;u is random at init; the scoring function dot-products against &phi;(i), so the recommendations are random projections until &theta;u accumulates local gradients from interactions.", correct:true},
-          {key:"b", text:"The KG is wrong for new users."},
-          {key:"c", text:"&phi; needs to retrain when a new user joins."},
-          {key:"d", text:"FedRKG cannot handle cold-start users."},
+          {key:"a", text:"FedRKG provides KG-augmented item representations; a local personalization head consumes them to produce a per-user score. Both stages are on-device; the federation contract (only KG embeddings cross the network) is unchanged. Stronger personalization with no extra federated payload.", correct:true},
+          {key:"b", text:"They cannot coexist."},
+          {key:"c", text:"Stacking puts user embeddings on the server."},
+          {key:"d", text:"They are mathematically identical."},
         ]}
-        trap={<>(b)(c) misattribute the issue. (d) overstates.</>}
-        lens={<>Personalization in FedRKG lives entirely in &theta;<sub>u</sub>; if &theta;<sub>u</sub> has not warmed up, the user side is uninformative. Standard cold-start mitigations apply: serve a population-prior &theta;<sub>init</sub> as warm-start, fall back to KG-popularity, or use a few interaction events to bootstrap before personalized scoring kicks in.</>}
-        stretch={<>What is a good source for the population-prior &theta;init?</>}
+        trap={<>(b)(c)(d) deny composition.</>}
+        lens={<>Personalization head is orthogonal — local in, local out.</>}
+        stretch={<>How big can the local head be on mobile without breaking the budget?</>}
       />
 
-      <VIS.TrapProblem
-        id="frk-p5" difficulty="hard" multiSelect
-        title="P5 — Production checks before shipping FedRKG"
-        scenario={<>Select the pre-deployment checks that meaningfully reduce risk.</>}
+      <VIS.TrapProblem id="frkg-p5" difficulty="medium"
+        title="P5 — When does the KG-bridge assumption STOP working?"
+        scenario={<><em>Discriminating insight: FedRKG assumes items across clients map into the SAME KG entity space. If clients have disjoint catalogs with no entity overlap (e.g., two niche regional product lines with zero shared brand/category entities), the KG carries no cross-client signal and FedRKG degenerates to local-only.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"KG quality audit: random sample of items, manual category verification.", correct:true},
-          {key:"b", text:"DP epsilon budget for &phi; updates documented and enforced.", correct:true},
-          {key:"c", text:"Cold-start onboarding flow with population-prior &theta;init.", correct:true},
-          {key:"d", text:"Per-slice nDCG: heavy users, casual users, brand-new users.", correct:true},
-          {key:"e", text:"Verifying that &theta;u never leaves any device (logging or hardware attestation)."},
+          {key:"a", text:"Catalogs with no KG entity overlap across clients (disjoint product spaces, disjoint medical entities). The shared KG carries no cross-client signal; FedRKG provides no advantage over local-only training.", correct:true},
+          {key:"b", text:"FedRKG always wins."},
+          {key:"c", text:"FedRKG works without any KG."},
+          {key:"d", text:"Entity overlap is irrelevant."},
         ]}
-        trap={<>All five are sensible. The honest answer is &quot;all&quot; — none of these are decoys. The trap is candidates who pick fewer than 5 because they don&apos;t realize each one targets a real failure documented above.</>}
-        lens={<>Real FL deployments need cross-cutting guarantees: data correctness (KG), privacy (DP + attestation), UX (cold-start), and evaluation (slice metrics). Skipping any one is a documented failure mode somewhere in production FL.</>}
-        stretch={<>Which check would you run continuously vs once before launch?</>}
+        trap={<>(b)(c)(d) miss the entity-overlap precondition.</>}
+        lens={<>FedRKG needs KG entity overlap; absent that, no bridge exists.</>}
+        stretch={<>What partial-overlap regime still helps?</>}
       />
 
-      <VIS.TrapProblem
-        id="frk-p6" difficulty="medium"
-        title="P6 — Is FedRKG &apos;model-agnostic&apos;?"
-        scenario={<>The paper calls FedRKG model-agnostic. What does that actually mean in practice?</>}
+      <VIS.TrapProblem id="frkg-p6" difficulty="hard"
+        title="P6 — Pick the architecture"
+        scenario={<><em>Discriminating insight: 3 regional hospital chains want to collaboratively recommend treatment-pathway options. Patient lists are strictly disjoint (no cross-hospital users). All hospitals use the same drug/diagnosis ontology (a shared medical KG). Patient data cannot leave the hospital. FedRKG is purpose-built — federate the KG (medical entities), keep patient embeddings local.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"The split between local user params and federated KG params is independent of the specific GNN / scoring head you plug in.", correct:true},
-          {key:"b", text:"Any neural net can be trained without any special handling."},
-          {key:"c", text:"The framework auto-detects which parameters are sensitive."},
-          {key:"d", text:"It works without any user data."},
+          {key:"a", text:"FedRKG — federate the medical KG (drug/diagnosis entities, relations) across hospitals; keep patient embeddings strictly local; the local model consumes KG-augmented item embeddings to score treatments. No user overlap needed; patient data never leaves; cross-hospital signal flows via the shared ontology.", correct:true},
+          {key:"b", text:"Central KG-rec — violates the hospital-data constraint."},
+          {key:"c", text:"Vanilla FedRec — averages patient embeddings, kills per-patient personalization."},
+          {key:"d", text:"Local-only at each hospital — no cross-hospital signal."},
         ]}
-        trap={<>(b)(c)(d) overstate the meaning of &quot;model-agnostic&quot;.</>}
-        lens={<>The model-agnostic claim is narrower: the partitioning idea — local &theta;<sub>u</sub>, federated &phi; — can wrap any item-side encoder (RGCN, KGAT, KGCN, lightweight GNNs). It does NOT mean you skip the engineering of choosing which params live where.</>}
-        stretch={<>What would break if you mis-assigned a parameter to the wrong partition?</>}
+        trap={<>(b) constraint. (c) personalization. (d) collaboration.</>}
+        lens={<>Disjoint users + shared item ontology + strict privacy = FedRKG.</>}
+        stretch={<>What governance ensures hospitals agree on the KG schema?</>}
       />
 
-      <VIS.TrapProblem
-        id="frk-p7" difficulty="hard"
-        title="P7 — Communication cost analysis"
-        scenario={<>Your &phi; (KG encoder) has 50M params; each user embedding is 64 dims. Vanilla FedAvg uploads 50M + 64 per round per device. FedRKG uploads what?</>}
+      <VIS.TrapProblem id="frkg-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just FedAvg the GNN weights on a shared item graph&rdquo;"
+        scenario={<><em>Discriminating insight: a plain item-item co-occurrence graph carries some cross-client signal but no SEMANTICS — entities are anonymous node IDs with no shared meaning. FedRKG&apos;s KG carries typed entities and typed relations (artist → performs → song), which provides far richer cross-client structure than a co-occurrence graph alone.</em><br/>Why is &ldquo;plain federated GNN&rdquo; insufficient?</>}
         options={[
-          {key:"a", text:"50M params (the &phi; encoder) — the 64-dim user embedding stays local; FedRKG saves communication only on user embeddings, which is typically a small fraction.", correct:true},
-          {key:"b", text:"64 dims per round."},
-          {key:"c", text:"Zero — nothing is uploaded."},
-          {key:"d", text:"The full 50M + 64 — same as FedAvg."},
+          {key:"a", text:"A plain item-item co-occurrence graph carries no SEMANTIC types — nodes are anonymous IDs whose meaning is not shared across clients. KG entities and relations are typed (artist, song, ingredient, drug class), giving structural priors that survive across clients with no co-occurrence overlap.", correct:true},
+          {key:"b", text:"Plain GNN is equivalent to KG-guided."},
+          {key:"c", text:"Plain GNN is always better."},
+          {key:"d", text:"There is no difference."},
         ]}
-        trap={<>(b)(c)(d) misunderstand what FedRKG actually saves.</>}
-        lens={<>FedRKG&apos;s primary value is personalization, not communication. The savings on user embeddings are real but typically small relative to the GNN size. If you need lower bandwidth, combine FedRKG with gradient compression or sparsification.</>}
-        stretch={<>How would you compress the &phi; upload to reduce per-round cost?</>}
+        trap={<>(b)(c)(d) collapse semantics.</>}
+        lens={<>Typed entities and relations carry structural priors that anonymous co-occurrence cannot.</>}
+        stretch={<>What does the type schema add over a learned embedding alone?</>}
       />
 
-      <VIS.TrapProblem
-        id="frk-p8" difficulty="hard" mode="ordered"
-        title="P8 — Deployment sequence"
-        scenario={<>Order the steps to deploy FedRKG. Wrong moves unranked.</>}
+      <VIS.TrapProblem id="frkg-p8" difficulty="hard"
+        title="P8 — FedRKG anchor (KG as cross-client bridge + user embeddings local): pitch it"
+        scenario={<><em>Discriminating insight: the anchor is &ldquo;KG entities are the cross-client bridge that replaces user overlap; user embeddings stay strictly local.&rdquo; The pitch must name both — KG-as-bridge alone is central KG-rec; users-local alone is local training.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Build / audit the global item KG.", order:1},
-          {key:"b", text:"Pre-train &phi; centrally on public KG + content.", order:2},
-          {key:"c", text:"Ship &phi; + population-prior &theta;init to all devices.", order:3},
-          {key:"d", text:"Begin federated rounds for &phi; only; clip + add DP noise on each upload.", order:4},
-          {key:"e", text:"Average user embeddings between devices to share personalization."},
-          {key:"f", text:"Monitor cold-start, KG-drift, and per-slice quality continuously.", order:5},
+          {key:"a", text:"We agree across clients on a shared item-side knowledge graph and federate its entity and relation embeddings — that is the cross-client signal channel. User embeddings and user-model layers stay strictly local on each client. Clients with disjoint user populations collaborate through the KG entities, not through their users.", correct:true},
+          {key:"b", text:"We FedAvg the entire model."},
+          {key:"c", text:"We keep the KG private to each client."},
+          {key:"d", text:"We share user embeddings across clients."},
         ]}
-        trap={<>(e) is the trap that defines the failure FedRKG specifically fixes.</>}
-        lens={<>Sequence: audit, pre-train, ship, federate (only the shared part with DP), monitor. Averaging user embeddings (e) is what vanilla FedAvg does and is exactly what FedRKG forbids.</>}
-        stretch={<>How would you partial-share user embeddings safely (e.g., cluster-level)?</>}
+        trap={<>(b)(c)(d) drop one of the two load-bearing choices.</>}
+        lens={<>KG-as-bridge AND users-local are inseparable.</>}
+        stretch={<>Which is harder to engineer: KG aggregation or local user-encoder consistency?</>}
       />
 
-      <VIS.TrapProblem
-        id="frk-p9" difficulty="medium"
-        title="P9 — Why is FedRKG considered &apos;personalized FL&apos;?"
-        scenario={<>What makes FedRKG fall under the personalized-FL umbrella rather than standard FL?</>}
+      <VIS.TrapProblem id="frkg-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use FedRKG. Select all that apply."
+        scenario={<><em>Discriminating insight: FedRKG needs (i) a high-quality, globally agreed KG, (ii) item-side KG entity overlap across clients, (iii) a privacy contract that allows central KG updates. It is wrong when no KG exists, when items are private, or when even KG aggregation is a privacy violation (some regulators).</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"It explicitly partitions parameters into shared and personal sets and only federates the shared set — preserving heterogeneity across users.", correct:true},
-          {key:"b", text:"It uses a larger learning rate."},
-          {key:"c", text:"It runs more rounds than standard FL."},
-          {key:"d", text:"It uses centralized validation."},
+          {key:"a", text:"No shared KG exists and you cannot build one (no agreed ontology across clients).", correct:true},
+          {key:"b", text:"Item content itself is private (FedRKG&apos;s KG aggregation exposes item-side structure).", correct:true},
+          {key:"c", text:"Hospitals with shared medical ontology and disjoint patient sets (sweet spot)."},
+          {key:"d", text:"Regulator forbids ANY centralized aggregation — even KG embeddings violate.", correct:true},
+          {key:"e", text:"Catalogs with zero KG entity overlap across clients.", correct:true},
         ]}
-        trap={<>(b)(c)(d) are irrelevant.</>}
-        lens={<>Personalized FL is any method that preserves per-client variation. FedRKG does so by explicit parameter partitioning — other approaches (per-FedAvg, meta-learning, multi-task FL) achieve personalization differently but share the same goal.</>}
-        stretch={<>Compare FedRKG to per-FedAvg in one sentence each.</>}
+        trap={<>(c) is sweet spot.</>}
+        lens={<>FedRKG needs a real KG, real overlap, and permissible KG aggregation.</>}
+        stretch={<>What does &ldquo;KG-as-bridge&rdquo; look like with only partial overlap?</>}
       />
 
-      <VIS.TrapProblem
-        id="frk-p10" difficulty="hard" multiSelect
-        title="P10 — Failure modes specific to FedRKG"
-        scenario={<>Select the failure modes that are FedRKG-specific (not present in vanilla FedAvg).</>}
+      <VIS.TrapProblem id="frkg-p10" difficulty="hard"
+        title="P10 — Why must user embeddings stay LOCAL, not be averaged?"
+        scenario={<><em>Discriminating insight: averaging user embeddings across disjoint client populations COLLAPSES every user toward the global mean — the opposite of personalization. The KG carries the shared structural signal; the user embedding must encode the deviation from that structure. Averaging it destroys that deviation.</em><br/>Why local?</>}
         options={[
-          {key:"a", text:"Misalignment between locally-trained &theta;u and a recently-updated &phi; (the personal embedding lives in a slightly drifted KG space).", correct:true},
-          {key:"b", text:"Cold-start users have degenerate local &theta;u that hurts personalization.", correct:true},
-          {key:"c", text:"KG noise propagates uniformly to all users via &phi;.", correct:true},
-          {key:"d", text:"Server can read user embeddings directly."},
-          {key:"e", text:"Gradient inversion on the global model."},
+          {key:"a", text:"Averaging user embeddings across disjoint client populations pulls every user toward the global mean — the exact opposite of personalization. The KG already carries the shared structural signal; user embeddings must encode each user&apos;s deviation from that shared structure, which only survives if they stay local.", correct:true},
+          {key:"b", text:"Averaging users is mathematically equivalent to keeping them local."},
+          {key:"c", text:"Averaging users is preferred."},
+          {key:"d", text:"There is no difference."},
         ]}
-        trap={<>(d) is false (the design forbids it). (e) is generic to FL, not FedRKG-specific.</>}
-        lens={<>The three FedRKG-specific failure modes: drift between &theta;<sub>u</sub> and &phi;, cold-start &theta;<sub>u</sub>, and KG noise propagation. Diagnosing each requires different tooling — version stamping, warm-up monitoring, KG audits.</>}
-        stretch={<>What logging would catch &theta;u-&phi; drift fast?</>}
+        trap={<>(b)(c)(d) miss the personalization mechanism.</>}
+        lens={<>Personalization lives in the deviation; averaging destroys deviation.</>}
+        stretch={<>What if there really is user overlap across two clients — does that change the local-only choice?</>}
       />
+
+      <VIS.TrapProblem id="frkg-p11" difficulty="hard"
+        title="P11 — Loss composition"
+        scenario={<><em>Discriminating insight: loss is local: a contrastive/BPR loss between user vector and KG-augmented item vector for clicked vs sampled items. Gradients flow into (i) local user embedding (stays local), (ii) KG entity / relation embeddings (uploaded to server). The KG-aggregation step happens server-side.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Local BPR / contrastive loss between local user vector and KG-augmented item embedding. Gradients split: user-embedding gradients stay on-device and update local users; KG-embedding gradients (entities, relations) are uploaded to the server for aggregation. Two gradient channels, one per federation contract.", correct:true},
+          {key:"b", text:"Pointwise CE with user embeddings uploaded centrally."},
+          {key:"c", text:"Adversarial loss between clients."},
+          {key:"d", text:"Server-only loss."},
+        ]}
+        trap={<>(b) violates user-local. (c)(d) misread.</>}
+        lens={<>Two gradient channels — local for users, federated for KG.</>}
+        stretch={<>What server-side optimizer is used on aggregated KG gradients?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p12" difficulty="hard"
+        title="P12 — What does FedRKG deliberately drop vs central KG-rec?"
+        scenario={<><em>Discriminating insight: central KG-rec (KGAT) can attend across users — &ldquo;users who liked X also liked Y where X and Y share a KG path.&rdquo; FedRKG cannot — each client only sees its own users, so cross-user collaborative paths within the KG are weakened. The KG itself becomes the only cross-client signal channel.</em><br/>What does it forfeit?</>}
+        options={[
+          {key:"a", text:"Cross-user collaborative paths through the KG. Central KG-rec can mine &ldquo;users who liked X also liked Y because X-shares-entity-with-Y&rdquo; across the entire user population. FedRKG only sees within-client user patterns; cross-user collaborative signal is restricted to what the KG embeddings encode globally.", correct:true},
+          {key:"b", text:"It forfeits the KG."},
+          {key:"c", text:"It forfeits gradients."},
+          {key:"d", text:"It forfeits items."},
+        ]}
+        trap={<>(b)(c)(d) miss the dropped property.</>}
+        lens={<>Cross-user KG paths are the privacy cost.</>}
+        stretch={<>What partial cross-user signal is privacy-safe in FedRKG?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: KG entity aggregation strategy dominates. Naive FedAvg over entities flattens regional differences (e.g., a drug entity behaves differently in hospital A vs hospital B); cluster-aware or attention-weighted aggregation preserves signal. Relation embedding LR comes next; local user-encoder LR last.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"KG entity aggregation strategy is most fragile (naive FedAvg flattens region-specific entity semantics); relation-embedding LR next (controls how fast typed-edge structure updates); local user-encoder LR after; FedAvg round count last.", correct:true},
+          {key:"b", text:"FedAvg round count is most fragile."},
+          {key:"c", text:"Batch size is most fragile."},
+          {key:"d", text:"Optimizer choice is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) miss the entity-aggregation choice.</>}
+        lens={<>Entity aggregation strategy is the FedRKG-specific knob.</>}
+        stretch={<>What does cluster-aware entity aggregation look like in practice?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: FedRKG assumes the KG schema is consistent across clients. If one client uses a different relation type (&ldquo;produced-by&rdquo; vs &ldquo;label-of&rdquo;) or one client mis-maps items to entities, the federated KG learns inconsistent structure. The fix is schema enforcement and entity-resolution audits.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"KG schema drift across clients: different relation names, different entity granularity, or mis-mapped items. The federated KG learns inconsistent structure because clients disagree on what an &ldquo;artist&rdquo; or a &ldquo;drug class&rdquo; is. Mitigation: schema enforcement + per-round entity-resolution audits.", correct:true},
+          {key:"b", text:"Off-by-one in entity IDs."},
+          {key:"c", text:"Tokenizer mismatch."},
+          {key:"d", text:"Batch size."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>KG schema consistency is the FedRKG-specific data contract.</>}
+        stretch={<>What governance keeps the schema synchronized across hospitals?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;the KG is just metadata — it cannot carry that much signal&rdquo;"
+        scenario={<><em>Discriminating insight: KG entity embeddings absorb POOLED signal from every client&apos;s interactions — a popular artist&apos;s embedding aggregates listening patterns across all clients. The KG is not static metadata; it is a LEARNED structural backbone whose embeddings are updated from cross-client gradients. That is where the lift comes from.</em><br/>Why is &ldquo;metadata&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"KG entity embeddings are LEARNED from cross-client interaction gradients — a popular artist&apos;s embedding aggregates listening signal from every client. The KG is a structural backbone whose embeddings update each round, not static metadata. That is where the cross-client lift originates.", correct:true},
+          {key:"b", text:"The KG is fixed metadata that does not update."},
+          {key:"c", text:"The KG has no embeddings."},
+          {key:"d", text:"The KG is purely cosmetic."},
+        ]}
+        trap={<>(b)(c)(d) deny the learning mechanism.</>}
+        lens={<>The KG is learned, not static; its embeddings carry the cross-client signal.</>}
+        stretch={<>How does TransE-style relation embedding behave under federation?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: &ldquo;FedRKG is just FedAvg with a KG&rdquo; cascades into (i) accidentally FedAvg-ing user embeddings (kills personalization), (ii) ignoring schema drift (KG semantics decohere), (iii) skipping the local personalization head (loses the deviation signal). Each is load-bearing.</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: user embeddings get averaged (personalization dies), KG schemas drift (cross-client semantics decohere), and the local personalization head is skipped (deviation signal lost). Each piece is load-bearing; remove any one and FedRKG regresses toward vanilla FedRec or local-only.", correct:true},
+          {key:"b", text:"Only the user-local choice matters."},
+          {key:"c", text:"Only the schema matters."},
+          {key:"d", text:"Nothing — FedRKG IS just FedAvg with a KG."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Three load-bearing pieces: users local, KG federated, schema enforced.</>}
+        stretch={<>What ablation table shows each piece&apos;s contribution?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior responds to recall regression by adding more KG relations. A senior measures per-entity gradient magnitude across clients first — if a few high-degree entities dominate, aggregation is collapsing the long tail; if gradients are uniform, the KG itself may be too sparse. Different fixes.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Measure per-entity gradient magnitude across clients. If high-degree entities dominate, aggregation is collapsing the long-tail entities — switch to attention-weighted or degree-corrected aggregation. If gradients are uniformly small, the KG itself is too sparse — enrich the KG before tweaking the algorithm.", correct:true},
+          {key:"b", text:"Add more relations blindly."},
+          {key:"c", text:"Drop FedRKG."},
+          {key:"d", text:"Increase the local user-encoder size."},
+        ]}
+        trap={<>(b)(c)(d) miss the per-entity gradient diagnostic.</>}
+        lens={<>Per-entity gradient distribution is the FedRKG-specific diagnostic.</>}
+        stretch={<>What dashboard panel exposes per-entity gradient health?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: NDCG dropped after a client joined"
+        scenario={<><em>Discriminating insight: a new client (region C) joined the federation. NDCG dropped 4% at the older clients. The new client&apos;s KG maps differently — it uses a finer drug-class taxonomy that splits one of the existing entities into 5 new ones. The federated aggregation now learns a flatter representation for the splits. Symptom: NDCG drop; cause: KG entity granularity drift on a new client.</em><br/>Most likely cause?</>}
+        options={[
+          {key:"a", text:"New client introduces finer KG entity granularity (one existing entity is split into 5). The federated aggregation flattens the splits because not all clients have the new entities. Old clients lose entity-specific signal. Fix: align entity granularity across all clients before joining, or use hierarchical aggregation.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Random seed changed."},
+          {key:"d", text:"Disk full."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>KG schema granularity drift is the FedRKG-specific regression vector.</>}
+        stretch={<>What hierarchical aggregator handles granularity heterogeneity?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p19" difficulty="hard"
+        title="P19 — Production gotcha: KG entity ID collisions across clients"
+        scenario={<><em>Discriminating insight: two clients used the same local entity ID (&ldquo;E_123&rdquo;) for DIFFERENT real-world entities. Federation averages two unrelated entities into one embedding, producing nonsense. The discipline: global entity IDs, namespaced, validated at the federation boundary.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Globally unique, namespaced entity IDs validated at the federation boundary. Per-client local IDs cannot be uploaded directly. A client-side ID -> global-KG-ID mapping must be enforced at every round; otherwise unrelated entities get averaged into nonsense embeddings.", correct:true},
+          {key:"b", text:"Local IDs are fine."},
+          {key:"c", text:"Skip ID validation."},
+          {key:"d", text:"Use random IDs."},
+        ]}
+        trap={<>(b)(c)(d) miss the ID-namespace discipline.</>}
+        lens={<>Global entity IDs are the federation boundary contract.</>}
+        stretch={<>What CI gate prevents ID collisions?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p20" difficulty="hard"
+        title="P20 — Failure on Friday: cold-start recall craters after KG schema update"
+        scenario={<><em>Discriminating insight: a new KG relation type was added. Client-side personalization heads were trained against the OLD KG schema and have no slot for the new relation. The KG embeddings now carry signal the local model cannot consume. Recall drops for items where the new relation is relevant — typically the long tail.</em><br/>3am page: long-tail recall down 30% after KG schema update. Diagnose.</>}
+        options={[
+          {key:"a", text:"KG schema added a new relation type; client-side personalization heads still consume the old schema and cannot route the new relation&apos;s signal. The new relation&apos;s embedding is learned but ignored downstream. Fix: schema-aware migration of the local head, rolling re-distillation, or roll back the schema update.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Disk full."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>KG schema upgrade implies local-head migration.</>}
+        stretch={<>What runbook covers schema-aware client migration?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p21" difficulty="medium"
+        title="P21 — Library default that bites: FedAvg weights entities by sample count"
+        scenario={<><em>Discriminating insight: FedAvg defaults weight client updates by the client&apos;s sample count. For KG entity embeddings, that means high-volume clients dominate the global entity embedding — a regional bias that flattens minority-client signal. The fix is sample-count-corrected or equal-weight aggregation for entities.</em><br/>Where does the default break?</>}
+        options={[
+          {key:"a", text:"FedAvg&apos;s sample-count-weighted aggregation dominates global entity embeddings with high-volume clients&apos; signal — minority clients&apos; entity semantics get washed out. For KG aggregation specifically, use equal-weighted or coverage-corrected aggregation so each client&apos;s view of an entity carries appropriate weight.", correct:true},
+          {key:"b", text:"Default LR is wrong."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Sample-weighted FedAvg is wrong for cross-client entity aggregation.</>}
+        stretch={<>What weighting scheme balances volume and coverage?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) agree on KG schema across all clients (governance), (2) seed KG entity embeddings centrally with pretraining, (3) deploy local user encoders, (4) enable federated KG aggregation, (5) monitor per-entity gradient + schema drift, (6) ramp. Starting federation before schema agreement is the classic mistake.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Agree on KG schema across clients → centrally pretrain KG entity embeddings → deploy local user encoders → enable federated KG aggregation → monitor entity gradients + schema drift → ramp.", correct:true},
+          {key:"b", text:"Federate first, agree on schema later."},
+          {key:"c", text:"Skip the central pretraining of KG embeddings."},
+          {key:"d", text:"Ramp before monitoring."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Schema → pretrain KG → local heads → federate → monitor → ramp.</>}
+        stretch={<>Why pretrain KG embeddings centrally before federation?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks the claimed advantage"
+        scenario={<><em>Discriminating insight: a federation of two clients where one has 99% of the data and the other has 1%. The minority client gains almost nothing because FedRKG&apos;s KG signal is dominated by the majority client; the minority might as well train locally. The advantage requires roughly balanced contribution.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"Two clients with 99%/1% data imbalance. The majority client dominates the KG aggregation; the minority gains negligible cross-client signal and might as well train locally. FedRKG&apos;s win requires roughly balanced participation OR coverage-corrected aggregation.", correct:true},
+          {key:"b", text:"Three hospitals with comparable patient volumes (sweet spot)."},
+          {key:"c", text:"Shared medical ontology (sweet spot)."},
+          {key:"d", text:"Disjoint patient lists (sweet spot)."},
+        ]}
+        trap={<>(b)(c)(d) sweet spots.</>}
+        lens={<>Data imbalance breaks symmetric FedAvg over entities.</>}
+        stretch={<>What coverage-corrected aggregation rescues imbalanced federations?</>}
+      />
+
+      <VIS.TrapProblem id="frkg-p24" difficulty="hard"
+        title="P24 — Named failure: KG-embedding inversion reveals client preferences"
+        scenario={<><em>Discriminating insight: even though user embeddings stay local, an adversarial server can compare KG entity embeddings before and after a client&apos;s round and infer which entities that client&apos;s users interacted with. Gradient inversion at entity granularity. Defenses: DP-noise on uploaded KG gradients, secure aggregation, or per-round client batching so individual contributions are hidden.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"KG-embedding inversion: an adversarial server differentiates pre/post-round KG embeddings per client and infers which entities that client&apos;s users interacted with. Defenses: DP-SGD on KG gradients (epsilon, delta noise), secure aggregation (server only sees the sum across clients), or per-round large client batching.", correct:true},
+          {key:"b", text:"KG aggregation is unconditionally private."},
+          {key:"c", text:"There is no inversion attack on KG embeddings."},
+          {key:"d", text:"There are no failures."},
+        ]}
+        trap={<>(b)(c)(d) deny the attack.</>}
+        lens={<>Keeping users local is not enough; KG gradients leak entity interactions; DP + SecAgg close the residual.</>}
+        stretch={<>What SecAgg protocol scales to hospital-network federations?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/pdf/2511.12959" target="_blank" rel="noopener">Anon. — <em>Personalized Federated Recommendation with Knowledge Guidance</em> (arXiv 2511.12959, 2025, paper)</a> — the FedRKG canonical reference.</li>
-        <li><a href="https://arxiv.org/abs/2002.10619" target="_blank" rel="noopener">Fallah, Mokhtari, Ozdaglar — <em>Personalized Federated Learning: A Meta-Learning Approach</em> (NeurIPS 2020, paper)</a> — per-FedAvg, an alternative personalization strategy for FL.</li>
-        <li><a href="https://arxiv.org/abs/1912.04977" target="_blank" rel="noopener">Kairouz et al. — <em>Advances and Open Problems in Federated Learning</em> (2019, survey)</a> — taxonomy of FL privacy attacks, including gradient inversion.</li>
-        <li><a href="https://distill.pub/2021/gnn-intro/" target="_blank" rel="noopener">Sanchez-Lengeling et al. — <em>A Gentle Introduction to Graph Neural Networks</em> (Distill, 2021, blog)</a> — KG encoders rest on GNNs; this is the cleanest intro.</li>
-        <li><a href="https://www.kaggle.com/code/heeraldedhia/knowledge-graphs-for-recommendation" target="_blank" rel="noopener">Knowledge Graphs for Recommendation (Kaggle notebook, code walkthrough)</a> — hands-on with KGAT / KGCN, the encoders FedRKG typically wraps.</li>
+        <li><a href="https://arxiv.org/pdf/2511.12959" target="_blank" rel="noopener">Anon. (2025), <em>Personalized Federated Recommendation with Knowledge Guidance</em> (arXiv 2511.12959)</a> — the FedRKG paper.</li>
+        <li><a href="https://arxiv.org/abs/1905.07854" target="_blank" rel="noopener">Wang et al., <em>KGAT: Knowledge Graph Attention Network for Recommendation</em> (KDD 2019)</a> — the canonical central KG-rec baseline FedRKG generalizes.</li>
+        <li><a href="https://arxiv.org/abs/1602.05629" target="_blank" rel="noopener">McMahan et al., <em>Communication-Efficient Learning of Deep Networks from Decentralized Data</em> (AISTATS 2017)</a> — the FedAvg paper that FedRKG critiques (whole-model averaging).</li>
+        <li><a href="https://web.stanford.edu/class/cs224w/" target="_blank" rel="noopener">Stanford CS224W — <em>Machine Learning with Graphs</em> (course)</a> — Jure Leskovec&apos;s practitioner-grade walkthrough of KG embeddings, TransE, GCN.</li>
+        <li><a href="https://eugeneyan.com/writing/recommendations-with-graph-neural-networks/" target="_blank" rel="noopener">Eugene Yan — <em>Recommendations with Graph Neural Networks</em> (blog)</a> — practitioner framing of KG-aware recsys.</li>
+        <li><a href="https://www.cleverhans.io/privacy/2018/04/29/privacy-and-machine-learning.html" target="_blank" rel="noopener">Papernot &amp; Goodfellow — <em>Privacy and Machine Learning</em> (blog)</a> — DP + federation tradeoffs that motivate P24.</li>
       </ul>
     </VIS.Section>
   </main>

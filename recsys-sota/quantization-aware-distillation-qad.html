@@ -1414,252 +1414,438 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 13
+// QAD — Quantization-Aware Distillation
+// Unique mechanism: distillation WHILE quantizing. The student is QUANTIZED
+// (INT8) during distillation; the teacher (FP32) sees the student's quantized
+// activations on the forward pass and the gradient flows through the
+// straight-through estimator. The student learns to be robust to ITS OWN
+// quantization noise — not to a post-hoc, frozen quantization.
+// Anchor that survives §2a redaction: "INT8 student trained jointly with a
+// distillation loss against an FP32 teacher; quantization is in the training
+// loop, not after it." This is NOT post-hoc PTQ + KD and NOT distillation-then-
+// quantize.
+// Efficiency pair caution (QAD vs FELRec): QAD is MODEL-SIZE efficiency via
+// quantization-aware distill; FELRec is COLD-START efficiency via dynamic
+// embedding updates. Different layer, different goal.
+// Sibling caution (QAD vs ScalingNote batch 12): ScalingNote distills DEPTH
+// (LLM teacher -> 4-layer student); QAD distills PRECISION (FP32 -> INT8 with
+// the quantization noise inside the training loop). Do not collapse to
+// "distillation."
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Distillation / quantization for serving"
-      title="Quantization-Aware Distillation (QAD)"
-      subtitle="Student learns to absorb quantization noise from a full-precision teacher in one loop — INT8 student matches FP32 teacher accuracy."
+      pill="RecSys SOTA · Compression for serving"
+      title="QAD — Quantization-Aware Distillation"
+      subtitle="Distill an FP32 teacher into an INT8 student while the student is being quantized. The quantization noise lives inside the training loop, so the student learns to be robust to its own INT8 rounding — not to a post-hoc, frozen quantization."
       byline={[
-        {label: "Source", value: "Intel Neural Compressor; 2025 LLM-compression survey (Springer)"},
-        {label: "Domain", value: "Edge/embedded recsys serving"},
+        {label: "Sources", value: "Intel Neural Compressor docs; \"A review of state-of-the-art techniques for large language model compression\" (Springer 2025)"},
+        {label: "Surface", value: "Edge / embedded serving where INT8 is mandatory and a teacher FP32 model is available"},
+        {label: "Anchor that survives redaction", value: "INT8 student trained jointly with KD loss against an FP32 teacher; fake-quant ops are inside the training graph; STE flows gradients through them"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="A model-compression workflow where an INT8 'student' is trained with both a quantization-aware forward pass AND a distillation loss matching a full-precision teacher, simultaneously.">QAD</VIS.Term> fuses
-      quantization-aware training with knowledge distillation so the student sees quantization noise WHILE imitating the teacher — recovering most of the accuracy that vanilla post-training quantization loses on edge recsys towers.
+      Two compression tools usually run sequentially: <VIS.Term def="Knowledge Distillation. A small student model is trained to match a large teacher model&apos;s outputs (logits / embeddings), transferring teacher capacity into a smaller architecture.">KD</VIS.Term> then <VIS.Term def="Post-Training Quantization. Take a trained FP32 model and round its weights and activations to INT8 (or lower) AFTER training, with no further gradient updates.">PTQ</VIS.Term>, or <VIS.Term def="Quantization-Aware Training. Train the model with fake-quant ops in the forward pass so it learns weights that survive INT8 rounding. No teacher.">QAT</VIS.Term> alone. QAD does both at once: the student has fake-quant ops in its forward pass AND a KD loss against an FP32 teacher. Crucially, the teacher reads the student&apos;s QUANTIZED activations, so the gradient signal teaches the student to compensate for its OWN INT8 noise. The senior trap: this is NOT &ldquo;distill, then quantize&rdquo; (the student never sees its INT8 errors until too late) and NOT &ldquo;QAT with extra KD loss&rdquo; (the teacher must consume quantized activations for the noise-awareness to transfer).
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        Imagine you trained a 1B-parameter two-tower recommender in FP32 and it hits 0.342 nDCG@10. To serve on a battery-powered device or a CPU-only edge node, you need INT8. Three knobs exist: <VIS.Term def="Post-Training Quantization: take a trained FP32 model and convert weights/activations to INT8 after the fact, without retraining.">PTQ</VIS.Term>, <VIS.Term def="Quantization-Aware Training: simulate INT8 rounding during training so weights adapt to the discretization.">QAT</VIS.Term>, and <VIS.Term def="Knowledge Distillation: train a small 'student' model to mimic the soft outputs of a larger 'teacher', getting some of the teacher's accuracy at lower cost.">distillation</VIS.Term>. PTQ is fast but drops accuracy; QAT recovers some accuracy but forgets the teacher signal; distillation alone keeps FP32 weights. QAD does both at once: the student runs in INT8 in its forward pass AND its loss includes a teacher-matching term.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
+    <VIS.Section id="sec-what" title="What it is — fake-quant in the forward pass, KD loss in the backward pass">
+      <VIS.Mermaid chart={`flowchart TB
+  X["Input batch"]
   T["FP32 teacher (frozen)"]
-  S["INT8 student (QAT forward)"]
-  X["Batch"]
-  LD["Distillation loss"]
-  LH["Hard-label loss"]
-  L["Total loss"]
+  S["Student weights (FP32 master)"]
+  FQ["Fake-quant op (round INT8, dequant FP32)"]
+  SF["Student forward (quantized acts)"]
+  L1["KD loss vs teacher"]
+  L2["Task loss (CE / contrastive)"]
+  STE["STE — gradient ignores rounding"]
   X --> T
   X --> S
-  T --> LD
-  S --> LD
-  S --> LH
-  LD --> L
-  LH --> L
-  L --> S
-      `} />
-      <VIS.Equation display tex="\mathcal{L}_{\text{QAD}} = \alpha\,\mathrm{KL}(\sigma(z_T/\tau) \,\|\, \sigma(z_S/\tau)) + (1-\alpha)\,\mathcal{L}_{\text{CE}}(y, z_S)" />
-      <p>
-        The student is updated through a <VIS.Term def="Straight-Through Estimator: during backprop, treat the non-differentiable rounding step as the identity function so gradients flow.">straight-through estimator</VIS.Term> for the INT8 rounding, while the teacher (in FP32) provides soft targets at temperature &tau;.
-      </p>
+  S --> FQ
+  FQ --> SF
+  T --> L1
+  SF --> L1
+  SF --> L2
+  L1 --> STE
+  L2 --> STE
+  STE --> S`} />
+      <ul>
+        <li><strong>Fake-quant in the forward pass</strong> — student weights and activations are rounded to INT8 then dequantized to FP32 so the rest of the graph stays differentiable.</li>
+        <li><strong>Teacher consumes quantized activations</strong> — the KD loss is computed against features that already carry INT8 rounding noise; the teacher&apos;s soft targets pull the student toward outputs that are robust to that noise.</li>
+        <li><strong>Straight-through estimator</strong> — the rounding op has zero gradient mathematically; <VIS.Term def="Straight-Through Estimator. A trick that replaces the gradient of a non-differentiable op (like rounding) with the identity, so the gradient flows around it unchanged.">STE</VIS.Term> passes the gradient through unchanged.</li>
+        <li><strong>Master FP32 weights</strong> — the optimizer updates a hidden FP32 copy; INT8 weights are derived on every forward.</li>
+      </ul>
+      <p>At deployment, the FP32 master is discarded and only the INT8 weights ship.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from PTQ / QAT / distillation alone">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Method</th><th style={{textAlign:"left",padding:8}}>Sees quantization noise?</th><th style={{textAlign:"left",padding:8}}>Sees teacher signal?</th><th style={{textAlign:"left",padding:8}}>Typical INT8 nDCG drop vs FP32</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from PTQ, QAT, KD, and distill-then-quantize">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Teacher?</th>
+          <th style={{textAlign:"left", padding:8}}>Where quantization lives</th>
+          <th style={{textAlign:"left", padding:8}}>Student sees its own INT8 noise during training?</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>PTQ</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Only at eval</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>2 to 6 pts</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>QAT</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Yes, during training</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>0.5 to 2 pts</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Distillation only</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No (still FP32 student)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Yes</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>N/A (FP32 student)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}><strong>QAD</strong></td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}><strong>Yes, during training</strong></td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}><strong>Yes</strong></td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}><strong>under 0.5 pts</strong></td></tr>
+          <tr><td style={{padding:8}}>PTQ</td><td style={{padding:8}}>No</td><td style={{padding:8}}>After training</td><td style={{padding:8}}>No</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>QAT</td><td style={{padding:8}}>No</td><td style={{padding:8}}>Inside training loop</td><td style={{padding:8}}>Yes — but no teacher signal</td></tr>
+          <tr><td style={{padding:8}}>KD then PTQ</td><td style={{padding:8}}>Yes (offline)</td><td style={{padding:8}}>After distillation</td><td style={{padding:8}}>No — student saw clean acts at distill time</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>PTQ then KD</td><td style={{padding:8}}>Yes (post)</td><td style={{padding:8}}>Before distillation</td><td style={{padding:8}}>Partial — quantization grid is frozen</td></tr>
+          <tr><td style={{padding:8}}><strong>QAD</strong></td><td style={{padding:8}}><strong>Yes (online)</strong></td><td style={{padding:8}}><strong>Inside training loop</strong></td><td style={{padding:8}}><strong>Yes, with teacher pulling against the noise</strong></td></tr>
         </tbody>
       </table>
-      <p>
-        The two staged alternatives — "PTQ then distill" or "distill then PTQ" — both fail in subtle ways. PTQ-then-distill freezes a quantized student whose weights no longer move, so the distillation loss has nothing to update. Distill-then-PTQ produces a distilled FP32 student that has never seen INT8 rounding, so it overfits to FP32 numerics and drops accuracy when finally quantized.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Embedded or edge serving where INT8 is mandatory (battery, memory, CPU-only inference).</li>
-        <li>Two-tower retrieval where the item tower is precomputed but the user tower runs per-request on edge.</li>
-        <li>Latency-bound recsys where INT8 gives 2 to 4&times; speedup on commodity CPUs (AVX-512 VNNI / ARM dot-product).</li>
-        <li>Cases where you already trained a strong FP32 teacher and cannot afford to retrain a small FP32 student from scratch.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Loss balancing.</strong> &alpha; (distill weight) and &tau; (temperature) must be tuned per task; a single set of defaults rarely generalizes.</li>
-        <li><strong>Engineering complexity.</strong> You need fake-quant ops, a straight-through estimator, an FP32 teacher serving forward, AND a distillation head — three orthogonal sources of bugs.</li>
-        <li><strong>Per-channel vs per-tensor quantization.</strong> Per-channel recovers accuracy but adds calibration cost; per-tensor is simpler but loses 0.5 to 1 nDCG on embeddings.</li>
-        <li><strong>Activation outliers.</strong> Embedding-table activations have heavy tails; clipping outliers to fit INT8 range is essential.</li>
-        <li><strong>Teacher size.</strong> Distilling from a much-larger teacher (10&times;) gives diminishing returns vs distilling from a 2&times; teacher — match capacities reasonably.</li>
-      </ul>
-      <VIS.Callout kind="gotcha" title="The 'compose two methods' trap">
-        Many teams try PTQ-then-distill or distill-then-PTQ because the libraries support each step separately. Both staged pipelines lose accuracy relative to QAD because either the student has frozen weights at distillation time, or it has never seen INT8 noise at quantization time. QAD&apos;s value is that the two losses cooperate in the same optimization step.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="qad-p1" difficulty="hard"
-        title="P1 — Why does QAD beat PTQ-then-distill?"
-        scenario={<>You try a two-stage pipeline: first PTQ the FP32 teacher to INT8, then distill into the same INT8 model with the teacher&apos;s soft labels. Accuracy is worse than QAD by 1.8 nDCG points. Why?</>}
+      <VIS.TrapProblem id="qad-p1" difficulty="hard"
+        title="P1 — QAD vs distill-then-quantize: what is the load-bearing difference?"
+        scenario={<><em>Discriminating insight: in distill-then-quantize, the student is distilled in FP32 against the teacher and only quantized AFTER. It never sees its own INT8 rounding noise during training; PTQ at the end re-introduces a noise budget the student was never optimized for. QAD puts the quantization INSIDE the training loop so the teacher&apos;s KD signal is computed against the student&apos;s already-quantized activations.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"After PTQ the student weights are quantized and effectively frozen; distillation cannot move them through the rounding step, so the teacher signal does not update the student.", correct:true},
-          {key:"b", text:"PTQ is always more accurate than QAD; the result is a measurement error."},
-          {key:"c", text:"Distillation loss is incompatible with INT8 forward passes."},
-          {key:"d", text:"Soft labels are only useful with FP16, not INT8."},
+          {key:"a", text:"QAD places fake-quant ops in the student&apos;s forward pass DURING distillation; the KD loss is computed against quantized activations and the student learns to compensate for its OWN INT8 noise. Distill-then-quantize never exposes the student to its rounding noise — PTQ at the end is a post-hoc shock.", correct:true},
+          {key:"b", text:"They are equivalent at deployment."},
+          {key:"c", text:"Distill-then-quantize always wins because it sees a higher-precision teacher signal."},
+          {key:"d", text:"QAD just runs PTQ twice."},
         ]}
-        trap={<>(b)(c)(d) misrepresent how QAT/STE allow gradients to flow through quantization.</>}
-        lens={<>QAD uses a straight-through estimator so gradients propagate through the fake-quant ops. PTQ-first hard-quantizes the weights with no STE attached, so subsequent distillation updates collapse to rounding noise. The two losses must share the same training graph for the cooperation to work.</>}
-        stretch={<>Why does distill-then-PTQ also lose, but via a different failure mode?</>}
+        trap={<>(b)(c)(d) collapse the noise-in-the-loop distinction.</>}
+        lens={<>Where the rounding noise lives during training is the load-bearing knob.</>}
+        stretch={<>What accuracy gap typically separates QAD from distill-then-PTQ on edge models?</>}
       />
 
-      <VIS.TrapProblem
-        id="qad-p2" difficulty="medium" multiSelect
-        title="P2 — Which knobs matter for QAD recsys towers?"
-        scenario={<>You are configuring QAD for a two-tower retrieval model. Select the knobs that materially affect final INT8 nDCG.</>}
+      <VIS.TrapProblem id="qad-p2" difficulty="hard"
+        title="P2 — QAD vs QAT alone: what does the teacher add?"
+        scenario={<><em>Discriminating insight: QAT trains a quantized model from scratch with task loss only. The student must learn the task AND learn quantization-robust weights from one gradient signal. QAD splits the work: the teacher&apos;s soft targets supply rich per-example signal that the small INT8 student would otherwise have to recover from one-hot labels alone.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Distillation weight &alpha; and temperature &tau;.", correct:true},
-          {key:"b", text:"Per-channel vs per-tensor quantization for embedding tables.", correct:true},
-          {key:"c", text:"Activation outlier clipping range.", correct:true},
-          {key:"d", text:"Whether the teacher is served from disk or RAM at training time."},
-          {key:"e", text:"The brand of the GPU running training."},
+          {key:"a", text:"The teacher supplies dense soft targets that carry per-example structure (which classes are close, which features matter); the INT8 student would otherwise have to recover this from sparse one-hot labels while also fighting quantization noise. The teacher decouples task signal from noise-robustness signal.", correct:true},
+          {key:"b", text:"The teacher only adds latency at inference."},
+          {key:"c", text:"QAT alone is mathematically equivalent to QAD."},
+          {key:"d", text:"The teacher provides quantization grids."},
         ]}
-        trap={<>(d)(e) affect throughput, not accuracy. They are real engineering knobs but do not move the metric.</>}
-        lens={<>The accuracy-moving knobs are the loss-balance (&alpha;, &tau;), the granularity of quantization (per-channel survives heavy-tailed embeddings far better), and the clipping range for activations (since INT8 has only 256 levels, outliers dominate if uncapped).</>}
-        stretch={<>What is a reasonable starting &alpha; range for recsys distillation?</>}
+        trap={<>(b) wrong phase. (c) collapses the difference. (d) misidentifies what the teacher provides.</>}
+        lens={<>The teacher carries the task signal; QAT alone forces the student to learn task and noise-robustness together.</>}
+        stretch={<>What happens to QAT-only accuracy as the student shrinks below the teacher&apos;s capacity?</>}
       />
 
-      <VIS.TrapProblem
-        id="qad-p3" difficulty="hard"
-        title="P3 — Embedding-table activation outliers"
-        scenario={<>Your QAD student has 0.3 nDCG worse than FP32 specifically on long-tail items. Activations from the embedding table for rare items have a few extreme magnitudes. Best fix?</>}
+      <VIS.TrapProblem id="qad-p3" difficulty="medium"
+        title="P3 — Without QAD, what is the realistic fallback for INT8 edge serving?"
+        scenario={<><em>Discriminating insight: fallbacks are (i) PTQ on the small FP32 model — fastest to ship, biggest accuracy drop; (ii) QAT-from-scratch — closes some of the gap but no teacher; (iii) distill-then-PTQ — KD helps but PTQ shock at the end remains; (iv) keep FP32 — violates the edge constraint. QAD is the upper-end accuracy at the INT8 latency budget.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Switch the embedding-table activations to per-channel quantization with calibrated outlier clipping (percentile or KL).", correct:true},
-          {key:"b", text:"Drop the long-tail items from training."},
-          {key:"c", text:"Increase &alpha; to 1.0 and remove the hard-label loss."},
-          {key:"d", text:"Quantize to INT4 — narrower range will help."},
+          {key:"a", text:"PTQ (fast, biggest drop), QAT-from-scratch (closes some gap, no teacher), or distill-then-PTQ (KD helps but PTQ shock remains). QAD is the upper-accuracy choice at the INT8 latency budget; the others trade accuracy for engineering simplicity.", correct:true},
+          {key:"b", text:"FP16 serving — but FP16 violates the INT8 mandate."},
+          {key:"c", text:"Just keep the FP32 model — violates edge constraints."},
+          {key:"d", text:"Pruning replaces quantization."},
         ]}
-        trap={<>(b) sacrifices coverage. (c) overweights distillation but ignores the root cause. (d) makes the range problem worse.</>}
-        lens={<>The 256-level INT8 grid wastes resolution if a single outlier sets the scale. Per-channel quantization fits a scale per embedding dimension, and percentile clipping (e.g., clip to 99.99th percentile) trades a tiny coverage loss for big resolution gain on the bulk of the distribution.</>}
-        stretch={<>Why is KL-based calibration often better than min-max for activations?</>}
+        trap={<>(b)(c) violate the surface. (d) is a different axis.</>}
+        lens={<>QAD sits at the top of the INT8 accuracy ladder when budget allows.</>}
+        stretch={<>When is plain PTQ &ldquo;good enough&rdquo; that the QAD engineering cost is wasted?</>}
       />
 
-      <VIS.TrapProblem
-        id="qad-p4" difficulty="medium"
-        title="P4 — Choosing temperature &tau;"
-        scenario={<>You set &tau; = 1 and the student barely matches the teacher. Increasing &tau; to 4 improves nDCG by 0.4. Why does temperature matter?</>}
+      <VIS.TrapProblem id="qad-p4" difficulty="hard"
+        title="P4 — Compose QAD with pruning"
+        scenario={<><em>Discriminating insight: pruning removes weights; QAD reduces precision. They are orthogonal compression axes — sparse INT8 = pruning + QAD. Order matters: prune FIRST (decide which weights survive) then QAD-train the remaining INT8 weights; doing QAD before pruning wastes the noise-robustness on weights that will be removed.</em><br/>What does the stack achieve, and in what order?</>}
         options={[
-          {key:"a", text:"Higher &tau; softens the teacher's logits, exposing the student to the relative ranking of non-top items — the dark knowledge the hard labels miss.", correct:true},
-          {key:"b", text:"Higher &tau; reduces gradient magnitude so training is more stable."},
-          {key:"c", text:"Temperature has no effect on cross-entropy gradients."},
-          {key:"d", text:"&tau; only matters for classification, not ranking."},
+          {key:"a", text:"Prune the FP32 student first (decide which weights survive), then run QAD on the pruned skeleton so the surviving INT8 weights become noise-robust. Reversing the order wastes QAD compute on weights that pruning will throw away.", correct:true},
+          {key:"b", text:"They cannot coexist — pruning and quantization conflict."},
+          {key:"c", text:"Run QAD first; then prune — the noise-robustness transfers."},
+          {key:"d", text:"They are mathematically identical."},
         ]}
-        trap={<>(b)(c)(d) are partially or entirely wrong. The gradient effect is real but secondary; the dark-knowledge effect is the main lever.</>}
-        lens={<>At &tau; = 1 the teacher distribution is sharp and the student mostly learns the top-1, which the hard labels already provide. Higher &tau; flattens the distribution so the relative ordering of items 2 through K becomes visible — exactly the signal ranking metrics reward.</>}
-        stretch={<>What is the right way to anneal &tau; over training?</>}
+        trap={<>(c) reverses the order and wastes compute. (b)(d) deny composition.</>}
+        lens={<>Orthogonal compression axes; pruning chooses topology, QAD chooses precision.</>}
+        stretch={<>What sparsity level starts to interact with INT8 quantization grids?</>}
       />
 
-      <VIS.TrapProblem
-        id="qad-p5" difficulty="hard" multiSelect
-        title="P5 — Diagnosing a QAD run that diverges"
-        scenario={<>Loss spikes to NaN after 2k steps. Pick the likely root causes you would investigate first.</>}
+      <VIS.TrapProblem id="qad-p5" difficulty="medium"
+        title="P5 — At what bit-width does QAD stop helping?"
+        scenario={<><em>Discriminating insight: QAD shines at INT8 where rounding noise is small enough that the teacher signal can pull the student through. Going below INT4 makes the noise so large that the gradient through STE is no longer informative — the student cannot follow the teacher&apos;s soft targets, and you need extra tricks (per-channel scales, learned step sizes, mixed precision). Plain QAD plateaus.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Straight-through estimator amplifying gradients through too-aggressive clipping.", correct:true},
-          {key:"b", text:"Distillation KL going negative because of numerical underflow in the softmax.", correct:true},
-          {key:"c", text:"Embedding-table scale factors collapsing to zero on rare features.", correct:true},
-          {key:"d", text:"The teacher is too accurate."},
-          {key:"e", text:"INT8 multiplication overflows the accumulator."},
+          {key:"a", text:"Below ~INT4 the rounding noise dominates the gradient signal STE can pass; plain QAD plateaus and you need learned-step-size quantization, per-channel scales, or mixed precision on top.", correct:true},
+          {key:"b", text:"QAD works equally well at any bit-width."},
+          {key:"c", text:"QAD only works at FP16."},
+          {key:"d", text:"Bit-width is irrelevant to QAD."},
         ]}
-        trap={<>(d) is not a failure cause. (e) is mitigated by INT32 accumulators in standard kernels and rarely the proximate cause of NaN at training time.</>}
-        lens={<>The three real culprits in QAD divergence: STE+clipping interaction (gradient explodes near the clip boundary), softmax underflow at low temperature, and per-channel scale collapse (a feature with all-zero rows yields a zero scale and divide-by-zero in fake-quant). Add gradient clipping, use log-softmax in KL, and floor the scale factor.</>}
-        stretch={<>What logging would you add to catch scale-collapse before NaN?</>}
+        trap={<>(b)(c)(d) miss the noise-budget collapse.</>}
+        lens={<>STE breaks when rounding noise exceeds the gradient signal it must transmit.</>}
+        stretch={<>What does LSQ (Learned Step-Size Quantization) add at INT4?</>}
       />
 
-      <VIS.TrapProblem
-        id="qad-p6" difficulty="medium"
-        title="P6 — Teacher capacity vs student capacity"
-        scenario={<>You consider three teacher sizes for QAD of a 50M-parameter INT8 student: 100M, 500M, 2B. Which is the most likely best choice?</>}
+      <VIS.TrapProblem id="qad-p6" difficulty="hard"
+        title="P6 — Pick the compression strategy"
+        scenario={<><em>Discriminating insight: an on-device speech model must ship at INT8 with &lt;1% accuracy drop vs the FP32 baseline. PTQ alone gives 3% drop. The team has a strong FP32 teacher available and one extra week of training compute. QAD is purpose-built.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"100M — a 2&times; ratio gives a strong signal the student can actually absorb.", correct:true},
-          {key:"b", text:"500M — bigger is always better."},
-          {key:"c", text:"2B — gets you the maximum dark knowledge."},
-          {key:"d", text:"The teacher size is irrelevant."},
+          {key:"a", text:"QAD — fake-quant in the student&apos;s forward pass, KD loss against the FP32 teacher; student learns to be robust to its INT8 noise while inheriting teacher structure. Hits the &lt;1% drop target.", correct:true},
+          {key:"b", text:"PTQ — already shown to fail the accuracy bar."},
+          {key:"c", text:"Distill in FP32, ship FP32 — violates the INT8 mandate."},
+          {key:"d", text:"FP16 serving — FP16 is not INT8."},
         ]}
-        trap={<>(b)(c) ignore the well-documented capacity-gap problem.</>}
-        lens={<>Distillation has diminishing or even negative returns when the capacity gap is large: the student cannot represent the teacher&apos;s output manifold, and the KL pulls it toward unreachable targets. A modest 2 to 4&times; ratio is usually the sweet spot for distillation gains.</>}
-        stretch={<>What is &quot;TA (teaching assistant)&quot; distillation and when does it help?</>}
+        trap={<>(b) fails the bar. (c)(d) violate the constraint.</>}
+        lens={<>Teacher available + INT8 mandate + tight accuracy bar = QAD.</>}
+        stretch={<>How many extra epochs does QAD typically add over QAT?</>}
       />
 
-      <VIS.TrapProblem
-        id="qad-p7" difficulty="hard"
-        title="P7 — Why distill-then-PTQ also fails"
-        scenario={<>Other team tries the reverse staged pipeline: first distill FP32 student from FP32 teacher, then PTQ to INT8. Accuracy is 0.9 nDCG worse than QAD. Why?</>}
+      <VIS.TrapProblem id="qad-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just calibrate PTQ more carefully&rdquo;"
+        scenario={<><em>Discriminating insight: PTQ calibration (per-channel scales, percentile clipping, KL-divergence calibration) fixes the QUANTIZATION GRID but does not change the weights. If the weights themselves are bunched in ways that round badly to INT8, no calibration can save them. QAD reshapes the weights during training so they land cleanly on the INT8 grid.</em><br/>Why is &ldquo;calibrate harder&rdquo; insufficient?</>}
         options={[
-          {key:"a", text:"The distilled FP32 student has weights tuned for FP32 numerics; PTQ rounding now perturbs an over-fit weight surface, losing more than starting from an INT8-aware optimizer would.", correct:true},
-          {key:"b", text:"Distillation always overfits."},
-          {key:"c", text:"PTQ adds bias the student cannot recover."},
-          {key:"d", text:"INT8 inference is incompatible with distilled models."},
+          {key:"a", text:"PTQ calibration tunes the grid (scale, zero-point) against fixed weights. If the weights are bunched or have heavy tails that round catastrophically, no grid choice fixes them. QAD reshapes the WEIGHTS during training so they land well on the grid.", correct:true},
+          {key:"b", text:"Calibration already does what QAD does."},
+          {key:"c", text:"Calibration cannot use a teacher."},
+          {key:"d", text:"Calibration is purely an inference-time tool."},
         ]}
-        trap={<>(b)(c)(d) blame the wrong components. The actual issue is that the optimizer never saw the quantization grid.</>}
-        lens={<>Distill-then-PTQ produces a sharp FP32 loss basin that does not align with the INT8 quantization grid. QAD&apos;s STE-aware optimizer finds an INT8-friendly basin from the start. The order of operations matters because the gradient signal needs to know about quantization while the weights are still moving.</>}
-        stretch={<>When would distill-then-PTQ be acceptable?</>}
+        trap={<>(b) the seductive misread. (c)(d) tangential.</>}
+        lens={<>Calibration tunes the grid; QAD tunes the weights to fit the grid.</>}
+        stretch={<>What does GPTQ do that pure calibration cannot?</>}
       />
 
-      <VIS.TrapProblem
-        id="qad-p8" difficulty="hard" mode="ordered"
-        title="P8 — Sequence to ship a QAD-served recsys"
-        scenario={<>Order the steps to ship an INT8 recsys tower under QAD. Wrong steps are unranked.</>}
+      <VIS.TrapProblem id="qad-p8" difficulty="hard"
+        title="P8 — QAD anchor (noise-in-the-loop + teacher signal): pitch it"
+        scenario={<><em>Discriminating insight: the anchor is &ldquo;quantization noise is inside the training loop AND the teacher pulls against that noise.&rdquo; The pitch must name both — noise-in-the-loop alone is QAT; teacher alone is KD.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Train FP32 teacher to convergence; freeze.", order:1},
-          {key:"b", text:"Initialize INT8 student from teacher; insert fake-quant ops with STE.", order:2},
-          {key:"c", text:"Calibrate activation ranges from a held-out sample with percentile or KL.", order:3},
-          {key:"d", text:"Joint train with distillation + hard-label loss; tune &alpha;, &tau;.", order:4},
-          {key:"e", text:"Skip activation calibration — let it adapt online."},
-          {key:"f", text:"Export to native INT8 kernels; validate parity on retrieval traces.", order:5},
+          {key:"a", text:"We put fake-quant ops in the student&apos;s forward pass so it sees its own INT8 rounding during training, AND we add a KD loss against an FP32 teacher so the gradient explicitly pulls the student toward outputs that survive the rounding. The student ships at INT8 with FP32-teacher accuracy.", correct:true},
+          {key:"b", text:"We quantize a distilled model after training."},
+          {key:"c", text:"We use a bigger teacher at serving."},
+          {key:"d", text:"We retrain weekly to recalibrate scales."},
         ]}
-        trap={<>(e) is the silent accuracy-loss trap — uncalibrated activation ranges waste INT8 resolution on outliers.</>}
-        lens={<>The five-step recipe: teach, init, calibrate, joint-train, deploy. Skipping calibration is the most common mistake because the libraries make it optional; without it, percentile-99.99 outliers dominate the scale and 90&#37; of the activations end up in 2&minus;3 INT8 buckets.</>}
-        stretch={<>What integration test verifies INT8 parity after export?</>}
+        trap={<>(b)(c)(d) drop one of the two load-bearing pieces.</>}
+        lens={<>Noise-in-the-loop and teacher-pull are inseparable; either alone is a sibling, not QAD.</>}
+        stretch={<>Which is more load-bearing: the teacher or the fake-quant?</>}
       />
 
-      <VIS.TrapProblem
-        id="qad-p9" difficulty="medium"
-        title="P9 — When NOT to use QAD"
-        scenario={<>Which scenario is the worst fit for QAD?</>}
+      <VIS.TrapProblem id="qad-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use QAD. Select all that apply."
+        scenario={<><em>Discriminating insight: QAD needs (i) a high-quality FP32 teacher, (ii) a serving constraint that forces INT8, (iii) enough training compute for joint distill+QAT. It is wrong when no teacher exists, when FP32 is acceptable at serving, or when the model is small enough that PTQ&apos;s accuracy drop is already in budget.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"You serve in BF16 on a GPU and your accuracy budget is tight — INT8 is not required.", correct:true},
-          {key:"b", text:"Edge inference on a phone with battery constraints."},
-          {key:"c", text:"CPU-only retrieval with AVX-512 VNNI."},
-          {key:"d", text:"A two-tower model with precomputed item embeddings."},
+          {key:"a", text:"No FP32 teacher exists and you cannot train one — QAD has nothing to distill from.", correct:true},
+          {key:"b", text:"FP32 serving is acceptable — quantization is unnecessary, so the joint loss is wasted compute.", correct:true},
+          {key:"c", text:"Tiny model where PTQ already meets the accuracy bar — QAD&apos;s engineering cost is not earned.", correct:true},
+          {key:"d", text:"Edge phone deployment of a 100M-param vision model with strict INT8 mandate (sweet spot)."},
+          {key:"e", text:"Sub-INT4 precision target — plain QAD plateaus; need LSQ / mixed precision on top.", correct:true},
         ]}
-        trap={<>(b)(c)(d) are all canonical QAD wins.</>}
-        lens={<>QAD pays an engineering complexity cost (STE, fake-quant, dual losses) that is only worth it when INT8 is forced. If you can serve in BF16/FP16 with sufficient throughput, plain distillation suffices and you skip the quantization tax.</>}
-        stretch={<>What other compression techniques are cheaper than QAD for BF16 deployments?</>}
+        trap={<>(d) is sweet spot.</>}
+        lens={<>QAD needs teacher + INT8 mandate + accuracy headroom; absent any one, choose a simpler tool.</>}
+        stretch={<>What is the smallest model where QAD over PTQ is empirically worth it?</>}
       />
 
-      <VIS.TrapProblem
-        id="qad-p10" difficulty="hard" multiSelect
-        title="P10 — Validating QAD before rollout"
-        scenario={<>What pre-deployment checks should you run on a QAD student? Select all that apply.</>}
+      <VIS.TrapProblem id="qad-p10" difficulty="hard"
+        title="P10 — Why must the teacher see QUANTIZED activations, not FP32?"
+        scenario={<><em>Discriminating insight: if the teacher reads FP32 activations from the student (pre-fake-quant), the KD loss does not reflect the noise the student will face at deployment; the student learns to imitate the teacher in FP32 but still suffers PTQ shock at INT8. The teacher MUST consume the post-quant activations for the gradient to teach noise-robustness.</em><br/>Why post-quant?</>}
         options={[
-          {key:"a", text:"Per-slice nDCG: head, torso, tail — INT8 often regresses the tail disproportionately.", correct:true},
-          {key:"b", text:"Numerical parity vs the training-time fake-quant model on a fixed eval set.", correct:true},
-          {key:"c", text:"Activation-range drift between calibration set and production traffic.", correct:true},
-          {key:"d", text:"Throughput / latency under realistic batch and concurrency."},
-          {key:"e", text:"Whether the model file size is exactly 4&times; smaller than FP32."},
+          {key:"a", text:"If the KD loss is computed against pre-quant FP32 activations, the gradient teaches the student to mimic the teacher in FP32 — exactly the wrong space. The student learns nothing about INT8 noise and suffers PTQ shock at deployment. Post-quant KD aligns the teacher signal with the student&apos;s actual serving precision.", correct:true},
+          {key:"b", text:"Pre-quant is mathematically equivalent."},
+          {key:"c", text:"Pre-quant is preferred."},
+          {key:"d", text:"The choice does not matter."},
         ]}
-        trap={<>(e) is a vanity check — file-size compression depends on storage format and is rarely exactly 4&times; due to per-channel scales, biases, and packing.</>}
-        lens={<>QAD validation has three accuracy axes (tail slices, fake-quant-vs-export parity, activation-drift) and one performance axis (throughput). File size is a side-effect, not a validation metric. Skipping tail-slice eval is the #1 reason teams ship a quantized model that quietly loses on long-tail recommendations.</>}
-        stretch={<>How would you A/B test QAD vs FP32 honestly?</>}
+        trap={<>(b)(c)(d) miss the alignment requirement.</>}
+        lens={<>The KD loss must be computed in the precision the student will deploy in.</>}
+        stretch={<>What does mid-block KD (intermediate features) require for QAD?</>}
       />
+
+      <VIS.TrapProblem id="qad-p11" difficulty="hard"
+        title="P11 — QAD loss composition"
+        scenario={<><em>Discriminating insight: the student loss is alpha * L_KD(student_quant vs teacher_FP32) + (1 - alpha) * L_task(student_quant vs labels). KD alone overfits to the teacher&apos;s mistakes; task alone loses the soft-target signal. Both must flow gradients through STE.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"L = alpha * L_KD(student-quant vs teacher-FP32 soft targets) + (1 - alpha) * L_task(student-quant vs labels). Both gradients flow through STE. KD alone overfits the teacher&apos;s errors; task alone discards the soft-target signal that motivates the teacher.", correct:true},
+          {key:"b", text:"L_KD alone."},
+          {key:"c", text:"L_task alone (this is just QAT)."},
+          {key:"d", text:"Adversarial loss between student and teacher."},
+        ]}
+        trap={<>(b)(c) are sibling methods. (d) wrong family.</>}
+        lens={<>Both losses load-bearing; their balance is alpha.</>}
+        stretch={<>How does alpha behave: anneal, fixed, or per-layer?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p12" difficulty="hard"
+        title="P12 — What does QAD deliberately drop vs QAT?"
+        scenario={<><em>Discriminating insight: QAT depends only on labels and the model; QAD adds a dependency on a teacher checkpoint that must be maintained, version-pinned, and re-trained when the data changes. QAD forfeits the simplicity of a single-stage pipeline for the accuracy ceiling.</em><br/>What does QAD give up?</>}
+        options={[
+          {key:"a", text:"Pipeline simplicity. QAT runs as a single stage with labels; QAD adds an FP32 teacher dependency that must be trained, checkpointed, version-pinned, and re-trained when data shifts. The gain is accuracy; the loss is a second moving part.", correct:true},
+          {key:"b", text:"QAD forfeits the use of fake-quant ops."},
+          {key:"c", text:"QAD forfeits gradients."},
+          {key:"d", text:"QAD forfeits INT8."},
+        ]}
+        trap={<>(b)(c)(d) miss the dropped property.</>}
+        lens={<>The teacher dependency is the deliberate cost.</>}
+        stretch={<>How would you avoid teacher-version drift in a CI/CD pipeline?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p13" difficulty="hard"
+        title="P13 — Most fragile knob in QAD"
+        scenario={<><em>Discriminating insight: the KD/task balance alpha and the distillation temperature T jointly control how much the student listens to the teacher. Mis-set T sharpens the teacher distribution into argmax (loses dark knowledge); mis-set alpha drowns either signal. Student depth and fake-quant scale come next; LR last.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"Distillation temperature T is most fragile (controls how soft the teacher targets are; mis-set destroys the dark-knowledge transfer); alpha (KD vs task mix) next; fake-quant scale (per-channel vs per-tensor) after; LR last.", correct:true},
+          {key:"b", text:"Student depth is most fragile."},
+          {key:"c", text:"Batch size is most fragile."},
+          {key:"d", text:"Optimizer choice is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) miss the distillation-control knob.</>}
+        lens={<>T is the KD control knob; alpha is the mixing knob.</>}
+        stretch={<>What does T &rarr; 1 do to the soft targets, and why is that often wrong for QAD?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: QAD assumes the teacher&apos;s outputs on training data reflect the deployment distribution. If the training data drifts (new dialect, new product line) the teacher itself is wrong before the student can learn from it. The KD loss then propagates teacher errors AS gradient.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Teacher domain drift. If the FP32 teacher was trained on a distribution that no longer matches deployment, its soft targets are systematically wrong; QAD then optimizes the INT8 student against those wrong targets. KD propagates teacher errors as gradient.", correct:true},
+          {key:"b", text:"Off-by-one in label indexing."},
+          {key:"c", text:"Tokenizer mismatch."},
+          {key:"d", text:"Wrong batch size."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>The teacher&apos;s domain coverage upper-bounds the student via KD.</>}
+        stretch={<>What monitor catches teacher-domain drift before QAD inherits it?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;the FP32 teacher dominates serving cost&rdquo;"
+        scenario={<><em>Discriminating insight: the teacher runs OFFLINE during distillation; at serving only the INT8 student runs. The teacher&apos;s cost is a one-time training expense amortized across deployments. Confusing training cost for serving cost is the senior trap.</em><br/>Why is &ldquo;teacher dominates serving&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"The teacher is OFFLINE: it produces soft targets during training and is then discarded. Only the INT8 student ships. The teacher cost is a training-time amortization; serving cost is purely INT8 student latency.", correct:true},
+          {key:"b", text:"The teacher runs at every inference."},
+          {key:"c", text:"Teacher and student both serve."},
+          {key:"d", text:"There is no teacher in QAD."},
+        ]}
+        trap={<>(b)(c) confuse training and serving. (d) denies the mechanism.</>}
+        lens={<>Teacher cost is offline; only the INT8 student is in the serving path.</>}
+        stretch={<>Could the teacher live in the serving path? Why not (cost)?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: &ldquo;QAD is just KD + QAT&rdquo; cascades into (i) computing KD on pre-quant activations (defeats noise-awareness), (ii) freezing the quantization scale (defeats co-adaptation), (iii) shipping the teacher (wastes serving cost). Each piece is load-bearing.</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: pre-quant KD (teacher signal is in the wrong precision), frozen quant scale (student cannot co-adapt with the grid), shipping the teacher (defeats the INT8 cost goal). Remove any one and QAD regresses toward KD-then-PTQ or QAT.", correct:true},
+          {key:"b", text:"Only the KD loss."},
+          {key:"c", text:"Only the quantization scale."},
+          {key:"d", text:"Nothing — QAD really is just KD + QAT."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Post-quant KD, learnable scales, offline teacher — all three load-bearing.</>}
+        stretch={<>What does an ablation table look like with each piece removed?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior responds to QAD accuracy regression by raising the bit-width. A senior measures the teacher-student KD loss curve first; if KD plateaued early, the teacher is the ceiling; if KD is still decreasing, train longer. Bit-width is a last resort, not a first knob.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Plot the teacher-student KD loss curve vs training steps. If KD plateaued early, the teacher is the ceiling (improve the teacher or pick a richer KD feature). If KD is still decreasing, train longer. Only escalate bit-width if both teacher and training time are exhausted.", correct:true},
+          {key:"b", text:"Raise the bit-width to INT16."},
+          {key:"c", text:"Drop QAD and use plain PTQ."},
+          {key:"d", text:"Increase student depth."},
+        ]}
+        trap={<>(b)(c)(d) miss the teacher-ceiling vs convergence diagnostic.</>}
+        lens={<>KD loss curve is the QAD-specific diagnostic.</>}
+        stretch={<>What dashboard panel shows KD convergence with quantization variance?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: per-tensor vs per-channel quant scale"
+        scenario={<><em>Discriminating insight: accuracy drops 2% after a framework upgrade; KD loss looks normal; bit-width unchanged. The default fake-quant op switched from per-channel weight scales to per-tensor. For conv/linear layers with wide weight magnitude variance across output channels, per-tensor scale collapses small-magnitude channels to zero. The student LOOKS converged in KD because logits roughly match — but downstream classification suffers.</em><br/>Most likely cause?</>}
+        options={[
+          {key:"a", text:"Framework default flipped to per-tensor weight scale. Channels with small magnitudes were quantized to zero; KD loss masks the damage because logits still roughly match teacher. Switch fake-quant config to per-channel weight scales and re-train.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Disk full on the checkpoint server."},
+          {key:"d", text:"Random initialization seed changed."},
+        ]}
+        trap={<>(b)(c)(d) generic infra suspects with no link to the framework upgrade.</>}
+        lens={<>Per-channel vs per-tensor scale is a silent regression vector after framework bumps.</>}
+        stretch={<>What CI gate would pin the fake-quant config across framework upgrades?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p19" difficulty="hard"
+        title="P19 — Production gotcha: training-serving quantization mismatch"
+        scenario={<><em>Discriminating insight: QAD trains with fake-quant (FP32 simulation of INT8 rounding). The serving runtime may quantize differently (asymmetric vs symmetric, different rounding mode, fused vs unfused activations). The student ships and accuracy drops despite clean KD curves.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Match the training fake-quant config to the deployment runtime byte-for-byte: same rounding mode, same symmetric/asymmetric scheme, same per-channel/per-tensor decision, same fusion order. Otherwise the student trained for one INT8 noise model and serves under another.", correct:true},
+          {key:"b", text:"Quantization config is interchangeable across runtimes."},
+          {key:"c", text:"The runtime always matches the training framework."},
+          {key:"d", text:"Skip quantization at serving and ship FP32."},
+        ]}
+        trap={<>(b)(c)(d) deny the mismatch.</>}
+        lens={<>Training and serving quantization must match exactly; otherwise QAD&apos;s noise-awareness misses the real noise.</>}
+        stretch={<>What integration test catches a fake-quant vs runtime drift?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p20" difficulty="hard"
+        title="P20 — Failure on Friday: accuracy cratered after teacher update"
+        scenario={<><em>Discriminating insight: the FP32 teacher was retrained on new data; the QAD student was re-distilled — but only against the new teacher logits, while the on-device runtime still loaded the OLD student weights. Diagnosis is teacher-student-runtime version skew, not a QAD bug.</em><br/>3am page: accuracy down 4% after teacher upgrade. Diagnose.</>}
+        options={[
+          {key:"a", text:"Teacher upgrade triggered student re-distillation, but the on-device runtime is still serving the old student. The QAD pipeline must atomically version (teacher, student, runtime) — bumping the teacher without rolling the student to production is a deploy bug.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Disk full."},
+        ]}
+        trap={<>(b)(c)(d) miss the version-pinning chain.</>}
+        lens={<>Teacher, student, runtime must move together.</>}
+        stretch={<>What runbook entry covers atomic re-roll of all three?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p21" difficulty="medium"
+        title="P21 — Library default that bites: STE clipping range"
+        scenario={<><em>Discriminating insight: many fake-quant ops apply STE only inside the clipped range and zero the gradient outside. If the student&apos;s activations stray into the clipped tails (early in training, or for outlier inputs), gradients disappear and learning stalls. Default ranges are often set for image classification and over-clip language activations.</em><br/>Where does the default break QAD?</>}
+        options={[
+          {key:"a", text:"Default STE clipping is set for vision activations; language / embedding activations often have wider tails. The clipped gradient zeroes out on outlier inputs, stalling learning. Tune the clipping percentile or use learned-step-size quantization.", correct:true},
+          {key:"b", text:"Default LR is too high."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>STE clipping range is task-dependent; defaults are vision-tuned.</>}
+        stretch={<>What does LSQ&apos;s learnable scale add over a fixed percentile?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p22" difficulty="hard" ordered
+        title="P22 — Order the QAD rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) train FP32 teacher to convergence, (2) initialize student from a pretrained small model, (3) attach fake-quant ops and KD loss, (4) joint train until KD + task converge, (5) export INT8 weights and integration-test against the deployment runtime, (6) shadow-eval on production traffic, (7) ramp. Starting QAD before the teacher is the classic mistake.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Train FP32 teacher → initialize student from pretrained small model → attach fake-quant + KD loss → joint train → export INT8 + integration-test against runtime → shadow-eval → ramp.", correct:true},
+          {key:"b", text:"Start QAD before the teacher is trained."},
+          {key:"c", text:"Skip the integration test against the runtime."},
+          {key:"d", text:"Ramp before shadow-eval."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Teacher → student init → joint QAD → export → integration test → shadow → ramp.</>}
+        stretch={<>Why integration-test against the runtime BEFORE shadow-eval?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks QAD&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: a model whose accuracy is already saturated by data scarcity, not by precision, will not improve under QAD because the teacher itself is at the ceiling. Both PTQ and QAD will hit the same low accuracy; QAD&apos;s extra engineering buys nothing.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A model trained on too little data — accuracy is data-limited, not precision-limited. The FP32 teacher itself is at the ceiling; QAD inherits the ceiling and does no better than PTQ. The engineering cost of QAD is wasted.", correct:true},
+          {key:"b", text:"100M-param vision model on a large dataset (sweet spot)."},
+          {key:"c", text:"INT8 mandate with strong teacher (sweet spot)."},
+          {key:"d", text:"Large vocabulary speech model on production data (sweet spot)."},
+        ]}
+        trap={<>(b)(c)(d) sweet spots.</>}
+        lens={<>QAD needs precision-limited (not data-limited) accuracy headroom.</>}
+        stretch={<>How would you detect data-limited vs precision-limited regimes?</>}
+      />
+
+      <VIS.TrapProblem id="qad-p24" difficulty="hard"
+        title="P24 — Named failure: outlier activations break fake-quant"
+        scenario={<><em>Discriminating insight: in transformer-based models, a handful of activation channels carry magnitudes 10–100× the median (the &ldquo;outlier feature&rdquo; phenomenon documented by Dettmers et al.). Symmetric per-tensor INT8 must allocate its dynamic range to those outliers, crushing the other channels to a few discrete levels. QAD with default scales silently regresses; the fix is per-channel scales, outlier-aware quantization (e.g., LLM.int8&apos;s mixed FP16 + INT8), or smoothing.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Outlier activation channels (magnitudes 10–100× median) blow out the INT8 dynamic range; non-outlier channels round to ~zero. Fix with per-channel scales, mixed-precision outlier channels (LLM.int8 style), or activation smoothing before fake-quant.", correct:true},
+          {key:"b", text:"Outliers do not affect INT8."},
+          {key:"c", text:"Outliers are handled by the teacher automatically."},
+          {key:"d", text:"There are no failures."},
+        ]}
+        trap={<>(b)(c)(d) miss the well-named failure mode.</>}
+        lens={<>Outlier activations are the dominant transformer INT8 failure; QAD inherits this unless mitigated.</>}
+        stretch={<>How does SmoothQuant redistribute outlier magnitude between weights and activations?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://link.springer.com/article/10.1007/s40747-025-02019-z" target="_blank" rel="noopener">Yu et al. — <em>A review of state-of-the-art techniques for large language model compression</em> (Complex &amp; Intelligent Systems, 2025, survey)</a> — taxonomy of PTQ, QAT, distillation, and combinations including QAD.</li>
-        <li><a href="https://intel.github.io/neural-compressor/" target="_blank" rel="noopener">Intel Neural Compressor docs (Intel)</a> — open-source library with reference QAD recipes for transformer towers.</li>
-        <li><a href="https://arxiv.org/abs/1503.02531" target="_blank" rel="noopener">Hinton, Vinyals, Dean — <em>Distilling the Knowledge in a Neural Network</em> (2015, paper)</a> — original soft-label distillation that QAD inherits.</li>
-        <li><a href="https://leimao.github.io/article/Neural-Networks-Quantization/" target="_blank" rel="noopener">Lei Mao — <em>Neural Network Quantization</em> (blog)</a> — practical walkthrough of fake-quant, STE, and calibration.</li>
-        <li><a href="https://huggingface.co/blog/hf-bitsandbytes-integration" target="_blank" rel="noopener">Hugging Face / bitsandbytes blog — <em>LLM.int8() and emergent outliers</em> (blog)</a> — why activation outliers dominate INT8 accuracy and how to handle them.</li>
+        <li><a href="https://link.springer.com/article/10.1007/s40747-025-02019-z" target="_blank" rel="noopener">Tang et al., <em>A review of state-of-the-art techniques for large language model compression</em> (Complex &amp; Intelligent Systems, 2025)</a> — situates QAD among KD, QAT, PTQ, pruning.</li>
+        <li><a href="https://arxiv.org/abs/1712.05877" target="_blank" rel="noopener">Jacob et al., <em>Quantization and Training of Neural Networks for Efficient Integer-Arithmetic-Only Inference</em> (CVPR 2018)</a> — canonical QAT paper (fake-quant + STE).</li>
+        <li><a href="https://intel.github.io/neural-compressor/" target="_blank" rel="noopener">Intel Neural Compressor — documentation</a> — production tooling that implements QAD recipes.</li>
+        <li><a href="https://lilianweng.github.io/posts/2023-01-10-inference-optimization/" target="_blank" rel="noopener">Lilian Weng — <em>Large Transformer Model Inference Optimization</em> (blog)</a> — practitioner walkthrough of quantization, KD, distillation tradeoffs.</li>
+        <li><a href="https://www.tensorflow.org/model_optimization/guide/quantization/training" target="_blank" rel="noopener">TensorFlow Model Optimization — <em>Quantization Aware Training</em> (guide)</a> — concrete fake-quant API and STE behavior reference.</li>
+        <li><a href="https://arxiv.org/abs/2208.07339" target="_blank" rel="noopener">Dettmers et al., <em>LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale</em> (NeurIPS 2022)</a> — outlier-feature handling, directly relevant to P24.</li>
       </ul>
     </VIS.Section>
   </main>

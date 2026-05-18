@@ -1414,248 +1414,426 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 13
+// FELRec — Efficient cold-start with dynamic representations (IJDSA 2024)
+// Unique mechanism: when a new item arrives, FELRec does NOT retrain the
+// full model from scratch. Instead it INCREMENTALLY computes the new item's
+// embedding via a lightweight update from its first few interactions; the
+// existing user and item embeddings are NOT recomputed. The dynamic update
+// rule is the load-bearing piece — it is the difference between
+// "incremental cold-start" and "periodic full retrain."
+// Anchor that survives §2a redaction: "New item arrives -> compute its
+// embedding incrementally from its first interactions WITHOUT retraining
+// existing user/item embeddings; the user-side space stays stable; only the
+// new item slot is filled."
+// Efficiency pair caution (FELRec vs QAD): FELRec is COLD-START efficiency
+// via dynamic item embedding; QAD is MODEL-SIZE efficiency via quantization.
+// They share the word "efficient" but solve different problems.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Continual learning for recs"
-      title="FELRec — efficient cold-start with dynamic representations"
-      subtitle="Incrementally update only the embeddings of newly-arrived items — skip the full-model retrain that static-embedding systems require."
+      pill="RecSys SOTA · Continual / cold-start"
+      title="FELRec — dynamic item representations for cold-start"
+      subtitle="A new item arrives; FELRec computes its embedding incrementally from its first interactions WITHOUT retraining the existing user/item embeddings. The model handles continual catalog growth without a full periodic retrain."
       byline={[
-        {label: "Paper", value: "FELRec — IJDSA 2024 (Springer)"},
-        {label: "Domain", value: "High-churn catalogs: news, short-video, marketplace"},
+        {label: "Paper", value: "Pisl &amp; Hartl, \"FELRec: efficient handling of item cold-start with dynamic representation learning in recommender systems\" (Int. J. Data Sci. Anal. 2024)"},
+        {label: "Surface", value: "High-churn catalogs (news, short video, marketplaces) with continual new-item arrivals"},
+        {label: "Anchor that survives redaction", value: "New item -> incremental embedding from first interactions; existing user/item embeddings NOT recomputed; only the new slot is filled"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="FELRec: a continual-learning recommender that learns embeddings for newly-arrived items incrementally, without retraining the full model — keeps user-side embeddings unchanged unless drift is detected.">FELRec</VIS.Term> attacks the item cold-start problem head-on: when 10k new items appear daily, you cannot retrain a full recsys daily. FELRec updates only the affected item embeddings via a dynamic representation learner, leaving user-side mostly untouched.
+      Most production recsys handle a new item with a periodic retrain — re-fit the whole two-tower or matrix-factorization model from scratch, possibly daily. Until the next retrain, the new item is cold (no embedding, weak recall). FELRec breaks this cadence: each new item gets a DYNAMIC embedding computed incrementally from its first interactions, using a learned update rule against the FROZEN existing user-side embedding space. No retrain. Existing user vectors are unchanged; existing item vectors are unchanged; only the new item&apos;s slot is filled in. The senior trap: this is NOT &ldquo;just use content features for cold-start&rdquo; (FELRec uses interaction signal, not content) and NOT &ldquo;just fine-tune on new data&rdquo; (fine-tuning DRIFTS the existing space and breaks downstream cached representations). The win is keeping the embedding space STABLE while the catalog grows.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        Consider a short-video platform where 50k new videos are uploaded every hour. A static-embedding recsys (matrix factorization, two-tower) maps each item to an embedding learned during training. When new items appear, the system has no embedding for them — the <VIS.Term def="The item cold-start problem: new items have no interaction history, so collaborative-filtering signals are missing; you must rely on content features or some bootstrap mechanism.">item cold-start</VIS.Term> problem. Periodic full retrains solve it but are expensive (hours of GPU, large batches of user history). FELRec computes a fresh item embedding from content features alone when an item arrives, and refines it as the first interactions accrue — without re-touching the existing item or user embeddings.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  N["New item arrives"]
-  C["Content features (text/image/meta)"]
-  G["Embedding generator g_phi"]
-  E["Initial item embedding e_i"]
-  I["First interactions (clicks/views)"]
-  R["Incremental refinement"]
-  S["User-side embeddings (mostly frozen)"]
-  N --> C
-  C --> G
-  G --> E
-  I --> R
-  E --> R
-  R --> S
-      `} />
-      <VIS.Equation display tex="e_i^{(0)} = g_\phi(\text{content}_i), \quad e_i^{(t+1)} = e_i^{(t)} - \eta\,\nabla_{e_i}\mathcal{L}(u, i, r)" />
-      <p>
-        The key is that gradient updates flow only into e<sub>i</sub> for new items i — not into the user embeddings or the other items&apos; embeddings. This decouples cold-start handling from full retraining.
-      </p>
+    <VIS.Section id="sec-what" title="What it is — incremental new-item embedding against a frozen user space">
+      <VIS.Mermaid chart={`flowchart TB
+  U["Frozen user embedding space"]
+  I["Frozen existing item embeddings"]
+  N["New item arrives (no embedding yet)"]
+  FI["First interactions: users u1..uk click new item"]
+  UR["Dynamic update rule: aggregate u1..uk into new item embedding"]
+  E["New item embedding (added to index)"]
+  N --> FI
+  FI --> UR
+  U --> UR
+  UR --> E
+  E --> I`} />
+      <ul>
+        <li><strong>Frozen existing space</strong> — user and existing item embeddings are NOT modified when a new item arrives. Cached representations downstream remain valid.</li>
+        <li><strong>Dynamic update rule</strong> — the new item&apos;s embedding is a learned function of its first few interaction partners (user vectors). Common form: weighted aggregation of the engaging users&apos; vectors plus a small learned residual.</li>
+        <li><strong>Online update</strong> — as more interactions accumulate, the new item&apos;s embedding refines (still without touching existing vectors). Eventually it stabilizes.</li>
+        <li><strong>Periodic re-anchoring</strong> — occasionally a full retrain is still done (e.g., monthly) to absorb the new items properly into the joint space; FELRec just defers and amortizes.</li>
+      </ul>
+      <p>The user-side embedding space is the load-bearing anchor — keeping it stable is what makes the incremental update mathematically meaningful.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from static-embedding recsys">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Static embedding recsys</th><th style={{textAlign:"left",padding:8}}>FELRec</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from periodic retrain, content-based cold-start, and fine-tuning">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Cold-start signal</th>
+          <th style={{textAlign:"left", padding:8}}>Existing user space?</th>
+          <th style={{textAlign:"left", padding:8}}>When are new items handled?</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>New-item handling</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Wait for full retrain</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Immediate via content generator</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Retrain cost</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Full model, periodically</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Only affected items, incrementally</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>User embeddings</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Re-learned each retrain</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Mostly frozen between retrains</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Representation drift</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Resolved at retrain</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Accumulates over time</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Best for</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Stable catalogs</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High-churn catalogs</td></tr>
+          <tr><td style={{padding:8}}>Periodic full retrain</td><td style={{padding:8}}>Interactions only</td><td style={{padding:8}}>Reset on each retrain</td><td style={{padding:8}}>At the next retrain</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Content-based cold-start</td><td style={{padding:8}}>Item content (text, image)</td><td style={{padding:8}}>Frozen</td><td style={{padding:8}}>Instantly from content</td></tr>
+          <tr><td style={{padding:8}}>Fine-tune on new data</td><td style={{padding:8}}>Interactions</td><td style={{padding:8}}>Drifts during fine-tune</td><td style={{padding:8}}>During fine-tune</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>FELRec</strong></td><td style={{padding:8}}><strong>First interactions of the new item</strong></td><td style={{padding:8}}><strong>Frozen — never drifts</strong></td><td style={{padding:8}}><strong>Incrementally as interactions arrive</strong></td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>High-churn catalogs: short-video, news, marketplaces — thousands of new items per hour.</li>
-        <li>Latency-sensitive cold-start: new items must be servable within minutes, not hours.</li>
-        <li>Cost-sensitive training: full retrain is too expensive to run daily.</li>
-        <li>Content-rich items: text, image, metadata available for the content-feature generator.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Representation drift.</strong> New-item embeddings are added into a space whose user-side embeddings are frozen; over time the two sides drift apart.</li>
-        <li><strong>Content-generator quality.</strong> If g<sub>&phi;</sub> is weak, new-item embeddings start in the wrong neighborhood and never converge to a useful position.</li>
-        <li><strong>Eventual full retrain is still required.</strong> FELRec extends the interval but does not eliminate it; without periodic full retrains, drift dominates within months.</li>
-        <li><strong>Popularity bias on new items.</strong> Without explicit exposure, new items get few interactions and the incremental refinement step starves.</li>
-        <li><strong>User-side cold start unaddressed.</strong> FELRec helps new items, not new users.</li>
-      </ul>
-      <VIS.Callout kind="gotcha" title="The drift between user-side and item-side">
-        Updating only new-item embeddings while keeping the user side frozen creates a subtle drift: the new items live in a slightly different region of the embedding space than the original training distribution. Dot-products with old user embeddings underestimate true relevance, biasing the system away from new items at exactly the time you want to surface them. Mitigation: align new-item embeddings to the user-side space via a projection trained on the few interactions that DO accrue, or schedule periodic mini-retrains of the user side.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="fel-p1" difficulty="hard"
-        title="P1 — Why does updating only new-item embeddings drift the user-side out of sync?"
-        scenario={<>You deploy FELRec. After three months, retrieval nDCG drops on the head of the catalog despite no change to old items. Why?</>}
+      <VIS.TrapProblem id="fel-p1" difficulty="hard"
+        title="P1 — FELRec vs periodic retrain: what is the load-bearing difference?"
+        scenario={<><em>Discriminating insight: periodic retrain RESETS the embedding space at every refresh; the new item only gets a meaningful embedding AFTER the next retrain. Until then it sits cold. FELRec INCREMENTALLY computes the new item&apos;s embedding from its first interactions against the FROZEN existing space — instant cold-start, no retrain triggered.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"New-item embeddings are gradient-updated into a region of the space the user embeddings were never aligned with; the dot-product scoring becomes mis-calibrated for the new region, and the global geometry shifts even though old items are frozen.", correct:true},
-          {key:"b", text:"Old items were silently re-indexed."},
-          {key:"c", text:"The user catalog churned."},
-          {key:"d", text:"FELRec is a streaming algorithm and forgets old items."},
+          {key:"a", text:"FELRec computes the new item&apos;s embedding incrementally from its first interactions against the FROZEN existing user-side space. The new item gets a usable embedding immediately. Periodic retrain blocks until the next refresh; until then the new item is cold.", correct:true},
+          {key:"b", text:"They are equivalent."},
+          {key:"c", text:"FELRec is just a faster retrain."},
+          {key:"d", text:"They differ only in batch size."},
         ]}
-        trap={<>(b)(c)(d) misdiagnose. The actual mechanism is the geometric drift of the item space relative to a frozen user space.</>}
-        lens={<>Embedding spaces are coordinate systems: when only one side updates, the coordinate frame shifts and the other side&apos;s vectors become slightly mis-aligned. Mitigations: project new-item embeddings into the user space, schedule periodic user-side mini-retrains, or use a contrastive alignment loss between the new items and a small held-out user sample.</>}
-        stretch={<>How would you measure this drift quantitatively week over week?</>}
+        trap={<>(b)(c)(d) collapse the incremental mechanism.</>}
+        lens={<>Frozen user space + incremental new-item embedding = the load-bearing combo.</>}
+        stretch={<>How does FELRec re-anchor periodically without disrupting the index?</>}
       />
 
-      <VIS.TrapProblem
-        id="fel-p2" difficulty="medium" multiSelect
-        title="P2 — Which content features power g_phi best?"
-        scenario={<>Pick the content sources that materially improve initial-embedding quality for a new short-video item.</>}
+      <VIS.TrapProblem id="fel-p2" difficulty="hard"
+        title="P2 — FELRec vs content-based cold-start: what does interaction signal add?"
+        scenario={<><em>Discriminating insight: content-based cold-start computes a new item&apos;s embedding from its TEXT/IMAGE features — instant but content-dependent and can mis-align with the interaction-driven user space. FELRec uses INTERACTION signal (first users who engaged) which is by construction aligned with the user space. Tradeoff: content gives instant cold-start with zero interactions; FELRec needs SOME interactions.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Video thumbnail visual embedding.", correct:true},
-          {key:"b", text:"Caption / title text embedding.", correct:true},
-          {key:"c", text:"Creator-level metadata (creator&apos;s historical category mix).", correct:true},
-          {key:"d", text:"Audio fingerprint embedding.", correct:true},
-          {key:"e", text:"The upload timestamp alone."},
+          {key:"a", text:"FELRec uses interaction signal (first users who engaged the new item) which is mathematically aligned with the user-side embedding space. Content-based cold-start uses item TEXT/IMAGE features that may not align with what users actually engage with. Tradeoff: content needs zero interactions; FELRec needs a small handful to fire.", correct:true},
+          {key:"b", text:"Content cold-start is always superior."},
+          {key:"c", text:"FELRec uses content features."},
+          {key:"d", text:"They are equivalent."},
         ]}
-        trap={<>(e) is a side feature, not a content signal.</>}
-        lens={<>Cold-start initial embeddings work only as well as the content-feature aggregator. Multi-modal fusion (visual + text + audio + creator) is the practical sweet spot — each modality covers a different failure mode of the others.</>}
-        stretch={<>How would you fuse these four modalities into a single embedding?</>}
+        trap={<>(b)(c)(d) collapse the signal type.</>}
+        lens={<>FELRec is interaction-signal cold-start; content cold-start is a sibling.</>}
+        stretch={<>Could you compose FELRec with a content prior?</>}
       />
 
-      <VIS.TrapProblem
-        id="fel-p3" difficulty="hard"
-        title="P3 — When does FELRec degrade gracefully vs catastrophically?"
-        scenario={<>Two deployments: (A) news with daily mini-retrain of user-side embeddings, (B) marketplace with no user-side updates. Which degrades catastrophically?</>}
+      <VIS.TrapProblem id="fel-p3" difficulty="medium"
+        title="P3 — Without FELRec, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: fallbacks are (i) periodic retrain — laggy cold-start; (ii) content-based cold-start — depends on content quality; (iii) random surfacing of new items + collect interactions + wait for retrain — bad UX; (iv) heuristic boost (artificially elevate new items for a day). FELRec sits in the &ldquo;incremental, interaction-signal&rdquo; slot the others miss.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"(B) — without user-side updates, the new-item space drifts further from the frozen user space each day; after weeks the system surfaces irrelevant items because the geometry is broken.", correct:true},
-          {key:"b", text:"(A) — daily mini-retrains will accumulate noise."},
-          {key:"c", text:"Neither — FELRec is robust to user-side staleness."},
-          {key:"d", text:"Both equally."},
+          {key:"a", text:"Periodic retrain (laggy), content-based cold-start (content-dependent), random surfacing + wait for retrain (bad UX), or heuristic boost (no real personalization). FELRec is the incremental, interaction-signal solution the others miss.", correct:true},
+          {key:"b", text:"Random recommendations at parity."},
+          {key:"c", text:"Skip recsys."},
+          {key:"d", text:"BM25."},
         ]}
-        trap={<>(b)(c)(d) misread the drift mechanism.</>}
-        lens={<>FELRec is a complement to user-side updates, not a replacement. A small periodic user-side refresh (daily mini-retrain, online learning on the user encoder, or per-user fine-tune) prevents the geometric drift. Skipping it produces silent degradation over weeks to months.</>}
-        stretch={<>What is the cheapest user-side refresh that keeps drift bounded?</>}
+        trap={<>(b)(c)(d) under-shoot.</>}
+        lens={<>FELRec occupies a specific slot: interaction-signal cold-start without retrain.</>}
+        stretch={<>What recall gap to periodic retrain remains after FELRec stabilizes?</>}
       />
 
-      <VIS.TrapProblem
-        id="fel-p4" difficulty="medium"
-        title="P4 — Popularity bias on new items"
-        scenario={<>FELRec produces high-quality embeddings for new items but they still receive few interactions. Why?</>}
+      <VIS.TrapProblem id="fel-p4" difficulty="hard"
+        title="P4 — Compose FELRec with content prior for zero-interaction cold-start"
+        scenario={<><em>Discriminating insight: FELRec needs SOME interactions to fire. For zero-interaction cold-start (a truly brand-new item nobody has seen), composing with a content prior gives an initial embedding from content, which is then refined by FELRec as interactions arrive. The two signals stack; neither replaces the other.</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"Initial embeddings derived from content alone score similar to many existing items; without explicit exposure (boost / explore / fresh-bucket), the ranker never surfaces them.", correct:true},
-          {key:"b", text:"FELRec embeddings are intentionally lower magnitude."},
-          {key:"c", text:"New items are blacklisted by the safety filter."},
-          {key:"d", text:"User embeddings drift away from new items."},
+          {key:"a", text:"Content prior provides the zero-interaction initial embedding (from item text/image). FELRec refines that embedding incrementally as the first interactions arrive. Stable user-side space is preserved throughout. Composition gives instant cold-start + interaction-driven refinement.", correct:true},
+          {key:"b", text:"They cannot coexist."},
+          {key:"c", text:"Composition makes both redundant."},
+          {key:"d", text:"Composition requires retraining."},
         ]}
-        trap={<>(b)(c) are usually false. (d) is a related but distinct issue.</>}
-        lens={<>Cold-start handling = embedding quality + exposure mechanism. FELRec gives you the embedding; you still need an exploration policy (e.g., fresh-item bucket, Thompson sampling, bandit-style boost) to accumulate the interactions that refine the embedding. Without exposure, the embeddings stay at their initial content-only quality forever.</>}
-        stretch={<>Describe a Thompson-sampling exposure policy for new items.</>}
+        trap={<>(b)(c)(d) deny composition.</>}
+        lens={<>Content prior + FELRec refinement = full cold-start coverage.</>}
+        stretch={<>How is the weight between content prior and FELRec interaction updates scheduled?</>}
       />
 
-      <VIS.TrapProblem
-        id="fel-p5" difficulty="hard" multiSelect
-        title="P5 — Mitigations for FELRec drift"
-        scenario={<>Pick the mitigations that meaningfully bound drift between user and item embeddings.</>}
+      <VIS.TrapProblem id="fel-p5" difficulty="medium"
+        title="P5 — When does the user/item drift assumption STOP holding?"
+        scenario={<><em>Discriminating insight: FELRec assumes the user-side embedding space is approximately stable between re-anchoring rounds. If user taste shifts dramatically (a viral trend) the frozen user vectors become stale and the new item&apos;s incremental embedding misaligns with current behavior. Re-anchor cadence becomes the boundary.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Periodic user-side mini-retrain on recent interactions.", correct:true},
-          {key:"b", text:"Contrastive alignment loss between new items and a held-out user sample.", correct:true},
-          {key:"c", text:"Project new-item embeddings into the user-side space via a learned linear map.", correct:true},
-          {key:"d", text:"Reset all item embeddings every month.", correct:true},
-          {key:"e", text:"Increase the dimension of the new embeddings only."},
+          {key:"a", text:"When user-side taste drifts faster than the re-anchoring cadence (viral trends, hard pivots). The frozen user vectors no longer reflect current behavior; new item embeddings computed against them misalign. Either shorten the re-anchor cadence OR add drift-triggered full retrains.", correct:true},
+          {key:"b", text:"FELRec always works."},
+          {key:"c", text:"User drift is irrelevant."},
+          {key:"d", text:"FELRec needs no re-anchoring."},
         ]}
-        trap={<>(e) cannot work because the dot-product would no longer be defined; the trap is candidates who confuse expressiveness with alignment.</>}
-        lens={<>The four mitigations target drift at different points: refresh user side (a), pull new items toward user side (b), explicit projection (c), or full reset (d). In practice, (a)+(b) or (a)+(c) are the production-friendly combinations.</>}
-        stretch={<>Which combination has the lowest GPU cost?</>}
+        trap={<>(b)(c)(d) deny the stability assumption.</>}
+        lens={<>FELRec needs user-space stability between re-anchorings.</>}
+        stretch={<>What drift detector triggers an early re-anchor?</>}
       />
 
-      <VIS.TrapProblem
-        id="fel-p6" difficulty="medium"
-        title="P6 — How often must a full retrain still happen?"
-        scenario={<>FELRec lets you skip the daily full retrain. How often must full retrain still occur to keep the system healthy?</>}
+      <VIS.TrapProblem id="fel-p6" difficulty="hard"
+        title="P6 — Pick the architecture"
+        scenario={<><em>Discriminating insight: a short-video platform adds 50k new videos per hour. Periodic retrain is too slow (videos go stale by the next refresh); content-based cold-start is weak (video content is hard to embed cheaply); random surfacing kills UX. FELRec fits: incremental embedding from first viewer interactions, no retrain, instant cold-start.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Once per several weeks to months, depending on observed drift; FELRec extends the interval but does not eliminate it.", correct:true},
-          {key:"b", text:"Never — FELRec replaces full retrains."},
-          {key:"c", text:"Every hour — same as before."},
-          {key:"d", text:"Only on hardware failure."},
+          {key:"a", text:"FELRec — incremental video embedding from its first viewer interactions against the frozen user-side space. Videos get usable embeddings within the first hundred views; no retrain blocks the catalog. Tight cold-start latency at high churn.", correct:true},
+          {key:"b", text:"Periodic retrain — too slow."},
+          {key:"c", text:"Content-only cold-start — video content is hard to embed cheaply."},
+          {key:"d", text:"Random surfacing — kills UX."},
         ]}
-        trap={<>(b) overstates FELRec&apos;s benefit. (c)(d) are wrong by other reasoning.</>}
-        lens={<>FELRec is an extension, not a replacement. Drift accumulates whether or not you address it incrementally; periodic full retrains zero out accumulated geometric noise. The right cadence is set by measured drift, not a calendar.</>}
-        stretch={<>How would you design a drift detector that triggers a full retrain?</>}
+        trap={<>(b) speed. (c) content. (d) UX.</>}
+        lens={<>High churn + interaction signal available = FELRec.</>}
+        stretch={<>What is the minimum number of interactions for a usable FELRec embedding?</>}
       />
 
-      <VIS.TrapProblem
-        id="fel-p7" difficulty="hard"
-        title="P7 — Comparing FELRec to a two-tower with content features"
-        scenario={<>A standard two-tower model already maps content features through the item tower. Isn&apos;t that already &quot;dynamic embeddings&quot;?</>}
+      <VIS.TrapProblem id="fel-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just fine-tune the model on new data&rdquo;"
+        scenario={<><em>Discriminating insight: fine-tuning DRIFTS the existing user and item embeddings to fit the new data. Downstream caches (ANN indices, user-vector caches, slate-rankers conditioned on user vectors) all assume embedding stability — fine-tuning invalidates them. FELRec deliberately keeps existing embeddings frozen for exactly this reason.</em><br/>Why is &ldquo;just fine-tune&rdquo; insufficient?</>}
         options={[
-          {key:"a", text:"A static two-tower computes item embeddings via a fixed tower trained at retrain time; FELRec additionally updates the embedding incrementally as new interactions arrive, refining the content-only initial guess.", correct:true},
-          {key:"b", text:"They are the same."},
-          {key:"c", text:"Two-tower is strictly better."},
-          {key:"d", text:"FELRec is strictly better."},
+          {key:"a", text:"Fine-tuning drifts ALL embeddings — existing user vectors and existing item vectors move to fit the new data. Downstream caches (ANN indices, user-vector caches, slate-rankers) all break because they assume stability. FELRec freezes existing embeddings for exactly this reason; only the new item&apos;s slot is filled.", correct:true},
+          {key:"b", text:"Fine-tuning is mathematically equivalent."},
+          {key:"c", text:"Fine-tuning is always cheaper."},
+          {key:"d", text:"Fine-tuning never drifts embeddings."},
         ]}
-        trap={<>(b)(c)(d) miss the incremental-refinement distinction.</>}
-        lens={<>Static two-tower fixes the embedding at retrain time. FELRec lets the embedding move post-deployment as the first interactions accrue, capturing the gap between content-only prior and actual collaborative signal. Implementing FELRec on a two-tower architecture means allowing per-item embedding gradient updates between retrains.</>}
-        stretch={<>What changes in serving infra are required to update item embeddings online?</>}
+        trap={<>(b)(c)(d) deny the drift.</>}
+        lens={<>Existing-embedding stability is a downstream contract; fine-tuning breaks it.</>}
+        stretch={<>What does ANN index invalidation cost at high scale?</>}
       />
 
-      <VIS.TrapProblem
-        id="fel-p8" difficulty="hard" mode="ordered"
-        title="P8 — Sequence to deploy FELRec on a two-tower system"
-        scenario={<>Order the steps. Wrong moves unranked.</>}
+      <VIS.TrapProblem id="fel-p8" difficulty="hard"
+        title="P8 — FELRec anchor (frozen user space + incremental new-item embedding): pitch it"
+        scenario={<><em>Discriminating insight: the anchor is &ldquo;existing space stays frozen; new item gets an incremental embedding from its first interactions.&rdquo; The pitch must name both — frozen alone is content-only cold-start; incremental alone is fine-tuning.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Add a content-feature generator g_phi that maps new items to initial embeddings.", order:1},
-          {key:"b", text:"Wire an online-update path that gradient-steps only new items&apos; embeddings.", order:2},
-          {key:"c", text:"Add an exposure policy (fresh-bucket / bandit) so new items accumulate interactions.", order:3},
-          {key:"d", text:"Schedule periodic user-side mini-retrain to bound drift.", order:4},
-          {key:"e", text:"Freeze the user tower forever; trust FELRec to compensate."},
-          {key:"f", text:"Monitor drift and trigger full retrain when threshold exceeded.", order:5},
+          {key:"a", text:"When a new item arrives we compute its embedding incrementally from its first interactions against the frozen existing user-side space. Existing user and item embeddings never move. Downstream ANN indices and caches remain valid; only the new slot is added. We re-anchor the whole space periodically.", correct:true},
+          {key:"b", text:"We retrain the full model on new data."},
+          {key:"c", text:"We move new items to a content-only embedding."},
+          {key:"d", text:"We skip cold-start entirely."},
         ]}
-        trap={<>(e) is the silent-degradation trap.</>}
-        lens={<>Sequence: content generator, online-update path, exposure policy, periodic user refresh, drift-triggered full retrain. Skipping user-side refresh is the most-documented FELRec failure mode in production.</>}
-        stretch={<>How would you A/B test FELRec vs the old daily-retrain pipeline?</>}
+        trap={<>(b)(c)(d) drop one of the two load-bearing pieces.</>}
+        lens={<>Frozen space + incremental embedding are inseparable.</>}
+        stretch={<>Which is harder to engineer: the freeze discipline or the incremental update rule?</>}
       />
 
-      <VIS.TrapProblem
-        id="fel-p9" difficulty="medium" multiSelect
-        title="P9 — Domains where FELRec is the WRONG choice"
-        scenario={<>Pick the domains where FELRec adds more complexity than value.</>}
+      <VIS.TrapProblem id="fel-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use FELRec. Select all that apply."
+        scenario={<><em>Discriminating insight: FELRec needs (i) high item-churn rate, (ii) usable interaction signal soon after item arrival, (iii) downstream caches that rely on embedding stability. It is wrong for stable catalogs, items that arrive with zero interactions and never get any, or systems that already trigger fast retrains.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Stable catalog with under 10 new items per day (e.g., curated streaming subset).", correct:true},
-          {key:"b", text:"Catalog with no content features (anonymous IDs only).", correct:true},
-          {key:"c", text:"Cold-start dominated by NEW USERS, not new items.", correct:true},
-          {key:"d", text:"Short-video platform with thousands of uploads per hour."},
-          {key:"e", text:"News recommender."},
+          {key:"a", text:"Stable catalog with monthly item additions — periodic retrain is sufficient and simpler.", correct:true},
+          {key:"b", text:"Item arrives and never accumulates any interactions (the cold-stays-cold case) — FELRec has nothing to fire on.", correct:true},
+          {key:"c", text:"Short-video platform with 50k new items per hour (sweet spot)."},
+          {key:"d", text:"User-side space drifts faster than re-anchor cadence — frozen vectors become stale.", correct:true},
+          {key:"e", text:"Pure content cold-start sufficient because item content is rich and aligned with user tastes — FELRec&apos;s interaction-based refinement is unnecessary overhead.", correct:true},
         ]}
-        trap={<>(d)(e) are canonical FELRec wins.</>}
-        lens={<>FELRec earns its complexity when (i) the catalog churns fast, (ii) content features power a useful initial embedding, and (iii) the cold-start bottleneck is item-side. If any of these fail, simpler approaches win.</>}
-        stretch={<>What is the FELRec analog for new-user cold start?</>}
+        trap={<>(c) is sweet spot.</>}
+        lens={<>FELRec needs churn + interactions + stability.</>}
+        stretch={<>What threshold of items/day justifies FELRec over periodic retrain?</>}
       />
 
-      <VIS.TrapProblem
-        id="fel-p10" difficulty="hard"
-        title="P10 — Embedding-space alignment as a continuous loss"
-        scenario={<>You want to bake the user/item alignment into the training objective so drift is reduced by design, not by periodic patches. What loss do you add?</>}
+      <VIS.TrapProblem id="fel-p10" difficulty="hard"
+        title="P10 — Why freeze the USER side specifically?"
+        scenario={<><em>Discriminating insight: freezing the user side means existing user vectors stay valid for cached lookups (ANN, slate-ranker conditioning, downstream models). If you freeze the item side instead, existing items stay stable but new users would have no way to be added incrementally. The user side is the more frequently cached anchor, so it must be the frozen one.</em><br/>Why user-side?</>}
         options={[
-          {key:"a", text:"A contrastive loss between new-item embeddings and known user embeddings on positive interactions, plus a regularization pulling new-item embeddings toward the centroid of similar existing items.", correct:true},
-          {key:"b", text:"L2 weight decay on user embeddings only."},
-          {key:"c", text:"Dropout on the content generator."},
-          {key:"d", text:"Higher learning rate on new-item embeddings."},
+          {key:"a", text:"The user side is the more heavily cached anchor (ANN search by user vector, slate-rankers conditioned on user, downstream personalization layers). Keeping it frozen preserves the downstream contract. Freezing the item side instead leaves new users with no incremental embedding path.", correct:true},
+          {key:"b", text:"User side is preferred by convention only."},
+          {key:"c", text:"Item side is mathematically symmetric."},
+          {key:"d", text:"Either side works equally."},
         ]}
-        trap={<>(b)(c)(d) are local optimizations that do not address the cross-space alignment.</>}
-        lens={<>Alignment must be expressed as a loss that couples the two spaces. Contrastive on positives ties new items to specific user vectors; centroid regularization keeps the global geometry compatible with the old item distribution. The combination keeps drift bounded continuously rather than fixing it at retrain time.</>}
-        stretch={<>How would you tune the relative weights of these two losses?</>}
+        trap={<>(b)(c)(d) miss the cache-stability reason.</>}
+        lens={<>Frozen side = downstream-cache anchor; user side wins because more is cached against it.</>}
+        stretch={<>What changes for a system where item-vector caches dominate?</>}
       />
+
+      <VIS.TrapProblem id="fel-p11" difficulty="hard"
+        title="P11 — Dynamic update rule"
+        scenario={<><em>Discriminating insight: the update rule is a learned aggregation of the engaging users&apos; vectors into the new item embedding. Common forms: attention-weighted mean of u1..uk vectors plus a small learned residual; or a learned function f(U_eng) where U_eng is the set of engaging users. The rule is trained against historical cold-start episodes (sampled from training history).</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"e_new = f(u1, u2, ..., uk) where u1..uk are the first-engaging users&apos; vectors and f is a learned attention-weighted aggregation. f is trained against historical cold-start episodes — items whose actual long-run embedding is known become supervised targets for the dynamic update rule.", correct:true},
+          {key:"b", text:"Random initialization until the next retrain."},
+          {key:"c", text:"Zero embedding until k=1000 interactions."},
+          {key:"d", text:"Mean of all item vectors."},
+        ]}
+        trap={<>(b) ignores signal. (c) too slow. (d) loses individuality.</>}
+        lens={<>The update rule is a learned aggregation of engaging users, supervised by historical cold-start episodes.</>}
+        stretch={<>What loss trains the dynamic update rule?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p12" difficulty="hard"
+        title="P12 — What does FELRec deliberately drop vs full retrain?"
+        scenario={<><em>Discriminating insight: full retrain CO-ADAPTS the user and item spaces — both move together to find the best joint factorization. FELRec forfeits that co-adaptation: the user space is frozen, so the new item can only fit the EXISTING user geometry, not reshape it. Long-term accuracy ceiling is slightly lower than periodic-retrain best.</em><br/>What does it forfeit?</>}
+        options={[
+          {key:"a", text:"Joint user-item co-adaptation. Full retrain lets both spaces move together to find the best joint factorization. FELRec freezes the user space, so each new item must fit the existing user geometry — long-term ceiling is slightly below full retrain. The cost buys cold-start latency.", correct:true},
+          {key:"b", text:"It forfeits the user encoder."},
+          {key:"c", text:"It forfeits gradients."},
+          {key:"d", text:"It forfeits items."},
+        ]}
+        trap={<>(b)(c)(d) miss the dropped property.</>}
+        lens={<>Co-adaptation is the deliberate sacrifice.</>}
+        stretch={<>How does re-anchoring cadence trade off ceiling vs cold-start latency?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: minimum interaction count k before firing the FELRec update dominates. Too low (k=1): one user&apos;s vector becomes the whole new-item embedding — noisy and biased; too high (k=100): the new item sits cold until k arrive. Re-anchor cadence and dynamic update rule complexity come next; batch size last.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"Minimum interaction count k (the firing threshold) is most fragile — too low is noisy, too high keeps items cold; re-anchor cadence next (controls user-space staleness); update-rule capacity (attention head count) after; batch size last.", correct:true},
+          {key:"b", text:"Batch size is most fragile."},
+          {key:"c", text:"Optimizer is most fragile."},
+          {key:"d", text:"Embedding dimension is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) miss the firing-threshold lever.</>}
+        lens={<>k is the cold-start latency vs noise knob.</>}
+        stretch={<>What does k=5 vs k=20 do empirically on a short-video dataset?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: FELRec assumes the first-engaging users are REPRESENTATIVE of the new item&apos;s broader audience. If a tiny power-user clique drives all early engagement, the new item&apos;s embedding fits the clique, not the eventual audience — &ldquo;influencer bias.&rdquo;</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Influencer bias: the first k engagers are a tiny power-user clique whose tastes do not represent the eventual audience. The new item&apos;s incremental embedding fits the clique geometry, not the broad audience. Mitigation: oversample early engagers from a diverse cohort or weight by user-vector novelty.", correct:true},
+          {key:"b", text:"Off-by-one in item IDs."},
+          {key:"c", text:"Tokenizer mismatch."},
+          {key:"d", text:"Wrong batch size."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>First-engager representativeness is the FELRec-specific data contract.</>}
+        stretch={<>How do you diversify the first-engager cohort without manipulating exposure?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;FELRec is just nearest-neighbor lookup over the user vectors that engaged&rdquo;"
+        scenario={<><em>Discriminating insight: a plain nearest-neighbor aggregation of engaging users is naive — it does not learn how to UPWEIGHT certain engagers (early adopters, diverse users) or DOWNWEIGHT others (influencer cliques). FELRec&apos;s dynamic update is a LEARNED aggregator trained against historical cold-start episodes; it absorbs these subtleties.</em><br/>Why is &ldquo;just nearest-neighbor&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"Plain mean of engagers is naive — it cannot weight early adopters vs influencer cliques, cannot down-weight noisy engagers, and cannot learn item-category-specific aggregation. FELRec&apos;s update is a LEARNED aggregator, trained against historical cold-start episodes to absorb these subtleties.", correct:true},
+          {key:"b", text:"Nearest neighbor is mathematically equivalent."},
+          {key:"c", text:"FELRec is purely heuristic."},
+          {key:"d", text:"FELRec does not learn anything."},
+        ]}
+        trap={<>(b)(c)(d) collapse the learned mechanism.</>}
+        lens={<>FELRec is a LEARNED aggregator; nearest-neighbor is a strawman baseline.</>}
+        stretch={<>How would you ablate the learned aggregator vs simple mean?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: &ldquo;FELRec is just incremental embedding&rdquo; cascades into (i) ignoring re-anchoring (user space drifts forever), (ii) skipping the learned aggregator (naive mean instead), (iii) firing at k=1 (noisy). Each is load-bearing.</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: ignore re-anchoring and the user space drifts forever, skip the learned aggregator and lose the trained weighting, fire at k=1 and accept noisy embeddings. Each piece is load-bearing; FELRec is not just &ldquo;add an embedding when interactions arrive.&rdquo;", correct:true},
+          {key:"b", text:"Only re-anchoring matters."},
+          {key:"c", text:"Only the firing threshold matters."},
+          {key:"d", text:"Nothing — FELRec really is just incremental embedding."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Three pieces: re-anchoring, learned aggregator, firing threshold.</>}
+        stretch={<>What ablation table shows each piece&apos;s contribution?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior responds to cold-start recall regression by lowering k. A senior measures the COLD-START EMBEDDING QUALITY metric first — distance between the FELRec embedding at k engagers and the eventual stabilized embedding for matched historical items. If the gap is large at the current k, lowering k makes it worse; if the gap is small, the bottleneck is elsewhere (re-anchor, aggregator capacity).</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Measure cold-start embedding quality: distance between the FELRec-at-k embedding and the eventual stabilized embedding for matched historical items. If quality is poor at current k, RAISING k may help; if quality is good, the bottleneck is downstream (re-anchor cadence or aggregator capacity). Lower k is rarely the right first lever.", correct:true},
+          {key:"b", text:"Lower k blindly."},
+          {key:"c", text:"Drop FELRec."},
+          {key:"d", text:"Increase embedding dim."},
+        ]}
+        trap={<>(b)(c)(d) miss the embedding-quality diagnostic.</>}
+        lens={<>Cold-start embedding quality is the FELRec-specific diagnostic.</>}
+        stretch={<>What dashboard panel shows quality vs k tradeoff over time?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: cold-start CTR degraded after a frontend layout change"
+        scenario={<><em>Discriminating insight: cold-start CTR drops 6% after the frontend changed the layout of new-item surfaces. FELRec embedding quality is unchanged. The frontend now shows new items to a narrower cohort (top-of-feed for power users only), biasing the first-k engagers toward power-user tastes. FELRec embeddings inherit the bias and the model under-recommends to the broader audience.</em><br/>Most likely cause?</>}
+        options={[
+          {key:"a", text:"Frontend cohort change. The layout now exposes new items primarily to power users; FELRec&apos;s first-k engagers are biased and the resulting embedding fits power-user taste. The downstream model under-recommends to the broader audience. Fix: diversify exposure cohort for new items OR weight engagers by audience-novelty.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Random seed changed."},
+          {key:"d", text:"Disk full."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Frontend exposure changes can silently bias FELRec embeddings via the first-k engager cohort.</>}
+        stretch={<>What audit catches frontend-cohort bias on new-item exposure?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p19" difficulty="hard"
+        title="P19 — Production gotcha: FELRec embedding written to ANN index too early"
+        scenario={<><em>Discriminating insight: writing the new item&apos;s embedding to the production ANN index at k=1 means that single user&apos;s vector dominates the embedding, and queries from very different users will miss the item. Best practice: hold the new item in a STAGING index until k crosses a stability threshold, then publish to production.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Hold the new item&apos;s FELRec embedding in a staging index until k crosses a stability threshold (e.g., k=20 or until the embedding moves &lt; epsilon between updates). Then publish to production ANN. Writing at k=1 puts a noisy embedding into the live retrieval path.", correct:true},
+          {key:"b", text:"Write at k=1; refine in place."},
+          {key:"c", text:"Never publish to production until full retrain."},
+          {key:"d", text:"Use a random embedding until stable."},
+        ]}
+        trap={<>(b)(c)(d) miss the staging discipline.</>}
+        lens={<>Staging until stable; publish to production once.</>}
+        stretch={<>How do you measure embedding stability cheaply?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p20" difficulty="hard"
+        title="P20 — Failure on Friday: long-tail items lose recall after a user-space re-anchor"
+        scenario={<><em>Discriminating insight: the periodic full retrain (re-anchor) shifted the user-side embedding space. New items added via FELRec since the previous retrain had embeddings anchored to the OLD user vectors and now point to the wrong places in the NEW user space. Long-tail items (most affected because they had fewer interactions to refine against) lose recall.</em><br/>3am page: long-tail recall down 18% after re-anchor. Diagnose.</>}
+        options={[
+          {key:"a", text:"Re-anchor shifted the user-side space; FELRec-added items still have embeddings anchored to the OLD user vectors. Long-tail items (least refined) are hit hardest. Fix: refresh FELRec embeddings against the new user space at re-anchor time, or stage re-anchor with embedding migration.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Disk full."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Re-anchor implies migration of all FELRec embeddings.</>}
+        stretch={<>What migration step refreshes FELRec items cheaply?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p21" difficulty="medium"
+        title="P21 — Library default that bites: ANN index does not support cheap incremental insertions"
+        scenario={<><em>Discriminating insight: many ANN libraries (FAISS IVF flat, ScaNN) batch-rebuild the index periodically; per-item insertion is expensive or unsupported. FELRec&apos;s use case demands cheap incremental insertion. HNSW or a separate staging index for new items is required.</em><br/>Where does the default break?</>}
+        options={[
+          {key:"a", text:"Many ANN libraries (IVF-PQ, ScaNN batch builds) do not support cheap per-item insertion — FELRec&apos;s incremental publication pattern is mismatched. Use HNSW (incremental friendly) or maintain a separate staging index for FELRec items merged into the main index at re-anchor time.", correct:true},
+          {key:"b", text:"Default LR is wrong."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>ANN index choice is a FELRec-specific infrastructure constraint.</>}
+        stretch={<>How does HNSW handle per-item insertion at high churn?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) periodic-retrain baseline + measure cold-start recall, (2) train the dynamic update rule on historical cold-start episodes, (3) deploy FELRec to staging ANN, (4) hold new items in staging until k threshold, (5) promote to production ANN, (6) measure cold-start recall lift, (7) ramp. Pushing to production ANN at k=1 is the classic mistake.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Periodic-retrain baseline → train dynamic update rule on historical cold-start episodes → deploy FELRec into staging ANN → hold new items until k threshold → promote to production ANN → measure cold-start lift → ramp.", correct:true},
+          {key:"b", text:"Skip the baseline."},
+          {key:"c", text:"Publish to production ANN at k=1."},
+          {key:"d", text:"Ramp before measurement."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Baseline → train rule → staging → promote → measure → ramp.</>}
+        stretch={<>Why train the dynamic update rule before deploying?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks the claimed advantage"
+        scenario={<><em>Discriminating insight: a catalog where every new item gets 0–2 interactions in its first week. FELRec&apos;s firing threshold k is never met; new items sit cold; the system degenerates to the periodic-retrain fallback. FELRec needs enough early interactions to fire.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A long-tail-heavy catalog where new items get 0–2 interactions in their first week. The FELRec firing threshold is never met; new items sit cold until the next periodic retrain. FELRec&apos;s incremental advantage collapses to the retrain fallback.", correct:true},
+          {key:"b", text:"Short-video platform with 50k items per hour and many engagers (sweet spot)."},
+          {key:"c", text:"News feed with continual updates (sweet spot)."},
+          {key:"d", text:"Marketplace with high-churn listings (sweet spot)."},
+        ]}
+        trap={<>(b)(c)(d) sweet spots.</>}
+        lens={<>FELRec needs enough early interactions to fire.</>}
+        stretch={<>What hybrid handles a zero-interaction long tail?</>}
+      />
+
+      <VIS.TrapProblem id="fel-p24" difficulty="hard"
+        title="P24 — Named failure: user-side drift causes the new-item embedding to be miscalibrated against current behavior"
+        scenario={<><em>Discriminating insight: FELRec&apos;s embedding is computed against the FROZEN user space, but user behavior keeps evolving. A new item embedded at time T against the time-T user space is still pointed at time-T user vectors when the live users are at time T+delta. The mismatch grows until the next re-anchor. Long-running FELRec deployments must monitor user-space drift and trigger re-anchor.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"User-side drift between re-anchorings. FELRec embeddings are anchored to the user space at the time the new item arrived; user behavior keeps evolving but the embedding does not. Long-running deployments need drift monitors that trigger re-anchor (or per-item embedding refresh) when user-space drift crosses a threshold.", correct:true},
+          {key:"b", text:"FELRec embeddings never drift."},
+          {key:"c", text:"User behavior is irrelevant after embedding."},
+          {key:"d", text:"There are no failures."},
+        ]}
+        trap={<>(b)(c)(d) deny the failure.</>}
+        lens={<>Frozen-anchor + evolving user behavior = drift; re-anchor monitor mandatory.</>}
+        stretch={<>What drift signal triggers an early re-anchor in production?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://link.springer.com/article/10.1007/s41060-024-00635-5" target="_blank" rel="noopener">Anon. — <em>FELRec: efficient handling of item cold-start with dynamic representation learning in recommender systems</em> (IJDSA 2024, paper)</a> — canonical reference.</li>
-        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener">Eugene Yan — <em>System Design for Discovery</em> (blog)</a> — two-tower retrieval that FELRec extends with dynamic item embeddings.</li>
-        <li><a href="https://research.google/pubs/pub47880/" target="_blank" rel="noopener">Covington, Adams, Sargin — <em>Deep Neural Networks for YouTube Recommendations</em> (RecSys 2016, paper)</a> — production cold-start handling in a high-churn catalog.</li>
-        <li><a href="https://lilianweng.github.io/posts/2021-05-31-contrastive/" target="_blank" rel="noopener">Lilian Weng — <em>Contrastive Representation Learning</em> (blog)</a> — alignment objectives that bound embedding-space drift.</li>
-        <li><a href="https://netflixtechblog.com/learning-a-personalized-homepage-aa8ec670359a" target="_blank" rel="noopener">Netflix Tech Blog — <em>Learning a Personalized Homepage</em> (blog)</a> — production discussion of periodic vs incremental retraining tradeoffs.</li>
+        <li><a href="https://link.springer.com/article/10.1007/s41060-024-00635-5" target="_blank" rel="noopener">Pisl &amp; Hartl (2024), <em>FELRec: efficient handling of item cold-start with dynamic representation learning in recommender systems</em> (IJDSA)</a> — the FELRec paper.</li>
+        <li><a href="https://arxiv.org/abs/1907.07171" target="_blank" rel="noopener">Vartak et al., <em>A Meta-Learning Perspective on Cold-Start Recommendations for Items</em> (NeurIPS 2017)</a> — the meta-learning view of item cold-start that FELRec generalizes.</li>
+        <li><a href="https://eugeneyan.com/writing/recsys-cold-start/" target="_blank" rel="noopener">Eugene Yan — <em>Real-time Machine Learning For Recommendations</em> (blog)</a> — practitioner framing of incremental cold-start and ANN integration.</li>
+        <li><a href="https://lilianweng.github.io/posts/2021-05-31-contrastive/" target="_blank" rel="noopener">Lilian Weng — <em>Contrastive Representation Learning</em> (blog)</a> — background on the embedding spaces FELRec freezes.</li>
+        <li><a href="https://www.pinecone.io/learn/series/faiss/hnsw/" target="_blank" rel="noopener">Pinecone — <em>HNSW</em> (guide)</a> — practitioner reference for incremental ANN insertion, relevant to P21.</li>
       </ul>
     </VIS.Section>
   </main>

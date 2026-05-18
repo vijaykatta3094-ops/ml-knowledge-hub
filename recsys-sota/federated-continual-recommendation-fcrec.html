@@ -1414,248 +1414,436 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 13
+// FCRec — Federated Continual Recommendation (CIKM 2025)
+// Unique mechanism: federated learning over NON-STATIONARY streams with
+// per-client EXPERIENCE REPLAY buffers. Each client maintains a small, privacy-
+// preserving replay buffer of its OWN past interactions and mixes them with
+// new data during local training to fight catastrophic forgetting WITHIN the
+// federated setting. Forgetting is amplified in federated rec because new
+// FedAvg rounds overwrite weights with averages of clients seeing different
+// drift directions.
+// Anchor that survives §2a redaction: "Federated rec where each client holds
+// a local experience-replay buffer; local training mixes new + replayed
+// interactions; FedAvg averages models that have all rehearsed history; both
+// concept drift AND catastrophic forgetting are addressed at once."
+// Federated trio caution: this is DIFFERENT from Efficient-FedRec (server/
+// client architectural split for privacy) and FedRKG (KG-as-bridge for
+// disjoint users). FCRec assumes a more standard federation but adds the
+// CONTINUAL learning machinery — replay buffers + drift detection — to handle
+// non-stationary streams.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Federated recs &middot; Continual learning"
-      title="Federated Continual Recommendation (FCRec)"
-      subtitle="Per-client experience-replay buffers handle concept drift across federated streams — no shared dataset, no catastrophic forgetting."
+      pill="RecSys SOTA · Federated continual recs"
+      title="FCRec — federated continual recommendation"
+      subtitle="Federated rec where the streams are non-stationary. Each client keeps a small local experience-replay buffer; local rounds mix new and replayed interactions; the FedAvg server averages clients that have all rehearsed their history. Catastrophic forgetting × federated drift, addressed jointly."
       byline={[
-        {label: "Paper", value: "Federated Continual Recommendation (CIKM 2025)"},
-        {label: "Domain", value: "Streaming on-device CRS (music, news, short-video)"},
+        {label: "Paper", value: "\"Federated Continual Recommendation\" (CIKM 2025)"},
+        {label: "Surface", value: "On-device recsys with evolving taste — music, news, short-video — where data is non-stationary AND private"},
+        {label: "Anchor that survives redaction", value: "Per-client local experience-replay buffer + FedAvg over clients that have all rehearsed past interactions; addresses concept drift AND catastrophic forgetting in one mechanism"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="Federated Continual Recommendation: a federated learning setup where each device sees a non-stationary stream of interactions and maintains a local experience-replay buffer to avoid catastrophic forgetting during federation rounds.">FCRec</VIS.Term> tackles two problems vanilla FedRec ignores: user taste drifts over time, AND the global model federated across drifting clients forgets old behaviors. The fix: per-client replay buffers that preserve a small sample of past interactions for local retraining.
+      Standard <VIS.Term def="Federated Recommendation. Each client trains a local copy of the rec model; a server FedAvg-aggregates weights and broadcasts. Implicit assumption: the data stream is roughly stationary across rounds.">FedRec</VIS.Term> assumes a roughly stationary data stream. Real on-device data is NON-stationary: a user&apos;s music taste shifts, news cycles change, products come and go. Federation amplifies the problem — new FedAvg rounds overwrite weights with the average of clients that may each be drifting in different directions, so each client&apos;s model can <VIS.Term def="Catastrophic Forgetting. A model trained on new data loses its ability to perform on old data because the weights move to fit the new distribution. Classic in continual learning; amplified in federated rec because FedAvg also moves weights toward other clients&apos; current distributions.">catastrophically forget</VIS.Term> its OWN past interactions even faster than in a single-tenant model. FCRec inserts per-client EXPERIENCE REPLAY buffers: each client stores a small, privacy-preserving sample of its own past interactions and mixes them into every local training round. After FedAvg, each client&apos;s model has seen both new and old data — drift is tracked, forgetting is curtailed. The senior trap: this is NOT &ldquo;just FedRec with continual learning bolted on&rdquo; — naive replay buffers leak privacy under DP. FCRec is the joint design where replay AND federated aggregation co-adapt.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        Standard FedRec assumes each device has a static dataset of interactions. Reality: users listen to new music genres, click new news topics, watch new short-video styles. Each device&apos;s data is a <VIS.Term def="A stream whose distribution changes over time — what the model learned yesterday no longer predicts today.">non-stationary stream</VIS.Term>. Plain federated rounds on a drifting stream cause <VIS.Term def="Catastrophic forgetting: a neural network trained on new data abruptly loses its accuracy on previously-learned tasks because the gradients overwrite old knowledge.">catastrophic forgetting</VIS.Term> of past tastes. FCRec solves this with two ingredients: (1) each device maintains a tiny <VIS.Term def="Experience replay: a buffer holding a representative sample of past examples; during training new examples are interleaved with replayed ones to preserve old skills.">experience-replay buffer</VIS.Term> of past interactions, and (2) the federation round trains on a mix of fresh stream + replayed buffer.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  S["User interaction stream (drifting)"]
-  B["Local replay buffer (small)"]
-  L["Local training: mix stream + buffer"]
-  U["Local update &Delta;&theta;"]
-  A["Server: FedAvg aggregation"]
-  G["Global model &theta;"]
-  S --> B
-  S --> L
-  B --> L
-  L --> U
-  U --> A
-  A --> G
-  G --> L
-      `} />
-      <VIS.Equation display tex="\mathcal{L}_{\text{FCRec}} = \mathcal{L}_{\text{stream}}(\theta; D_t) + \lambda \cdot \mathcal{L}_{\text{replay}}(\theta; B)" />
-      <p>
-        The replay loss is computed on a per-client buffer B of size ~hundreds to low thousands of past events. &lambda; controls the rigidity-plasticity tradeoff: high &lambda; remembers old well but adapts slowly to drift; low &lambda; adapts fast but forgets.
-      </p>
+    <VIS.Section id="sec-what" title="What it is — replay buffers on every client, FedAvg as usual">
+      <VIS.Mermaid chart={`flowchart TB
+  N1["Client A: new interactions"]
+  R1["Client A: replay buffer (sampled past)"]
+  L1["Client A: local train on new + replay"]
+  N2["Client B: new interactions"]
+  R2["Client B: replay buffer (sampled past)"]
+  L2["Client B: local train on new + replay"]
+  S["Server: FedAvg over rehearsed local models"]
+  G["Updated global model"]
+  N1 --> L1
+  R1 --> L1
+  N2 --> L2
+  R2 --> L2
+  L1 --> S
+  L2 --> S
+  S --> G
+  G --> L1
+  G --> L2`} />
+      <ul>
+        <li><strong>Per-client replay buffer</strong> — a small, bounded sample of past interactions stays on each device. Sampling strategies include reservoir sampling, surprise-weighted sampling, or class-balanced sampling.</li>
+        <li><strong>Local mixed-batch training</strong> — every local update consumes a mixture of new interactions and replayed past ones, so the local model does not forget its history before FedAvg.</li>
+        <li><strong>FedAvg over rehearsed locals</strong> — the server averages clients that have ALL rehearsed; the global model carries less forgetting amplification than vanilla FedRec.</li>
+        <li><strong>Drift detection</strong> — clients (or the server) monitor distribution shift signals; replay sampling rate adapts when shift is detected.</li>
+      </ul>
+      <p>The replay buffer is local-only; no past interaction ever leaves the device.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from vanilla FedRec">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Vanilla FedRec</th><th style={{textAlign:"left",padding:8}}>FCRec</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How it differs from vanilla FedRec, single-tenant continual rec, and Efficient-FedRec">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Federated?</th>
+          <th style={{textAlign:"left", padding:8}}>Handles concept drift?</th>
+          <th style={{textAlign:"left", padding:8}}>Handles catastrophic forgetting?</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Data assumption</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Static, IID on each device</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Non-stationary stream</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Old-behavior retention</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Catastrophic forgetting</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Preserved via replay</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Drift adaptation</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Built-in via stream loss</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Shared dataset</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No (replay is local)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Privacy risk</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Gradient inversion</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Gradient inversion + replay-buffer storage</td></tr>
+          <tr><td style={{padding:8}}>Vanilla FedRec</td><td style={{padding:8}}>Yes</td><td style={{padding:8}}>No</td><td style={{padding:8}}>No — amplified by FedAvg</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Single-tenant continual rec (replay-based)</td><td style={{padding:8}}>No</td><td style={{padding:8}}>Yes</td><td style={{padding:8}}>Yes (central replay)</td></tr>
+          <tr><td style={{padding:8}}>Efficient-FedRec (news)</td><td style={{padding:8}}>Yes (server/client split)</td><td style={{padding:8}}>Partial (encoder refreshes)</td><td style={{padding:8}}>No</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>FCRec</strong></td><td style={{padding:8}}><strong>Yes</strong></td><td style={{padding:8}}><strong>Yes (drift-adaptive replay)</strong></td><td style={{padding:8}}><strong>Yes (per-client replay)</strong></td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>On-device CRS for evolving taste: music streaming, news, short-video — where preferences shift weekly.</li>
-        <li>Long-lived federated deployments where the data over a year is clearly non-stationary even if the daily batch looks stable.</li>
-        <li>Cases where periodic full retraining is infeasible (cost, privacy, energy on device).</li>
-        <li>Domains where preserving rarely-revisited interests is valuable (the user occasionally returns to classical music after months of pop).</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Replay-buffer privacy.</strong> Even though the buffer stays local, storing past interactions on-device may itself violate the strict-DP threat model (a device compromise leaks the buffer).</li>
-        <li><strong>Buffer selection bias.</strong> Reservoir sampling, FIFO, or importance-weighted selection each produce different long-term behavior; no universal best.</li>
-        <li><strong>Memory pressure on phones.</strong> A 10k-event buffer with embeddings is non-trivial on low-end devices.</li>
-        <li><strong>Stale buffer drift.</strong> If &lambda; is too high, the model is anchored to year-old preferences the user no longer holds.</li>
-        <li><strong>Drift-detection signal.</strong> Without explicit drift monitoring, the system cannot self-tune &lambda; over time.</li>
-      </ul>
-      <VIS.Callout kind="gotcha" title="The DP-replay incompatibility">
-        Strict differential privacy bounds the influence of any single data point. Experience replay deliberately KEEPS specific past data points around to retrain on them. The two are at odds: every replayed event is reused across many gradient computations, multiplying its privacy cost. FCRec compromises by (a) limiting buffer size, (b) clipping per-event gradient contributions, and (c) accounting for the buffer in the DP budget. There is no &quot;free&quot; replay under strict DP.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="fcr-p1" difficulty="hard"
-        title="P1 — Why is naive replay incompatible with strict DP federated rec?"
-        scenario={<>You add experience replay to a federated recommender already running under strict DP-SGD. The DP epsilon budget is exhausted in days instead of months. Why?</>}
+      <VIS.TrapProblem id="fcr-p1" difficulty="hard"
+        title="P1 — FCRec vs vanilla FedRec: what is the load-bearing difference?"
+        scenario={<><em>Discriminating insight: vanilla FedRec assumes stationary streams; under drift, each client&apos;s local round moves weights toward the LATEST data, and FedAvg averages those drifting locals. The global model forgets historical patterns FASTER than single-tenant continual learning. FCRec adds per-client experience replay so locals rehearse history BEFORE FedAvg averages them.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Each replayed event is reused across many gradient steps, multiplying its privacy cost; under strict DP accounting, repeated access compounds epsilon.", correct:true},
-          {key:"b", text:"Replay buffers do not interact with DP at all."},
-          {key:"c", text:"DP-SGD always fails on streaming data."},
-          {key:"d", text:"The buffer leaks because it is stored on disk."},
+          {key:"a", text:"FCRec adds per-client experience-replay buffers so each local round trains on a mix of new AND replayed past interactions. After FedAvg, the global model has seen rehearsed history from every client. Vanilla FedRec has no such mechanism; under drift it forgets history faster than single-tenant continual learning because FedAvg amplifies the drift.", correct:true},
+          {key:"b", text:"They are equivalent."},
+          {key:"c", text:"FCRec is just FedRec with a larger batch size."},
+          {key:"d", text:"They differ only in the optimizer."},
         ]}
-        trap={<>(b)(c) are wrong about how DP accounts for repeated access. (d) is a side concern but not the epsilon-exhaustion mechanism.</>}
-        lens={<>DP&apos;s privacy guarantee weakens when the same example is queried many times. Replay deliberately re-queries past examples, so the per-event privacy cost compounds across replays. FCRec navigates this by capping buffer size, clipping per-event contributions, and including buffer reuse in the DP accountant — accepting a worse but accounted epsilon.</>}
-        stretch={<>How would you derive an epsilon budget that accounts for buffer reuse?</>}
+        trap={<>(b)(c)(d) collapse the continual mechanism.</>}
+        lens={<>Replay-before-FedAvg is the load-bearing addition; FedAvg amplifies forgetting absent rehearsal.</>}
+        stretch={<>Why does FedAvg amplify catastrophic forgetting?</>}
       />
 
-      <VIS.TrapProblem
-        id="fcr-p2" difficulty="medium" multiSelect
-        title="P2 — Choosing the replay-buffer policy"
-        scenario={<>Pick the buffer-selection policies that meaningfully affect retention quality.</>}
+      <VIS.TrapProblem id="fcr-p2" difficulty="hard"
+        title="P2 — FCRec vs single-tenant replay-based continual rec: what does federation add?"
+        scenario={<><em>Discriminating insight: single-tenant continual rec uses ONE replay buffer over all users. FCRec uses PER-CLIENT replay buffers (each device has its own history) and FedAvg-aggregates models trained against those local buffers. The federation contract requires never moving the buffers; the continual mechanism must work with per-client buffer fragments.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Reservoir sampling — uniform random over time.", correct:true},
-          {key:"b", text:"Importance-weighted — keep events with high gradient norm.", correct:true},
-          {key:"c", text:"FIFO — drop oldest first.", correct:true},
-          {key:"d", text:"LIFO — drop newest first."},
-          {key:"e", text:"Keep every event ever (no eviction)."},
+          {key:"a", text:"Federation: replay buffers must stay on each device (privacy). Single-tenant continual rec has one central replay buffer with global statistics; FCRec has many local buffers, each with only its client&apos;s history. The continual mechanism must work with per-client buffer fragments and FedAvg over locally rehearsed models.", correct:true},
+          {key:"b", text:"Federation adds nothing — it is identical to single-tenant."},
+          {key:"c", text:"Federation makes continual learning impossible."},
+          {key:"d", text:"They are mathematically identical."},
         ]}
-        trap={<>(d) inverts retention. (e) violates the memory constraint and the DP budget.</>}
-        lens={<>The three real choices: reservoir (unbiased over time, good for drift detection), importance-weighted (keeps informative events, may bias toward outliers), FIFO (preserves recency). Each has a different long-term failure mode; the right choice depends on the drift profile of the domain.</>}
-        stretch={<>For news (fast drift) vs music (slow drift), which buffer policy each?</>}
+        trap={<>(b)(c)(d) collapse the contract.</>}
+        lens={<>Per-client buffer fragments must produce a consistent global model under FedAvg.</>}
+        stretch={<>How are heterogeneous replay buffers handled in FedAvg?</>}
       />
 
-      <VIS.TrapProblem
-        id="fcr-p3" difficulty="hard"
-        title="P3 — Catastrophic forgetting in plain FedRec"
-        scenario={<>You run plain FedRec on a music streaming app where user listening shifts from rock to electronic over six weeks. After eight weeks, the recommender suggests only electronic items. Why is rock missing?</>}
+      <VIS.TrapProblem id="fcr-p3" difficulty="medium"
+        title="P3 — Without FCRec, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: fallbacks are (i) vanilla FedRec — drift kills it; (ii) periodic retrain-from-scratch — discards all history; (iii) longer FedAvg rounds — averages stale gradients; (iv) central continual rec — violates the privacy contract. FCRec is the only design that keeps both federation AND non-stationarity handling.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Gradient updates from the recent electronic-dominated stream overwrote the parameters that encoded rock preferences — classic catastrophic forgetting; FedRec has no replay or regularization to preserve old behavior.", correct:true},
-          {key:"b", text:"Rock is no longer in the catalog."},
-          {key:"c", text:"The user&apos;s embedding was reset by the server."},
-          {key:"d", text:"FedAvg always destroys minority preferences."},
+          {key:"a", text:"Vanilla FedRec (drift kills it), retrain-from-scratch (discards history), longer FedAvg rounds (averages stale gradients), or central continual rec (breaks the federation contract). FCRec is the design that keeps both federation AND non-stationarity handling.", correct:true},
+          {key:"b", text:"Random recommendations."},
+          {key:"c", text:"BM25 only."},
+          {key:"d", text:"Skip recsys entirely."},
         ]}
-        trap={<>(b)(c)(d) misattribute the cause.</>}
-        lens={<>This is the textbook continual-learning failure: gradients from recent data overwrite earlier-learned features. FCRec mitigates by replaying old interactions; alternative mitigations include elastic weight consolidation, progressive networks, or gradient projection — all of which trade some flexibility for retention.</>}
-        stretch={<>What other continual-learning mechanisms could you combine with FCRec?</>}
+        trap={<>(b)(c)(d) under-shoot.</>}
+        lens={<>FCRec is the only intersection of federation and continual.</>}
+        stretch={<>What recall gap does FCRec close vs vanilla FedRec under drift?</>}
       />
 
-      <VIS.TrapProblem
-        id="fcr-p4" difficulty="medium"
-        title="P4 — Tuning &lambda; (rigidity-plasticity)"
-        scenario={<>What is the right way to think about &lambda; in FCRec?</>}
+      <VIS.TrapProblem id="fcr-p4" difficulty="hard"
+        title="P4 — Compose FCRec with DP-SGD on the local replay buffer"
+        scenario={<><em>Discriminating insight: replay buffers contain raw past interactions. Even though they stay on-device, gradient inversion at FedAvg time can leak buffer contents through model updates. Composing FCRec with DP-SGD over local training (including the replay-buffer pass) bounds the leakage formally. The replay buffer itself becomes a privacy surface that must be covered.</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"&lambda; trades plasticity (adapt to drift) against rigidity (retain old behavior); set higher when drift is slow and retention matters, lower when drift is fast.", correct:true},
-          {key:"b", text:"&lambda; is the federation round count."},
-          {key:"c", text:"&lambda; should always be set to 1.0."},
-          {key:"d", text:"&lambda; has no effect once the buffer is full."},
+          {key:"a", text:"DP-SGD on local training (including the replay-buffer pass) adds calibrated noise so the FedAvg uploads carry (epsilon, delta) bounds on how much they reveal about either new OR replayed interactions. The replay buffer becomes a privacy surface — composition is necessary, not optional.", correct:true},
+          {key:"b", text:"DP cannot apply to replay buffers."},
+          {key:"c", text:"DP makes replay buffers redundant."},
+          {key:"d", text:"DP must be applied centrally only."},
         ]}
-        trap={<>(b)(c)(d) misrepresent the parameter.</>}
-        lens={<>This is the rigidity-plasticity dilemma: too rigid and the model is stuck in the past; too plastic and it forgets. &lambda; controls the tradeoff. Many production systems anneal &lambda; over time or condition it on a drift-detection signal.</>}
-        stretch={<>How would you auto-tune &lambda; from a drift detector?</>}
+        trap={<>(b)(c)(d) deny composition.</>}
+        lens={<>The replay buffer is a privacy surface that DP must cover.</>}
+        stretch={<>What does &ldquo;privacy amplification by sampling&rdquo; do for replay-buffer DP?</>}
       />
 
-      <VIS.TrapProblem
-        id="fcr-p5" difficulty="hard" multiSelect
-        title="P5 — Diagnosing FCRec accuracy degradation"
-        scenario={<>FCRec metrics decline over six months despite running federation rounds daily. Pick the plausible root causes.</>}
+      <VIS.TrapProblem id="fcr-p5" difficulty="medium"
+        title="P5 — When does the replay-buffer approach STOP working?"
+        scenario={<><em>Discriminating insight: replay buffers help when past patterns remain RELEVANT. If a user&apos;s taste hard-pivots (left a music genre forever), rehearsing the old genre actively HURTS — the model keeps recommending stuff the user no longer wants. The fix is drift-aware buffer eviction or recency-weighted replay.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Replay buffer is dominated by stale interactions; &lambda; pulls the model toward outdated preferences.", correct:true},
-          {key:"b", text:"Item catalog has churned; old items in buffer are no longer servable.", correct:true},
-          {key:"c", text:"User embedding has not been refreshed; only model params federate.", correct:true},
-          {key:"d", text:"Devices stopped uploading because of the FCRec algorithm name."},
-          {key:"e", text:"Federation rounds are too frequent."},
+          {key:"a", text:"When a user&apos;s preferences hard-pivot (left a category permanently), rehearsing the old category from the replay buffer becomes a bug — the model keeps recommending stale tastes. Drift-aware buffer eviction or recency-weighted replay is needed to forget what should be forgotten.", correct:true},
+          {key:"b", text:"FCRec always wins."},
+          {key:"c", text:"Replay buffers never hurt."},
+          {key:"d", text:"Drift is irrelevant to replay."},
         ]}
-        trap={<>(d) is nonsensical. (e) is rarely the issue at daily cadence.</>}
-        lens={<>The three real culprits: buffer staleness (need eviction policy that tracks drift), catalog churn (need item-side handling — see FELRec for incremental updates), user-embedding staleness (need to refresh the personalized side too). Real production FCRec is multi-component, not just &lambda;-tuning.</>}
-        stretch={<>How would you measure buffer staleness quantitatively?</>}
+        trap={<>(b)(c)(d) miss the &ldquo;forgetting is sometimes correct&rdquo; nuance.</>}
+        lens={<>Forgetting is sometimes correct; replay buffers need eviction policy.</>}
+        stretch={<>What drift signal triggers buffer eviction?</>}
       />
 
-      <VIS.TrapProblem
-        id="fcr-p6" difficulty="medium"
-        title="P6 — Buffer size on a phone"
-        scenario={<>You have a 16-dim embedding per item, 8 bytes per event metadata, and want a 10k-event replay buffer per user. Storage cost?</>}
+      <VIS.TrapProblem id="fcr-p6" difficulty="hard"
+        title="P6 — Pick the architecture"
+        scenario={<><em>Discriminating insight: a music recsys deployed on 10M phones. User taste shifts seasonally; new songs appear weekly; clicks cannot leave the device. Vanilla FedRec forgets winter tastes by summer; central continual rec violates privacy; on-device-only loses cross-user signal. FCRec keeps federation AND handles drift.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"~700KB per user — well within mobile storage; cost is dominated by gradient compute when training on the buffer, not raw storage.", correct:true},
-          {key:"b", text:"~70MB per user — prohibitive."},
-          {key:"c", text:"Zero — buffer is server-side."},
-          {key:"d", text:"Cannot be computed."},
+          {key:"a", text:"FCRec — federated learning across 10M phones with per-device replay buffers that rehearse each user&apos;s seasonal history. FedAvg aggregates models that all have rehearsed; the global model retains both seasonal patterns AND tracks new songs.", correct:true},
+          {key:"b", text:"Vanilla FedRec — forgets seasonal tastes."},
+          {key:"c", text:"Central continual rec — violates privacy."},
+          {key:"d", text:"On-device-only — loses cross-user signal."},
         ]}
-        trap={<>(b)(c)(d) misread the order of magnitude or the design.</>}
-        lens={<>10k events &times; (16 floats &times; 4 bytes + 8 bytes metadata) &approx; 720KB. The real on-device cost is the compute to run replay gradient steps each round, not the storage. Battery and CPU time are the practical limits.</>}
-        stretch={<>At what buffer size do you cross into &quot;noticeable battery&quot; territory on a typical phone?</>}
+        trap={<>(b) drift. (c) privacy. (d) collaboration.</>}
+        lens={<>Drift + privacy + cross-user signal = FCRec.</>}
+        stretch={<>What replay-buffer size fits on a phone with strict storage limits?</>}
       />
 
-      <VIS.TrapProblem
-        id="fcr-p7" difficulty="hard"
-        title="P7 — Drift detection as a system signal"
-        scenario={<>You want to auto-tune &lambda; per device based on observed drift. What is the right signal?</>}
+      <VIS.TrapProblem id="fcr-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just increase FedAvg rounds to handle drift&rdquo;"
+        scenario={<><em>Discriminating insight: more rounds DO NOT recover history — they just keep averaging clients all drifting toward the latest data. Without replay, FedAvg has no memory mechanism. The fix must inject historical signal somewhere; FCRec puts it on each client.</em><br/>Why is &ldquo;more rounds&rdquo; insufficient?</>}
         options={[
-          {key:"a", text:"Track distribution distance (e.g., KL or Wasserstein) between recent-stream item distribution and buffer item distribution; high distance means drift, lower &lambda;.", correct:true},
-          {key:"b", text:"Federation round number."},
-          {key:"c", text:"Total number of clicks ever."},
-          {key:"d", text:"Time since installation."},
+          {key:"a", text:"More FedAvg rounds only re-average the latest-drift state; without a memory mechanism, the global model has no way to retain history. The fix must inject historical signal somewhere in the training loop. FCRec injects it via per-client replay buffers.", correct:true},
+          {key:"b", text:"More rounds always solve drift."},
+          {key:"c", text:"FedAvg has implicit memory."},
+          {key:"d", text:"More rounds and replay are equivalent."},
         ]}
-        trap={<>(b)(c)(d) are proxies that do not measure drift.</>}
-        lens={<>Drift is a distributional change. Measure it directly: a sliding-window estimate of recent interactions vs the buffer&apos;s historical distribution. Large KL divergence signals concept drift and warrants more plasticity (lower &lambda;). Small divergence means stable preferences and supports higher &lambda;.</>}
-        stretch={<>What threshold KL would you trigger an &lambda; decrease at?</>}
+        trap={<>(b)(c)(d) collapse the memory mechanism.</>}
+        lens={<>Without explicit memory, FedAvg has no history.</>}
+        stretch={<>What memory mechanism alternatives exist (EWC, MAS) and how do they federate?</>}
       />
 
-      <VIS.TrapProblem
-        id="fcr-p8" difficulty="hard" mode="ordered"
-        title="P8 — FCRec deployment sequence"
-        scenario={<>Order the steps to ship FCRec. Wrong moves unranked.</>}
+      <VIS.TrapProblem id="fcr-p8" difficulty="hard"
+        title="P8 — FCRec anchor (per-client replay + FedAvg over rehearsed locals): pitch it"
+        scenario={<><em>Discriminating insight: the anchor is &ldquo;per-client experience replay BEFORE FedAvg.&rdquo; The pitch must name both — replay alone is single-tenant continual; FedAvg alone is vanilla FedRec.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Define buffer policy (reservoir vs importance-weighted vs FIFO) per domain drift profile.", order:1},
-          {key:"b", text:"Account for buffer reuse in the DP budget; clip per-event contributions.", order:2},
-          {key:"c", text:"Set initial &lambda; based on offline drift simulation.", order:3},
-          {key:"d", text:"Begin federation rounds with replay-augmented local training.", order:4},
-          {key:"e", text:"Skip drift monitoring; &lambda; will self-correct."},
-          {key:"f", text:"Monitor per-device drift signal; auto-tune &lambda; over time.", order:5},
+          {key:"a", text:"Each client keeps a small local experience-replay buffer of its own past interactions. Every local training round mixes new and replayed data, so the local model rehearses history before the FedAvg upload. The server averages rehearsed locals; the global model retains both per-client history and new signal. Replay buffer never leaves the device.", correct:true},
+          {key:"b", text:"We move replay buffers to the server."},
+          {key:"c", text:"We retrain weekly to fix drift."},
+          {key:"d", text:"We skip FedAvg."},
         ]}
-        trap={<>(e) is the silent-decay trap — without monitoring, &lambda; never adapts.</>}
-        lens={<>Sequence: policy choice, DP accounting, &lambda; init, federate, monitor + tune. Skipping monitoring is the most common failure because it works fine for the first weeks and degrades silently over months.</>}
-        stretch={<>Which step is hardest to retrofit after launch?</>}
+        trap={<>(b)(c)(d) drop one of the load-bearing pieces.</>}
+        lens={<>Replay + FedAvg-over-rehearsed are inseparable; either alone is a sibling.</>}
+        stretch={<>Which is more load-bearing: the replay buffer or the FedAvg discipline?</>}
       />
 
-      <VIS.TrapProblem
-        id="fcr-p9" difficulty="medium" multiSelect
-        title="P9 — Where FCRec is the WRONG choice"
-        scenario={<>Pick the scenarios where FCRec is NOT a good fit.</>}
+      <VIS.TrapProblem id="fcr-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use FCRec. Select all that apply."
+        scenario={<><em>Discriminating insight: FCRec needs (i) non-stationary streams, (ii) enough on-device storage for replay buffers, (iii) clients capable of mixed-batch training. It is wrong for stationary streams, ultra-constrained devices, or settings where rehearsing past data is a regulatory violation (strict right-to-erasure).</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Strict DP environment with tight epsilon budget — buffer reuse makes accounting prohibitive.", correct:true},
-          {key:"b", text:"Domain with no observable concept drift over the deployment horizon.", correct:true},
-          {key:"c", text:"Devices with no persistent storage.", correct:true},
-          {key:"d", text:"Production news recommendation."},
-          {key:"e", text:"Music streaming on-device."},
+          {key:"a", text:"Strict right-to-erasure regulation — rehearsing past interactions violates the user&apos;s deletion request.", correct:true},
+          {key:"b", text:"Stationary stream where vanilla FedRec is sufficient.", correct:true},
+          {key:"c", text:"Ultra-low-storage IoT device that cannot fit a meaningful replay buffer.", correct:true},
+          {key:"d", text:"Music recsys on 10M phones with seasonal drift (sweet spot)."},
+          {key:"e", text:"Settings where past interactions are no longer valid (taste hard-pivot is common).", correct:true},
         ]}
-        trap={<>(d)(e) are canonical FCRec wins.</>}
-        lens={<>The bad-fit scenarios are: strict DP (replay compounds privacy cost), stationary domains (replay is unnecessary), and ephemeral devices (no place for the buffer). For everything else, FCRec is a reasonable choice.</>}
-        stretch={<>Could you do FCRec without persistent local storage? How?</>}
+        trap={<>(d) is sweet spot.</>}
+        lens={<>FCRec needs drift + storage + valid-history; violate any and it regresses.</>}
+        stretch={<>What does right-to-erasure imply for replay-buffer design?</>}
       />
 
-      <VIS.TrapProblem
-        id="fcr-p10" difficulty="hard"
-        title="P10 — Buffer privacy under device compromise"
-        scenario={<>An adversary briefly compromises a device. What does the on-device replay buffer leak?</>}
+      <VIS.TrapProblem id="fcr-p10" difficulty="hard"
+        title="P10 — Why local replay buffers, not server-side?"
+        scenario={<><em>Discriminating insight: a server-side replay buffer would require uploading past interactions — violating the federation contract. Local replay keeps history on-device; only the gradients of the locally-trained (rehearsed) model are uploaded. Local replay is the only way to combine federation with continual learning&apos;s memory machinery.</em><br/>Why local?</>}
         options={[
-          {key:"a", text:"A snapshot of the user&apos;s representative past interactions — potentially the most sensitive content the user ever consumed, since informative events are over-represented in importance-weighted buffers.", correct:true},
-          {key:"b", text:"Nothing — buffers are encrypted."},
-          {key:"c", text:"Only aggregate counts."},
-          {key:"d", text:"The global model weights."},
+          {key:"a", text:"A server-side replay buffer requires uploading past interactions — violating the federation contract that data stays on-device. Local replay keeps history private; only gradients from the rehearsed local model are uploaded. Federation + continual learning forces local replay.", correct:true},
+          {key:"b", text:"Server-side replay is mathematically equivalent."},
+          {key:"c", text:"Server-side replay is preferred."},
+          {key:"d", text:"There is no difference."},
         ]}
-        trap={<>(b) assumes encryption that may not be enforced. (c)(d) misrepresent buffer contents.</>}
-        lens={<>The buffer is, by design, a curated subset of the user&apos;s history — exactly the kind of data a privacy adversary wants. Mitigations: at-rest encryption, hardware enclave storage, periodic buffer rotation, and minimizing buffer size to the minimum useful for continual learning.</>}
-        stretch={<>How would you size a buffer to balance retention quality and breach risk?</>}
+        trap={<>(b)(c)(d) miss the privacy constraint.</>}
+        lens={<>Federation forces local-only history.</>}
+        stretch={<>What happens to model utility as the per-client buffer shrinks?</>}
       />
+
+      <VIS.TrapProblem id="fcr-p11" difficulty="hard"
+        title="P11 — Loss composition"
+        scenario={<><em>Discriminating insight: local loss is a sum of (i) loss on new mini-batch and (ii) loss on a replay mini-batch sampled from the buffer, possibly weighted to emphasize recent vs old history. The gradient on this combined loss is what feeds FedAvg.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"L_local = L_new(new mini-batch) + beta * L_replay(replay mini-batch). Both terms compute the same task loss; beta controls how strongly history is rehearsed. The local gradient on this combined loss is the FedAvg input. Beta scheduling can tighten under drift.", correct:true},
+          {key:"b", text:"Loss on new data only (this is vanilla FedRec)."},
+          {key:"c", text:"Loss on replay data only (no new learning)."},
+          {key:"d", text:"Adversarial loss between new and replay."},
+        ]}
+        trap={<>(b) is vanilla FedRec. (c) freezes the model. (d) wrong family.</>}
+        lens={<>Combined task loss with beta balancing new vs history.</>}
+        stretch={<>How does beta schedule under detected drift?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p12" difficulty="hard"
+        title="P12 — What does FCRec deliberately drop vs vanilla FedRec?"
+        scenario={<><em>Discriminating insight: FCRec spends on-device storage on the replay buffer and on-device compute on the mixed-batch training. Vanilla FedRec is cheaper per round. The cost is paid for the continual-learning benefit.</em><br/>What does it forfeit?</>}
+        options={[
+          {key:"a", text:"On-device storage (replay buffer) and compute (mixed-batch training). Vanilla FedRec is cheaper per round; FCRec spends that overhead to retain history. The tradeoff is engineering cost for continual robustness.", correct:true},
+          {key:"b", text:"It forfeits federation."},
+          {key:"c", text:"It forfeits gradients."},
+          {key:"d", text:"It forfeits the model."},
+        ]}
+        trap={<>(b)(c)(d) deny the mechanism.</>}
+        lens={<>Storage + compute is the deliberate cost.</>}
+        stretch={<>What is the typical buffer size on a phone (MB)?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: replay-buffer SAMPLING strategy dominates. Naive reservoir sampling under-represents recent shifts; surprise-weighted under-represents stable patterns. The chosen strategy must balance recency, diversity, and forgetting policy. Buffer size and beta come next; FedAvg round count last.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"Replay-buffer sampling strategy is most fragile (reservoir vs surprise-weighted vs class-balanced have very different forgetting behavior); buffer size is next (caps how much history is retained); beta (loss weight on replay) after; FedAvg round count last.", correct:true},
+          {key:"b", text:"FedAvg round count is most fragile."},
+          {key:"c", text:"Optimizer is most fragile."},
+          {key:"d", text:"Batch size is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) miss the buffer-sampling lever.</>}
+        lens={<>Sampling strategy is the continual-learning-specific knob.</>}
+        stretch={<>What does surprise-weighted sampling do under drift?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: FCRec assumes past interactions remain SEMANTICALLY VALID (the same item ID means the same thing). If item IDs are recycled (e.g., a discontinued product&apos;s ID gets reassigned to a new product), the replay buffer rehearses stale meaning against new labels — silent training corruption.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Item-ID recycling. A discontinued item&apos;s ID is reused for a new product; the replay buffer still holds the old interaction labeled by that ID and now feeds stale meaning into the model. Mitigation: append-only ID space, retire IDs rather than reuse.", correct:true},
+          {key:"b", text:"Off-by-one in timestamps."},
+          {key:"c", text:"Tokenizer mismatch."},
+          {key:"d", text:"Wrong batch size."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Append-only item IDs are the continual-rec contract.</>}
+        stretch={<>What versioned-ID scheme handles legitimate item updates?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;FedAvg already averages history, so replay is redundant&rdquo;"
+        scenario={<><em>Discriminating insight: FedAvg averages MODEL WEIGHTS, not training data. Each weight value reflects whatever each local model has just seen (new data). Without replay, the locals all saw only new data; averaging their weights does not magically inject history. The averaging is over a population of forgetful locals.</em><br/>Why is &ldquo;FedAvg averages history&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"FedAvg averages WEIGHTS, not training data. Each local model&apos;s weights reflect whatever each client just trained on (new data). Without replay, FedAvg averages a population of forgetful locals — the resulting global model has no history either. Replay is what puts history into each local before the average.", correct:true},
+          {key:"b", text:"FedAvg implicitly includes history."},
+          {key:"c", text:"Replay is mathematically redundant."},
+          {key:"d", text:"FedAvg has memory."},
+        ]}
+        trap={<>(b)(c)(d) deny the mechanism.</>}
+        lens={<>FedAvg averages forgetful locals; replay supplies the history each local needs to retain.</>}
+        stretch={<>What does an &ldquo;averaging of replay statistics&rdquo; look like, and why is it weaker?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: &ldquo;FCRec is just FedRec + replay&rdquo; cascades into (i) buffer never evicted (rehearses outdated tastes), (ii) no DP on local rehearsed updates (privacy leak), (iii) no drift detection (replay rate static under shift). Each piece is load-bearing.</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: no buffer eviction policy (rehearses outdated tastes), no DP on the rehearsed local updates (replay creates a privacy surface), no drift detection (replay rate stays static even when the stream shifts hard). Remove any one and FCRec regresses.", correct:true},
+          {key:"b", text:"Only buffer eviction matters."},
+          {key:"c", text:"Only DP matters."},
+          {key:"d", text:"Nothing — FCRec really is just FedRec + replay."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Eviction, DP, drift-detection — all three load-bearing on top of replay.</>}
+        stretch={<>What ablation table proves each piece&apos;s contribution?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior responds to recall regression by enlarging the replay buffer. A senior measures the DRIFT signal first — if drift is high, buffer enlargement may hurt by rehearsing irrelevant history; if drift is low, the buffer may genuinely be too small. The diagnostic is drift, not buffer size.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Measure the drift signal (e.g., KL divergence of new vs replayed mini-batch distributions). If drift is high, ENLARGING the buffer hurts because it rehearses irrelevant history — instead, tighten eviction and raise beta on recent history. If drift is low, the buffer may be undersized.", correct:true},
+          {key:"b", text:"Enlarge the replay buffer blindly."},
+          {key:"c", text:"Drop replay entirely."},
+          {key:"d", text:"Increase FedAvg rounds."},
+        ]}
+        trap={<>(b)(c)(d) miss the drift diagnostic.</>}
+        lens={<>Drift signal is the FCRec-specific diagnostic.</>}
+        stretch={<>What drift detector is privacy-safe and cheap on-device?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: recall dropped at the round-N boundary"
+        scenario={<><em>Discriminating insight: a holiday weekend triggered a sharp population-wide taste shift (e.g., all users watching holiday movies). FCRec without drift-adaptive replay rate kept beta constant — replay still mixed in non-holiday history at the same rate. Locals trained against a stale-history-heavy mixture and produced gradients that pulled the global model AWAY from the holiday distribution. Recall dropped.</em><br/>Most likely cause?</>}
+        options={[
+          {key:"a", text:"Drift-unaware replay rate. A population-wide taste shift (holiday) needs the beta on replay to drop or the buffer to favor recent items. Static beta keeps replay mixed at the old rate, dragging the FedAvg gradient toward the pre-holiday distribution. Fix: drift-adaptive beta scheduling.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Disk full."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Static beta under drift is the FCRec-specific regression.</>}
+        stretch={<>What auto-tuning rule for beta tracks population drift?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p19" difficulty="hard"
+        title="P19 — Production gotcha: replay buffer leaks under gradient inversion"
+        scenario={<><em>Discriminating insight: the replay buffer is local but the gradients of locally-rehearsed training are uploaded to the server. Gradient-inversion attacks can recover individual buffer entries through the uploaded gradient — the replay buffer is a HIDDEN privacy surface that vanilla FedRec did not have. DP-SGD on local training is mandatory.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Replay buffers create a hidden privacy surface: gradient-inversion attacks on uploaded FedAvg updates can recover individual buffer entries. DP-SGD on the entire local training pass (including the replay pass) is mandatory, with the (epsilon, delta) budget accounting both new AND replay data.", correct:true},
+          {key:"b", text:"Local replay never leaks."},
+          {key:"c", text:"Only new-data gradients leak."},
+          {key:"d", text:"DP cannot apply to replay."},
+        ]}
+        trap={<>(b)(c)(d) deny the leak.</>}
+        lens={<>Replay is a privacy surface — DP must cover it.</>}
+        stretch={<>How does the DP budget split between new and replay data?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p20" difficulty="hard"
+        title="P20 — Failure on Friday: long-tail recall craters after a buffer-size cut"
+        scenario={<><em>Discriminating insight: on-device storage was reduced (app size mandate). Replay buffer shrank from 5000 to 500 entries per client. Reservoir sampling under-represents the long-tail items (only frequent items survive). The model forgets long-tail; recall on long-tail items craters.</em><br/>3am page: long-tail recall down 35% after buffer-size cut. Diagnose.</>}
+        options={[
+          {key:"a", text:"Buffer-size cut compressed the replay sample; reservoir sampling kept frequent items and dropped long-tail. The model lost the long-tail signal and now under-recommends rare items. Fix: switch sampling to class-balanced or coverage-weighted, OR restore buffer size.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Random seed changed."},
+          {key:"d", text:"Disk full."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Buffer compression interacts with sampling strategy on the long tail.</>}
+        stretch={<>What sampling strategy preserves long-tail under tight buffer sizes?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p21" difficulty="medium"
+        title="P21 — Library default that bites: continual-learning libs assume server-side replay"
+        scenario={<><em>Discriminating insight: most off-the-shelf continual-learning frameworks (Avalanche, etc.) assume a central replay buffer the server controls. Plugging them naively into a federated setting either uploads local buffers (privacy violation) or fails to apply replay at the right step. FCRec needs federation-aware replay scheduling.</em><br/>Where does the default break?</>}
+        options={[
+          {key:"a", text:"Most continual-learning libraries assume server-side replay buffers and a single global training loop. Naive integration with FedAvg either uploads local buffers (privacy violation) or applies replay at the wrong stage (e.g., post-aggregation, when locals are already FedAvg-averaged). FCRec needs federation-aware replay scheduling that hooks into the LOCAL training step.", correct:true},
+          {key:"b", text:"Default LR is wrong."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Continual-learning libs default to server-side replay; FCRec must wire replay into the local step.</>}
+        stretch={<>What hook in PyTorch Lightning supports federation-aware replay?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) vanilla FedRec baseline (measure forgetting amplification), (2) deploy local replay buffers + mixed-batch training, (3) add drift detection and adaptive beta, (4) add DP-SGD on local training, (5) shadow-eval against the vanilla baseline, (6) ramp. Starting with DP before replay obscures the mechanism diagnostic.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Vanilla FedRec baseline → deploy local replay + mixed-batch → add drift detection + adaptive beta → add DP-SGD on local training → shadow-eval vs baseline → ramp.", correct:true},
+          {key:"b", text:"DP-SGD first, then replay."},
+          {key:"c", text:"Skip the baseline."},
+          {key:"d", text:"Ramp before shadow-eval."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Baseline → replay → drift adapt → DP → shadow → ramp.</>}
+        stretch={<>Why add DP last?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks the claimed advantage"
+        scenario={<><em>Discriminating insight: a stationary stream where the underlying distribution does not shift at all (e.g., a frozen catalog and stable taste). Replay buffers spend on-device cost rehearsing what FedAvg would learn anyway. FCRec&apos;s extra machinery buys nothing.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A stationary stream with a frozen catalog and stable user taste. Replay buffers and drift detection cost on-device storage and compute, but vanilla FedRec converges to the same global model. FCRec&apos;s extra machinery buys nothing.", correct:true},
+          {key:"b", text:"Music recsys with seasonal drift (sweet spot)."},
+          {key:"c", text:"Non-stationary on-device stream (sweet spot)."},
+          {key:"d", text:"Privacy-sensitive federated rec (sweet spot)."},
+        ]}
+        trap={<>(b)(c)(d) sweet spots.</>}
+        lens={<>FCRec needs non-stationarity to earn its cost.</>}
+        stretch={<>What stationarity test runs offline before deploying FCRec?</>}
+      />
+
+      <VIS.TrapProblem id="fcr-p24" difficulty="hard"
+        title="P24 — Named failure: client drift hetero — different clients drift in different directions"
+        scenario={<><em>Discriminating insight: client A&apos;s users drift toward genre X; client B&apos;s users drift toward genre Y. FedAvg averages two locally-rehearsed models with opposite drift directions and produces a global model that does WORSE on both. The fix is personalization (e.g., per-cluster heads) or client-aware aggregation rather than naive FedAvg.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Heterogeneous client drift. Client A drifts toward genre X, client B toward Y; FedAvg averages opposite drifts into a worse-on-both global. Fix: per-cluster personalization heads, client-clustered FedAvg, or move toward a fully personalized FedRec variant rather than naive averaging.", correct:true},
+          {key:"b", text:"Heterogeneous drift is solved by larger replay buffers."},
+          {key:"c", text:"Heterogeneous drift does not occur."},
+          {key:"d", text:"FedAvg is always optimal."},
+        ]}
+        trap={<>(b)(c)(d) deny the failure.</>}
+        lens={<>Heterogeneous drift makes naive FedAvg actively harmful; client-clustered aggregation is the fix.</>}
+        stretch={<>What client clustering signal is privacy-safe (no per-user upload)?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://dl.acm.org/doi/10.1145/3746252.3761268" target="_blank" rel="noopener">Anon. — <em>Federated Continual Recommendation</em> (CIKM 2025, paper)</a> — canonical FCRec reference with per-client replay design.</li>
-        <li><a href="https://arxiv.org/abs/1612.00796" target="_blank" rel="noopener">Kirkpatrick et al. — <em>Overcoming catastrophic forgetting in neural networks</em> (PNAS 2017, paper)</a> — EWC, the original alternative to replay for continual learning.</li>
-        <li><a href="https://lilianweng.github.io/posts/2018-04-08-policy-gradient/" target="_blank" rel="noopener">Lilian Weng — <em>Lifelong Learning</em> (lilianweng.github.io, blog)</a> — surveys replay vs regularization vs architectural approaches.</li>
-        <li><a href="https://www.continualai.org/" target="_blank" rel="noopener">ContinualAI — community resources (continualai.org)</a> — benchmarks, code, and tutorials for replay-based continual learning.</li>
-        <li><a href="https://arxiv.org/abs/1912.04977" target="_blank" rel="noopener">Kairouz et al. — <em>Advances and Open Problems in Federated Learning</em> (2019, survey)</a> — DP-FL accounting that FCRec must work within.</li>
+        <li><a href="https://dl.acm.org/doi/10.1145/3746252.3761268" target="_blank" rel="noopener">Anon. (2025), <em>Federated Continual Recommendation</em> (CIKM 2025)</a> — the FCRec paper.</li>
+        <li><a href="https://arxiv.org/abs/1802.07569" target="_blank" rel="noopener">Parisi et al., <em>Continual Lifelong Learning with Neural Networks: A Review</em> (Neural Networks 2019)</a> — primer on replay buffers, EWC, MAS that FCRec generalizes.</li>
+        <li><a href="https://arxiv.org/abs/1602.05629" target="_blank" rel="noopener">McMahan et al., <em>Communication-Efficient Learning of Deep Networks from Decentralized Data</em> (AISTATS 2017)</a> — the FedAvg paper whose forgetting amplification FCRec mitigates.</li>
+        <li><a href="https://eugeneyan.com/writing/recsys-survey/" target="_blank" rel="noopener">Eugene Yan — <em>A Practical Guide to Recommendation Systems</em> (blog)</a> — production framing of online/continual recsys tradeoffs.</li>
+        <li><a href="https://ai.googleblog.com/2017/04/federated-learning-collaborative.html" target="_blank" rel="noopener">Google AI Blog — <em>Federated Learning: Collaborative Machine Learning without Centralized Training Data</em> (blog)</a> — practitioner intro to the federated setting.</li>
+        <li><a href="https://www.cleverhans.io/privacy/2018/04/29/privacy-and-machine-learning.html" target="_blank" rel="noopener">Papernot &amp; Goodfellow — <em>Privacy and Machine Learning</em> (blog)</a> — DP + federation tradeoffs that motivate P19.</li>
       </ul>
     </VIS.Section>
   </main>
