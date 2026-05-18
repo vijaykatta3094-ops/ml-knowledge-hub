@@ -1414,243 +1414,676 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// MOCB — Multi-Objective Contextual Bandit (Sci Reports 2025)
+// v2 redo — ~32 trap problems spanning A-F taxonomy axes.
+// Filter #3: per-problem discriminating insight one-liner in comments.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · Bandits &amp; online learning"
       title="Multi-Objective Contextual Bandit (MOCB)"
-      subtitle="Single bandit optimizing a vector reward via scalarization with weights that adapt when constraints (fairness floor, diversity floor) are violated."
+      subtitle="LinUCB machinery, vector reward, dual-ascent weight updates that respond to constraint violations — fairness/diversity floors enforced INSIDE the bandit loop, not by an external post-filter."
       byline={[
         {label: "Paper", value: "Multi-objective contextual bandits in recommendation systems for smart tourism (Sci Reports 2025)"},
+        {label: "Year", value: "2025"},
         {label: "Domain", value: "Surfaces with hard fairness / diversity floors + utility"},
       ]}/>
 
     <VIS.TLDR>
-      A scalar LinUCB chases CTR. A real product also needs <strong>fairness floors</strong> (small sellers must hit at least 20% exposure), <strong>diversity floors</strong>, and revenue ceilings. MOCB keeps the reward as a vector, scalarizes with adaptive weights w_t, and <strong>tightens weights whenever a constraint is violated</strong>. Same UCB machinery, vector reward, dual-style weight updates — the bandit naturally drifts toward feasible regions instead of optimizing CTR into a fairness lawsuit.
+      Plain LinUCB chases scalar CTR; real products have <strong>fairness floors</strong> (small-seller exposure &ge; 20%), diversity floors, revenue ceilings. Post-filters paper over this by dropping items after ranking — but post-filters do not <em>learn</em>. MOCB keeps the reward as a <strong>vector</strong>, scalarizes it with a weight vector <em>w<sub>t</sub></em>, and runs <strong>dual ascent on constraint slack</strong>: violated constraint &rArr; weight goes up next step; slack constraint &rArr; weight relaxes. The bandit drifts toward the feasible region while still doing UCB exploration. Source: <a href="https://www.nature.com/articles/s41598-025-89920-2" target="_blank" rel="noopener">Sci Reports 2025</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        State per arm: a per-objective linear estimator θ_a^{`(k)`} for each objective k. At step t, the bandit observes context x, computes a per-objective UCB score, scalarizes with current weight vector w_t, and pulls the argmax.
+        Per arm <em>a</em>, MOCB maintains a separate <VIS.Term def="Linear least-squares estimator for the expected reward of an arm given context features.">linear estimator</VIS.Term> &theta;<sub>a</sub><sup>(k)</sup> for each of the K objectives. At step t, observe context x, compute a per-objective <VIS.Term def="Upper confidence bound — point estimate plus an exploration bonus that shrinks as the arm is pulled more.">UCB</VIS.Term> score per arm, scalarize with the current weight vector w<sub>t</sub>, and pull the argmax.
       </p>
       <VIS.Equation display tex={`p_a(x) = \\sum_k w_t^{(k)} \\left( \\hat{\\theta}_a^{(k)\\top} x + \\alpha \\sqrt{x^\\top A_a^{-1} x} \\right), \\quad \\text{subject to } C_j(\\pi_t) \\geq \\tau_j`}/>
       <p>
-        After observing the vector reward, the bandit (i) updates the per-objective estimators and (ii) updates w_t using a dual-ascent rule on the constraint violation: violated constraint &rArr; increase its weight; satisfied with slack &rArr; relax it.
+        After observing the vector reward r &isin; &#8477;<sup>K</sup>: (i) update per-objective estimators &theta;<sub>a</sub><sup>(k)</sup> with ridge regression as in LinUCB; (ii) <strong>dual-update</strong> w<sub>t</sub> via projected gradient ascent on the constraint Lagrangian — violated &rArr; <em>w</em> up, slack &rArr; <em>w</em> down.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  X["Context x"] --> SC["Per-objective UCB score"]
-  W["Weights w_t"] --> S["Scalarize w_t · scores"]
+  X["Context x at step t"] --> SC["Per-objective UCB score per arm"]
+  W["Weights w_t (one per objective)"] --> S["Scalarize: w_t dot scores"]
   SC --> S
-  S --> A["Argmax → arm a*"]
-  A --> R["Vector reward + constraints"]
-  R --> UE["Update θ_a per objective"]
-  R --> UW["Dual update on w_t"]
+  S --> A["Argmax → pull arm a*"]
+  A --> R["Observe VECTOR reward r and constraint signals"]
+  R --> UE["Ridge update theta_a per objective"]
+  R --> UW["Dual ascent on w_t (constraint slack)"]
   UE --> SC
   UW --> W
+  style W fill:#fef3c7,stroke:#d97706
+  style UW fill:#fef3c7,stroke:#d97706
       `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from siblings">
       <p>
-        Plain LinUCB optimizes a scalar reward and offers no constraint mechanism — fairness floors must be enforced by an exogenous post-filter. MOCB internalizes both: vector reward + adaptive weights respond to constraint slack inside the bandit loop.
+        <strong>vs LinUCB:</strong> scalar reward, no constraint mechanism; fairness/diversity floors must be enforced by an exogenous post-filter that the bandit never sees.
       </p>
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>LinUCB</th><th style={{textAlign:"left",padding:8}}>MOCB</th></tr></thead>
+      <p>
+        <strong>vs constrained-LinUCB / OPLB:</strong> single constraint hard-coded; cannot adapt to multiple, evolving constraint targets. MOCB carries K constraints &rarr; K dual variables.
+      </p>
+      <p>
+        <strong>vs scalarized linear bandit with FIXED weights:</strong> fixed weights freeze the tradeoff at design time; cannot respond when traffic shifts. MOCB adapts weights to <em>current</em> constraint slack.
+      </p>
+      <p>
+        <strong>vs Pareto-front bandit (e.g. DeepPRL):</strong> Pareto-front methods learn the entire frontier; expensive in samples. MOCB learns ONE adaptive point that respects constraints — cheaper, sufficient when product wants a single feasible operating point, not the whole front.
+      </p>
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>LinUCB</th><th style={{textAlign:"left",padding:8}}>Scalarized fixed-w</th><th style={{textAlign:"left",padding:8}}>MOCB</th><th style={{textAlign:"left",padding:8}}>Pareto-front (DeepPRL)</th></tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Reward</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Scalar</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Vector</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Weights</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None / static</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Adaptive via constraint duals</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Constraints</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>External</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Internal floor / ceiling</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Behavior on violation</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Continues</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Re-weights toward feasibility</td></tr>
+          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Reward</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Scalar</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Vector &rarr; scalar</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Vector &rarr; scalar</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Vector</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Weights</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>n/a</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Static, hand-tuned</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}><strong>Adaptive via dual</strong></td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>n/a (front)</td></tr>
+          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Constraints</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>External post-filter</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}><strong>Internal floors/ceilings</strong></td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Selected at deploy</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Output</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>One policy</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>One policy</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>One feasible policy</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Whole Pareto front</td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Surfaces with hard fairness / diversity floors (marketplace seller exposure, content fairness).</li>
-        <li>Vector reward with meaningful per-objective signal (not just engagement proxies).</li>
-        <li>Constraint violation is real-business cost (lawsuit, churn, regulator).</li>
-        <li>Ability to log per-objective outcomes — fairness and diversity must be observable.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick it">
+      <p>
+        Pick MOCB when: (1) you have a real multi-objective tension with a <strong>regulator- or product-defined floor</strong> (fairness, diversity, compliance) that can't be relaxed; (2) you can <strong>log per-impression objective signals</strong> (the constraint must be observable at the action grain); (3) you need to <em>learn</em> under the constraint, not just enforce it post-hoc. Skip when the catalog is single-objective, the constraint is non-binding, or you genuinely want the whole Pareto front (use DeepPRL).
+      </p>
+      <VIS.Mermaid chart={`
+flowchart TB
+  D["Surface assessment"]
+  D --> Q1{"Hard constraint binding?"}
+  Q1 -->|No| Lin["LinUCB suffices"]
+  Q1 -->|Yes| Q2{"Per-impression signal logged?"}
+  Q2 -->|No| Fix["Fix logging FIRST"]
+  Q2 -->|Yes| Q3{"Need one feasible point or entire Pareto front?"}
+  Q3 -->|Single point| MOCB["MOCB"]
+  Q3 -->|Full front| DPR["DeepPRL / Pareto-front methods"]
+  style MOCB fill:#dcfce7,stroke:#16a34a
+      `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations &amp; gotchas">
-      <ul>
-        <li><strong>Feasibility under exploration noise</strong> — the bandit can transiently violate constraints while learning; needs a slack budget.</li>
-        <li><strong>Weight oscillation</strong> — naive dual updates can oscillate; needs averaging or clipping.</li>
-        <li><strong>Constraint definition</strong> — fairness floors are notoriously hard to define correctly (window, granularity).</li>
-        <li><strong>Multi-objective overhead</strong> — K objectives → K per-arm estimators; memory and update cost scale.</li>
-      </ul>
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations &amp; gotchas">
+      <p>
+        <strong>Feasibility under exploration noise:</strong> the bandit must explore — transient violations are unavoidable. Need a slack budget the regulator agrees to. <strong>Weight oscillation:</strong> naive dual ascent over-reacts to short-window slack; needs averaging or step-size clipping. <strong>Constraint definition:</strong> fairness floors hinge on window length and granularity — per-session 20% with 4 slots forces binary decisions. <strong>Infeasibility silently destroys regret:</strong> if no policy satisfies the constraints given the catalog, dual variables diverge and CTR collapses with no warning bell.
+      </p>
+      <VIS.Callout kind="gotcha" title="Dual divergence is a feasibility signal, not a bug">
+        If w<sub>j</sub> grows without bound and CTR collapses, do NOT add a clip and ship — the algorithm is telling you the constraint is unattainable on the current catalog. Fix the constraint, expand the catalog, or accept a slack budget.
+      </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        ~32 problems across taxonomy axes A-F. Redact "MOCB" to "Model X" — generic-ML or generic-bandits candidates should not be able to answer correctly. Each is anchored to a property MOCB owns (vector reward, dual-ascent weights, internal floors, dual divergence as feasibility signal).
+      </p>
 
+      {/* ============== A. Identity & comparison ============== */}
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity &amp; comparison</h3>
+
+      {/* axis: A1 — insight: MOCB's discriminator vs LinUCB+post-filter is that the constraint is INSIDE the learning loop */}
       <VIS.TrapProblem
-        id="moc-p1" difficulty="hard"
-        title="P1 — Design an MOCB for CTR with small-seller floor 20%"
-        scenario={<>You must maximize CTR subject to: small-seller exposure ≥ 20% over each 24-hour window. Pick the cleanest design.</>}
+        id="mocb-a1"
+        difficulty="hard"
+        title="A1 — MOCB vs LinUCB + post-filter"
+        scenario={<>Two designs both deliver "small-seller share &ge; 20%": (i) LinUCB on CTR, then a post-filter that swaps in small-seller items when share drops below floor; (ii) MOCB with CTR and small-seller-share as a vector reward. The post-filter pipeline already meets the floor on average. What does MOCB actually buy you?</>}
         options={[
-          {key:"a", text:"Two objectives (CTR, small-seller share); adaptive weights via dual ascent; constraint defined per 24-hour window with slack budget for exploration.", correct:true},
-          {key:"b", text:"Single CTR objective + post-filter that drops items until 20% is met."},
-          {key:"c", text:"Train two separate LinUCBs and switch between them randomly."},
-          {key:"d", text:"Hard-code 20% of slots to small sellers."},
+          {key:"a", text:"MOCB internalizes the constraint into the LEARNING signal — the bandit observes the small-seller objective per impression and adjusts arm preferences. Post-filter is a corrective lens applied AFTER ranking; the underlying LinUCB still believes only-CTR is the goal and keeps proposing small-seller-poor slates. MOCB's slates need fewer post-hoc swaps and the CTR-after-feasibility is higher.", correct:true},
+          {key:"b", text:"MOCB removes the need for the LinUCB exploration term."},
+          {key:"c", text:"MOCB is faster to score."},
+          {key:"d", text:"Post-filter and MOCB are mathematically equivalent."},
         ]}
-        trap={<>(b) ignores learning under the constraint. (c)(d) are blunt instruments.</>}
-        lens={<>The textbook MOCB recipe: vector reward (CTR, small-seller share), adaptive weights driven by the constraint slack, and a window-based check matching the regulator&apos;s definition. Slack budget acknowledges that bandits must explore.</>}
-        stretch={<>What does the slack budget look like in steady state?</>}
+        trap={<>(d) is the seductive equivalence claim — both meet the floor on average, but the CTR-under-feasibility differs because one bandit LEARNS the tradeoff and the other gets corrected after the fact.</>}
+        lens={<>The discriminator is "constraint inside vs outside the learning loop." Post-filter is uninformed about its corrections; MOCB integrates them into &theta; updates.</>}
+        stretch={<>What metric would you track to prove MOCB&apos;s lift over post-filter?</>}
       />
 
+      {/* axis: A2 — insight: scalarization with fixed w != MOCB; the adaptive dual IS the technique */}
       <VIS.TrapProblem
-        id="moc-p2" difficulty="medium" multiSelect
-        title="P2 — Symptoms that a single-objective bandit + post-filter is failing"
-        scenario={<>You currently run LinUCB + a small-seller-share post-filter. Which of these are signals you should migrate to MOCB? Select all that apply.</>}
+        id="mocb-a2"
+        difficulty="hard"
+        title="A2 — MOCB vs fixed-weight scalarized bandit"
+        scenario={<>A teammate proposes "scalarize CTR and fairness with a fixed weight w = 0.7 / 0.3 and run plain LinUCB." Why is this NOT MOCB, and when does it fail?</>}
         options={[
-          {key:"a", text:"Post-filter regularly drops items, causing visible empty slots or stale fallback content.", correct:true},
-          {key:"b", text:"CTR after filter is much lower than CTR before filter.", correct:true},
-          {key:"c", text:"Small-seller exposure swings wildly hour-to-hour.", correct:true},
-          {key:"d", text:"The post-filter rarely activates."},
-          {key:"e", text:"All sellers are large."},
+          {key:"a", text:"Fixed weights freeze the tradeoff at design time; if traffic shifts (more new sellers join, holiday surge), the fixed weight either over-protects or under-protects the floor. MOCB&apos;s defining contribution is that the weight w_t is the dual variable for the constraint — it RISES when the floor is violated and RELAXES when slack is large, tracking the constraint without re-tuning.", correct:true},
+          {key:"b", text:"Fixed weights are mathematically forbidden."},
+          {key:"c", text:"LinUCB cannot handle multiple objectives even with scalarization."},
+          {key:"d", text:"Fixed weight 0.7/0.3 always equals MOCB at steady state."},
         ]}
-        trap={<>(d)(e) mean the constraint is loose; MOCB has no advantage.</>}
-        lens={<>The trio of symptoms — empty slots, post-filter CTR damage, exposure instability — all indicate the bandit is fighting the constraint. MOCB lets the bandit learn under the constraint instead of being externally corrected.</>}
-        stretch={<>What metric would you use to decide the migration is worth it?</>}
+        trap={<>(d) — fixed-weight equilibrium != dual equilibrium except by accident.</>}
+        lens={<>The dual-ascent rule IS MOCB. Strip it and you have plain scalarization; the constraint is no longer enforced, just averaged.</>}
+        stretch={<>What does the dual variable converge to in a stationary environment?</>}
       />
 
+      {/* axis: A3 — insight: counterfactual without MOCB = post-filter or hand-tuned w; both regress under traffic shift */}
       <VIS.TrapProblem
-        id="moc-p3" difficulty="hard"
-        title="P3 — Adaptive-weight update direction"
-        scenario={<>Constraint: diversity ≥ 0.3. Current 24h diversity = 0.22 (violated). What direction should the dual update push the diversity weight w^(div)?</>}
+        id="mocb-a3"
+        difficulty="medium"
+        title="A3 — Counterfactual: no MOCB"
+        scenario={<>If MOCB didn't exist, what fallback do you ship to enforce a 20% small-seller floor on a CTR-maximizing bandit, and what's the concrete cost?</>}
         options={[
-          {key:"a", text:"Increase w^(div) so the scalarized score values diverse arms more — the bandit shifts toward feasibility on the next steps.", correct:true},
-          {key:"b", text:"Decrease w^(div) because we are violating, so the objective is hurting us."},
-          {key:"c", text:"Hold w^(div) constant; let the bandit converge."},
+          {key:"a", text:"LinUCB + per-slot post-filter swap. Cost: CTR-under-filter is 2-4% lower than CTR-pre-filter (filter swaps for less-clicked items the bandit didn&apos;t propose); empty-slot fallback when post-filter exhausts qualifying items; bandit never learns the fairness signal so the gap is permanent, not closing.", correct:true},
+          {key:"b", text:"No alternative exists."},
+          {key:"c", text:"Train two separate LinUCBs and average them."},
+          {key:"d", text:"Drop the floor."},
+        ]}
+        trap={<>(c) is plausible-looking but doesn&apos;t solve constrained learning either.</>}
+        lens={<>The realistic fallback is uninformed post-filter; MOCB&apos;s value is the gap shrinking over time as &theta; updates incorporate the fairness signal.</>}
+        stretch={<>Could a static hand-tuned w match MOCB in stationary traffic?</>}
+      />
+
+      {/* axis: A4 — insight: composing MOCB with TS or NeuralUCB keeps the dual ascent but swaps the score; the dual layer is concept-orthogonal */}
+      <VIS.TrapProblem
+        id="mocb-a4"
+        difficulty="hard"
+        title="A4 — Compose MOCB with NeuralUCB"
+        scenario={<>You want MOCB&apos;s constraint mechanism but reward is non-linear in context. Can you swap LinUCB for NeuralUCB inside MOCB? What survives the swap?</>}
+        options={[
+          {key:"a", text:"Yes. The dual-ascent layer on w_t is concept-orthogonal to the per-objective scorer; replace each per-objective linear estimator with a NeuralUCB head and keep the dual update unchanged. What changes: confidence bonus comes from network gradients (and may be over-confident — NeuralUCB&apos;s known weakness); what survives: vector reward, scalarization, dual ascent on constraint slack.", correct:true},
+          {key:"b", text:"No, MOCB only works with linear estimators."},
+          {key:"c", text:"Yes, but you must drop the constraint mechanism."},
+          {key:"d", text:"No, NeuralUCB cannot output a UCB score."},
+        ]}
+        trap={<>(b), (c), (d) misread the architecture.</>}
+        lens={<>The dual mechanism is on top of the scorer. Any UCB-shaped scorer composes.</>}
+        stretch={<>What changes in the regret bound after the swap?</>}
+      />
+
+      {/* axis: A5 — insight: MOCB and Pareto-front methods are different products: feasible point vs full front */}
+      <VIS.TrapProblem
+        id="mocb-a5"
+        difficulty="medium"
+        title="A5 — Boundary: MOCB vs Pareto-front methods"
+        scenario={<>Your VP says "I want to see the whole tradeoff curve between CTR and fairness so I can pick." Is MOCB the right tool?</>}
+        options={[
+          {key:"a", text:"No. MOCB delivers ONE policy at the current feasible point (CTR maximized subject to fairness floor). The VP wants the Pareto FRONT — many policies spanning the tradeoff. Use a Pareto-front method (DeepPRL). To get the front with MOCB, you&apos;d sweep the floor &tau; across many values and run separate MOCBs, which is expensive and noisy.", correct:true},
+          {key:"b", text:"Yes — MOCB always exposes the front."},
+          {key:"c", text:"Yes — set all weights to 1 and read off the front."},
+          {key:"d", text:"No — MOCB cannot handle multiple objectives."},
+        ]}
+        trap={<>(c) is a confident-sounding misread of what scalarization gives you.</>}
+        lens={<>MOCB = one feasible operating point that adapts. Pareto-front = many points covering the curve. Different products.</>}
+        stretch={<>When does sweeping &tau; in MOCB beat training a Pareto-front method?</>}
+      />
+
+      {/* ============== B. Application ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      {/* axis: B1 — insight: pick MOCB when constraint is hard, observable, and bandit must learn under it */}
+      <VIS.TrapProblem
+        id="mocb-b1"
+        difficulty="hard"
+        title="B1 — Pick the right tool"
+        scenario={<>Surface: ads marketplace, 50M items, advertiser fairness floor "no advertiser exceeds 12% of impressions per day"; you currently run LinUCB on revenue, fairness is enforced by a per-advertiser cap at serving. The cap fires for ~8% of requests; CTR after cap is 6% lower than before cap. Best move?</>}
+        options={[
+          {key:"a", text:"Migrate to MOCB with revenue and per-advertiser share as vector reward, ceiling constraint at 12% (dual variable rises as an advertiser approaches the ceiling). The post-filter&apos;s 8% firing rate IS the under-learning signal; MOCB&apos;s &theta; update will start penalizing arms that contribute to over-exposure.", correct:true},
+          {key:"b", text:"Keep LinUCB; the 6% CTR gap is acceptable cost of fairness."},
+          {key:"c", text:"Drop fairness — revenue dominates."},
+          {key:"d", text:"Switch to Pareto-front method."},
+        ]}
+        trap={<>(b) accepts a real and learnable lost CTR. (d) overkill — you don&apos;t need the front, just feasibility.</>}
+        lens={<>High post-filter firing rate + measurable CTR damage = MOCB&apos;s ideal pitch.</>}
+        stretch={<>What dual step size do you propose for the ceiling?</>}
+      />
+
+      {/* axis: B2 — insight: "just raise w" sounds prudent but fixed w is exactly what MOCB rejects */}
+      <VIS.TrapProblem
+        id="mocb-b2"
+        difficulty="medium"
+        multiSelect
+        title="B2 — Sounds prudent, isn't"
+        scenario={<>Fairness floor missed by 1% yesterday. Engineer says "raise the fairness weight from 0.3 to 0.5 and we&apos;re done." Which of these are correct critiques of that move? Select all that apply.</>}
+        options={[
+          {key:"a", text:"It freezes the tradeoff at hand-tuned w; if traffic shifts tomorrow you re-tune again — the same problem MOCB&apos;s dual ascent solves automatically.", correct:true},
+          {key:"b", text:"It treats a one-day miss as steady-state; the dual variable would have smoothly risen and fallen, not been re-pinned.", correct:true},
+          {key:"c", text:"Hand-tuning w bypasses the algorithm&apos;s convergence guarantees on constraint violation.", correct:true},
+          {key:"d", text:"Hand-tuning w is mathematically impossible."},
+          {key:"e", text:"All weight updates must be 0.5 exactly."},
+        ]}
+        trap={<>(d), (e) silly.</>}
+        lens={<>The MOCB pitch IS automated dual response; manual re-pinning admits the algorithm isn&apos;t doing its job and re-introduces operational burden.</>}
+        stretch={<>What dashboard metric would have caught this engineer&apos;s reflex?</>}
+      />
+
+      {/* axis: B3 — insight: MOCB-specific pitch must reference the dual mechanism, not generic "we care about fairness" */}
+      <VIS.TrapProblem
+        id="mocb-b3"
+        difficulty="hard"
+        title="B3 — One-sentence pitch to your PM (MOCB-specific)"
+        scenario={<>PM asks "why MOCB over our current LinUCB + post-filter?" Pick the pitch that COULD NOT be made about any random fairness-aware system.</>}
+        options={[
+          {key:"a", text:"Today the bandit doesn&apos;t even SEE the fairness signal — post-filter corrects its mistakes silently. MOCB lets the bandit&apos;s arm-selection theta directly learn from the fairness reward, so the post-filter swap rate drops from 8% to under 2% within a few weeks of online learning, recovering most of the CTR we currently leave on the table.", correct:true},
+          {key:"b", text:"It improves fairness."},
+          {key:"c", text:"It uses contextual bandits."},
+          {key:"d", text:"It's a SOTA technique from Sci Reports 2025."},
+        ]}
+        trap={<>(b), (c), (d) all survive the redaction test — replace MOCB with any random fairness system and they still work. (a) hinges on MOCB&apos;s specific property: the bandit&apos;s own scorer learns the fairness reward.</>}
+        lens={<>The B3 pitch must require the listener to understand WHY this technique (not just any fairness technique) is the move. "Bandit learns the constraint vs being corrected after" is MOCB&apos;s unique business case.</>}
+        stretch={<>How long until the swap-rate drop is measurable?</>}
+      />
+
+      {/* axis: B4 — insight: when to NOT use MOCB: no real tension, unobservable constraint, want full front */}
+      <VIS.TrapProblem
+        id="mocb-b4"
+        difficulty="medium"
+        title="B4 — Where MOCB is the wrong choice"
+        scenario={<>You manage a job-board ranker. Two objectives: relevance (click) and gender-balance across recommended jobs. Per-impression you log click; gender balance is computed daily across the cohort. Is MOCB the right tool?</>}
+        options={[
+          {key:"a", text:"No — MOCB needs the constraint signal at the action grain (per impression). Gender balance only exists at the cohort/day level; you cannot dual-update w per step. Either re-frame the signal (per-impression gender flag of the recommended job) or use a different method (cohort-level constrained optimization).", correct:true},
+          {key:"b", text:"Yes — MOCB always wins for fairness."},
+          {key:"c", text:"Yes — cohort-level signals are equivalent to per-impression."},
+          {key:"d", text:"No — MOCB cannot handle two objectives."},
+        ]}
+        trap={<>(c) — common conflation. Aggregate != per-step learning signal.</>}
+        lens={<>Logging granularity is the gating prerequisite. If the constraint signal isn&apos;t observable per action, MOCB&apos;s learning loop can&apos;t close.</>}
+        stretch={<>What log-pipeline change unlocks MOCB here?</>}
+      />
+
+      {/* ============== C. Mechanism ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      {/* axis: C1 — insight: dual ascent on Lagrangian is why w rises on violation, falls on slack */}
+      <VIS.TrapProblem
+        id="mocb-c1"
+        difficulty="hard"
+        title="C1 — Why dual ASCENT (not descent) on violation"
+        scenario={<>Constraint: diversity &ge; &tau; = 0.30. Current 24h diversity = 0.22 (violated). The dual update should push w<sup>(div)</sup> in which direction, and why?</>}
+        options={[
+          {key:"a", text:"INCREASE w^(div). The Lagrangian L = -reward + lambda(tau - diversity); violation means (tau - diversity) > 0, so the gradient w.r.t. lambda is positive → lambda goes UP → the scalarized score favors diverse arms next step → bandit drifts toward feasibility.", correct:true},
+          {key:"b", text:"DECREASE w^(div) because the objective is hurting us."},
+          {key:"c", text:"Hold w constant; let theta updates fix it."},
           {key:"d", text:"Set w^(div) = 0 and re-run."},
         ]}
-        trap={<>(b)(c)(d) all weaken or freeze the very signal that drives feasibility.</>}
-        lens={<>Dual ascent on the constraint Lagrangian: when violated, increase the multiplier (and hence the weight); when slack is large, relax. The bandit follows the dual gradient toward the feasible region.</>}
-        stretch={<>How would you bound w^(div) to prevent runaway?</>}
+        trap={<>(b) is the seductive misread: "if it&apos;s hurting, weight less" — but the constraint is the thing being violated; weighting it more is exactly the dual&apos;s point.</>}
+        lens={<>Dual ascent: violated &rArr; multiplier up &rArr; constraint pressure up. The Lagrangian sign convention makes this unambiguous.</>}
+        stretch={<>What does &nabla;<sub>&lambda;</sub>L look like in code?</>}
       />
 
+      {/* axis: C2 — insight: scalarization is the loss; per-objective ridge updates are unchanged */}
       <VIS.TrapProblem
-        id="moc-p4" difficulty="medium"
-        title="P4 — Constraint window choice"
-        scenario={<>You define the small-seller floor as "≥ 20% per session". One user has 4 slots per session. What is the issue?</>}
+        id="mocb-c2"
+        difficulty="hard"
+        title="C2 — Loss shape vs LinUCB"
+        scenario={<>Does MOCB&apos;s loss / update for per-objective &theta; differ from plain LinUCB&apos;s ridge regression?</>}
         options={[
-          {key:"a", text:"Granularity is too small — fractional slot counts force binary or near-binary share, making the constraint either trivially met (1/4) or violated.", correct:true},
-          {key:"b", text:"Sessions are too long."},
-          {key:"c", text:"4 slots is too many."},
-          {key:"d", text:"Per-session constraints always work better."},
+          {key:"a", text:"No — per-objective theta is updated by plain ridge regression on its own scalar reward r^(k), exactly like K independent LinUCBs. The multi-objective and constraint machinery lives at the SCALARIZATION / WEIGHT layer, not in the per-objective estimator. This is the design point: drop-in compatibility with the LinUCB estimator code.", correct:true},
+          {key:"b", text:"Yes — MOCB needs a joint loss across objectives."},
+          {key:"c", text:"Yes — ridge regression doesn&apos;t apply to vector rewards."},
+          {key:"d", text:"No — there is no theta update."},
         ]}
-        trap={<>(b)(c)(d) misdiagnose. The granularity / discreteness is the issue.</>}
-        lens={<>Fairness floors only make sense at granularities where the math has room to breathe — typically per-day or per-cohort. Per-session floors with small denominators force binary decisions that destroy CTR with no real fairness gain.</>}
-        stretch={<>What window would you actually propose to the PM?</>}
+        trap={<>(b) is the "fancier loss must mean fancier algorithm" reflex.</>}
+        lens={<>The clean separation between (i) per-objective estimators and (ii) scalarization-with-adaptive-w is what makes MOCB a small delta on LinUCB infra-wise.</>}
+        stretch={<>Could you parallelize the K ridge solves?</>}
       />
 
+      {/* axis: C3 — insight: vs LinUCB, MOCB ADDS a dual update step; nothing is dropped */}
       <VIS.TrapProblem
-        id="moc-p5" difficulty="hard" mode="ordered"
-        title="P5 — Order the MOCB per-step loop"
-        scenario={<>Order the operations. Wrong moves do not get ranked.</>}
+        id="mocb-c3"
+        difficulty="medium"
+        title="C3 — What's added vs LinUCB; what's dropped"
+        scenario={<>Compared with vanilla LinUCB, what does MOCB ADD, and what does it DROP?</>}
         options={[
-          {key:"a", text:"Observe context x at step t.", order:1},
-          {key:"b", text:"Compute per-objective UCB scores per arm.", order:2},
-          {key:"c", text:"Scalarize with current weights w_t.", order:3},
-          {key:"d", text:"Argmax → pull arm a*.", order:4},
-          {key:"e", text:"Observe vector reward r; update per-objective θ.", order:5},
-          {key:"f", text:"Dual-update w using constraint slack.", order:6},
-          {key:"g", text:"Reset w_t every step."},
-          {key:"h", text:"Update only the highest-weighted objective."},
+          {key:"a", text:"Adds: per-objective theta, weight vector w, dual ascent step on w. Drops: nothing structural — the per-arm UCB score, ridge update, exploration bonus alpha are all preserved. The constraint mechanism is bolted on top, not surgery.", correct:true},
+          {key:"b", text:"Adds dual ascent; drops the exploration bonus."},
+          {key:"c", text:"Adds exploration; drops ridge regression."},
+          {key:"d", text:"Drops the linear assumption."},
         ]}
-        trap={<>(g) destroys learning on weights. (h) loses dimensions of the bandit.</>}
-        lens={<>The disciplined loop is observe → score per objective → scalarize → pick → update θ per objective → dual-update w. Resetting w or updating one estimator only breaks the algorithm.</>}
-        stretch={<>How would you slow down the dual updates if they oscillate?</>}
+        trap={<>(b), (c), (d) all imagine surgery that isn&apos;t there.</>}
+        lens={<>MOCB = LinUCB + (vector reward) + (dual ascent on w). Strict superset.</>}
+        stretch={<>How does this compare to OPLB&apos;s single-constraint variant?</>}
       />
 
+      {/* axis: C4 — insight: dual step size is the killer hyperparameter; too large → oscillation, too small → slow */}
       <VIS.TrapProblem
-        id="moc-p6" difficulty="medium"
-        title="P6 — When MOCB is overkill"
-        scenario={<>Pick the scenario where plain LinUCB is the better choice over MOCB.</>}
+        id="mocb-c4"
+        difficulty="hard"
+        title="C4 — Hyperparameter most likely to break production"
+        scenario={<>Rank the operational risk if mis-set: (i) exploration alpha, (ii) ridge regularization lambda_r, (iii) dual step size eta, (iv) constraint window length W. Which is highest-risk?</>}
         options={[
-          {key:"a", text:"Single utility objective (CTR), no fairness or diversity floor, large stable catalog.", correct:true},
-          {key:"b", text:"Marketplace with seller-fairness floor."},
-          {key:"c", text:"Regulated finance recs with multiple compliance constraints."},
-          {key:"d", text:"News feed balancing diversity vs engagement."},
+          {key:"a", text:"(iii) dual step size eta. Too large → w oscillates wildly between hours, bandit chases a moving scalarization; too small → w doesn&apos;t catch traffic shifts and the floor is missed for days. This is the MOCB-unique knob; alpha and lambda_r exist in plain LinUCB and have well-understood ranges.", correct:true},
+          {key:"b", text:"(i) exploration alpha — the most important UCB knob."},
+          {key:"c", text:"(ii) ridge lambda — affects fit quality."},
+          {key:"d", text:"(iv) window W — controls latency."},
         ]}
-        trap={<>(b)(c)(d) are exactly where MOCB wins.</>}
-        lens={<>MOCB&apos;s overhead — multiple per-arm estimators, dual updates, constraint definitions — pays off only when there is a real multi-objective tension. Single-objective worlds get cleaner regret bounds from plain LinUCB.</>}
-        stretch={<>What is the cheapest test for "no real tension"?</>}
+        trap={<>(a) requires noticing eta is the new knob that doesn&apos;t exist in LinUCB; (i), (ii), (iv) are also real but mature knobs.</>}
+        lens={<>Look for the knob that&apos;s SPECIFIC to the new machinery. Mature knobs have ops playbooks; new ones don&apos;t.</>}
+        stretch={<>What&apos;s a safe starting eta as a fraction of the reward scale?</>}
       />
 
+      {/* axis: C5 — insight: MOCB assumes vector reward observable per step; aggregate signals violate the assumption */}
       <VIS.TrapProblem
-        id="moc-p7" difficulty="hard"
-        title="P7 — Persistent violation"
-        scenario={<>You ship MOCB and the diversity floor is missed every day by 1-2 points. Weights keep climbing. Most likely root cause?</>}
+        id="mocb-c5"
+        difficulty="medium"
+        title="C5 — Data assumption violation"
+        scenario={<>MOCB&apos;s convergence story assumes that at each step the bandit observes the vector reward r &isin; &#8477;<sup>K</sup>. Your fairness signal arrives ONLY as a daily aggregate (small-seller share over 24h). What specifically breaks?</>}
         options={[
-          {key:"a", text:"The feasible region is empty — no policy exists that satisfies CTR exploration AND the diversity floor given current catalog; weights diverge.", correct:true},
-          {key:"b", text:"The bandit is broken."},
-          {key:"c", text:"Alpha is too low."},
-          {key:"d", text:"The catalog is too small."},
+          {key:"a", text:"The per-step ridge update for the small-seller estimator theta^(small-seller) has no per-step target — you can&apos;t update K independent estimators if K-1 of them only get daily aggregates. The dual update can still fire on the daily slack, but the per-objective bandit collapses to "one well-learned objective + a slow corrective dual" — closer to LinUCB + slow post-filter than true MOCB.", correct:true},
+          {key:"b", text:"Nothing breaks."},
+          {key:"c", text:"The exploration bonus disappears."},
+          {key:"d", text:"The argmax becomes random."},
         ]}
-        trap={<>(b) is a bald assertion. (c)(d) are unrelated to feasibility.</>}
-        lens={<>Dual divergence is the algorithm telling you the constraint is unattainable. Either relax the floor, expand the catalog with diverse arms, or accept slack budget. Forcing higher weights only sacrifices CTR without fixing feasibility.</>}
-        stretch={<>What diagnostic plot exposes infeasibility?</>}
+        trap={<>(b) — the convenient lie.</>}
+        lens={<>Per-step signal is the assumption; aggregates degrade MOCB to a glorified scalarized LinUCB.</>}
+        stretch={<>Could you impute the per-step signal from item metadata?</>}
       />
 
+      {/* ============== D. Intuition traps ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      {/* axis: D1 ⭐ — insight: "more weight on fairness = more fairness" is intuitive but wrong direction in dual */}
       <VIS.TrapProblem
-        id="moc-p8" difficulty="hard" multiSelect
-        title="P8 — Theoretical guarantees of MOCB"
-        scenario={<>Which of these statements about MOCB regret / constraint violation are reasonable to expect? Select all that apply.</>}
+        id="mocb-d1"
+        difficulty="hard"
+        title="D1 ⭐ — Intuitive but wrong"
+        scenario={<>Intuition: "If fairness is consistently violated, just hand-set w<sup>(fair)</sup> = 10 and the bandit will rank fair items first." Why is this exactly what MOCB rejects, and what fails in practice?</>}
         options={[
-          {key:"a", text:"Cumulative constraint violation grows sublinearly under bounded dual updates.", correct:true},
-          {key:"b", text:"Per-objective regret grows like the single-objective regret, weighted by w.", correct:true},
-          {key:"c", text:"Adaptive weights add an extra O(&radic;T) term but do not break sublinearity.", correct:true},
-          {key:"d", text:"MOCB achieves zero violation at every step."},
-          {key:"e", text:"MOCB has no regret bound when the feasible region is empty."},
+          {key:"a", text:"Two failures. (1) High fixed w_fair makes CTR estimator irrelevant — you ship a near-pure-fairness ranker, CTR collapses, no slack to even DETECT excess feasibility. (2) When traffic shifts (more small sellers), the constraint becomes slack at w=10, but your fixed w can&apos;t relax — you over-protect indefinitely. The dual is supposed to RELAX when slack is large; you killed the feedback.", correct:true},
+          {key:"b", text:"Nothing fails — high w guarantees feasibility."},
+          {key:"c", text:"The CTR theta stops updating."},
+          {key:"d", text:"You need w &gt; 100 for it to work."},
         ]}
-        trap={<>(d) is too strong — exploration causes occasional violation. (e) is colloquially true but stated more carefully in the literature.</>}
-        lens={<>The MOCB regret story is "regret + cumulative violation are both sublinear in T under feasibility." Per-step violation is not zero; the algorithm trades transient violation against learning. Empty feasibility breaks every bandit, not just MOCB.</>}
-        stretch={<>How does the cumulative-violation rate change with the dual step size?</>}
+        trap={<>(b) is the natural intuition; only by tracing dual feedback do you see why high-fixed-w destroys learning in BOTH directions.</>}
+        lens={<>The dual&apos;s entire value is bidirectional. Hand-pinning kills one direction. The bandit can no longer self-correct toward LOOSER weights when slack opens up.</>}
+        stretch={<>What&apos;s the right intuition for "what does w_t want to be"?</>}
       />
 
+      {/* axis: D2 ⭐ — wrong-assumption cascade: "MOCB == LinUCB with more numbers" → wrong logging, wrong eval, wrong rollback */}
       <VIS.TrapProblem
-        id="moc-p9" difficulty="medium"
-        title="P9 — Logging requirements"
-        scenario={<>You decide to add a fairness objective mid-flight. What is the prerequisite?</>}
+        id="mocb-d2"
+        difficulty="hard"
+        multiSelect
+        title="D2 ⭐ — Wrong-assumption cascade"
+        scenario={<>You assume "MOCB is just LinUCB with more numbers in the reward." Which downstream decisions does this WRONG assumption silently break? Select all.</>}
         options={[
-          {key:"a", text:"You must already log the per-impression objective signal (e.g., small-seller flag) and the per-impression outcome for that signal.", correct:true},
-          {key:"b", text:"You only need overall daily fairness scores."},
-          {key:"c", text:"You can infer fairness from CTR alone."},
-          {key:"d", text:"Logging is optional."},
+          {key:"a", text:"Logging — you forget to log per-impression objective signals, only logging the scalar CTR. MOCB can&apos;t update the fairness theta.", correct:true},
+          {key:"b", text:"Eval — you compare MOCB to LinUCB on CTR alone; MOCB will look WORSE on CTR (it&apos;s spending capacity on fairness) and you&apos;ll roll back a working algorithm.", correct:true},
+          {key:"c", text:"Rollback policy — you don&apos;t plan for "what if dual diverges"; when w_fair explodes after a catalog change you have no playbook.", correct:true},
+          {key:"d", text:"Latency — MOCB is somehow 10x slower than LinUCB.", correct:false},
+          {key:"e", text:"Cache TTL — MOCB requires non-cacheable scoring.", correct:false},
         ]}
-        trap={<>(b)(c)(d) all skip the per-impression observability the algorithm needs.</>}
-        lens={<>MOCB needs vector reward at the action grain. Daily aggregates can serve as the constraint-check but not as the per-step learning signal. Before adding an objective, audit whether you log it.</>}
-        stretch={<>How would you back-fill a missing per-impression signal?</>}
+        trap={<>(d), (e) are non-anchored guesses — MOCB&apos;s per-call cost is K LinUCBs + a tiny w update, not 10x.</>}
+        lens={<>Three real cascades — logging, eval, rollback. Each is a "we assumed it&apos;s like LinUCB" landmine.</>}
+        stretch={<>Which of the three has bitten the most teams?</>}
       />
 
+      {/* axis: D3 — junior fix vs senior fix on constraint violation */}
       <VIS.TrapProblem
-        id="moc-p10" difficulty="hard"
-        title="P10 — Oscillating weights"
-        scenario={<>Diversity weight oscillates between 0.1 and 2.5 every few hours; bandit behavior is unstable. Best fix?</>}
+        id="mocb-d3"
+        difficulty="hard"
+        title="D3 — Junior vs senior fix on persistent violation"
+        scenario={<>Diversity floor missed three days in a row. Junior MLE: "raise eta so dual catches up faster." Senior MLE reaches for what FIRST?</>}
         options={[
-          {key:"a", text:"Use averaged or smoothed dual updates (exponential moving average of slack) and clip step size; oscillation is over-reacting to short-window slack.", correct:true},
-          {key:"b", text:"Increase dual step size."},
-          {key:"c", text:"Restart from scratch."},
-          {key:"d", text:"Remove the constraint."},
+          {key:"a", text:"Check feasibility: is the floor attainable given the current catalog? Plot the maximum achievable diversity across all policies — if the ceiling on diversity is 0.28 and the floor is 0.30, no eta change will help; the constraint is infeasible. Only once feasibility is confirmed does the senior tune eta.", correct:true},
+          {key:"b", text:"Increase alpha to explore more."},
+          {key:"c", text:"Add a regularizer."},
+          {key:"d", text:"Restart from scratch."},
         ]}
-        trap={<>(b) makes oscillation worse. (c)(d) are nuclear options.</>}
-        lens={<>Naive dual ascent over-reacts; averaging or clipping the gradient is the standard cure (mirror descent with averaging guarantees stable convergence). Without this, the bandit chases a moving scalarization and never settles.</>}
-        stretch={<>What EMA half-life would you start with?</>}
+        trap={<>The junior&apos;s fix is locally plausible but skips the structural question.</>}
+        lens={<>Persistent violation has two root causes: (i) eta too slow (operational fix), (ii) infeasibility (structural fix). Senior checks the structural one first; otherwise raising eta makes oscillation worse without ever achieving the floor.</>}
+        stretch={<>What plot specifically proves infeasibility?</>}
       />
+
+      {/* axis: D4 — symptom looks like one thing, is another */}
+      <VIS.TrapProblem
+        id="mocb-d4"
+        difficulty="hard"
+        title="D4 — Plausible misattribution"
+        scenario={<>Symptom: w<sup>(fair)</sup> oscillates between 0.1 and 2.5 every few hours; bandit behavior unstable; user complaints up. Which is the MOST LIKELY root cause?</>}
+        options={[
+          {key:"a", text:"Dual step size eta too large relative to the constraint-evaluation window — w over-reacts to short-window slack noise. Fix: averaged dual update (EMA of slack) and/or step-size clipping, NOT a longer evaluation window which causes its own lag bug.", correct:true},
+          {key:"b", text:"The catalog changed — re-train theta from scratch."},
+          {key:"c", text:"Exploration alpha too high."},
+          {key:"d", text:"Reward scaling drift."},
+        ]}
+        trap={<>(b), (c), (d) are all plausible-looking causes that don&apos;t explain the multi-hour oscillation specifically; only an eta vs window mismatch produces that exact signature.</>}
+        lens={<>Signature matching: "oscillation period == constraint window" points squarely at the dual step size, not at static knobs like alpha.</>}
+        stretch={<>What EMA half-life would damp this?</>}
+      />
+
+      {/* ============== E. Operations ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      {/* axis: E1 — insight: dual divergence as feasibility signal is the canonical MOCB production gotcha */}
+      <VIS.TrapProblem
+        id="mocb-e1"
+        difficulty="hard"
+        title="E1 — Production gotcha: dual divergence"
+        scenario={<>Two weeks post-launch, w<sup>(fair)</sup> has climbed from 0.3 &rarr; 1.0 &rarr; 4.0 &rarr; 12.0; CTR has collapsed 18%. The dashboards are green except for CTR. Most likely cause?</>}
+        options={[
+          {key:"a", text:"The feasible region is empty — no policy on the current catalog can satisfy fairness floor + sustain meaningful CTR exploration. Dual ascent doesn&apos;t saturate; w keeps climbing trying to enforce an unattainable target. Diagnosis: plot max-achievable fairness across policies; if it&apos;s below the floor, the constraint must be relaxed or the catalog expanded with diverse arms. DO NOT clip w and ship — clipping silently breaks the algorithm.", correct:true},
+          {key:"b", text:"Random noise."},
+          {key:"c", text:"Exploration alpha too high."},
+          {key:"d", text:"theta is mis-initialized."},
+        ]}
+        trap={<>(b), (c), (d) miss the climbing pattern that&apos;s the algorithm&apos;s feasibility alarm.</>}
+        lens={<>Dual divergence IS the diagnostic signal MOCB exposes. Treat it as a structural alert, not a tuning knob.</>}
+        stretch={<>What policy-space plot shows infeasibility most cleanly?</>}
+      />
+
+      {/* axis: E2 ⭐ — Failure-on-Friday: catalog drop causes w to spike, bandit goes nuts overnight */}
+      <VIS.TrapProblem
+        id="mocb-e2"
+        difficulty="hard"
+        title="E2 ⭐ — Failure on Friday"
+        scenario={<>Friday 3am page: CTR down 14%, fairness OK, complaint queue full. Investigation shows: Thursday 11pm, the merchandising team disabled a chunk of small-seller inventory for a brand campaign. Latency, GPU util, ranking all unchanged. What specifically went wrong in the MOCB loop — and why does this fail mode NOT exist in plain LinUCB?</>}
+        options={[
+          {key:"a", text:"Pulling the small-seller inventory made the small-seller floor harder to hit on the remaining catalog. MOCB&apos;s dual ascent fired hard — w_fair spiked overnight, the scalarized score is now dominated by the (small) remaining fairness signal, and CTR-driven arm selection got crushed. Plain LinUCB would have just delivered worse fairness silently. The MOCB-specific fix: dual rate-limit + alert on catalog mass changes feeding into the bandit&apos;s feasibility set.", correct:true},
+          {key:"b", text:"Standard catalog refresh — re-train theta."},
+          {key:"c", text:"Wait for traffic to normalize."},
+          {key:"d", text:"Increase exploration alpha."},
+        ]}
+        trap={<>(b), (c), (d) treat this as generic — but the CTR-crash WITH stable latency and stable fairness IS the MOCB signature when catalog feasibility tightens.</>}
+        lens={<>Catalog edits are silent inputs to MOCB&apos;s feasibility set. Without a rate-limit on dual, sudden infeasibility tightening crushes CTR before ops can react.</>}
+        stretch={<>What alerting rule do you add to catalog-change pipelines?</>}
+      />
+
+      {/* axis: E3 — implementation specific: default eta in reference implementation, dual step too aggressive */}
+      <VIS.TrapProblem
+        id="mocb-e3"
+        difficulty="medium"
+        title="E3 — Library default to override"
+        scenario={<>You use a reference MOCB implementation. Which default is most likely to bite you in production if you accept it as-is?</>}
+        options={[
+          {key:"a", text:"The default dual step size eta — often set to a value reasonable for stationary academic benchmarks (e.g. 0.1) but too aggressive for the noisy, traffic-shifting production reward signal. Set eta by reward scale / constraint variance, not by library default.", correct:true},
+          {key:"b", text:"Default ridge regularization lambda_r."},
+          {key:"c", text:"Default UCB alpha."},
+          {key:"d", text:"Default random seed."},
+        ]}
+        trap={<>(b), (c) have mature defaults; (d) is a joke option that some pick anyway.</>}
+        lens={<>The MOCB-new knob is eta. Defaults are tuned to benchmarks, not your reward variance. Always re-tune.</>}
+        stretch={<>How would you estimate the right eta from one day of logs?</>}
+      />
+
+      {/* axis: E4 — rollout: shadow scoring is special-cased because of dual */}
+      <VIS.TrapProblem
+        id="mocb-e4"
+        difficulty="hard"
+        mode="ordered"
+        title="E4 — Rollout sequence"
+        scenario={<>Migrate LinUCB &rarr; MOCB. Order the phases. Items that don&apos;t belong are not ranked.</>}
+        options={[
+          {key:"a", text:"Backfill per-impression fairness signal in logs; verify K-dim reward stream is clean.", order:1},
+          {key:"b", text:"Shadow-score MOCB offline on logged data with dual UPDATES DISABLED (frozen w) — confirm theta_k learn separately.", order:2},
+          {key:"c", text:"Enable dual updates in shadow; confirm w_t tracks constraint slack without affecting production.", order:3},
+          {key:"d", text:"Small traffic ramp (1%) with dual rate-limit ON; monitor dual divergence and CTR.", order:4},
+          {key:"e", text:"Full ramp to MOCB; retire LinUCB after 14 days dual stability.", order:5},
+          {key:"f", text:"Replace LinUCB on day 1 with full MOCB."},
+          {key:"g", text:"Enable dual updates BEFORE shadow scoring."},
+        ]}
+        trap={<>(f), (g) skip the dual-validation phase that&apos;s MOCB-specific.</>}
+        lens={<>The dual layer needs its own shadow-validation phase: estimators first (with w frozen), then dual (with shadow traffic). Skipping bakes dual misbehavior into the rollout.</>}
+        stretch={<>What dashboard exits the shadow phase?</>}
+      />
+
+      {/* axis: E5 — reproducibility: paper uses hand-set tau; production tau is regulator-defined */}
+      <VIS.TrapProblem
+        id="mocb-e5"
+        difficulty="medium"
+        title="E5 — Paper-to-production reproducibility"
+        scenario={<>The Sci Reports paper benchmarks MOCB on a smart-tourism dataset with hand-set constraint thresholds &tau;. What&apos;s the hardest detail to reproduce in YOUR production?</>}
+        options={[
+          {key:"a", text:"The constraint threshold tau — in the paper, tau is set to make the constraint interesting AND feasible. In production, tau is regulator- or product-defined and may be infeasible OR trivially slack. The paper&apos;s clean MOCB-vs-LinUCB delta depends on tau being a sweet-spot binding constraint; production tau frequently is not.", correct:true},
+          {key:"b", text:"The exploration alpha."},
+          {key:"c", text:"The ridge lambda_r."},
+          {key:"d", text:"The dataset size."},
+        ]}
+        trap={<>(b), (c), (d) all matter but are mature; (a) is the MOCB-specific reproduction trap.</>}
+        lens={<>Benchmark feasibility is curated; production feasibility is given. The MOCB-vs-baseline delta in production is conditional on tau being binding.</>}
+        stretch={<>How would you A/B-test a candidate tau?</>}
+      />
+
+      {/* axis: E6 — eval contamination: comparing on CTR alone hides MOCB's value */}
+      <VIS.TrapProblem
+        id="mocb-e6"
+        difficulty="hard"
+        title="E6 — Eval contamination"
+        scenario={<>An A/B test report says "MOCB lost — CTR is 1.8% lower than LinUCB control." How is this evaluation contaminated, and what&apos;s the honest readout?</>}
+        options={[
+          {key:"a", text:"CTR-only eval ignores the entire point of MOCB. The honest readout is (i) CTR delta and (ii) fairness floor satisfaction delta — control likely violated the floor (paying nothing in CTR because no constraint mechanism); MOCB satisfied it (paying 1.8% CTR as feasibility cost). If the regulator&apos;s floor is mandatory, that 1.8% is the price of compliance, not a loss.", correct:true},
+          {key:"b", text:"The test is fine — CTR is the only metric that matters."},
+          {key:"c", text:"MOCB is wrong."},
+          {key:"d", text:"The sample size is too small."},
+        ]}
+        trap={<>(b) is the seductive product-side framing that throws away the entire reason MOCB exists.</>}
+        lens={<>Multi-objective methods MUST be evaluated multi-objectively. CTR-only eval is the most common way to roll back a working MOCB.</>}
+        stretch={<>What multi-objective summary metric reads cleanly for the VP?</>}
+      />
+
+      {/* ============== F. Failure modes ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      {/* axis: F1 — edge case: K=1 collapses MOCB to LinUCB */}
+      <VIS.TrapProblem
+        id="mocb-f1"
+        difficulty="medium"
+        title="F1 — Edge case: K = 1 objective"
+        scenario={<>You configure MOCB with K=1 objective (just CTR), no active constraints. What happens?</>}
+        options={[
+          {key:"a", text:"MOCB collapses exactly to LinUCB. The dual variable has nothing to update against (no constraint slack); the single weight is irrelevant under argmax. This is the design check: MOCB is a strict superset, so the degenerate case must reduce cleanly. If your implementation does anything else, it&apos;s buggy.", correct:true},
+          {key:"b", text:"MOCB crashes."},
+          {key:"c", text:"MOCB ignores the context."},
+          {key:"d", text:"MOCB performs much better than LinUCB."},
+        ]}
+        trap={<>(d) is the "more machinery == better" instinct; in the degenerate case the machinery does nothing useful.</>}
+        lens={<>Reduction sanity-check: every multi-X method must collapse to its scalar baseline in the K=1 case. Failure to reduce is a code smell.</>}
+        stretch={<>What unit test would you add to enforce this?</>}
+      />
+
+      {/* axis: F2 — adversarial: attack on the dual mechanism specifically */}
+      <VIS.TrapProblem
+        id="mocb-f2"
+        difficulty="hard"
+        title="F2 — Adversarial attack on the dual"
+        scenario={<>Design an adversarial traffic pattern that maximally degrades MOCB&apos;s CTR while leaving plain LinUCB unaffected.</>}
+        options={[
+          {key:"a", text:"Inject periodic bursts of users for whom the fairness floor is near-violated (cohorts where small-seller arms have artificially low CTR). MOCB&apos;s dual sees the threatened violation, RAISES w_fair, and the scalarized ranker over-corrects on this cohort; CTR drops. Plain LinUCB doesn&apos;t see fairness at all so it&apos;s unaffected by these bursts.", correct:true},
+          {key:"b", text:"Increase total traffic — affects both equally."},
+          {key:"c", text:"Use the same query repeatedly."},
+          {key:"d", text:"There is no such attack."},
+        ]}
+        trap={<>(d) — confident wrong answer; (b), (c) generic load attacks.</>}
+        lens={<>The dual mechanism is the new attack surface. Anyone who can manipulate the fairness signal can push w around. Mitigate with rate-limited dual updates and outlier rejection on the slack stream.</>}
+        stretch={<>What input filter blocks the attack?</>}
+      />
+
+      {/* axis: F3 — reverse engineering: symptom is "w climbing + CTR flat" → which design choice causes it */}
+      <VIS.TrapProblem
+        id="mocb-f3"
+        difficulty="hard"
+        title="F3 — Reverse engineering"
+        scenario={<>Observed: w<sup>(fair)</sup> climbs steadily for 6 hours, then PLATEAUS at a high value; CTR is stable; fairness floor is met. Which MOCB design choice causes this exact pattern?</>}
+        options={[
+          {key:"a", text:"Dual ascent ON a binding-but-feasible constraint. The dual climbs until the scalarized argmax shifts the bandit into the feasible region; once slack is zero (constraint exactly met), the dual gradient is zero too, and w plateaus. CTR stable = the bandit settled into the feasible optimum. This is the textbook MOCB success pattern, not a bug.", correct:true},
+          {key:"b", text:"Dual divergence — the constraint is infeasible."},
+          {key:"c", text:"Oscillation — eta too large."},
+          {key:"d", text:"theta drift — the catalog changed."},
+        ]}
+        trap={<>(b) is the panic readout — climbing w is alarming until you check if it PLATEAUED. (c), (d) explain different signatures.</>}
+        lens={<>Signature matching: climb + plateau + stable CTR = healthy dual convergence on a binding constraint. Climb without plateau = divergence. Train ops to recognize both.</>}
+        stretch={<>What plateau-detection rule would alert on divergence but stay quiet on healthy climb-plateau?</>}
+      />
+
+      {/* axis: F4 — paper-named: Sci Reports authors call out exploration-feasibility tension */}
+      <VIS.TrapProblem
+        id="mocb-f4"
+        difficulty="hard"
+        title="F4 — Paper-named failure mode"
+        scenario={<>The Sci Reports paper specifically warns about ONE regime where MOCB&apos;s constraint mechanism can transiently fail even with correct hyperparameters. Which regime?</>}
+        options={[
+          {key:"a", text:"Early exploration phase. UCB requires exploration; exploration means pulling under-pulled arms; for cold arms theta is uncertain so exploration can produce arms that violate the constraint. Cumulative violation is bounded but not zero in this phase. The paper formalizes this as sublinear cumulative-violation guarantee, NOT per-step zero violation.", correct:true},
+          {key:"b", text:"Stationary phase — no failures."},
+          {key:"c", text:"K = 1 case."},
+          {key:"d", text:"When alpha = 0."},
+        ]}
+        trap={<>(b) misreads the paper&apos;s guarantee.</>}
+        lens={<>Exploration-feasibility tension is intrinsic. The paper bounds CUMULATIVE violation, not per-step. Regulators must accept a slack budget or you can&apos;t run any bandit.</>}
+        stretch={<>How would you communicate the slack budget to a regulator?</>}
+      />
+
+      {/* axis: F5 — community-named follow-up: constrained-bandit literature critiques MOCB's slow tau-shift response */}
+      <VIS.TrapProblem
+        id="mocb-f5"
+        difficulty="hard"
+        title="F5 — Community-found weakness"
+        scenario={<>Constrained-bandit literature (post-2023) critiques MOCB-style dual ascent for one specific weakness when constraints THEMSELVES drift (e.g. regulator raises the floor mid-quarter). What&apos;s the weakness, and what kind of follow-up addresses it?</>}
+        options={[
+          {key:"a", text:"Dual ascent assumes the constraint threshold tau is fixed. When tau drifts (regulator raises floor from 20% to 25%), the dual variable needs to fully re-converge — which is slow because dual ascent is a single-rate gradient method. Follow-ups (e.g. predictive dual updates, meta-learned eta schedules) anticipate tau drift and pre-warm the dual.", correct:true},
+          {key:"b", text:"MOCB cannot handle drifting context — only constraint drift."},
+          {key:"c", text:"Dual ascent is mathematically wrong."},
+          {key:"d", text:"There are no such follow-ups."},
+        ]}
+        trap={<>(d) confidently denies the literature.</>}
+        lens={<>Drifting tau is the under-discussed weakness. Stationary tau assumption is buried in the proof. Follow-ups attack this directly.</>}
+        stretch={<>How would you detect tau drift before it bites you?</>}
+      />
+
+      {/* axis: F6 — second F-axis: regret-violation tradeoff under different eta */}
+      <VIS.TrapProblem
+        id="mocb-f6"
+        difficulty="hard"
+        title="F6 — Regret vs violation tradeoff"
+        scenario={<>You can spend an extra factor-2 in regret to halve cumulative constraint violation, or vice versa. Which knob trades these?</>}
+        options={[
+          {key:"a", text:"The dual step size eta. Larger eta → dual reacts faster → less cumulative violation but more regret (over-reactive scalarization hurts CTR). Smaller eta → slower violation correction but cleaner regret. This trade is the headline result of constrained-bandit analysis and the operational knob.", correct:true},
+          {key:"b", text:"The exploration alpha."},
+          {key:"c", text:"The ridge regularizer."},
+          {key:"d", text:"The catalog size."},
+        ]}
+        trap={<>(b), (c), (d) are unrelated knobs.</>}
+        lens={<>Eta is the regret-violation control. Tune by the relative business cost of the two.</>}
+        stretch={<>How do you set eta given your team&apos;s SLA on cumulative violation?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://www.nature.com/articles/s41598-025-89920-2" target="_blank" rel="noopener">Multi-objective contextual bandits in recommendation systems for smart tourism (Sci Reports 2025, paper)</a> — primary source; constraint-feasibility derivation.</li>
-        <li><a href="https://arxiv.org/abs/2003.06467" target="_blank" rel="noopener">Mehrotra et al. — <em>Fairness-Aware Recommendation</em> (paper)</a> — broader fairness-floor landscape, complementary framing.</li>
-        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener">Eugene Yan — <em>System Design for Discovery</em> (blog)</a> — where multi-objective tradeoffs really show up in production.</li>
-        <li><a href="https://lilianweng.github.io/posts/2018-01-23-multi-armed-bandit/" target="_blank" rel="noopener">Lilian Weng — <em>The Multi-Armed Bandit Problem and Its Solutions</em> (blog)</a> — bandit fundamentals you compose into MOCB.</li>
-        <li><a href="https://tor-lattimore.com/downloads/book/book.pdf" target="_blank" rel="noopener">Lattimore &amp; Szepesvári — <em>Bandit Algorithms</em> (textbook, free PDF)</a> — chapter on constrained bandits; gold-standard math.</li>
+        <li>
+          <a href="https://www.nature.com/articles/s41598-025-89920-2" target="_blank" rel="noopener"><strong>Multi-objective contextual bandits in recommendation systems for smart tourism</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper, Sci Reports 2025)</span>
+          <br/>Primary source. Read §3 (vector reward formalization), §4 (adaptive-weight dual ascent), §5 (regret + cumulative-violation bounds).
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/1003.0146" target="_blank" rel="noopener"><strong>Li et al. — A Contextual-Bandit Approach to Personalized News Article Recommendation (LinUCB)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper, WWW 2010)</span>
+          <br/>The scalar baseline MOCB extends. Read for ridge update, UCB bonus, alpha tuning conventions.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/1706.06969" target="_blank" rel="noopener"><strong>Agrawal &amp; Devanur — Linear Contextual Bandits with Knapsacks (OPLB family)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2016)</span>
+          <br/>The constrained-bandit lineage MOCB sits in. Read for the dual-ascent regret-violation tradeoff that MOCB inherits.
+        </li>
+        <li>
+          <a href="https://tor-lattimore.com/downloads/book/book.pdf" target="_blank" rel="noopener"><strong>Lattimore &amp; Szepesv&aacute;ri — Bandit Algorithms</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(textbook, free PDF)</span>
+          <br/>Chapter on constrained bandits. Gold-standard derivations.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2003.06467" target="_blank" rel="noopener"><strong>Mehrotra et al. — Fairness-aware recommendation</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper)</span>
+          <br/>Broader fairness-floor landscape. Where MOCB&apos;s constraint-as-floor framing comes from.
+        </li>
+        <li>
+          <a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener"><strong>Eugene Yan — System Design for Discovery</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
+          <br/>Practitioner perspective on where multi-objective tradeoffs actually bite in production.
+        </li>
       </ul>
     </VIS.Section>
   </main>
