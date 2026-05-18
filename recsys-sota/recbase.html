@@ -1414,266 +1414,426 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 15
+// RecBase — generative foundation model pretraining for zero-shot recsys
+// Unique mechanism: train ONE generative backbone over user-item sequences
+// from MANY DIVERSE DOMAINS, using a UNIFIED text-and-ID vocabulary, so the
+// model transfers zero-shot to a brand-new domain. Like BERT-for-recsys but
+// generative and recsys-native. Surpasses P5, RecGPT, and even GPT-3.5 on
+// zero-shot recsys benchmarks despite far fewer parameters.
+// Anchor that survives redaction: "ONE generative backbone pretrained across
+// many domains with a UNIFIED text-and-ID vocabulary, for zero-shot transfer
+// to brand-new domains."
+// Foundation-model pair caution:
+//   GPSD    = pretrain-then-discriminative (single-domain pipeline)
+//   RecBase = full multi-domain foundation, zero-shot transfer [THIS visual]
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · Foundation models for recs"
       title="RecBase — generative foundation model pretraining for zero-shot recsys"
-      subtitle="A generative recommender pretrained across many domains with a unified text-and-ID vocabulary, enabling zero-shot recommendation in new domains where no in-domain data exists."
+      subtitle="One generative backbone pretrained across many domains with a unified text-and-ID vocabulary. Transfers zero-shot to new domains. Beats P5, RecGPT, even GPT-3.5 at far fewer parameters."
       byline={[
-        {label: "Source", value: "EMNLP 2025"},
-        {label: "Domain", value: "Foundation models for recommendation"},
+        {label: "Paper", value: "'RecBase: Generative Foundation Model Pretraining for Zero-Shot Recommendation' (EMNLP 2025)"},
+        {label: "Surface", value: "Brand-new domain launches with no in-domain data; cross-domain transfer learning for recommendation"},
+        {label: "Anchor that survives redaction", value: "ONE generative backbone pretrained across MANY DOMAINS with a UNIFIED text-and-ID vocabulary; zero-shot transfer to new domains"},
       ]}/>
 
     <VIS.TLDR>
-      <strong>RecBase</strong> pretrains a generative recommender on diverse domains with a unified token vocabulary that mixes text tokens and ID tokens. Result: it can recommend in brand-new domains with{" "}
-      <VIS.Term def="A model used on a task or domain it has never been trained on, with no fine-tuning. The model relies entirely on generalization from pretraining.">zero shots</VIS.Term>{" "}
-      — and outperforms P5, RecGPT, and GPT-3.5 on zero-shot benchmarks despite being smaller.
+      Most recsys foundation-model attempts before RecBase (P5, RecGPT) pretrain on a single domain or a small mix; their zero-shot transfer is weak. Generic LLMs like GPT-3.5 transfer better but were not pretrained to do recsys. <strong>RecBase</strong> closes the gap with a single generative backbone pretrained over a diverse multi-domain corpus using a UNIFIED text-and-ID vocabulary - items get represented both by their text descriptions and by stable IDs across domains. The senior trap: this is NOT &ldquo;just bigger pretraining.&rdquo; The load-bearing detail is the <em>unified vocabulary</em> - it is what lets the model transfer item-level structure across domains. Drop the unified vocab and RecBase collapses to a per-domain model.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        RecBase is a generative pretraining recipe targeted at zero-shot recommendation. Three design choices distinguish it:
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  D1["Domain 1 sequences"] --> M["Unified text + ID vocabulary"]
-  D2["Domain 2 sequences"] --> M
-  D3["Many other domains"] --> M
-  M --> P["Generative pretrain — predict next item"]
-  P --> Z["Zero-shot apply to new domain"]
-  P --> F["OR few-shot fine-tune"]
-      `} />
+    <VIS.Section id="sec-what" title="What it is — one backbone, many domains, unified vocab">
+      <VIS.Mermaid chart={`flowchart TB
+  D1["Domain A sequences (movies)"]
+  D2["Domain B sequences (books)"]
+  D3["Domain C sequences (music)"]
+  VOCAB["Unified text-and-ID vocabulary"]
+  BACKBONE["One generative transformer backbone"]
+  NEWDOM["Brand-new domain D (no labeled data)"]
+  ZS["Zero-shot prediction"]
+  D1 --> VOCAB
+  D2 --> VOCAB
+  D3 --> VOCAB
+  VOCAB --> BACKBONE
+  NEWDOM --> BACKBONE
+  BACKBONE --> ZS`} />
       <ul>
-        <li><strong>Domain diversity at pretrain</strong> — RecBase pretrains across many heterogeneous domains (movies, books, e-commerce, music, etc.). Diversity forces the model to learn domain-invariant patterns.</li>
-        <li><strong>Unified text-and-ID vocabulary</strong> — items in every domain are represented as a mix of natural-language tokens (title, description) and ID tokens. This allows the model to fall back to text for unseen items.</li>
-        <li><strong>Generative objective</strong> — next-token prediction over item sequences. Same training signal as a language model, applied to user trajectories.</li>
-        <li><strong>Zero-shot inference path</strong> — for a new domain, feed the user&apos;s recent items as a prompt; the model generates a candidate next item from the cross-domain vocabulary.</li>
+        <li><strong>Multi-domain pretraining corpus</strong> - user-item sequences from many domains. Diversity is load-bearing; mono-domain pretraining collapses to per-domain.</li>
+        <li><strong>Unified text-and-ID vocabulary</strong> - each item is represented both by its text description (transferable) and by a stable ID (memorization). The vocab spans all pretraining domains.</li>
+        <li><strong>Generative objective</strong> - next-token-prediction over the unified vocab. The backbone learns cross-domain item-and-user structure.</li>
+        <li><strong>Zero-shot deployment</strong> - the trained backbone is applied to a brand-new domain with no labeled data; the text-side vocabulary carries item meaning across the gap.</li>
       </ul>
+      <p>The unified vocab is what makes it a foundation model and not five disjoint models.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from P5, RecGPT, GPT-3.5">
+    <VIS.Section id="sec-diff" title="How RecBase differs from GPSD, P5, RecGPT, GPT-3.5">
       <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
-        <thead><tr style={{background:"#f1f5f9"}}>
-          <th style={{textAlign:"left",padding:8}}>Property</th>
-          <th style={{textAlign:"left",padding:8}}>P5 / RecGPT</th>
-          <th style={{textAlign:"left",padding:8}}>GPT-3.5 zero-shot</th>
-          <th style={{textAlign:"left",padding:8}}>RecBase</th>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Pretrain scope</th>
+          <th style={{textAlign:"left", padding:8}}>Vocabulary</th>
+          <th style={{textAlign:"left", padding:8}}>Best use</th>
         </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Pretrain corpus</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>One or few recsys domains</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Web text</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Many diverse recsys domains</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Item representation</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Text or ID</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Text only</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Unified text + ID</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Zero-shot on a new domain</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Weak</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Moderate (prompted)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Strongest (paper claim)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Param count</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Hundreds of millions</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Many billions</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Hundreds of millions (RecBase-large)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Inference cost on new domain</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Low</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High (LLM)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Low</td></tr>
+          <tr><td style={{padding:8}}>GPSD</td><td style={{padding:8}}>Single-domain sequences</td><td style={{padding:8}}>Per-domain sparse table</td><td style={{padding:8}}>Discriminative serving in one domain</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>P5 / RecGPT</td><td style={{padding:8}}>Small mix of domains</td><td style={{padding:8}}>Mostly text</td><td style={{padding:8}}>Cross-task within trained domains</td></tr>
+          <tr><td style={{padding:8}}>GPT-3.5</td><td style={{padding:8}}>Web text (not recsys-shaped)</td><td style={{padding:8}}>Generic NLP tokens</td><td style={{padding:8}}>Generic LLM prompting</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>RecBase</strong></td><td style={{padding:8}}><strong>Many diverse recsys domains</strong></td><td style={{padding:8}}><strong>Unified text-and-ID</strong></td><td style={{padding:8}}><strong>Zero-shot launch into new domains</strong></td></tr>
         </tbody>
       </table>
-      <p style={{marginTop:12}}>
-        RecBase&apos;s pitch: domain-specialized generative pretrain on a diverse corpus is more sample-efficient for recsys than general LLM pretrain. Beating GPT-3.5 with far fewer parameters is the headline result.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li><strong>Brand-new domain launches</strong> — no in-domain data, but you have RecBase trained on many other domains.</li>
-        <li>Long-tail domains where each individual domain has too little data to train its own recommender.</li>
-        <li>Cross-domain transfer — when a user&apos;s history in one domain should inform recommendations in another.</li>
-        <li>Cold-start scenarios where unified text-and-ID vocabulary lets the model fall back to item titles or descriptions.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Vocabulary alignment is fragile</strong> — assigning ID tokens consistently across domains is non-trivial; same ID number means different things in different catalogs.</li>
-        <li><strong>Few-shot still helps</strong> — zero-shot is impressive but in-domain fine-tuning still wins when labels exist.</li>
-        <li><strong>Item description quality matters</strong> — text-token fallback only helps if item titles or descriptions are meaningful.</li>
-        <li><strong>Distribution coverage</strong> — RecBase only generalizes well to domains structurally similar to its pretrain mix; truly novel domains (e.g., niche enterprise catalogs) may not benefit.</li>
-        <li><strong>Generative decoding cost</strong> — autoregressive generation is slower than retrieval-style scoring; for high-QPS settings, requires distillation or candidate-set restriction.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick the right move(s); reveal trap and lens after committing.</p>
-
-      <VIS.TrapProblem
-        id="recbase-p1" difficulty="hard"
-        title="P1 — Why does RecBase beat GPT-3.5 on zero-shot recsys despite GPT-3.5 having far more parameters?"
-        scenario={<>RecBase-large is a few hundred million parameters; GPT-3.5 has many billions. Yet RecBase outperforms GPT-3.5 on zero-shot recsys benchmarks. Pick the strongest explanation.</>}
+      <VIS.TrapProblem id="recbase-p1" difficulty="hard"
+        title="P1 — RecBase vs GPSD: load-bearing difference"
+        scenario={<><em>Discriminating insight: GPSD is a single-domain two-stage pipeline (pretrain then discriminative fine-tune). RecBase is a multi-domain foundation model whose value is zero-shot transfer to a brand-new domain. Scope and goal are different.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Pretraining corpus matters more than parameter count for a specialized task. GPT-3.5 was trained on web text, which is a noisy proxy for user-item interaction patterns. RecBase was pretrained on diverse recsys sequences — the data is much closer to the inference task.", correct:true},
-          {key:"b", text:"GPT-3.5 cannot do recommendation."},
-          {key:"c", text:"RecBase has more parameters than GPT-3.5."},
-          {key:"d", text:"RecBase uses retrieval augmentation."},
+          {key:"a", text:"GPSD pretrains in ONE domain then adds a discriminative head on top of frozen sparse embeddings for CTR serving. RecBase pretrains across MANY diverse domains with a unified text-and-ID vocabulary and transfers zero-shot to a brand-new domain. Scope (single vs many) and goal (in-domain serving vs cross-domain transfer) are different.", correct:true},
+          {key:"b", text:"They are the same model with different names."},
+          {key:"c", text:"RecBase is single-domain."},
+          {key:"d", text:"GPSD is multi-domain."},
         ]}
-        trap={<>(b) is false — GPT-3.5 can do recsys, just less well. (c) is factually wrong. (d) is unsupported.</>}
-        lens={<>The bitter-lesson reversal: when the corpus is well-targeted, smaller models on the right data beat much larger models on web text. RecBase&apos;s pretrain data is sequences of user-item interactions across many domains — structurally identical to the inference task. GPT-3.5 has to infer that structure from web text, which is a much weaker signal. This is the same intuition behind domain-specific code, math, or medical models beating general LLMs on their specialty.</>}
-        stretch={<>At what GPT-3.5 size or training-mix change might it catch up?</>}
+        trap={<>(b)(c)(d) collapse the scope-and-goal distinction.</>}
+        lens={<>RecBase = multi-domain foundation. GPSD = single-domain pipeline.</>}
+        stretch={<>Could you fine-tune a RecBase backbone with GPSD&apos;s freeze recipe?</>}
       />
 
-      <VIS.TrapProblem
-        id="recbase-p2" difficulty="medium" multiSelect
-        title="P2 — What does RecBase&apos;s unified text-and-ID vocabulary enable?"
-        scenario={<>Pick the real benefits of mixing text tokens with ID tokens.</>}
+      <VIS.TrapProblem id="recbase-p2" difficulty="hard"
+        title="P2 — RecBase vs P5 / RecGPT: what is the load-bearing difference?"
+        scenario={<><em>Discriminating insight: P5 and RecGPT pretrain on smaller domain mixes and use mostly text vocabulary; their zero-shot is weaker. RecBase&apos;s wins come from (a) larger and more DIVERSE domain coverage and (b) the UNIFIED text-and-ID vocabulary - IDs carry cross-domain structure that text alone misses.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Cold-start fallback — when an ID has not been seen in pretrain, the model can still reason from the item&apos;s text tokens (title, description).", correct:true},
-          {key:"b", text:"Cross-domain transfer — text tokens are shared across domains, so the model can connect 'thriller novel' to 'thriller movie' even if the IDs differ.", correct:true},
-          {key:"c", text:"Lower vocabulary size — the model needs fewer unique embeddings.", correct:true},
-          {key:"d", text:"Allows the model to be served as a pure ID model with no text."},
-          {key:"e", text:"Removes the need for any item metadata."},
+          {key:"a", text:"RecBase pretrains on a larger and more diverse multi-domain corpus AND uses a unified text-and-ID vocabulary - items are represented by both text descriptions AND stable cross-domain IDs. P5 / RecGPT use smaller mixes and mostly-text vocabularies; their zero-shot transfer to a new domain is weaker.", correct:true},
+          {key:"b", text:"P5 is RecBase with renamed components."},
+          {key:"c", text:"RecGPT is single-domain."},
+          {key:"d", text:"P5 already uses unified text-and-ID vocab."},
         ]}
-        trap={<>(d) misses the design — both modalities are essential. (e) is the opposite of what unified vocab needs.</>}
-        lens={<>Three real benefits: cold-start (text fallback), cross-domain transfer (text bridges), and vocabulary efficiency (shared text tokens). All three depend on having meaningful item text — RecBase&apos;s unified design rewards investment in item descriptions.</>}
-        stretch={<>What goes wrong if item descriptions are uninformative (e.g., SKU codes)?</>}
+        trap={<>(b)(c)(d) miss the unified-vocab + diversity argument.</>}
+        lens={<>RecBase wins via diversity + unified text-and-ID vocab.</>}
+        stretch={<>What does the ablation say about removing the ID vocab?</>}
       />
 
-      <VIS.TrapProblem
-        id="recbase-p3" difficulty="hard"
-        title="P3 — Domain coverage and zero-shot generalization"
-        scenario={<>You apply RecBase to a niche enterprise catalog (industrial parts). Zero-shot performance is poor. Pick the strongest explanation.</>}
+      <VIS.TrapProblem id="recbase-p3" difficulty="hard"
+        title="P3 — Why does RecBase beat GPT-3.5 zero-shot despite far fewer parameters?"
+        scenario={<><em>Discriminating insight: GPT-3.5 has more parameters but was not pretrained on RECSYS-SHAPED data (user-item sequences with stable item IDs). RecBase, despite fewer parameters, sees the right data distribution and the right objective. Param count is not the bottleneck; pretraining shape is.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"RecBase generalizes to domains structurally similar to its pretrain mix. A truly novel domain whose consumption pattern differs from the pretrain distribution will not benefit from zero-shot.", correct:true},
-          {key:"b", text:"RecBase only works on movies."},
-          {key:"c", text:"Zero-shot is impossible by definition."},
-          {key:"d", text:"The catalog is too small."},
+          {key:"a", text:"GPT-3.5 has more parameters but its pretraining corpus is web text, not user-item sequences. RecBase is much smaller but pretrains on the right SHAPE of data (sequences) with the right OBJECTIVE (next-item prediction) and stable cross-domain IDs. Parameter count is not the bottleneck; pretraining shape is.", correct:true},
+          {key:"b", text:"GPT-3.5 has fewer params than RecBase."},
+          {key:"c", text:"GPT-3.5 is pretrained on user-item sequences."},
+          {key:"d", text:"Param count is the dominant factor."},
         ]}
-        trap={<>(b), (c), (d) are over- or under-stated.</>}
-        lens={<>RecBase zero-shot leans on structural similarity to pretrain domains. Pretrain consists mostly of consumer recsys (movies, books, music, e-commerce). Industrial parts have very different consumption patterns (workflow-driven, technical-attribute-driven), so the prior is mismatched. In such domains, RecBase needs in-domain fine-tuning to be useful.</>}
-        stretch={<>How would you decide whether a new domain is similar enough to the pretrain mix?</>}
+        trap={<>(b)(c)(d) miss the pretraining-shape argument.</>}
+        lens={<>Right data + right objective beats bigger model on a wrong-shape pretrain.</>}
+        stretch={<>What does this say about LLM-as-recommender deployments?</>}
       />
 
-      <VIS.TrapProblem
-        id="recbase-p4" difficulty="medium" multiSelect
-        title="P4 — Vocabulary alignment challenges"
-        scenario={<>Pick the real challenges in unifying ID vocabulary across domains.</>}
+      <VIS.TrapProblem id="recbase-p4" difficulty="hard"
+        title="P4 — Compose RecBase with downstream fine-tune"
+        scenario={<><em>Discriminating insight: RecBase&apos;s zero-shot is the headline; in practice you often have SOME in-domain data even at launch. Fine-tuning RecBase on that small in-domain dataset typically beats zero-shot, sometimes substantially. The composition is foundation-then-fine-tune, mirroring NLP&apos;s pattern.</em><br/>What does the composition achieve?</>}
         options={[
-          {key:"a", text:"ID 12345 means different items in different domains — a global ID space must be built.", correct:true},
-          {key:"b", text:"Domain-specific tokenization choices (movie genres, e-commerce categories) need a shared schema.", correct:true},
-          {key:"c", text:"Vocabulary size can explode with millions of items across domains.", correct:true},
-          {key:"d", text:"Tokens for items with similar text must be encoded similarly to enable transfer.", correct:true},
-          {key:"e", text:"All items can be represented by a single token."},
+          {key:"a", text:"Foundation-then-fine-tune. RecBase&apos;s zero-shot is the strong baseline; when even small amounts of in-domain data exist, a light fine-tune on the new domain lifts performance further. Mirrors the BERT/LLM pattern: pretrain once, fine-tune cheaply per task.", correct:true},
+          {key:"b", text:"Fine-tuning a foundation model never helps."},
+          {key:"c", text:"RecBase is fine-tune-only."},
+          {key:"d", text:"Fine-tune erases pretraining."},
         ]}
-        trap={<>(e) is wrong — items need unique tokens or compound representations.</>}
-        lens={<>Four real challenges. The biggest is ID-space management — a multi-domain RecBase has to either build a global ID namespace or accept that the same ID number is reused. The standard fix is domain-prefixed IDs or learned ID embeddings that incorporate domain context.</>}
-        stretch={<>How would you handle the millionth-new-item case during inference?</>}
+        trap={<>(b)(c)(d) misunderstand the foundation-model pattern.</>}
+        lens={<>Pretrain once; fine-tune cheaply per domain.</>}
+        stretch={<>How much in-domain data tips zero-shot vs few-shot?</>}
       />
 
-      <VIS.TrapProblem
-        id="recbase-p5" difficulty="hard"
-        title="P5 — RecBase serving cost"
-        scenario={<>You want to deploy RecBase to a high-QPS production system. Pick the strongest cost mitigation.</>}
+      <VIS.TrapProblem id="recbase-p5" difficulty="medium"
+        title="P5 — Where does RecBase&apos;s zero-shot edge shrink to zero?"
+        scenario={<><em>Discriminating insight: RecBase&apos;s zero-shot win shrinks when the new domain looks NOTHING like the pretraining domains - e.g., a niche industrial-equipment recsys where items have no text descriptions and IDs do not cross domains. The unified vocab no longer carries information; transfer collapses.</em><br/>Where does the edge vanish?</>}
         options={[
-          {key:"a", text:"Distill RecBase into a smaller, retrieval-style two-tower model for the high-QPS path; reserve generative RecBase for low-QPS cold-start and novel domains.", correct:true},
-          {key:"b", text:"Serve RecBase autoregressively for every request."},
-          {key:"c", text:"Cache all recommendations."},
-          {key:"d", text:"Drop RecBase entirely."},
+          {key:"a", text:"A new domain where items have no text descriptions and IDs do not cross over from pretraining domains - the unified text-and-ID vocab carries no information into the new domain. RecBase reduces to a random initialization; building a domain-specific recommender from scratch (with whatever signal exists) may be competitive.", correct:true},
+          {key:"b", text:"RecBase always wins zero-shot."},
+          {key:"c", text:"RecBase needs a million labeled examples to start."},
+          {key:"d", text:"Domain similarity is irrelevant to transfer."},
         ]}
-        trap={<>(b) is operationally expensive — autoregressive decoding does not scale to high QPS. (c) breaks for new users or unbounded query patterns. (d) abandons the benefit.</>}
-        lens={<>The standard production pattern for any generative recommender is hybrid: distill into a retrieval-style two-tower for the hot path, keep the full generative model for cold-start, novel domains, or low-QPS surfaces (chat-style discovery). This is how generative recommenders coexist with production latency budgets.</>}
-        stretch={<>What recall hit does the distillation typically cost?</>}
+        trap={<>(b)(c)(d) miss the transfer-similarity argument.</>}
+        lens={<>Zero-shot needs vocabulary overlap; novel-vocab domains collapse the edge.</>}
+        stretch={<>What signals predict transfer success before launch?</>}
       />
 
-      <VIS.TrapProblem
-        id="recbase-p6" difficulty="medium"
-        title="P6 — Zero-shot vs few-shot in RecBase"
-        scenario={<>You launched a new domain. After a few weeks you have a small labeled in-domain dataset. Pick the strongest move.</>}
+      <VIS.TrapProblem id="recbase-p6" difficulty="hard"
+        title="P6 — Pick the recommendation architecture"
+        scenario={<><em>Discriminating insight: a brand-new domain (e.g., a startup launching its first recsys surface) with NO in-domain user-item interaction history, but items have rich text descriptions and overlap with public catalogs. Zero-shot RecBase is purpose-built for this.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Few-shot fine-tune RecBase on the in-domain data — preserves cross-domain priors while adapting to the new domain. Almost always beats both pure zero-shot and pure in-domain training on small data.", correct:true},
-          {key:"b", text:"Throw away RecBase and train an in-domain model from scratch."},
-          {key:"c", text:"Stick with zero-shot RecBase forever."},
-          {key:"d", text:"Combine RecBase predictions with a heuristic baseline by averaging."},
+          {key:"a", text:"RecBase zero-shot - the new domain has no in-domain history but items have text descriptions and overlap with public catalogs the model saw in pretraining. The unified text-and-ID vocab carries enough structure that zero-shot beats a from-scratch model trained on the empty in-domain dataset.", correct:true},
+          {key:"b", text:"Train a DLRM from scratch - no labeled data."},
+          {key:"c", text:"Train an HSTU from scratch - no sequence data."},
+          {key:"d", text:"Skip recommendation - no data."},
         ]}
-        trap={<>(b) wastes pretrain. (c) misses easy in-domain gains. (d) is a weak ensemble that ignores the right answer.</>}
-        lens={<>Few-shot fine-tune is the standard pattern for foundation models: zero-shot for launch (no data), few-shot for the first weeks (small data), full fine-tune for mature operation (lots of data). RecBase is no exception. The few-shot phase is where the foundation-model investment pays off.</>}
-        stretch={<>How would you decide when to graduate from few-shot to full fine-tune?</>}
+        trap={<>(b)(c) impossible without data. (d) gives up.</>}
+        lens={<>No-data domain launch + text-rich items = RecBase zero-shot.</>}
+        stretch={<>What changes once you accumulate 10K interactions?</>}
       />
 
-      <VIS.TrapProblem
-        id="recbase-p7" difficulty="hard" mode="ordered"
-        title="P7 — Order your debugging when RecBase zero-shot in a new domain fails"
-        scenario={<>You deployed RecBase zero-shot in a new domain; quality is bad. Order your investigation.</>}
+      <VIS.TrapProblem id="recbase-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just use GPT-4 for recommendations&rdquo;"
+        scenario={<><em>Discriminating insight: GPT-4 is bigger and more capable than RecBase but was not pretrained on user-item sequences with stable IDs. It does ok at prompt-style recsys but does not have the right inductive bias for retrieval at scale. RecBase&apos;s structural advantage is the recsys-shaped pretraining.</em><br/>Why is &ldquo;just use GPT-4&rdquo; usually wrong?</>}
         options={[
-          {key:"a", text:"Check structural similarity of new domain to pretrain mix — is consumption pattern shape (session length, repeat rates) similar to what RecBase saw?", order:1},
-          {key:"b", text:"Inspect item-text quality — are titles meaningful enough for the text-fallback path?", order:2},
-          {key:"c", text:"Throw out RecBase and train an in-domain model."},
-          {key:"d", text:"Add a small few-shot in-domain fine-tune.", order:3},
-          {key:"e", text:"Page the on-call."},
+          {key:"a", text:"GPT-4 is bigger but was pretrained on web text, not user-item sequences. It lacks the inductive bias for retrieval at scale, has no native item-ID vocabulary, and is much more expensive to serve. RecBase&apos;s recsys-shaped pretraining produces a smaller, cheaper, better-aligned model for the task.", correct:true},
+          {key:"b", text:"GPT-4 always wins by parameter count."},
+          {key:"c", text:"GPT-4 is pretrained on user-item sequences."},
+          {key:"d", text:"Param count is the only factor."},
         ]}
-        trap={<>(c) is destructive without diagnosis. (e) is premature.</>}
-        lens={<>Ladder: similarity check → text quality → few-shot. Most zero-shot failures fall in the first two categories; both have cheap mitigations before resorting to in-domain training.</>}
-        stretch={<>What single offline signal predicts zero-shot quality before launching?</>}
+        trap={<>(b)(c)(d) miss the pretraining-shape argument again.</>}
+        lens={<>Pretraining shape matters more than raw scale.</>}
+        stretch={<>What hybrid (GPT for text-features + RecBase for retrieval) makes sense?</>}
       />
 
-      <VIS.TrapProblem
-        id="recbase-p8" difficulty="medium" multiSelect
-        title="P8 — RecBase production launch checklist"
-        scenario={<>Pick items that belong on a pre-launch RecBase checklist.</>}
+      <VIS.TrapProblem id="recbase-p8" difficulty="hard"
+        title="P8 — RecBase&apos;s anchor (multi-domain + unified vocab + generative): pitch it"
+        scenario={<><em>Discriminating insight: the anchor names all three pieces - multi-domain pretraining, unified text-and-ID vocabulary, generative next-item objective. A pitch missing any one falls short.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Item-text quality audited in the new domain.", correct:true},
-          {key:"b", text:"Structural similarity to pretrain mix measured.", correct:true},
-          {key:"c", text:"Distilled serving path benchmarked for QPS budget.", correct:true},
-          {key:"d", text:"Few-shot fine-tune pipeline plumbed for when in-domain data arrives.", correct:true},
-          {key:"e", text:"Confirm RecBase needs no item metadata."},
+          {key:"a", text:"RecBase is a single generative transformer pretrained on user-item sequences from many diverse domains, using a unified vocabulary that includes both item text descriptions and stable IDs. Trained with a next-item prediction objective. The result transfers zero-shot to brand-new domains and beats both prior recsys foundation models (P5, RecGPT) and much larger generic LLMs (GPT-3.5) on cold-start.", correct:true},
+          {key:"b", text:"RecBase is single-domain DLRM."},
+          {key:"c", text:"RecBase is GPT-3.5 fine-tuned."},
+          {key:"d", text:"RecBase is a graph index."},
         ]}
-        trap={<>(e) is wrong — text metadata is core to RecBase&apos;s design.</>}
-        lens={<>Four real checks; the most overlooked one is structural similarity. Teams often assume "domain X is like a recsys problem" and skip the check; if the domain has very different consumption shape, zero-shot will disappoint.</>}
-        stretch={<>What is the cheapest structural similarity measurement?</>}
+        trap={<>(b) wrong scope. (c) wrong base. (d) wrong category.</>}
+        lens={<>Multi-domain + unified vocab + generative - all three.</>}
+        stretch={<>Which of the three is hardest to engineer well?</>}
       />
 
-      <VIS.TrapProblem
-        id="recbase-p9" difficulty="hard"
-        title="P9 — Generative decoding vs retrieval scoring"
-        scenario={<>RecBase generates next items autoregressively. Pick the strongest claim about how this compares to retrieval-style scoring.</>}
+      <VIS.TrapProblem id="recbase-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use RecBase. Select 4."
+        scenario={<><em>Discriminating insight: RecBase needs (i) a launch context (no or little in-domain data), (ii) text-rich items, (iii) some vocabulary overlap with pretraining. It is wrong when in-domain data is abundant, when items have no text, when vocabulary does not overlap, or when serving infra cannot host the generative backbone.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Generative decoding can produce items not present in any explicit candidate set, which is both its strength (true cold-start) and its weakness (item leakage to invalid items, latency cost).", correct:true},
-          {key:"b", text:"Generative decoding is always faster than retrieval scoring."},
-          {key:"c", text:"Retrieval scoring cannot do cold-start."},
-          {key:"d", text:"Generative decoding requires a discrete candidate set."},
+          {key:"a", text:"Mature domain with billions of in-domain interaction labels - a discriminative DLRM or HSTU+GPSD will beat zero-shot RecBase comfortably.", correct:true},
+          {key:"b", text:"Items have no text descriptions and IDs do not overlap with pretraining - the unified vocab carries no information.", correct:true},
+          {key:"c", text:"Brand-new app launch, items have text descriptions, no in-domain data (sweet spot for zero-shot)."},
+          {key:"d", text:"Strict latency budget that cannot host a generative transformer at serving time and no distillation pipeline.", correct:true},
+          {key:"e", text:"Niche industrial-equipment recsys where vocabulary is completely disjoint from public catalogs.", correct:true},
         ]}
-        trap={<>(b), (c), (d) are false.</>}
-        lens={<>Generative decoding&apos;s defining property is unbounded item generation — the model can predict any token sequence, including item IDs it has never seen. This is genuine cold-start power. The cost: invalid generations (IDs that do not exist, or are not in the current catalog), and autoregressive latency. Production systems constrain decoding to valid items via{" "}
-        <VIS.Term def="A decoding technique that filters or biases the next-token logits so only valid sequences (e.g. real item IDs) can be produced.">constrained decoding</VIS.Term>{" "}
-        or pair with retrieval re-ranking.</>}
-        stretch={<>How would you constrain decoding to only return items in the current live catalog?</>}
+        trap={<>(c) is sweet spot.</>}
+        lens={<>RecBase needs launch context + text-rich items + vocab overlap.</>}
+        stretch={<>How do you detect vocab overlap before training?</>}
       />
 
-      <VIS.TrapProblem
-        id="recbase-p10" difficulty="medium"
-        title="P10 — RecBase vs GPSD"
-        scenario={<>Pick the strongest one-line claim about RecBase vs GPSD.</>}
+      <VIS.TrapProblem id="recbase-p10" difficulty="hard"
+        title="P10 — Why does the unified text-and-ID vocabulary matter?"
+        scenario={<><em>Discriminating insight: text alone transfers item meaning across domains but loses the cross-domain item identity (the same DVD across two stores has different IDs but the same item). Stable IDs alone transfer identity but lose meaning. The UNIFIED vocab gives the model both - it can transfer by description AND by identity when an item appears across pretraining domains.</em><br/>Why both?</>}
         options={[
-          {key:"a", text:"RecBase is for zero-shot cross-domain launch; GPSD is for migrating an existing in-domain DLRM to a transformer foundation while preserving discriminative serving.", correct:true},
-          {key:"b", text:"RecBase and GPSD solve the same problem."},
-          {key:"c", text:"GPSD is a multi-domain pretrain like RecBase."},
-          {key:"d", text:"RecBase requires DLRM as a backbone."},
+          {key:"a", text:"Text alone transfers meaning across domains but loses cross-domain identity (an item appearing in two domains has two different IDs by default). Stable IDs alone transfer identity but lose semantic meaning. The unified text-and-ID vocab gives the model BOTH channels: text carries meaning into unseen items, IDs anchor cross-domain occurrences. Removing either degrades transfer.", correct:true},
+          {key:"b", text:"Only text matters."},
+          {key:"c", text:"Only IDs matter."},
+          {key:"d", text:"They are redundant."},
         ]}
-        trap={<>(b), (c), (d) are false or unsupported.</>}
-        lens={<>The two recipes target different problems. RecBase aims at the "no in-domain data" case (zero-shot or few-shot in a new domain) via cross-domain pretrain. GPSD aims at the "mature in-domain DLRM" case (existing labeled data, in-domain stack) and preserves discriminative serving. They can co-exist in a single product portfolio.</>}
-        stretch={<>Could you pretrain RecBase-style and then fine-tune GPSD-style for a hybrid?</>}
+        trap={<>(b)(c)(d) miss the complementarity.</>}
+        lens={<>Text carries meaning; IDs anchor identity; unified vocab carries both.</>}
+        stretch={<>What is the ablation cost of dropping IDs?</>}
       />
 
-      <VIS.TrapProblem
-        id="recbase-p11" difficulty="hard"
-        title="P11 — RecBase failure modes specific"
-        scenario={<>Pick the RecBase-specific failure (not generic generative-model issues).</>}
+      <VIS.TrapProblem id="recbase-p11" difficulty="hard"
+        title="P11 — How does domain diversity affect transfer?"
+        scenario={<><em>Discriminating insight: more diverse pretraining domains give a broader inductive prior for what user-item structures look like across the recsys universe; the model transfers better to a domain whose structure resembles ANY pretraining domain. Narrow pretraining (one domain) collapses to a per-domain model that does not transfer.</em><br/>Why diversity?</>}
         options={[
-          {key:"a", text:"Cross-domain vocabulary contamination — an ID or text token learned in domain A misleads predictions in domain B because the model conflates contexts.", correct:true},
-          {key:"b", text:"Sequence padding."},
-          {key:"c", text:"Standard transformer training instability."},
-          {key:"d", text:"Vocabulary size too small."},
+          {key:"a", text:"Diverse pretraining domains broaden the structural prior - the model learns what user-item interactions look like across many sectors and can apply that prior to a new domain that resembles ANY pretraining domain. Narrow pretraining over-fits to one domain&apos;s shape and does not generalize. Diversity is what distinguishes RecBase from P5 and RecGPT.", correct:true},
+          {key:"b", text:"Diversity hurts transfer."},
+          {key:"c", text:"Diversity is irrelevant."},
+          {key:"d", text:"One domain suffices."},
         ]}
-        trap={<>(b), (c), (d) are generic and not RecBase-specific.</>}
-        lens={<>The RecBase-specific failure mode is cross-domain conflation. The whole point of the unified vocabulary is to enable transfer; the price is that bad transfer can ALSO happen — e.g., "John" the author in books context leaking into "John" the actor context in movies, producing spurious correlations. Mitigations include domain-aware context tokens and balanced sampling across domains during pretrain.</>}
-        stretch={<>How would you detect cross-domain contamination offline?</>}
+        trap={<>(b)(c)(d) miss the prior-breadth argument.</>}
+        lens={<>Broad prior = broad transfer surface.</>}
+        stretch={<>How many domains is the practical sweet spot?</>}
       />
+
+      <VIS.TrapProblem id="recbase-p12" difficulty="hard"
+        title="P12 — What does RecBase deliberately drop vs DLRM?"
+        scenario={<><em>Discriminating insight: DLRM has engineered cross features and a discriminative loss tuned to one domain&apos;s exact labels. RecBase drops both - no engineered crosses, no in-domain supervised loss. The trade buys cross-domain transferability at the cost of in-domain peak accuracy.</em><br/>What does RecBase forfeit?</>}
+        options={[
+          {key:"a", text:"In-domain peak accuracy and the benefit of engineered cross features tuned for the surface. DLRM&apos;s discriminative loss and engineered crosses give it the in-domain ceiling; RecBase&apos;s generative pretrain on a multi-domain corpus does not memorize a single domain&apos;s quirks. The trade buys zero-shot transfer at a small ceiling cost.", correct:true},
+          {key:"b", text:"RecBase forfeits the use of items."},
+          {key:"c", text:"RecBase forfeits sequences."},
+          {key:"d", text:"RecBase forfeits transformers."},
+        ]}
+        trap={<>(b)(c)(d) miss the trade.</>}
+        lens={<>In-domain ceiling vs cross-domain transfer.</>}
+        stretch={<>How close is RecBase to DLRM after a small fine-tune?</>}
+      />
+
+      <VIS.TrapProblem id="recbase-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: the temperature parameter in the generative decoding dominates evaluation. Too low and the model becomes deterministic, hurting diversity in recommendations. Too high and the model samples wildly and recall drops. Domain mixing weights and backbone size are secondary.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"Decoding temperature is most fragile - too low and recommendations collapse to the highest-prob items (no diversity, hurts coverage); too high and the model samples wildly (recall drops). Domain mixing weights are next. Backbone size is most forgiving over a wide range.", correct:true},
+          {key:"b", text:"Backbone size is most fragile."},
+          {key:"c", text:"Domain mixing is most fragile."},
+          {key:"d", text:"Tokenizer is most fragile."},
+        ]}
+        trap={<>(b) wide-range robust. (c) sticky but predictable. (d) infra detail.</>}
+        lens={<>Temperature is the load-bearing decoding dial.</>}
+        stretch={<>What is the optimal temperature curve across domains?</>}
+      />
+
+      <VIS.TrapProblem id="recbase-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: RecBase assumes the new domain&apos;s vocabulary overlaps with pretraining (via text descriptions or cross-domain IDs). If a new domain uses entirely proprietary item codes and proprietary text (no public catalog overlap), the unified vocab cannot bridge the gap and zero-shot fails.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"The new domain has no vocabulary overlap with pretraining - proprietary item codes, proprietary text descriptions not in any public catalog. The unified text-and-ID vocab cannot carry information across; zero-shot reduces to a random initialization. Fix: enrich items with public-catalog joins, or fine-tune with whatever in-domain data exists.", correct:true},
+          {key:"b", text:"User-id encoding differs."},
+          {key:"c", text:"Tokenizer was upgraded on the new domain."},
+          {key:"d", text:"Different batch sizes between train and serve."},
+        ]}
+        trap={<>(b)(c)(d) generic infra, not RecBase-specific.</>}
+        lens={<>Vocabulary overlap is the load-bearing assumption.</>}
+        stretch={<>What overlap metric predicts zero-shot success?</>}
+      />
+
+      <VIS.TrapProblem id="recbase-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;just make it bigger to fix transfer&rdquo;"
+        scenario={<><em>Discriminating insight: more parameters help up to a point but the dominant lever for transfer is pretraining DIVERSITY and the unified VOCABULARY - not parameter count. A 10x bigger RecBase trained on the same narrow corpus barely improves. A same-size model trained on more diverse domains transfers much better.</em><br/>Why is &ldquo;bigger fixes transfer&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"Parameter count helps up to a point but the dominant lever for transfer is pretraining DIVERSITY and the unified vocabulary - data shape, not model scale. A 10x larger RecBase trained on a narrow corpus barely improves; a same-size model on more diverse domains transfers much better. The GPT-3.5 comparison underscores this.", correct:true},
+          {key:"b", text:"Bigger always wins."},
+          {key:"c", text:"Diversity hurts."},
+          {key:"d", text:"Vocabulary is irrelevant."},
+        ]}
+        trap={<>(b)(c)(d) revert to scale-only thinking.</>}
+        lens={<>Diversity + vocab beat scale for transfer.</>}
+        stretch={<>What does the scale-vs-diversity Pareto look like?</>}
+      />
+
+      <VIS.TrapProblem id="recbase-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;RecBase is just a generative LLM for recsys&rdquo; cascades into (i) skipping the multi-domain corpus (collapses to single-domain pretraining), (ii) skipping the unified vocab (collapses to text-only LLM), (iii) ignoring vocabulary overlap with target domain (zero-shot fails silently).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: multi-domain corpus, unified text-and-ID vocab, and vocabulary overlap with the target domain. Each is load-bearing; black-boxing RecBase as &ldquo;just a generative LLM&rdquo; loses all three and the resulting model underperforms even P5 / RecGPT.", correct:true},
+          {key:"b", text:"Only the unified vocab."},
+          {key:"c", text:"Only the multi-domain corpus."},
+          {key:"d", text:"Nothing - RecBase IS just an LLM."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>RecBase has three operational contracts; collapsing them loses all three.</>}
+        stretch={<>What dashboard panel surfaces these?</>}
+      />
+
+      <VIS.TrapProblem id="recbase-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior responds to weak zero-shot recall by retraining RecBase from scratch with a bigger backbone. A senior FIRST measures vocabulary overlap and domain similarity between pretraining and target; if overlap is low, no scale fix will help - the right move is to enrich the target with public-catalog joins (text features) or to collect a small fine-tune set.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Measure vocabulary overlap (how many target-domain items appear in pretraining text or ID vocabulary) and domain similarity (does the target sector resemble any pretraining sector?). If overlap is low, scale will not fix it - enrich items with public catalog joins or collect a small in-domain fine-tune set. If overlap is high, scale or longer pretraining can help.", correct:true},
+          {key:"b", text:"Scale up unconditionally."},
+          {key:"c", text:"Retrain from scratch."},
+          {key:"d", text:"Switch to GPT-3.5."},
+        ]}
+        trap={<>(b)(c) skip diagnosis. (d) abandons RecBase.</>}
+        lens={<>Vocab + domain overlap is the RecBase-specific transfer diagnostic.</>}
+        stretch={<>What overlap threshold predicts a 5-point zero-shot win?</>}
+      />
+
+      <VIS.TrapProblem id="recbase-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: target tokenizer drift"
+        scenario={<><em>Discriminating insight: a startup deployed RecBase zero-shot and recall sits 8 points below the published number. The team blames inadequate pretraining diversity. Actual cause: the tokenizer at serving wraps item text with a different BPE vocabulary than the one the pretrained backbone uses (a custom domain-specific tokenizer was bolted on without retrain). Same text now tokenizes differently; the unified-vocab argument breaks.</em><br/>Zero-shot recall -8 vs paper. Team blames pretraining diversity. Most likely cause?</>}
+        options={[
+          {key:"a", text:"Pretraining diversity insufficient - retrain with more domains.", correct:false},
+          {key:"b", text:"Target-side tokenizer drift: the serving stack uses a different BPE / wordpiece vocabulary than the pretrained backbone. Same item text now tokenizes into different tokens; the unified-vocab argument breaks at the tokenization layer. Diagnostic: hash the tokenizer config on every train + serve run and alert on mismatch.", correct:true},
+          {key:"c", text:"GPU memory leak.", correct:false},
+          {key:"d", text:"Item-id encoding flipped.", correct:false},
+        ]}
+        trap={<>(a) plausible blame but expensive to act on. (c)(d) generic infra. The RecBase-specific fingerprint is &ldquo;unified vocab broken at the tokenizer.&rdquo;</>}
+        lens={<>Tokenizer hash must match train and serve; vocabulary is the load-bearing contract.</>}
+        stretch={<>What CI gate catches tokenizer drift before launch?</>}
+      />
+
+      <VIS.TrapProblem id="recbase-p19" difficulty="hard"
+        title="P19 — Production gotcha: zero-shot expectations"
+        scenario={<><em>Discriminating insight: zero-shot RecBase delivers value at LAUNCH when no in-domain data exists. As in-domain interactions accumulate, the team should expect to shift toward fine-tuned RecBase or even DLRM-style discriminative models. Staying on pure zero-shot forever leaves performance on the table.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Treat zero-shot as a LAUNCH posture, not a permanent serving posture. Once a few weeks of in-domain interactions accumulate, plan a fine-tune (cheap, leverages all the pretraining) or even a discriminative migration. Staying on pure zero-shot indefinitely leaves performance on the table.", correct:true},
+          {key:"b", text:"Stay on zero-shot forever."},
+          {key:"c", text:"Discard RecBase once in-domain data arrives."},
+          {key:"d", text:"Fine-tune is forbidden."},
+        ]}
+        trap={<>(b)(c)(d) miss the lifecycle.</>}
+        lens={<>Zero-shot is a launch posture; fine-tune is the steady-state.</>}
+        stretch={<>At what label volume does fine-tune dominate zero-shot?</>}
+      />
+
+      <VIS.TrapProblem id="recbase-p20" difficulty="hard"
+        title="P20 — Failure on Friday: zero-shot transfer cratered after a vocab refactor"
+        scenario={<><em>Discriminating insight: someone refactored the item-text pipeline to strip HTML and lowercase everything. Pretrained backbone expects original-case text (it learned that &ldquo;Apple&rdquo; the brand is different from &ldquo;apple&rdquo; the fruit via casing). New pipeline collapses both; recall craters on the affected items.</em><br/>3am page: zero-shot recall fell 12 points after a text-preprocessing refactor. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Text-preprocessing refactor changed the tokenization shape (e.g., lowercased the input). The pretrained backbone learned cased-text features that the new pipeline collapses; the unified vocab now sees different tokens. Roll back the preprocessing or retrain with the new normalization; both pipelines must agree.", correct:true},
+          {key:"b", text:"The serving box ran out of GPU memory."},
+          {key:"c", text:"Item-id encoding flipped."},
+          {key:"d", text:"User-id encoding flipped."},
+        ]}
+        trap={<>(b)(c)(d) miss the text-pipeline contract.</>}
+        lens={<>Train-serve text-pipeline parity is part of the unified-vocab contract.</>}
+        stretch={<>What CI gate hashes the preprocessing config?</>}
+      />
+
+      <VIS.TrapProblem id="recbase-p21" difficulty="medium"
+        title="P21 — Library default that bites: domain mixing weights"
+        scenario={<><em>Discriminating insight: open-source RecBase implementations default to uniform domain-mixing weights. Real production targets often resemble ONE pretraining domain more than others; uniform mixing under-weights the most-relevant pretraining domain at the cost of zero-shot recall on the target.</em><br/>Where does the default break RecBase?</>}
+        options={[
+          {key:"a", text:"Default uniform domain-mixing weights treat every pretraining domain equally. If the target domain looks more like one specific pretraining domain (e.g., books target leans on books + media pretraining), uniform mixing under-weights the most-relevant pretraining and costs zero-shot recall. Tune mixing weights toward likely-target sectors when known.", correct:true},
+          {key:"b", text:"Defaults are perfect for all targets."},
+          {key:"c", text:"Domain mixing is irrelevant."},
+          {key:"d", text:"RecBase has no domain mixing."},
+        ]}
+        trap={<>(b)(c)(d) deny the default trap.</>}
+        lens={<>Uniform mixing leaves transfer recall on the table.</>}
+        stretch={<>What mixing-weight policy works without knowing the target?</>}
+      />
+
+      <VIS.TrapProblem id="recbase-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) curate multi-domain corpus, (2) build unified text-and-ID vocab, (3) pretrain generatively, (4) measure vocab overlap with target domain, (5) zero-shot eval on a holdout, (6) launch behind a feature flag, (7) collect in-domain interactions, (8) fine-tune. Skipping the vocab-overlap check is the classic mistake.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Curate multi-domain corpus - build unified text-and-ID vocab - pretrain generatively - measure vocab overlap with target - zero-shot eval on holdout - launch behind feature flag - collect in-domain data - fine-tune", correct:true},
+          {key:"b", text:"Launch first."},
+          {key:"c", text:"Fine-tune before pretraining."},
+          {key:"d", text:"Skip vocab overlap check."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Corpus then vocab then pretrain then overlap then eval then launch then collect then fine-tune.</>}
+        stretch={<>Why measure vocab overlap before zero-shot eval?</>}
+      />
+
+      <VIS.TrapProblem id="recbase-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks RecBase&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: a target domain whose items are 100% proprietary (no public-catalog overlap), no text descriptions, and shape (user-item bipartite) does not resemble any pretraining domain. Vocabulary overlap is zero. Zero-shot reduces to a random initialization; RecBase&apos;s claimed edge collapses.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A target domain with 100% proprietary item codes, no text descriptions, and structural patterns unlike any pretraining domain. Vocabulary overlap is zero; the unified text-and-ID vocab carries nothing into the new domain. Zero-shot reduces to a random initialization; a from-scratch model with any in-domain signal would tie or beat it.", correct:true},
+          {key:"b", text:"Brand-new app, text-rich items, public-catalog overlap (sweet spot)."},
+          {key:"c", text:"100M users with rich interaction history."},
+          {key:"d", text:"Catalog of 50K well-known consumer items."},
+        ]}
+        trap={<>(b) sweet spot. (c) plenty of in-domain data, not a zero-shot use. (d) high overlap.</>}
+        lens={<>RecBase needs vocab overlap; bust it and the edge collapses.</>}
+        stretch={<>What enrichment recovers overlap on a proprietary catalog?</>}
+      />
+
+      <VIS.TrapProblem id="recbase-p24" difficulty="hard"
+        title="P24 — Paper-named failure: vocabulary alignment fragility"
+        scenario={<><em>Discriminating insight: the paper names vocabulary alignment across domains as the dominant fragility - if the unified vocab is built poorly, item structures do not transfer and the foundation-model property breaks. The fix is careful vocab construction (joint tokenization training across domains) and CI gates that hash the vocab at train and serve.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Vocabulary alignment across domains. If the unified text-and-ID vocab is built poorly - mismatched tokenization, inconsistent ID assignment - item structures do not transfer and the foundation-model property degrades into per-domain models stuck in one backbone. Fix: joint tokenization training across pretraining domains and CI gates that hash vocab at train + serve.", correct:true},
+          {key:"b", text:"Vocabulary is automatic and never an issue."},
+          {key:"c", text:"Bigger models fix vocab problems."},
+          {key:"d", text:"There are no documented failures."},
+        ]}
+        trap={<>(b)(c)(d) deny the named failure.</>}
+        lens={<>Vocabulary alignment is the canonical RecBase fragility.</>}
+        stretch={<>What CI gate hashes the vocab end-to-end?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://aclanthology.org/2025.emnlp-main.786.pdf" target="_blank" rel="noopener"><strong>RecBase: Generative Foundation Model Pretraining for Zero-Shot Recommendation</strong></a> <span style={{color:"#64748b", fontSize:14}}>(EMNLP 2025, paper)</span><br/>The RecBase paper. Section 4 covers vocabulary unification; Section 6 has the zero-shot benchmark.</li>
-        <li><a href="https://arxiv.org/abs/2203.13366" target="_blank" rel="noopener"><strong>Geng et al. — P5: Recommendation as Language Processing</strong></a> <span style={{color:"#64748b", fontSize:14}}>(RecSys 2022, paper)</span><br/>The predecessor that RecBase improves on. Useful to read first; RecBase&apos;s "multi-domain, unified vocab" pitch only makes sense against P5&apos;s "one domain, text-only" baseline.</li>
-        <li><a href="https://arxiv.org/abs/2305.07001" target="_blank" rel="noopener"><strong>Hou et al. — Large Language Models as Zero-Shot Conversational Recommenders</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>Useful counterpoint — what LLMs can already do zero-shot without specialized pretraining. Helps you weigh whether RecBase&apos;s specialization is worth it.</li>
-        <li><a href="https://blog.reachsumit.com/posts/2024/06/multi-task-video-recsys-p1/" target="_blank" rel="noopener"><strong>Sumit&apos;s blog — Industrial recsys trends</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Practitioner notes on generative recommenders in production. Useful framing for where RecBase fits.</li>
-        <li><a href="https://lilianweng.github.io/posts/2023-06-23-agent/" target="_blank" rel="noopener"><strong>Lilian Weng — LLM-powered Autonomous Agents</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Useful background on generative-model serving patterns. Same constrained-decoding and tool-augmented decoding tricks apply to RecBase as to agent LLMs.</li>
+        <li><a href="https://aclanthology.org/2025.emnlp-main.786.pdf" target="_blank" rel="noopener">Authors et al. - <em>RecBase: Generative Foundation Model Pretraining for Zero-Shot Recommendation</em> (EMNLP 2025, paper)</a> - the canonical RecBase paper. Sections 3-5 cover the unified vocab and multi-domain pretraining.</li>
+        <li><a href="https://arxiv.org/abs/2203.13366" target="_blank" rel="noopener">Geng et al. - <em>P5: Recommendation as Language Processing</em> (RecSys 2022, paper)</a> - the predecessor RecBase is benchmarked against.</li>
+        <li><a href="https://jalammar.github.io/illustrated-bert/" target="_blank" rel="noopener">Jay Alammar - <em>The Illustrated BERT</em> (blog)</a> - background on foundation-model pretraining patterns that RecBase mirrors.</li>
+        <li><a href="https://eugeneyan.com/writing/llm-recsys/" target="_blank" rel="noopener">Eugene Yan - <em>LLMs and Recommendations</em> (blog)</a> - practitioner framing of LLM-meets-recsys; useful context for where RecBase fits relative to prompt-style LLMs.</li>
+        <li><a href="https://www.youtube.com/watch?v=zjkBMFhNj_g" target="_blank" rel="noopener">Karpathy - <em>Intro to Large Language Models</em> (video)</a> - foundation-model intuitions that carry over to recsys-shaped pretraining.</li>
       </ul>
     </VIS.Section>
   </main>

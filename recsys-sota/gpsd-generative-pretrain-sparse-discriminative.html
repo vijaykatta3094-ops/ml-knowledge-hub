@@ -1414,267 +1414,424 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 15
+// GPSD (Generative Pretrain, Sparse Discriminative)
+// Unique mechanism: TWO-STAGE training for recommendation transformers.
+//   Stage 1: generative pretrain (next-token-prediction over user sequences) —
+//            transformer learns rich item-sequence embeddings.
+//   Stage 2: discriminative fine-tune — ADD a dense classifier head on top
+//            of the frozen sparse item embeddings; fine-tune only the head
+//            on labeled discriminative targets (click, purchase, dwell).
+// Anchor that survives redaction: "generative pretrain (NTP) for embedding,
+// then discriminative fine-tune on a dense head with sparse embeddings FROZEN."
+// Foundation-model pair caution:
+//   GPSD    = pretrain-then-discriminative (cold-start + discriminative serving) [THIS]
+//   RecBase = full foundation-model fine-tuned per task (zero-shot transfer)
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · Foundation models for recs"
       title="GPSD — Generative Pretrain, Sparse Discriminative"
-      subtitle="Pretrain a transformer generatively on user sequences (next-token loss), then fine-tune ONLY the dense head discriminatively — keeping the sparse embeddings frozen."
+      subtitle="Pretrain a transformer with next-token-prediction over user sequences. Then freeze the sparse embeddings and fine-tune a dense classifier head on click/purchase. Two stages, two losses."
       byline={[
-        {label: "Source", value: "arXiv 2506.03699 — Scaling Transformers for Discriminative Recommendation via Generative Pretraining (2025)"},
-        {label: "Domain", value: "Bridging DLRM-style ranking and generative pretraining"},
+        {label: "Paper", value: "'Scaling Transformers for Discriminative Recommendation via Generative Pretraining' (arXiv 2506.03699, 2025)"},
+        {label: "Surface", value: "Migrating a DLRM stack to a foundation-style transformer while keeping discriminative serving (CTR / CVR)"},
+        {label: "Anchor that survives redaction", value: "Generative pretrain (NTP) for embedding, then discriminative fine-tune on a dense head with sparse embeddings FROZEN"},
       ]}/>
 
     <VIS.TLDR>
-      Plain generative pretraining (next-token) does not directly serve a discriminative ranker. <strong>GPSD</strong>{" "}
-      keeps the generative pretrain benefits by leaving the giant{" "}
-      <VIS.Term def="A lookup table that maps a user/item ID to a learned dense vector. Most of the parameters in a production recommender live in these tables.">sparse embedding</VIS.Term>{" "}
-      tables frozen, and adapts only the dense transformer head to a discriminative objective.
+      Plain next-token-prediction (NTP) transformers learn rich representations of user-item sequences but do not directly produce well-calibrated CTR or CVR scores. Plain <VIS.Term def="Deep Learning Recommendation Model — Meta&apos;s discriminative recommender that interleaves dense MLPs over engineered cross-features.">DLRM</VIS.Term>-style discriminative models score well but do not benefit from large-scale generative pretraining. <strong>GPSD</strong> bridges them: pretrain a transformer generatively to get rich sparse item embeddings, then FREEZE those embeddings and fine-tune ONLY a dense discriminative head on labeled CTR/CVR targets. The senior trap: this is NOT &ldquo;just transfer learning&rdquo; - the load-bearing detail is keeping the sparse embedding table frozen during fine-tune, so the discriminative loss does not blow up the generative structure. Freezing is what lets the generative knowledge survive the fine-tune.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        GPSD is a two-phase recipe for migrating a DLRM-style stack to a transformer foundation architecture:
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  S["User-item sequences"] --> P["Phase 1: Generative pretrain (NTP loss)"]
-  P --> SE["Sparse embeddings learned"]
-  P --> DE["Dense transformer learned"]
-  SE --> F["Freeze sparse"]
-  DE --> D["Phase 2: Discriminative fine-tune on dense head only"]
-  F --> D
-  D --> R["Production ranker"]
-      `} />
+    <VIS.Section id="sec-what" title="What it is — two stages, frozen sparse embeddings">
+      <VIS.Mermaid chart={`flowchart TB
+  SEQ["User-item sequence data (massive, unlabeled)"]
+  NTP["Stage 1: Generative pretrain via NTP"]
+  EMB["Sparse item embedding table (rich, generative)"]
+  LBL["Labeled CTR / CVR targets (smaller)"]
+  HEAD["Stage 2: Dense discriminative head ONLY"]
+  FROZEN["Embedding table FROZEN"]
+  SEQ --> NTP --> EMB
+  EMB --> HEAD
+  LBL --> HEAD
+  EMB --> FROZEN
+  HEAD --> SCORE["Discriminative score (click, purchase)"]`} />
       <ul>
-        <li><strong>Phase 1: generative pretrain</strong> — train the full model (sparse embeddings + dense transformer) on user-item sequences with a next-token-prediction (NTP) loss. Mass training signal.</li>
-        <li><strong>Phase 2: sparse-frozen discriminative fine-tune</strong> — freeze the sparse embedding tables, fine-tune ONLY the dense transformer body (and a discriminative head) on labeled ranker objectives (click, watch-time, etc.).</li>
-        <li><strong>Why freeze sparse</strong> — sparse embedding gradients have high variance (each ID appears rarely) and dominate fine-tune. Freezing keeps the broad signal learned during pretrain and lets the dense layers adapt.</li>
-        <li><strong>Periodic unfreeze</strong> — fully refreezing forever causes the sparse params to go stale. Periodic short unfreeze / re-pretrain cycles re-sync embeddings with the current catalog.</li>
+        <li><strong>Stage 1 (generative pretrain)</strong> - a transformer is trained on user-item sequences with the standard next-token-prediction loss. The sparse embedding table becomes the rich, transfer-ready artifact.</li>
+        <li><strong>Stage 2 (discriminative fine-tune)</strong> - a small dense head is added on top of the pretrained transformer. ONLY the dense head is trained on labeled CTR / CVR targets. The sparse item embeddings remain FROZEN.</li>
+        <li><strong>Why freeze?</strong> - sparse embedding tables have billions of parameters; fine-tuning them on a much smaller labeled dataset would over-fit and erase the generative structure. Freezing preserves the pretraining signal.</li>
+        <li><strong>Periodic unfreeze</strong> - sparse params slowly go stale as the catalog evolves; the paper recommends scheduled re-pretraining to refresh them.</li>
       </ul>
+      <p>The two-stage structure is the whole idea. Skip the freeze and you lose the generative win.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from plain NTP / plain DLRM">
+    <VIS.Section id="sec-diff" title="How GPSD differs from RecBase, NTP-only, and DLRM">
       <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
-        <thead><tr style={{background:"#f1f5f9"}}>
-          <th style={{textAlign:"left",padding:8}}>Property</th>
-          <th style={{textAlign:"left",padding:8}}>Plain NTP / generative</th>
-          <th style={{textAlign:"left",padding:8}}>Plain DLRM</th>
-          <th style={{textAlign:"left",padding:8}}>GPSD</th>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Pretrain</th>
+          <th style={{textAlign:"left", padding:8}}>Fine-tune</th>
+          <th style={{textAlign:"left", padding:8}}>Use case</th>
         </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Objective</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Predict next item</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Predict click prob</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Both: pretrain generative, fine-tune discriminative</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Discriminative serving</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Awkward — needs adapter</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Native</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Native after fine-tune</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Use of unlabeled sequences</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Yes</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Yes (in pretrain)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Sparse param dynamics during fine-tune</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Updated</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Updated</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Frozen</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Fine-tune cost</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Lower — only dense params</td></tr>
+          <tr><td style={{padding:8}}><strong>GPSD</strong></td><td style={{padding:8}}><strong>Generative NTP</strong></td><td style={{padding:8}}><strong>Dense head only; sparse embeddings frozen</strong></td><td style={{padding:8}}><strong>Discriminative serving (CTR/CVR) on a DLRM-migrating stack</strong></td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>NTP-only (HSTU, etc.)</td><td style={{padding:8}}>Generative NTP</td><td style={{padding:8}}>(none - inference is generative)</td><td style={{padding:8}}>Generative retrieval / next-item</td></tr>
+          <tr><td style={{padding:8}}>DLRM</td><td style={{padding:8}}>(none)</td><td style={{padding:8}}>Discriminative from scratch over engineered crosses</td><td style={{padding:8}}>Discriminative serving baseline</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>RecBase</td><td style={{padding:8}}>Generative foundation pretrain over multiple domains</td><td style={{padding:8}}>Full fine-tune per task</td><td style={{padding:8}}>Zero-shot transfer to new domains</td></tr>
         </tbody>
       </table>
-      <p style={{marginTop:12}}>
-        GPSD&apos;s key insight: in a recsys transformer, most parameters live in sparse embeddings, but most useful gradient signal during fine-tune lives in dense layers. Decoupling the two phases (pretrain together, fine-tune dense only) preserves the pretrain benefit AND makes fine-tune cheap.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li><strong>Migrating a DLRM stack to a foundation architecture</strong> — GPSD is a recipe for keeping the production discriminative ranker while adding pretrain benefits.</li>
-        <li>Catalogs where unlabeled sequences are abundant but labels are scarce.</li>
-        <li>Teams that can afford a periodic re-pretrain cadence.</li>
-        <li>Settings where the dense head is the main place new product behavior (new objectives, calibration) needs to land.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Frozen sparse goes stale</strong> — new items, new users, and distribution drift make the pretrained embeddings less aligned with current data. Periodic unfreezing required.</li>
-        <li><strong>Pretrain-finetune mismatch</strong> — the generative pretrain optimizes a different objective than the production ranker. The gap is real but bounded.</li>
-        <li><strong>Coverage of cold IDs</strong> — IDs not seen during pretrain have no embedding; cold-start treatment still needed on top.</li>
-        <li><strong>Two-phase complexity</strong> — operationally heavier than a single end-to-end training pipeline.</li>
-        <li><strong>Dense head capacity</strong> — if the dense transformer is too small, it cannot adapt enough during fine-tune to compensate for frozen sparse drift.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick the right move(s); reveal trap and lens after committing.</p>
-
-      <VIS.TrapProblem
-        id="gpsd-p1" difficulty="hard"
-        title="P1 — Why does GPSD freeze sparse params during discriminative fine-tuning?"
-        scenario={<>You are explaining GPSD to a colleague. Pick the strongest single reason for freezing the sparse embedding tables during fine-tune.</>}
+      <VIS.TrapProblem id="gpsd-p1" difficulty="hard"
+        title="P1 — GPSD vs NTP-only: load-bearing difference"
+        scenario={<><em>Discriminating insight: NTP-only models are trained generatively and inference is also generative (sampling next item) - they are not designed for discriminative scoring. GPSD adds a SECOND discriminative-fine-tune stage on top of the same generative backbone, producing calibrated CTR/CVR scores while keeping the rich pretrained sparse embeddings.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Sparse embedding gradients during fine-tune are dominated by the small number of items in the fine-tune dataset, which causes the broad pretrain signal to be overwritten with narrow fine-tune statistics. Freezing preserves the broad signal.", correct:true},
-          {key:"b", text:"Sparse params do not have gradients."},
-          {key:"c", text:"Freezing speeds up training."},
-          {key:"d", text:"Sparse params are not used in the model."},
+          {key:"a", text:"NTP-only stops at generative pretraining and serves by sampling next items. GPSD adds a discriminative fine-tune stage on a dense head over the FROZEN sparse embeddings - producing calibrated CTR/CVR scores while preserving the generative pretraining structure. Two stages vs one; discriminative serving vs generative serving.", correct:true},
+          {key:"b", text:"They are the same model with different names."},
+          {key:"c", text:"NTP-only fine-tunes a discriminative head."},
+          {key:"d", text:"GPSD is generative-only at serving."},
         ]}
-        trap={<>(b) is false. (c) is a side benefit but not the main reason. (d) is false.</>}
-        lens={<>The pretrain dataset covers a much wider slice of the catalog than the labeled fine-tune dataset. If sparse params are unfrozen during fine-tune, only the items in the fine-tune set get updated, and they update aggressively (because each ID&apos;s gradient is concentrated on that one ID). The result: catastrophic forgetting of the broad pretrain signal. Freezing preserves that signal; dense layers adapt the high-level scoring.</>}
-        stretch={<>What sparse-update schedule would still allow some adaptation without forgetting?</>}
+        trap={<>(b)(c)(d) collapse the two-stage structure.</>}
+        lens={<>NTP-only = generative all the way. GPSD = generative + discriminative head.</>}
+        stretch={<>How does GPSD compare to HSTU on CTR calibration?</>}
       />
 
-      <VIS.TrapProblem
-        id="gpsd-p2" difficulty="medium" multiSelect
-        title="P2 — Symptoms of stale frozen sparse params"
-        scenario={<>You launched GPSD six months ago, no re-pretrain. Pick the symptoms you would expect.</>}
+      <VIS.TrapProblem id="gpsd-p2" difficulty="hard"
+        title="P2 — GPSD vs RecBase: anchor each"
+        scenario={<><em>Discriminating insight: cross-visual caution. RecBase is a FOUNDATION model - one backbone pretrained across many domains for zero-shot transfer. GPSD is a TWO-STAGE PIPELINE on a single domain - pretrain then discriminative fine-tune. Different scope, different goal.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"New items added in the last six months have no representation and rank poorly.", correct:true},
-          {key:"b", text:"User taste drift in long-tenured users is poorly captured.", correct:true},
-          {key:"c", text:"Head-of-catalog popular items still rank well.", correct:true},
-          {key:"d", text:"Tail diversity collapses — recommendations skew to the pretrain-era popular items.", correct:true},
-          {key:"e", text:"The model crashes during inference."},
+          {key:"a", text:"RecBase pretrains a generative recommendation foundation model across many domains for zero-shot transfer to new domains. GPSD is a single-domain two-stage pipeline: generatively pretrain on that domain&apos;s sequences, then fine-tune a discriminative head. Different scope (multi-domain foundation vs single-domain pipeline) and different goal (zero-shot transfer vs in-domain discriminative serving).", correct:true},
+          {key:"b", text:"They are the same architecture."},
+          {key:"c", text:"GPSD is a foundation model."},
+          {key:"d", text:"RecBase has no pretraining."},
         ]}
-        trap={<>(e) is wrong — staleness is a quality issue, not a crash.</>}
-        lens={<>Stale-frozen-sparse symptoms: missing new items (no embedding), drift in user preferences (embedding does not move), but head items still work (their embedding was already well-trained). Diversity collapses because the model defaults to the pretrain-era popularity distribution. The fix is periodic re-pretrain or selective unfreezing of cold IDs.</>}
-        stretch={<>What single offline metric catches staleness before it shows in production?</>}
+        trap={<>(b)(c)(d) collapse the foundation-vs-pipeline distinction.</>}
+        lens={<>RecBase = multi-domain foundation. GPSD = single-domain two-stage pipeline.</>}
+        stretch={<>Could GPSD ride on a RecBase backbone?</>}
       />
 
-      <VIS.TrapProblem
-        id="gpsd-p3" difficulty="hard"
-        title="P3 — Why generative pretrain at all? Why not just DLRM scaled up?"
-        scenario={<>Pick the strongest single reason GPSD bothers with a generative pretrain phase.</>}
+      <VIS.TrapProblem id="gpsd-p3" difficulty="medium"
+        title="P3 — Without GPSD, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: realistic fallbacks are pure DLRM (no pretraining, all discriminative), NTP-only (no discriminative head), or naive end-to-end fine-tune of a pretrained transformer (loses generative structure to overfitting). GPSD&apos;s structure sits between them.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"NTP loss extracts useful signal from unlabeled sequences (impressions, browse history). DLRM only learns from labeled supervision and discards the massive unlabeled fraction.", correct:true},
-          {key:"b", text:"NTP is faster to train than supervised."},
-          {key:"c", text:"DLRM cannot be scaled."},
-          {key:"d", text:"Generative pretrain is mandatory for transformers."},
+          {key:"a", text:"Pure DLRM (no pretraining benefit), NTP-only (no discriminative head, no calibrated CTR), or end-to-end fine-tune of a pretrained transformer (over-fits on the smaller labeled dataset and erases the generative structure). GPSD&apos;s freeze-the-sparse-table protocol sits between them.", correct:true},
+          {key:"b", text:"Random recommender is at parity."},
+          {key:"c", text:"BM25 only - exact text."},
+          {key:"d", text:"Skip recommendation entirely."},
         ]}
-        trap={<>(b) is false. (c) is wrong — DLRM has been scaled extensively. (d) is overstated.</>}
-        lens={<>The leverage comes from unlabeled data. User sequences are far more abundant than labeled clicks. Generative pretrain captures broad item co-occurrence and user trajectory structure for free. Discriminative fine-tune then specializes to the production objective. This is the same recipe NLP transformers use; GPSD adapts it to recsys.</>}
-        stretch={<>What unlabeled signal does a session-level NTP loss capture that click labels miss?</>}
+        trap={<>(b)(c)(d) under-shoot the recommendation surface.</>}
+        lens={<>GPSD&apos;s freeze protocol is what makes the migration tractable.</>}
+        stretch={<>What does end-to-end fine-tune look like on a billion-parameter sparse table?</>}
       />
 
-      <VIS.TrapProblem
-        id="gpsd-p4" difficulty="hard"
-        title="P4 — Periodic unfreezing strategy"
-        scenario={<>You want to combat staleness. Pick the strongest periodic-unfreezing strategy.</>}
+      <VIS.TrapProblem id="gpsd-p4" difficulty="hard"
+        title="P4 — Compose GPSD with HSTU"
+        scenario={<><em>Discriminating insight: HSTU is an NTP-only generative transducer; it produces rich sequence representations but no discriminative head. GPSD&apos;s framing - generative pretrain then discriminative fine-tune with frozen embeddings - works on top of an HSTU backbone. The composition gives you HSTU&apos;s sequence modeling AND a calibrated CTR head.</em><br/>What does the composition achieve?</>}
         options={[
-          {key:"a", text:"Periodically re-run a short pretrain pass with recent data (fresh NTP), then re-freeze and resume discriminative fine-tune. Combines staleness mitigation with discriminative quality.", correct:true},
-          {key:"b", text:"Unfreeze permanently after the first month."},
-          {key:"c", text:"Never unfreeze — accept staleness."},
-          {key:"d", text:"Unfreeze only the newest IDs and fine-tune them with the discriminative loss."},
+          {key:"a", text:"HSTU&apos;s generative transducer is the pretraining stage; GPSD adds the second stage - a dense discriminative head over the frozen sparse embeddings. You get HSTU&apos;s sequence-level pretraining AND a calibrated CTR/CVR score; the freeze keeps the generative structure intact during discriminative training.", correct:true},
+          {key:"b", text:"They cannot coexist."},
+          {key:"c", text:"GPSD replaces HSTU."},
+          {key:"d", text:"HSTU is discriminative-only."},
         ]}
-        trap={<>(b) defeats GPSD&apos;s purpose. (c) is the symptom we&apos;re fixing. (d) injects narrow signal into a narrow set of IDs and creates an inconsistent embedding space.</>}
-        lens={<>The canonical fix is a periodic re-pretrain cycle: continue NTP for a short window on fresh data, allow sparse to update broadly, then re-freeze. Frequency depends on catalog churn — daily for fast-moving content (news), weekly to monthly for slower (long-tail e-comm).</>}
-        stretch={<>How would you decide the right re-pretrain cadence without an A/B?</>}
+        trap={<>(b)(c)(d) miss the composability.</>}
+        lens={<>HSTU is the pretrain; GPSD adds the discriminative head.</>}
+        stretch={<>How does HSTU+GPSD compare to MTGR?</>}
       />
 
-      <VIS.TrapProblem
-        id="gpsd-p5" difficulty="medium" multiSelect
-        title="P5 — GPSD vs plain pretrain-then-finetune"
-        scenario={<>What does GPSD&apos;s sparse-frozen recipe achieve over the naive "pretrain then fine-tune all params"?</>}
+      <VIS.TrapProblem id="gpsd-p5" difficulty="medium"
+        title="P5 — Where does GPSD&apos;s edge over end-to-end fine-tune shrink?"
+        scenario={<><em>Discriminating insight: GPSD&apos;s freeze policy beats end-to-end fine-tune when the labeled discriminative dataset is much smaller than the generative pretraining data (the freeze prevents overfitting). When the labeled dataset is huge - comparable to pretraining scale - end-to-end fine-tune can match GPSD; the freeze stops mattering.</em><br/>Where does the edge vanish?</>}
         options={[
-          {key:"a", text:"Lower fine-tune compute cost — sparse tables are by far the largest part of the model.", correct:true},
-          {key:"b", text:"Preserves broad pretrain signal — sparse params don&apos;t get overwritten by narrow fine-tune statistics.", correct:true},
-          {key:"c", text:"Lower fine-tune memory — frozen params don&apos;t need optimizer state.", correct:true},
-          {key:"d", text:"Allows online fine-tuning at much higher rates.", correct:true},
-          {key:"e", text:"Removes the need for any sparse embeddings."},
+          {key:"a", text:"When the labeled discriminative dataset is comparable in scale to the generative pretraining data. The freeze policy exists to prevent the smaller discriminative loss from overwriting the generative structure; when both losses see similar data scale, end-to-end fine-tune matches GPSD without the bookkeeping.", correct:true},
+          {key:"b", text:"GPSD always wins."},
+          {key:"c", text:"GPSD wins only at tiny scale."},
+          {key:"d", text:"Scale is irrelevant."},
         ]}
-        trap={<>(e) is wrong — embeddings exist and matter; they are just frozen.</>}
-        lens={<>Four real benefits: compute, memory, signal preservation, and online-tune feasibility. Each follows from the parameter count: sparse tables can be 100x larger than dense. Freezing them turns fine-tune from a billion-param optimization into a millions-param one.</>}
-        stretch={<>How does sparse-frozen fine-tune compare to LoRA on dense layers?</>}
+        trap={<>(b)(c)(d) miss the scale-balance argument.</>}
+        lens={<>Freeze matters when the discriminative signal is small relative to generative signal.</>}
+        stretch={<>How does the freeze-vs-fine-tune curve look as labeled-data fraction grows?</>}
       />
 
-      <VIS.TrapProblem
-        id="gpsd-p6" difficulty="hard" mode="ordered"
-        title="P6 — Order your debugging when GPSD fine-tune quality plateaus below DLRM baseline"
-        scenario={<>You ran GPSD; fine-tune converges but final discriminative metric is BELOW your prior DLRM baseline. Order your diagnostics.</>}
+      <VIS.TrapProblem id="gpsd-p6" difficulty="hard"
+        title="P6 — Pick the recommendation architecture"
+        scenario={<><em>Discriminating insight: a mature DLRM stack with billions of users and trillions of interaction events, a strong CTR/CVR labeling pipeline, and the team wants a foundation-style migration without throwing away the calibrated discriminative serving. GPSD is purpose-built.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Check if frozen sparse params come from a sufficiently long pretrain — undertrained pretrain leaves noisy embeddings that fine-tune cannot fully overcome.", order:1},
-          {key:"b", text:"Inspect dense-head capacity — if too small, dense cannot compensate for whatever frozen sparse cannot represent.", order:2},
-          {key:"c", text:"Unfreeze sparse permanently."},
-          {key:"d", text:"Check pretrain-vs-finetune distribution gap (item / user coverage in each).", order:3},
-          {key:"e", text:"Roll back to DLRM."},
+          {key:"a", text:"GPSD - generative pretrain on the trillion-event sequence data, then fine-tune a dense discriminative head on the existing CTR/CVR labels with sparse embeddings frozen. Keeps the DLRM-style discriminative serving (calibrated scores) while gaining the pretraining benefit. End-to-end fine-tune would overfit on the smaller labeled dataset.", correct:true},
+          {key:"b", text:"Pure NTP - no discriminative head, no calibrated CTR."},
+          {key:"c", text:"End-to-end fine-tune - over-fits the sparse embeddings."},
+          {key:"d", text:"Pure DLRM - no pretraining benefit."},
         ]}
-        trap={<>(c) defeats GPSD. (e) is premature.</>}
-        lens={<>Ladder: pretrain quality → dense capacity → distribution gap. Most "below-baseline" GPSD failures are pretrain-side, not fine-tune-side.</>}
-        stretch={<>What single signal tells you the pretrain was undertrained?</>}
+        trap={<>(b) calibration. (c) overfitting. (d) leaves pretraining on the table.</>}
+        lens={<>DLRM migration + CTR/CVR keep + pretraining want = GPSD.</>}
+        stretch={<>What changes if labeled dataset matches generative dataset in size?</>}
       />
 
-      <VIS.TrapProblem
-        id="gpsd-p7" difficulty="medium"
-        title="P7 — Migrating from DLRM to GPSD"
-        scenario={<>Your team operates a mature DLRM ranker. Pick the strongest migration path to GPSD.</>}
+      <VIS.TrapProblem id="gpsd-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just unfreeze everything for the fine-tune&rdquo;"
+        scenario={<><em>Discriminating insight: unfreezing the sparse embedding table during discriminative fine-tune means the discriminative loss starts overwriting the generative structure. With ~10x less labeled than unlabeled data, the embeddings drift toward the smaller signal and lose the generative knowledge. The freeze is load-bearing, not optional.</em><br/>Why is &ldquo;just unfreeze everything&rdquo; wrong?</>}
         options={[
-          {key:"a", text:"Build the transformer architecture; pretrain its sparse + dense from scratch with NTP on user sequences; then fine-tune the dense head on the same labels DLRM uses. Compare end-to-end metric to DLRM in offline + A/B.", correct:true},
-          {key:"b", text:"Replace DLRM embeddings with GPSD embeddings without changing the dense layers."},
-          {key:"c", text:"Run DLRM and GPSD in parallel forever."},
-          {key:"d", text:"Skip pretrain and just freeze DLRM embeddings."},
+          {key:"a", text:"Sparse embedding tables have billions of parameters; the discriminative loss is computed on a much smaller labeled dataset; unfreezing means the smaller signal overwrites the generative structure built during pretraining. Recall and calibration both drop. The freeze is what protects the pretraining win.", correct:true},
+          {key:"b", text:"Unfreezing always improves recall."},
+          {key:"c", text:"Sparse tables have tiny parameter counts."},
+          {key:"d", text:"Discriminative loss is bigger than generative."},
         ]}
-        trap={<>(b) loses the architectural benefit. (c) is a non-strategy. (d) misses the pretrain advantage.</>}
-        lens={<>The right migration is end-to-end: full new architecture, full pretrain phase, then discriminative fine-tune. The temptation to "just swap the embeddings" or "just freeze the old embeddings" misses where the GPSD benefit lives — the dense transformer trained on NTP.</>}
-        stretch={<>What is the smallest pilot you could run to derisk GPSD migration?</>}
+        trap={<>(b)(c)(d) miss the data-scale imbalance.</>}
+        lens={<>Freeze protects pretraining from the smaller discriminative signal.</>}
+        stretch={<>What does periodic unfreeze look like in practice?</>}
       />
 
-      <VIS.TrapProblem
-        id="gpsd-p8" difficulty="hard" multiSelect
-        title="P8 — Failure modes specific to GPSD"
-        scenario={<>Pick the GPSD-specific failures (not generic transformer / DLRM issues).</>}
+      <VIS.TrapProblem id="gpsd-p8" difficulty="hard"
+        title="P8 — GPSD&apos;s anchor (NTP pretrain + frozen sparse + dense head): pitch it"
+        scenario={<><em>Discriminating insight: the anchor names all three pieces - NTP pretrain to learn rich embeddings, frozen sparse embedding table during fine-tune, and a dense discriminative head on top. A pitch missing any one is incomplete.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Frozen sparse goes stale as catalog churns.", correct:true},
-          {key:"b", text:"NTP pretrain mode-collapses onto a few popular items, leaving tail embeddings noisy.", correct:true},
-          {key:"c", text:"Dense head is too small to compensate for any limit in the frozen sparse representation.", correct:true},
-          {key:"d", text:"Cold IDs have no embedding at all because pretrain never saw them.", correct:true},
-          {key:"e", text:"The model cannot be served in production."},
+          {key:"a", text:"Pretrain a transformer generatively on user-item sequences with next-token-prediction loss. Then add a dense discriminative head and fine-tune ONLY the head on labeled CTR/CVR targets - the sparse embedding table stays frozen. The generative knowledge survives the fine-tune; the dense head provides the calibrated discriminative score for serving.", correct:true},
+          {key:"b", text:"Train discriminatively from scratch."},
+          {key:"c", text:"Fine-tune everything end-to-end."},
+          {key:"d", text:"Skip pretraining."},
         ]}
-        trap={<>(e) is wrong — serving works exactly like a DLRM transformer.</>}
-        lens={<>Four real GPSD-specific failures: staleness, pretrain mode collapse, undersized dense, and cold IDs. Each has a known mitigation: re-pretrain cadence, balanced sampling in pretrain, larger dense, and explicit cold-start handling on top.</>}
-        stretch={<>How would you instrument production to catch each failure?</>}
+        trap={<>(b) is DLRM. (c) over-fits. (d) leaves pretraining on the table.</>}
+        lens={<>NTP pretrain + frozen sparse + dense head - all three.</>}
+        stretch={<>Which of the three is hardest to engineer well?</>}
       />
 
-      <VIS.TrapProblem
-        id="gpsd-p9" difficulty="hard"
-        title="P9 — GPSD vs RecBase and other generative recommenders"
-        scenario={<>Pick the strongest distinguishing claim about GPSD.</>}
+      <VIS.TrapProblem id="gpsd-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use GPSD. Select 2."
+        scenario={<><em>Discriminating insight: GPSD needs (i) much more unlabeled generative data than labeled discriminative data, (ii) a discriminative serving requirement (CTR/CVR), (iii) a transformer-friendly serving infra. It is wrong when labels are abundant relative to sequence data, or when you do not need calibrated discriminative scores.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"GPSD is a migration recipe specifically for shops with mature discriminative rankers; it deliberately preserves the production discriminative interface, unlike pure generative recommenders that re-architect the serving stack.", correct:true},
-          {key:"b", text:"GPSD has no relation to generative pretraining."},
-          {key:"c", text:"GPSD only works at sub-million scale."},
-          {key:"d", text:"GPSD requires LLM-scale parameters."},
+          {key:"a", text:"Labeled CTR/CVR data is comparable in scale to the unlabeled sequence data - the freeze stops mattering and end-to-end fine-tune matches at simpler bookkeeping.", correct:true},
+          {key:"b", text:"Generative retrieval surface where the output is the next item itself - no calibrated discriminative score needed (e.g., TIGER, HSTU-style).", correct:true},
+          {key:"c", text:"DLRM migration with trillion-event sequences and rich CTR/CVR labels - the sweet spot."},
+          {key:"d", text:"Multi-domain zero-shot transfer to brand-new domains - RecBase territory, not GPSD."},
+          {key:"e", text:"Real-time serving on a transformer-friendly fleet with calibrated CTR scoring requirement."},
         ]}
-        trap={<>(b), (c), (d) are false or unsupported.</>}
-        lens={<>GPSD&apos;s niche is migration ergonomics. Teams that already operate a DLRM-style ranker want pretrain benefits without re-architecting serving. Pure generative recommenders (P5, RecBase, RecGPT) replace the serving model entirely. GPSD&apos;s sparse-freeze trick is what makes it operationally palatable.</>}
-        stretch={<>When does a pure generative recommender beat GPSD?</>}
+        trap={<>(c) sweet spot. (d) is RecBase&apos;s job but not because GPSD fails - it is just out of scope. (e) is also a sweet spot.</>}
+        lens={<>GPSD needs data-scale asymmetry + discriminative requirement.</>}
+        stretch={<>How would you detect &ldquo;labels comparable to sequences&rdquo;?</>}
       />
 
-      <VIS.TrapProblem
-        id="gpsd-p10" difficulty="medium"
-        title="P10 — Sparse embedding gradient variance"
-        scenario={<>Pick the strongest reason sparse embedding gradients have high variance during fine-tune.</>}
+      <VIS.TrapProblem id="gpsd-p10" difficulty="hard"
+        title="P10 — Why does sparse-embedding capacity matter so much?"
+        scenario={<><em>Discriminating insight: sparse embedding tables in modern recsys hold most of the model parameters (billions for big catalogs). Their capacity dominates what the model can memorize about items. The generative pretrain populates this capacity richly; freezing protects that population from being trampled by the smaller discriminative loss.</em><br/>Why does the sparse table dominate?</>}
         options={[
-          {key:"a", text:"Each ID appears rarely in any given batch — the gradient signal for that ID is concentrated on a few examples per epoch, producing high-variance updates.", correct:true},
-          {key:"b", text:"Sparse gradients are randomly initialized."},
-          {key:"c", text:"Sparse gradients are zero by construction."},
-          {key:"d", text:"Sparse gradients are ignored by Adam."},
+          {key:"a", text:"The sparse embedding table is where most of the model&apos;s parameters live (billions for big catalogs). It memorizes per-item structure that the dense layers cannot recover. Generative pretrain populates it richly; the discriminative head consumes those embeddings as features. Freeze protects the population from the smaller discriminative signal.", correct:true},
+          {key:"b", text:"Sparse tables hold few parameters."},
+          {key:"c", text:"Dense layers dominate parameter count."},
+          {key:"d", text:"Sparse tables are decorative."},
         ]}
-        trap={<>(b), (c), (d) are false or overstated.</>}
-        lens={<>The fundamental issue is sparsity in observation, not architecture. Most IDs appear in a small fraction of training examples. The gradient for any given ID is a noisy estimate based on a handful of examples. This is well known in click-prediction work and is one reason DLRM systems often use specialized optimizers like Adagrad or FTRL for embeddings.</>}
-        stretch={<>How does Adagrad mitigate sparse gradient variance compared to vanilla SGD?</>}
+        trap={<>(b)(c)(d) miss the capacity argument.</>}
+        lens={<>Sparse tables dominate parameter count; their content is the pretraining artifact.</>}
+        stretch={<>What is the typical sparse-vs-dense parameter ratio in a billion-user recsys?</>}
       />
 
-      <VIS.TrapProblem
-        id="gpsd-p11" difficulty="medium" multiSelect
-        title="P11 — GPSD production launch checklist"
-        scenario={<>Which items belong on a pre-launch GPSD checklist?</>}
+      <VIS.TrapProblem id="gpsd-p11" difficulty="hard"
+        title="P11 — What does the dense head learn?"
+        scenario={<><em>Discriminating insight: the dense head learns the MAPPING from rich pretrained sparse embeddings (the user-history representation produced by the transformer) to a calibrated CTR/CVR score. It does NOT relearn the embeddings; it learns the readout function over them.</em><br/>What does the dense head do?</>}
         options={[
-          {key:"a", text:"Pretrain has converged on holdout NTP loss; no obvious mode collapse.", correct:true},
-          {key:"b", text:"Discriminative fine-tune metric matches or exceeds DLRM baseline on labeled holdout.", correct:true},
-          {key:"c", text:"Cold-start path exists for IDs not in pretrain corpus.", correct:true},
-          {key:"d", text:"Re-pretrain cadence and triggering criteria documented.", correct:true},
-          {key:"e", text:"Sparse and dense are trained jointly with no freezing."},
+          {key:"a", text:"The dense head learns the readout function: given the rich transformer-produced sequence representation (built from the frozen sparse embeddings), predict the labeled discriminative target (CTR/CVR). It learns the mapping, not the embeddings.", correct:true},
+          {key:"b", text:"The dense head re-learns the item embeddings."},
+          {key:"c", text:"The dense head is identity."},
+          {key:"d", text:"The dense head is the sparse table."},
         ]}
-        trap={<>(e) is wrong — that&apos;s the recipe GPSD specifically rejects.</>}
-        lens={<>Four real checks; the often-missed one is documented re-pretrain cadence. Teams ship GPSD, see the win, and forget that staleness is a slow-rolling failure that takes weeks to manifest.</>}
-        stretch={<>What triggers would you wire to auto-fire re-pretrain?</>}
+        trap={<>(b)(c)(d) miss the readout function.</>}
+        lens={<>Dense head = readout. Sparse embeddings = pretrained features.</>}
+        stretch={<>How big is the dense head relative to the sparse table?</>}
       />
+
+      <VIS.TrapProblem id="gpsd-p12" difficulty="hard"
+        title="P12 — What does GPSD deliberately drop vs full fine-tune?"
+        scenario={<><em>Discriminating insight: full fine-tune lets the discriminative loss update every parameter - including the sparse table. GPSD forfeits that flexibility (the sparse table is frozen) in exchange for protecting the generative pretraining structure. The drop is flexibility; the gain is preserved pretraining.</em><br/>What does GPSD forfeit?</>}
+        options={[
+          {key:"a", text:"Full-fine-tune flexibility. Locking the sparse table means the discriminative loss cannot adapt the embeddings to its objective; if the discriminative signal needed something the pretraining did not provide, GPSD cannot reach it. The gain is preserved generative structure - on net, calibrated discriminative scoring at a small flexibility cost.", correct:true},
+          {key:"b", text:"GPSD forfeits the use of transformers."},
+          {key:"c", text:"GPSD forfeits sparse embeddings entirely."},
+          {key:"d", text:"GPSD forfeits the dense head."},
+        ]}
+        trap={<>(b)(c)(d) miss what is sacrificed.</>}
+        lens={<>Flexibility traded for preserved pretraining structure.</>}
+        stretch={<>When does flexibility loss hurt? - discriminative-only patterns absent from pretraining.</>}
+      />
+
+      <VIS.TrapProblem id="gpsd-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: the discriminative-fine-tune learning rate dominates. Too high and even with the freeze, the dense head over-fits the small labeled dataset and the calibration drops. Too low and the head under-fits. Freeze policy and batch size are secondary.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"Discriminative-fine-tune learning rate is most fragile - too high, the dense head over-fits the small labeled dataset and calibration drops; too low, the head under-fits and recall lags. Freeze policy (which params to freeze) is next. Batch size for pretraining is most robust over wide ranges.", correct:true},
+          {key:"b", text:"Batch size is most fragile."},
+          {key:"c", text:"Random seed is most fragile."},
+          {key:"d", text:"NTP loss coefficient is most fragile."},
+        ]}
+        trap={<>(b) wide-range robust. (c) noise. (d) decided at pretraining, not fine-tune.</>}
+        lens={<>Fine-tune LR is the production-fragile dial.</>}
+        stretch={<>What does the recall-vs-LR curve look like at fine-tune?</>}
+      />
+
+      <VIS.TrapProblem id="gpsd-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: GPSD assumes a much larger pool of unlabeled sequence data than labeled discriminative data. If a new catalog ingests millions of items but the labeled pool barely grew, the frozen sparse embeddings have nothing for those new items (they were not in pretraining). Discriminative scores on cold items degrade silently.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Cold items absent from pretraining. The frozen sparse table holds embeddings only for items present at pretrain time; new catalog items have random or zero embeddings; the dense head cannot rescue them. Fix: schedule re-pretraining when catalog turnover crosses a threshold, or use a content-based fallback for cold items.", correct:true},
+          {key:"b", text:"Mismatched sequence-id encoding between train and serve."},
+          {key:"c", text:"Wrong serialization library for the embedding table."},
+          {key:"d", text:"Different optimizer state on the dense head."},
+        ]}
+        trap={<>(b)(c)(d) generic infra, not GPSD-specific.</>}
+        lens={<>Cold items are GPSD&apos;s blind spot; pretraining is the only way in.</>}
+        stretch={<>What re-pretrain cadence handles weekly catalog turnover?</>}
+      />
+
+      <VIS.TrapProblem id="gpsd-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;the freeze loses information&rdquo;"
+        scenario={<><em>Discriminating insight: the freeze does not lose information - the sparse embeddings already contain rich pretraining structure. The freeze prevents that structure from being OVERWRITTEN by the smaller discriminative signal. &ldquo;Loses information&rdquo; framing inverts the actual mechanism.</em><br/>Why is &ldquo;the freeze loses information&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"The freeze preserves pretraining information - it does not delete anything. Without the freeze, the smaller discriminative loss would overwrite the rich generative structure with patterns specific to the labeled dataset. The freeze PROTECTS information; the inversion is the trap.", correct:true},
+          {key:"b", text:"The freeze deletes embeddings."},
+          {key:"c", text:"The freeze is destructive."},
+          {key:"d", text:"The freeze is purely organizational."},
+        ]}
+        trap={<>(b)(c)(d) miss the protection role.</>}
+        lens={<>Freeze protects; it does not erase.</>}
+        stretch={<>What is the analog in language-model fine-tuning?</>}
+      />
+
+      <VIS.TrapProblem id="gpsd-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;GPSD is just transfer learning&rdquo; cascades into (i) unfreezing the sparse table (generative structure overwritten), (ii) skipping periodic re-pretraining (sparse embeddings go stale), (iii) ignoring the data-scale balance check (the freeze stops being load-bearing if labeled data catches up).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: the freeze, the re-pretraining schedule, and the data-scale check. Each is load-bearing for GPSD specifically; black-boxing it as &ldquo;just transfer learning&rdquo; loses all three and the resulting model underperforms both DLRM (no calibration) and end-to-end fine-tune (better-tuned for its dataset).", correct:true},
+          {key:"b", text:"Only the freeze."},
+          {key:"c", text:"Only the schedule."},
+          {key:"d", text:"Nothing - GPSD IS just transfer learning."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>GPSD has three operational contracts; collapsing them breaks all three.</>}
+        stretch={<>What dashboard panel surfaces these?</>}
+      />
+
+      <VIS.TrapProblem id="gpsd-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior responds to a fine-tune recall drop by unfreezing more parameters. A senior measures the labeled-vs-unlabeled scale ratio first: if labels are 1% of sequences, freeze must stay; if labels are 50%, unfreeze can help. The freeze policy is data-scale-dependent.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Measure labeled-vs-unlabeled scale ratio. If labels are a tiny fraction of sequences, keep the freeze - unfreezing will over-fit and erase pretraining. If labels are comparable to sequences, unfreeze can be safe and may help. The freeze policy is data-scale-dependent, not a universal recipe.", correct:true},
+          {key:"b", text:"Unfreeze unconditionally."},
+          {key:"c", text:"Freeze more layers."},
+          {key:"d", text:"Switch to end-to-end fine-tune."},
+        ]}
+        trap={<>(b)(c) skip diagnosis. (d) abandons GPSD.</>}
+        lens={<>Scale ratio is the GPSD-specific freeze diagnostic.</>}
+        stretch={<>What does the ratio look like at YouTube vs at a brand-new app?</>}
+      />
+
+      <VIS.TrapProblem id="gpsd-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: pretraining sequence boundary shift"
+        scenario={<><em>Discriminating insight: offline CTR AUC improved 2 points after a routine pipeline refactor; online CTR FELL 1 point on the same model. The dense head is unchanged; sparse embeddings are frozen. Actual cause: the pretraining pipeline silently switched its sequence-segmentation boundary (UTC-midnight vs user-local-midnight); the model is pretrained on slightly different sequences than serving sees. Offline eval used the new boundaries (matches train); online uses session-local boundaries (no match).</em><br/>Offline AUC +2; online CTR -1 after a refactor. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Dense head over-fit during fine-tune.", correct:false},
+          {key:"b", text:"Sequence-boundary drift: pretraining now segments user sequences at UTC midnight; serving sees session-local boundaries. The model is pretrained on different sequence shapes than serving feeds. Offline eval uses the new boundaries and matches; online uses the production boundaries and diverges. Fix: pin sequence segmentation across pretraining, eval, and serving.", correct:true},
+          {key:"c", text:"GPU OOM on serving box.", correct:false},
+          {key:"d", text:"Network latency added to the dense head call.", correct:false},
+        ]}
+        trap={<>(a) seductive blame but freeze rules it out. (c)(d) generic infra. The fingerprint is offline-online divergence after a sequence-pipeline refactor.</>}
+        lens={<>Sequence-boundary contract must be identical between pretrain, eval, and serve.</>}
+        stretch={<>What CI gate hashes sequence-segmentation config?</>}
+      />
+
+      <VIS.TrapProblem id="gpsd-p19" difficulty="hard"
+        title="P19 — Production gotcha: sparse-embedding staleness"
+        scenario={<><em>Discriminating insight: frozen sparse embeddings are great for stability but go stale as the catalog evolves. The paper recommends periodic re-pretraining to refresh them. Teams ship the freeze without the re-pretrain schedule and watch recall decay over months.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Schedule periodic re-pretraining on fresh sequence data. The freeze protects against discriminative-loss damage but does NOT protect against catalog drift - new items, retired items, changing user behavior. Re-pretrain on a cadence (weekly or monthly), then re-run the discriminative fine-tune over the refreshed sparse table.", correct:true},
+          {key:"b", text:"Sparse embeddings never need refresh."},
+          {key:"c", text:"The dense head refreshes the sparse table for you."},
+          {key:"d", text:"Catalog drift is irrelevant to GPSD."},
+        ]}
+        trap={<>(b)(c)(d) miss the staleness contract.</>}
+        lens={<>Freeze + scheduled re-pretrain - both load-bearing.</>}
+        stretch={<>What re-pretrain cadence balances cost vs staleness?</>}
+      />
+
+      <VIS.TrapProblem id="gpsd-p20" difficulty="hard"
+        title="P20 — Failure on Friday: CTR cratered for cold items"
+        scenario={<><em>Discriminating insight: a catalog-team product launch ingested 100K new items; the pretraining cadence is monthly so those items have no embeddings yet. The frozen sparse table returns zero / random embeddings for cold items; the dense head produces noise; CTR on cold items collapses while warm-item CTR is fine.</em><br/>3am page: CTR on items launched in the last week is near random. Warm CTR is fine. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Cold-item embeddings are uninitialized in the frozen sparse table - those items were not in the most recent pretraining run. The frozen-table policy means new items have no representation until the next re-pretrain. Fix: trigger an out-of-cycle re-pretrain on cold items, or add a content-based fallback for items absent from the pretrain corpus.", correct:true},
+          {key:"b", text:"Warm-item embeddings rotated."},
+          {key:"c", text:"Dense head needs more capacity."},
+          {key:"d", text:"Sequence boundary changed."},
+        ]}
+        trap={<>(b) plausible but warm CTR is fine. (c)(d) miss the cold-item-vs-warm asymmetry.</>}
+        lens={<>Cold items + monthly pretrain = empty embeddings at launch.</>}
+        stretch={<>What content-based fallback covers items between pretrain runs?</>}
+      />
+
+      <VIS.TrapProblem id="gpsd-p21" difficulty="medium"
+        title="P21 — Library default that bites: full fine-tune by default"
+        scenario={<><em>Discriminating insight: HuggingFace-style fine-tune scripts default to unfrozen everything (full fine-tune). Naively applying that to a GPSD-style sparse table over-fits the smaller discriminative dataset and erases the pretraining win. The team needs to explicitly freeze sparse parameter groups.</em><br/>Where does the default break GPSD?</>}
+        options={[
+          {key:"a", text:"Generic transformer fine-tune scripts (HuggingFace style) default to unfrozen everything - all parameters update from the discriminative loss. Applied naively to a recsys sparse table with billions of parameters and a small labeled dataset, this over-fits and erases pretraining. GPSD requires explicitly listing sparse-table parameter groups in the freeze list.", correct:true},
+          {key:"b", text:"Defaults are tuned for recsys."},
+          {key:"c", text:"Defaults freeze the right groups."},
+          {key:"d", text:"GPSD has no fine-tune step."},
+        ]}
+        trap={<>(b)(c)(d) deny the default trap.</>}
+        lens={<>Library defaults assume NLP fine-tune scale; recsys breaks the assumption.</>}
+        stretch={<>What is the right freeze-group spec for a Faiss-style sparse table?</>}
+      />
+
+      <VIS.TrapProblem id="gpsd-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) collect unlabeled sequence data, (2) pretrain transformer with NTP, (3) sanity-check sparse embeddings on a held-out generative metric, (4) add dense head + freeze sparse, (5) discriminative fine-tune on labeled CTR/CVR, (6) calibration audit on holdout, (7) traffic ramp. Skipping the sparse-embedding sanity check is the classic mistake - garbage pretraining feeds garbage fine-tune.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Collect sequence data - pretrain with NTP - sanity-check sparse embeddings on a held-out generative metric - add dense head + freeze sparse - discriminative fine-tune - calibration audit on holdout - traffic ramp", correct:true},
+          {key:"b", text:"Ramp traffic first."},
+          {key:"c", text:"Skip pretraining."},
+          {key:"d", text:"Fine-tune before pretraining."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Sequences then pretrain then audit then freeze+head then fine-tune then calibrate then ramp.</>}
+        stretch={<>Why audit pretraining before fine-tune?</>}
+      />
+
+      <VIS.TrapProblem id="gpsd-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks GPSD&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: a labeled CTR dataset that is COMPARABLE in size to the sequence pretraining data. The data-scale asymmetry that justifies the freeze evaporates; end-to-end fine-tune is now safe and may dominate. GPSD&apos;s freeze is bookkeeping that buys nothing.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A labeled CTR dataset comparable in scale to the unlabeled sequence pretraining data. The freeze policy is justified by the data-scale gap; when the gap closes, end-to-end fine-tune is safe and adapts the sparse table to the discriminative signal directly. GPSD&apos;s structural advantage shrinks to zero.", correct:true},
+          {key:"b", text:"Trillion-event sequences, 1% labeled - the sweet spot."},
+          {key:"c", text:"100M users."},
+          {key:"d", text:"Catalog of 50K items."},
+        ]}
+        trap={<>(b) sweet spot. (c) user count, not data-scale ratio. (d) too small for either method to matter.</>}
+        lens={<>GPSD needs data-scale asymmetry; close the gap and the freeze stops paying.</>}
+        stretch={<>What hybrid covers both regimes?</>}
+      />
+
+      <VIS.TrapProblem id="gpsd-p24" difficulty="hard"
+        title="P24 — Paper-named failure: sparse staleness"
+        scenario={<><em>Discriminating insight: the paper names sparse-embedding staleness as the dominant operational failure mode. The freeze policy is correct for protecting pretraining, but it must be paired with a scheduled refresh; otherwise the catalog drifts away from what the embeddings know.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Sparse-embedding staleness under catalog drift. The freeze protects against discriminative-loss damage but the catalog still evolves; without scheduled re-pretraining, embeddings age and recall decays. Fix is policy: pair the freeze with a recurring re-pretrain cadence proportional to catalog turnover.", correct:true},
+          {key:"b", text:"Sparse embeddings auto-refresh."},
+          {key:"c", text:"Staleness boosts recall."},
+          {key:"d", text:"There are no documented failures."},
+        ]}
+        trap={<>(b)(c)(d) deny the named failure.</>}
+        lens={<>Staleness is GPSD&apos;s long-tail operational bug.</>}
+        stretch={<>What re-pretrain cadence keeps recall flat?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/2506.03699" target="_blank" rel="noopener"><strong>Scaling Transformers for Discriminative Recommendation via Generative Pretraining</strong></a> <span style={{color:"#64748b", fontSize:14}}>(arXiv 2025, paper)</span><br/>The GPSD paper. Section 3 explains the freeze recipe; Section 5 shows the ablations.</li>
-        <li><a href="https://arxiv.org/abs/2310.06966" target="_blank" rel="noopener"><strong>HSTU — Actions Speak Louder than Words (Meta)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>Meta&apos;s industrial generative recommender. Useful comparison architecture for thinking about generative-vs-discriminative tradeoffs at scale.</li>
-        <li><a href="https://lilianweng.github.io/posts/2024-07-07-hallucination/" target="_blank" rel="noopener"><strong>Lilian Weng — Transfer Learning &amp; Fine-tuning patterns</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Background on freeze vs unfreeze trade-offs in transfer learning. Useful intuition for why GPSD&apos;s recipe works in general.</li>
-        <li><a href="https://research.facebook.com/publications/dlrm-an-advanced-open-source-deep-learning-recommendation-model/" target="_blank" rel="noopener"><strong>Naumov et al. — DLRM: An Advanced, Open Source Deep Learning Recommendation Model</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>The architecture GPSD aims to evolve. Useful to read first so you understand which production interface GPSD preserves.</li>
-        <li><a href="https://karpathy.github.io/2019/04/25/recipe/" target="_blank" rel="noopener"><strong>Andrej Karpathy — A Recipe for Training Neural Networks</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Practitioner field guide on pretrain-finetune dynamics, useful background for the freeze decision.</li>
+        <li><a href="https://arxiv.org/abs/2506.03699" target="_blank" rel="noopener">Authors et al. - <em>Scaling Transformers for Discriminative Recommendation via Generative Pretraining</em> (arXiv 2506.03699, 2025, paper)</a> - the canonical GPSD paper. Sections 3-4 cover the freeze policy.</li>
+        <li><a href="https://arxiv.org/abs/2402.17152" target="_blank" rel="noopener">Zhai et al. - <em>HSTU</em> (ICML 2024, paper)</a> - the generative-pretrain backbone GPSD composes with.</li>
+        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener">Eugene Yan - <em>System Design for Discovery</em> (blog)</a> - practitioner framing of DLRM-to-foundation migrations; useful context for where GPSD fits.</li>
+        <li><a href="https://jalammar.github.io/illustrated-transformer/" target="_blank" rel="noopener">Jay Alammar - <em>The Illustrated Transformer</em> (blog)</a> - background on the transformer backbone.</li>
+        <li><a href="https://www.youtube.com/watch?v=zduSFxRajkE" target="_blank" rel="noopener">Andrej Karpathy - <em>Let&apos;s build GPT</em> (video)</a> - intuition on NTP-style pretraining used in stage 1.</li>
       </ul>
     </VIS.Section>
   </main>

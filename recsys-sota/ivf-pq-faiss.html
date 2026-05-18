@@ -1414,261 +1414,423 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 15
+// IVF-PQ (Faiss) — billion-scale ANN on a memory diet
+// Unique mechanism: cluster the vector space with k-means (Inverted File / IVF),
+// then encode each vector with PRODUCT QUANTIZATION (PQ) — split the vector
+// into M subvectors and replace each subvector with the nearest code in a
+// per-subvector codebook. Lookup = find closest centroids (nprobe), then
+// approximate the distance with PQ table lookups.
+// Anchor that survives redaction: "cluster space into K cells (IVF); encode each
+// vector as a product of subvector codes (PQ); lookup = closest centroids + PQ
+// distance approximations." Compact codes (~16 bytes per vector); lossy.
+// ANN-trio caution:
+//   HNSW    = proximity graph (RAM-heavy, log-time)
+//   IVF-PQ  = clustering + product quantization (compact but lossy) [THIS visual]
+//   ScaNN   = anisotropic quantization (loss-aware, MIP-tuned)
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · Sparse retrieval / ANN"
       title="IVF-PQ (Faiss) — billion-scale ANN on a memory diet"
-      subtitle="Inverted-file partitioning to skip most of the corpus, plus product quantization to shrink each vector to 16 bytes — the workhorse for billion-scale catalogs."
+      subtitle="Cluster vectors into K cells (IVF). Encode each vector as M subvector codes (PQ). Lookup = closest centroids + PQ distance tables. ~16 bytes per vector at the cost of recall."
       byline={[
-        {label: "Source", value: "Jégou et al. 2011; deployed widely 2024-2026"},
-        {label: "Domain", value: "Memory-efficient Approximate Nearest Neighbor search"},
+        {label: "Paper", value: "Jegou et al. 2011 (PQ) + Sivic & Zisserman 2003 (IVF); widely deployed in Faiss 2024-2026"},
+        {label: "Surface", value: "Billion-scale catalogs where RAM is the binding constraint, not the last few recall points"},
+        {label: "Anchor that survives redaction", value: "K-means cells (IVF) + product-quantized codes (PQ); ~16 bytes/vector; lookup = closest centroids + PQ approximations"},
       ]}/>
 
     <VIS.TLDR>
-      IVF-PQ pairs two ideas. <strong>IVF</strong> clusters the corpus into K buckets and probes only a handful at query time. <strong>PQ</strong>{" "}
-      slices each vector into chunks and quantizes each chunk to one of 256 centroids — turning a 768-dim float32 vector (3 KB) into 16 bytes. Together they make a billion vectors fit on one box.
+      IVF-PQ is the canonical answer when the catalog will not fit in RAM as raw vectors. <strong>IVF</strong> partitions the vector space into K cells via k-means; at query time you probe the <code>nprobe</code> closest cells instead of scanning every vector. <strong>PQ</strong> chops each vector into M equal subvectors and replaces each subvector with the index of its nearest entry in a per-subvector codebook of (usually) 256 entries - the whole vector compresses to M bytes (often M=16, hence ~16 bytes per vector). The senior trap: IVF-PQ is NOT &ldquo;just an ANN index.&rdquo; It is specifically a <em>clustering + quantization</em> stack whose compactness lets a billion vectors live in ~16 GB - but whose tail recall collapses if cluster sizes are imbalanced and <code>nprobe</code> misses the cell holding the true neighbor.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        IVF-PQ is a two-stage compressed index:
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  Q["Query vector"] --> CT["Coarse quantizer — pick top nprobe clusters"]
-  CT --> SC["Scan candidates inside chosen clusters"]
-  SC --> PQ["PQ-decoded approximate distances"]
-  PQ --> R["Top-k results"]
-      `} />
+    <VIS.Section id="sec-what" title="What it is — IVF cells plus PQ codes">
+      <VIS.Mermaid chart={`flowchart TB
+  V["Vector v in R^d"]
+  IVF["K-means cells (IVF), pick nprobe closest"]
+  SPLIT["Split v into M subvectors"]
+  PQ["Each subvector becomes one byte code in its codebook"]
+  IDX["Per-cell inverted list of (id, M-byte code)"]
+  Q["Query q"]
+  Q --> IVF
+  V --> SPLIT --> PQ --> IDX
+  IVF --> SCAN["Scan only the nprobe cells"]
+  SCAN --> DIST["PQ distance via precomputed tables"]
+  DIST --> R["Top-k candidates"]`} />
       <ul>
-        <li><strong>Inverted file (IVF)</strong> — train K centroids via k-means; each vector is assigned to one. At query time, compute distance to each centroid and probe only the top{" "}
-        <VIS.Term def="In IVF, the number of clusters to search at query time. Larger nprobe = higher recall and higher latency.">nprobe</VIS.Term>.</li>
-        <li><strong>Product Quantization (PQ)</strong> — split each vector into M sub-vectors; train a separate 256-centroid codebook per slice. Encode each vector as M one-byte codes.</li>
-        <li><strong>Asymmetric distance</strong> — the query stays float; only the corpus is quantized. Distances are computed via a small lookup table per query.</li>
-        <li><strong>Residual coding</strong> — Faiss subtracts the cluster centroid before PQ-encoding; the residual is what gets quantized. Improves quality without extra bytes.</li>
+        <li><strong>IVF (Inverted File)</strong> - cluster all vectors with k-means into K cells (typical K = 4096-65536). At query, score each centroid; probe only the <code>nprobe</code> closest cells. This is the &ldquo;skip 99% of the catalog&rdquo; trick.</li>
+        <li><strong>PQ (Product Quantization)</strong> - split each vector into M equal-length subvectors. For each subvector position, learn a 256-entry codebook by k-means. Encode the subvector as the byte-index of its nearest codebook entry. The whole vector now lives in M bytes.</li>
+        <li><strong>Distance approximation</strong> - at query time, precompute a (M x 256) table of subvector-to-query distances once. Each candidate distance is M table lookups + sum. No raw vectors needed.</li>
       </ul>
+      <p>The full catalog fits in M bytes per vector. The trade is recall: PQ approximation introduces error, and the <code>nprobe</code> heuristic can miss the true cell.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from HNSW and brute force">
+    <VIS.Section id="sec-diff" title="How IVF-PQ differs from HNSW and ScaNN">
       <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
-        <thead><tr style={{background:"#f1f5f9"}}>
-          <th style={{textAlign:"left",padding:8}}>Property</th>
-          <th style={{textAlign:"left",padding:8}}>HNSW</th>
-          <th style={{textAlign:"left",padding:8}}>IVF-PQ</th>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Core mechanism</th>
+          <th style={{textAlign:"left", padding:8}}>Memory</th>
+          <th style={{textAlign:"left", padding:8}}>Recall ceiling</th>
         </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Bytes per vector</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Full vector (e.g. 3 KB) plus graph</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Around 16 bytes (PQ codes) plus cluster ID</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Recall at fixed latency</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Higher</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Lower (lossy quantization)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Tunable recall-latency knob</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>ef_search</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>nprobe</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Scale ceiling on one box</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Hundreds of millions</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Billions</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Re-rank with full-precision recommended?</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Not needed</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Yes — rerank top-100 from full vectors</td></tr>
+          <tr><td style={{padding:8}}>HNSW</td><td style={{padding:8}}>Proximity graph, greedy walk</td><td style={{padding:8}}>Full vectors + edges in RAM</td><td style={{padding:8}}>Very high (raw vectors)</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>IVF-PQ</strong></td><td style={{padding:8}}><strong>k-means cells + product-quantized codes</strong></td><td style={{padding:8}}><strong>~16 bytes/vector</strong></td><td style={{padding:8}}><strong>Capped by PQ error</strong></td></tr>
+          <tr><td style={{padding:8}}>ScaNN</td><td style={{padding:8}}>Anisotropic quantization, inner-product-aware</td><td style={{padding:8}}>Compact, MIP-tuned</td><td style={{padding:8}}>Higher than PQ for MIP</td></tr>
         </tbody>
       </table>
-      <p style={{marginTop:12}}>
-        IVF-PQ trades lossy quantization for 10x to 100x lower memory than HNSW. The common pattern: IVF-PQ for candidate generation, then re-score top-100 candidates against full-precision vectors held on disk or in a smaller cache.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li><strong>Billion-scale corpora</strong> — when HNSW would not fit in RAM at any reasonable cost.</li>
-        <li>Severe memory budgets — embeddings hosted in cost-sensitive environments.</li>
-        <li>Workloads tolerant of a few percent recall loss in candidate generation, with downstream re-ranking compensating.</li>
-        <li>Write-heavy workloads — IVF insertions only touch one cluster, no graph rebalance.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Tail recall collapse</strong> — recall@10 looks fine, but recall@1000 (large k) can drop sharply if cluster sizes are imbalanced.</li>
-        <li><strong>Imbalanced clusters</strong> — k-means on real embeddings produces wildly uneven clusters; one cluster may hold 10% of the corpus.</li>
-        <li><strong>PQ codebook training drift</strong> — embeddings change over time but the codebook was trained once. Periodic re-training needed.</li>
-        <li><strong>Re-ranking is essential</strong> — raw PQ distances are noisy; production systems always re-rank the top candidates with full-precision vectors.</li>
-        <li><strong>Hard for short queries / tail queries</strong> — rare queries fall into low-density regions where IVF&apos;s cluster choices are poor.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick the right move(s); reveal trap and lens after committing.</p>
-
-      <VIS.TrapProblem
-        id="ivfpq-p1" difficulty="hard"
-        title="P1 — IVF-PQ recall@10 is 0.97; recall@1000 is 0.71. What is going on?"
-        scenario={<>Your IVF-PQ retrieval looks great at recall@10 but collapses by recall@1000. Pick the strongest single explanation.</>}
+      <VIS.TrapProblem id="ivf-p1" difficulty="hard"
+        title="P1 — IVF-PQ vs HNSW: load-bearing difference"
+        scenario={<><em>Discriminating insight: HNSW keeps raw vectors and a graph in RAM and walks the graph. IVF-PQ keeps NO raw vectors - just ~16-byte codes and an inverted-file index. Memory profile is ~100x smaller, recall ceiling is lower, and tail recall depends on nprobe choosing the right cell.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Cluster sizes are imbalanced — the right answers for tail queries live in clusters you never probed because nprobe was tuned for head queries.", correct:true},
-          {key:"b", text:"PQ is fundamentally broken."},
-          {key:"c", text:"You are using too few PQ subquantizers."},
-          {key:"d", text:"Recall@1000 is always lower than recall@10 by definition."},
+          {key:"a", text:"IVF-PQ stores no raw vectors - only k-means centroids and ~16-byte PQ codes per vector. ANN search probes nprobe closest cells and approximates distances via PQ tables. HNSW stores raw vectors AND a graph; greedy walk over raw vectors. ~100x memory advantage for IVF-PQ; lower recall ceiling.", correct:true},
+          {key:"b", text:"They use the same memory profile."},
+          {key:"c", text:"IVF-PQ is a graph method."},
+          {key:"d", text:"Both store raw vectors."},
         ]}
-        trap={<>(b) overstates. (c) is generic — PQ subquantizer count affects all-k recall uniformly. (d) is false — recall is monotone in k for fixed retrieval (a top-1000 set always contains the top-10 set).</>}
-        lens={<>The signature of "head recall good, tail recall bad" is IVF partitioning imbalance. K-means on real embeddings produces giant clusters that hold popular items and tiny clusters that hold rare items. With small nprobe, tail queries that should land in a tiny cluster get routed to a dense cluster and the right answers (deep in the tail) are never visited. Mitigations: balanced k-means, raise nprobe for tail traffic, or switch to OPQ + multiple coarse quantizers.</>}
-        stretch={<>How would you detect this in production without ground-truth labels?</>}
+        trap={<>(b)(c)(d) collapse the clustering-plus-quantization mechanism that defines IVF-PQ.</>}
+        lens={<>k-means cells + quantized codes vs proximity graph over raw vectors.</>}
+        stretch={<>What is the per-vector byte cost of HNSW at d=768, M=32?</>}
       />
 
-      <VIS.TrapProblem
-        id="ivfpq-p2" difficulty="medium" multiSelect
-        title="P2 — Knobs that affect IVF-PQ recall"
-        scenario={<>Pick the knobs that genuinely move the recall dial in IVF-PQ.</>}
+      <VIS.TrapProblem id="ivf-p2" difficulty="hard"
+        title="P2 — IVF-PQ vs ScaNN: anchor each"
+        scenario={<><em>Discriminating insight: PQ minimizes generic L2 reconstruction error in each subvector codebook. ScaNN&apos;s anisotropic quantization weights the error along the inner-product axis so the codes preserve the distance that actually matters for MIP search. Same compactness, smarter codebook.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"nprobe — number of clusters scanned per query.", correct:true},
-          {key:"b", text:"M — number of PQ sub-quantizers (more sub-quantizers means finer quantization).", correct:true},
-          {key:"c", text:"K — number of IVF clusters at training time.", correct:true},
-          {key:"d", text:"Bits per code — 8 bits (256 centroids) vs 6 bits per slice.", correct:true},
-          {key:"e", text:"The CPU clock speed."},
+          {key:"a", text:"IVF-PQ&apos;s codebooks are trained to minimize generic L2 reconstruction error per subvector. ScaNN&apos;s anisotropic quantization weights the error in the direction of inner product - the loss that matters for max-inner-product retrieval. Same byte budget, smarter codes for MIP.", correct:true},
+          {key:"b", text:"They optimize the same loss."},
+          {key:"c", text:"ScaNN drops the IVF stage."},
+          {key:"d", text:"IVF-PQ is anisotropic by default."},
         ]}
-        trap={<>(e) affects latency, not recall.</>}
-        lens={<>Four real recall knobs in IVF-PQ: nprobe (query-time, cheap), M (build-time, doubles memory), K (build-time, affects cluster granularity), bits per code (build-time, affects PQ quality). Production sweep: pick K around sqrt(N) and M around dim/4; tune nprobe for the recall-latency budget you can afford.</>}
-        stretch={<>How does the optimal K scale with N?</>}
+        trap={<>(b)(c)(d) confuse the quantization objective.</>}
+        lens={<>PQ = isotropic L2 codes. ScaNN = anisotropic MIP-aware codes.</>}
+        stretch={<>Why does ScaNN&apos;s edge over PQ shrink for L2-based image retrieval?</>}
       />
 
-      <VIS.TrapProblem
-        id="ivfpq-p3" difficulty="hard"
-        title="P3 — Why re-rank top-100 from full vectors?"
-        scenario={<>Production IVF-PQ pipelines almost always re-rank the top retrieved candidates against full-precision vectors. Pick the strongest reason.</>}
+      <VIS.TrapProblem id="ivf-p3" difficulty="medium"
+        title="P3 — Without IVF-PQ, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: realistic fallbacks at billion-scale are DiskANN (disk-resident graph), HNSW sharded across many boxes (RAM-expensive), or ScaNN (compact but tuned for inner-product). IVF-PQ sits at the cheapest-RAM end of the spectrum.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"PQ distances are unbiased but noisy; the ORDER among the top candidates is shaky. Re-ranking the small final set with full vectors recovers order at small cost.", correct:true},
-          {key:"b", text:"PQ does not produce any usable score."},
-          {key:"c", text:"Re-ranking changes WHICH items appear in the top-k completely."},
-          {key:"d", text:"Re-ranking is decorative."},
+          {key:"a", text:"DiskANN (graph index streamed from disk), HNSW sharded across many RAM-heavy boxes, or ScaNN if the embedding is inner-product. IVF-PQ sits at the cheapest-RAM corner of the design space; the others give back some RAM-cost for higher recall.", correct:true},
+          {key:"b", text:"Brute-force scan is at parity."},
+          {key:"c", text:"Random retrieval suffices."},
+          {key:"d", text:"BM25 is the fallback."},
         ]}
-        trap={<>(c) overstates — the candidate set is largely correct; re-ranking adjusts the order. (d) is unhelpful.</>}
-        lens={<>PQ provides a fast approximate distance that is good for filtering but not for ordering. Once you have say 100 candidates, full-precision distances cost 100 * dim multiplications — negligible. The result is much better ordering for downstream ranking models.</>}
-        stretch={<>What is the right size of the re-rank window?</>}
+        trap={<>(b)(c)(d) under-shoot ANN at scale.</>}
+        lens={<>IVF-PQ is the cheapest-RAM corner; alternatives trade RAM for recall.</>}
+        stretch={<>What is DiskANN&apos;s recall edge over IVF-PQ?</>}
       />
 
-      <VIS.TrapProblem
-        id="ivfpq-p4" difficulty="medium"
-        title="P4 — Compute back-of-envelope: 1B vectors at 768-dim"
-        scenario={<>Pick the realistic IVF-PQ memory footprint.</>}
+      <VIS.TrapProblem id="ivf-p4" difficulty="hard"
+        title="P4 — Compose IVF-PQ with OPQ (Optimized Product Quantization)"
+        scenario={<><em>Discriminating insight: OPQ applies a learned rotation R to the data before PQ so the subvectors are statistically decorrelated - each subvector codebook covers a more compact region, and the PQ approximation error drops. IVF-OPQ is the standard production variant.</em><br/>What does OPQ add?</>}
         options={[
-          {key:"a", text:"~3 TB — full precision dominates."},
-          {key:"b", text:"~16-32 GB with M=16 sub-quantizers and 8-bit codes plus a cluster ID per vector.", correct:true},
-          {key:"c", text:"~1 GB — IVF-PQ uses no memory."},
-          {key:"d", text:"~100 GB regardless of compression."},
+          {key:"a", text:"OPQ learns a rotation R that decorrelates the dimensions before PQ splits them. Each subvector is more compact in the rotated basis, so PQ error drops for the same byte budget. IVF-OPQ is the standard production variant; same byte cost, better recall.", correct:true},
+          {key:"b", text:"OPQ is a different distance metric."},
+          {key:"c", text:"OPQ adds a graph on top of IVF."},
+          {key:"d", text:"OPQ doubles the byte budget."},
         ]}
-        trap={<>(a) is the brute-force footprint. (c) overstates compression. (d) is arbitrary.</>}
-        lens={<>The math: 1e9 vectors * 16 bytes (PQ codes) = 16 GB. Add coarse cluster IDs and PQ codebooks (negligible). This is why IVF-PQ is the standard for billion-scale: a billion vectors on a single box with 32 GB of RAM is realistic.</>}
-        stretch={<>How does the math change for 256-dim embeddings?</>}
+        trap={<>(b)(c)(d) miss the rotation mechanism.</>}
+        lens={<>Rotate to decorrelate; PQ compresses tighter for free.</>}
+        stretch={<>What is OPQ&apos;s typical recall lift over plain PQ?</>}
       />
 
-      <VIS.TrapProblem
-        id="ivfpq-p5" difficulty="hard" multiSelect
-        title="P5 — Failure modes specific to IVF-PQ"
-        scenario={<>Pick the IVF-PQ-specific failures (not generic ANN).</>}
+      <VIS.TrapProblem id="ivf-p5" difficulty="medium"
+        title="P5 — Below what catalog size does IVF-PQ stop paying for itself?"
+        scenario={<><em>Discriminating insight: IVF-PQ&apos;s compactness pays off only when raw vectors do not fit in RAM. Below ~10M-50M vectors, HNSW&apos;s recall edge dominates the RAM savings. The crossover depends on dim, M, and recall target.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Codebook drift — embeddings retrained over time make the PQ codebook stale.", correct:true},
-          {key:"b", text:"Cluster imbalance after k-means — tail queries land in dense clusters.", correct:true},
-          {key:"c", text:"Re-rank window too small — PQ noise leaks into the final order.", correct:true},
-          {key:"d", text:"Asymmetric distance is wrong — query must also be quantized."},
-          {key:"e", text:"Vector dimension must be a power of two for IVF."},
+          {key:"a", text:"Below tens of millions of vectors, the RAM savings are too small to matter and HNSW&apos;s higher recall ceiling wins. IVF-PQ&apos;s value proposition is RAM-bound scale - it shines exactly where HNSW&apos;s graph blows the RAM budget.", correct:true},
+          {key:"b", text:"IVF-PQ always wins."},
+          {key:"c", text:"IVF-PQ wins only at tiny scale."},
+          {key:"d", text:"Scale is irrelevant."},
         ]}
-        trap={<>(d) is false — asymmetric distance is the right design; quantizing the query throws away signal. (e) is false — dim just needs to be divisible by M.</>}
-        lens={<>Three real IVF-PQ-specific failures: codebook drift (the trained codebook becomes a mismatch when embeddings move), cluster imbalance (k-means on real distributions is uneven), and re-rank window too small (PQ ordering noise leaks through). Each requires an explicit mitigation in production.</>}
-        stretch={<>How would you detect codebook drift without ground-truth labels?</>}
+        trap={<>(b)(c)(d) miss the RAM-vs-scale trade.</>}
+        lens={<>IVF-PQ&apos;s edge is exactly the regime where HNSW runs out of RAM.</>}
+        stretch={<>What is the per-vector byte cost of M=8 vs M=32 PQ?</>}
       />
 
-      <VIS.TrapProblem
-        id="ivfpq-p6" difficulty="medium"
-        title="P6 — IVF-PQ vs HNSW: the decision rule"
-        scenario={<>When should you pick IVF-PQ over HNSW?</>}
+      <VIS.TrapProblem id="ivf-p6" difficulty="hard"
+        title="P6 — Pick the retrieval architecture"
+        scenario={<><em>Discriminating insight: a 2B-doc semantic catalog at 3k QPS, p95 latency 30 ms, recall@100 target 0.92, single-box budget. HNSW does not fit. ScaNN is overkill if the embedding is not strictly MIP. IVF-PQ at M=16, nprobe=64 fits in ~32 GB and meets the recall floor.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"When you have billions of vectors and / or tight memory, and you can pair the index with a re-ranker. Trade some recall for ~10-100x less RAM.", correct:true},
-          {key:"b", text:"When you have under a million vectors."},
-          {key:"c", text:"Always."},
-          {key:"d", text:"Never — HNSW is strictly better."},
+          {key:"a", text:"IVF-PQ at M=16, nprobe=64 - 2B 16-byte codes fit in ~32 GB; PQ table lookup meets 30 ms; recall@100 at 0.92 is reachable with a properly tuned nprobe. HNSW would need many TB of RAM; ScaNN is for tighter latency budgets and strictly inner-product embeddings.", correct:true},
+          {key:"b", text:"HNSW - but does not fit in RAM at 2B vectors."},
+          {key:"c", text:"Brute-force scan - 30 ms budget impossible at 2B."},
+          {key:"d", text:"LSH - recall floor below 0.92."},
         ]}
-        trap={<>(c) and (d) are absolutes. (b) is the wrong regime — HNSW dominates at small scale.</>}
-        lens={<>The decision is memory and scale driven. Under 100M vectors and RAM is plentiful → HNSW. Above 1B vectors or RAM-constrained → IVF-PQ + re-rank. In the middle, either works and the tiebreaker is your team&apos;s ops familiarity and the latency budget.</>}
-        stretch={<>How would you A/B between HNSW and IVF-PQ fairly?</>}
+        trap={<>(b) RAM. (c) latency. (d) recall.</>}
+        lens={<>2B + RAM cap + 0.92 recall = IVF-PQ.</>}
+        stretch={<>What changes at recall@10 = 0.99 target?</>}
       />
 
-      <VIS.TrapProblem
-        id="ivfpq-p7" difficulty="hard" mode="ordered"
-        title="P7 — Order your debugging when IVF-PQ recall regresses"
-        scenario={<>Recall regressed overnight. Order your investigation. Wrong moves do not get a number.</>}
+      <VIS.TrapProblem id="ivf-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just add IVF cells to HNSW&rdquo;"
+        scenario={<><em>Discriminating insight: people propose &ldquo;IVF over HNSW&rdquo; to reduce graph search scope. The architectures are orthogonal mechanisms (cell partitioning vs proximity-graph walking); fusing them naively duplicates work and rarely beats either pure variant. The win path is HNSW-PQ (graph topology + quantized vectors), not IVF + graph.</em><br/>Why is &ldquo;IVF on top of HNSW&rdquo; usually a mistake?</>}
         options={[
-          {key:"a", text:"Check if the embedding model was redeployed — codebook is now stale.", order:1},
-          {key:"b", text:"Inspect nprobe and the cluster-imbalance histogram — has the query distribution drifted?", order:2},
-          {key:"c", text:"Retrain the PQ codebook on a fresh sample of current embeddings.", order:3},
-          {key:"d", text:"Disable IVF-PQ and serve brute force."},
-          {key:"e", text:"Roll back the entire service."},
+          {key:"a", text:"IVF cells already approximate locality; running a proximity-graph walk inside each cell duplicates the work the cell partition is supposed to short-circuit. The right composition is HNSW-PQ: keep graph topology, compress per-node vectors. Not IVF wrapping HNSW.", correct:true},
+          {key:"b", text:"IVF and HNSW always compose for free."},
+          {key:"c", text:"IVF and HNSW are identical."},
+          {key:"d", text:"Faiss already does this internally."},
         ]}
-        trap={<>(d) is wasteful before knowing the cause. (e) is heavy-handed.</>}
-        lens={<>Ladder: embedder change → nprobe / distribution drift → codebook retrain. Most "overnight" IVF-PQ regressions are codebook mismatch after an embedder push.</>}
-        stretch={<>What single canary metric should be watched continuously?</>}
+        trap={<>(b)(c)(d) collapse the mechanism distinction.</>}
+        lens={<>Compose orthogonally - graph + quantization, not partitioning + graph.</>}
+        stretch={<>What does HNSW-PQ in Faiss actually look like?</>}
       />
 
-      <VIS.TrapProblem
-        id="ivfpq-p8" difficulty="medium"
-        title="P8 — IVF-PQ vs IVF-Flat"
-        scenario={<>Pick the strongest reason to choose IVF-Flat over IVF-PQ.</>}
+      <VIS.TrapProblem id="ivf-p8" difficulty="hard"
+        title="P8 — IVF-PQ&apos;s anchor (cells + product codes + lookup tables): pitch it"
+        scenario={<><em>Discriminating insight: the anchor names all three pieces - k-means cells, product-quantized codes, and the precomputed distance table that turns scoring into M table lookups. A pitch missing any one is a near-miss.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"When you can afford to keep full-precision vectors inside the cluster lists — you still pay for IVF&apos;s partitioning benefits but skip PQ&apos;s quantization loss.", correct:true},
-          {key:"b", text:"IVF-Flat is always faster."},
-          {key:"c", text:"IVF-PQ does not support cosine."},
-          {key:"d", text:"IVF-Flat is the only option for cold starts."},
+          {key:"a", text:"IVF-PQ partitions the vector space into K cells via k-means and probes the nprobe closest cells per query. Each vector is encoded into M (typically 16) byte-codes by product quantization. Per-query, a (M x 256) distance table is precomputed once and candidate distances are M table lookups. Fits a billion vectors in ~16 GB.", correct:true},
+          {key:"b", text:"IVF-PQ is a proximity-graph walk."},
+          {key:"c", text:"IVF-PQ is brute-force scan."},
+          {key:"d", text:"IVF-PQ is locality-sensitive hashing."},
         ]}
-        trap={<>(b), (c), (d) are false or unsupported.</>}
-        lens={<>IVF-Flat keeps full vectors inside the clusters — same partitioning trick, no PQ loss, but no PQ memory win either. Use when you have moderate scale (under 100M) AND want the cluster-locality benefits of IVF without the recall loss of quantization.</>}
-        stretch={<>When does IVF-Flat beat HNSW?</>}
+        trap={<>(b) is HNSW. (c) is the baseline. (d) is LSH.</>}
+        lens={<>Cells + product codes + precomputed lookup tables - all three.</>}
+        stretch={<>Which of the three is hardest to engineer well?</>}
       />
 
-      <VIS.TrapProblem
-        id="ivfpq-p9" difficulty="hard"
-        title="P9 — Asymmetric distance computation"
-        scenario={<>The "ADC" trick in IVF-PQ: the query is full precision, the corpus is PQ-quantized. Why does this matter?</>}
+      <VIS.TrapProblem id="ivf-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use IVF-PQ. Select 3."
+        scenario={<><em>Discriminating insight: IVF-PQ needs (i) catalog too big for raw-vector RAM, (ii) recall budget that tolerates PQ error, (iii) stable cluster sizes. It is wrong for tiny catalogs, recall-saturated tasks, or distributions that produce massively imbalanced cells.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"It avoids throwing away query information. Precomputing distances from the full query to all PQ centroids gives a lookup table; then approximate distance to any quantized vector is a sum of M lookups.", correct:true},
-          {key:"b", text:"It is slower than symmetric distance."},
-          {key:"c", text:"It quantizes both query and corpus."},
-          {key:"d", text:"It is a deprecated technique."},
+          {key:"a", text:"Catalog of 1M items where HNSW fits comfortably and gives higher recall.", correct:true},
+          {key:"b", text:"Recall-saturated task where the application needs recall above 0.995 (PQ error caps below this).", correct:true},
+          {key:"c", text:"Embedding distribution with massively imbalanced clusters - one cell holds 30% of vectors and nprobe probes can miss the true neighbor.", correct:true},
+          {key:"d", text:"2B-vector catalog at 30 ms latency with recall@100 = 0.92 target - production sweet spot."},
+          {key:"e", text:"Real-time updates with millisecond-fresh inserts where rebuilding cells is acceptable nightly."},
         ]}
-        trap={<>(b), (c), (d) are false.</>}
-        lens={<>ADC (asymmetric distance computation) is the standard Faiss trick. At query time you build a 256 * M lookup table (one row per centroid per slice) of distances between the query and each PQ centroid. Then computing distance to any encoded vector is M table lookups plus a sum. Fast and lossless on the query side.</>}
-        stretch={<>What is the lookup-table size and cache implication for M=16, 256 centroids per slice?</>}
+        trap={<>(d) sweet spot. (e) plausible-not-wrong - rebuilds are doable.</>}
+        lens={<>IVF-PQ needs scale + recall headroom + balanced clusters.</>}
+        stretch={<>What diagnoses cluster imbalance early?</>}
       />
 
-      <VIS.TrapProblem
-        id="ivfpq-p10" difficulty="medium" multiSelect
-        title="P10 — IVF-PQ production launch checklist"
-        scenario={<>Which items belong on a pre-launch checklist for an IVF-PQ index?</>}
+      <VIS.TrapProblem id="ivf-p10" difficulty="hard"
+        title="P10 — Why PRODUCT quantization, not scalar?"
+        scenario={<><em>Discriminating insight: a single (scalar) codebook over d-dim vectors needs 2^(d*log2(256)) entries to be expressive - impossible. Product quantization factorizes the codebook into M smaller (256-entry) codebooks, each over a subvector. Codebook size grows linearly in M, not exponentially in d.</em><br/>Why product?</>}
         options={[
-          {key:"a", text:"Measure recall@k against full-brute-force on a labeled holdout.", correct:true},
-          {key:"b", text:"Verify cluster-size histogram is reasonable — no cluster holds over a few percent of the corpus.", correct:true},
-          {key:"c", text:"Plan a codebook-refresh schedule tied to the embedding model release cadence.", correct:true},
-          {key:"d", text:"Choose a re-rank window size and validate end-to-end recall after re-rank.", correct:true},
-          {key:"e", text:"Confirm IVF-PQ retains full-precision vectors implicitly."},
+          {key:"a", text:"A single codebook covering R^d at byte-level granularity needs an exponentially large entry count. Product quantization factorizes the codebook into M smaller codebooks, each over a d/M-dim subvector - codebook size scales linearly in M, not exponentially in d. The factorization is what makes byte-coded ANN feasible.", correct:true},
+          {key:"b", text:"Product is just a code name."},
+          {key:"c", text:"Product reduces the distance metric."},
+          {key:"d", text:"Product is for batch processing."},
         ]}
-        trap={<>(e) is wrong — IVF-PQ explicitly throws away full precision; if you need it, store separately.</>}
-        lens={<>Four real checks: recall, cluster balance, codebook freshness, re-rank window. The often-missed check is codebook freshness — teams forget that an embedder upgrade requires either re-training the PQ codebook or accepting a recall hit.</>}
-        stretch={<>How would you trigger codebook refresh automatically?</>}
+        trap={<>(b)(c)(d) miss the factorization argument.</>}
+        lens={<>Factorize the codebook to avoid exponential blow-up.</>}
+        stretch={<>What is the equivalent of M=1 PQ?</>}
       />
 
-      <VIS.TrapProblem
-        id="ivfpq-p11" difficulty="hard"
-        title="P11 — OPQ (Optimized PQ) — when worth the complexity?"
-        scenario={<>OPQ rotates the embedding space before PQ to align variance with the PQ slice boundaries. Pick the strongest reason to use it.</>}
+      <VIS.TrapProblem id="ivf-p11" difficulty="hard"
+        title="P11 — nprobe: what does it control?"
+        scenario={<><em>Discriminating insight: nprobe is the number of cells visited per query. Bigger nprobe = more cells scanned = more candidates = higher recall and higher latency. The recall-vs-nprobe curve typically has an elbow; production runs to the right of it for safety.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"When the embedding dimensions have very uneven variance — OPQ rotation balances variance across PQ slices, materially improving recall at the same memory budget.", correct:true},
-          {key:"b", text:"Always — OPQ is free."},
-          {key:"c", text:"When you have under 1M vectors."},
-          {key:"d", text:"OPQ does not exist."},
+          {key:"a", text:"nprobe = number of IVF cells visited per query. Bigger nprobe = more candidates = higher recall and linearly higher latency. The recall-vs-nprobe curve has an elbow; production tunes just past it.", correct:true},
+          {key:"b", text:"nprobe controls the codebook size."},
+          {key:"c", text:"nprobe controls the number of subvectors M."},
+          {key:"d", text:"nprobe is the batch size."},
         ]}
-        trap={<>(b) overstates — OPQ adds training cost and a rotation matrix to store. (c) is wrong regime. (d) is false.</>}
-        lens={<>OPQ (Optimized Product Quantization) learns an orthogonal rotation jointly with the PQ codebooks to maximize quantization quality. Useful when the embedding distribution has wildly uneven per-dimension variance (most learned embeddings do). The cost: a small extra matrix to apply at query and index time. The gain: a few percent recall at the same memory.</>}
-        stretch={<>When would you skip OPQ even though embeddings have uneven variance?</>}
+        trap={<>(b)(c)(d) confuse nprobe with PQ knobs.</>}
+        lens={<>nprobe trades recall for latency, linearly.</>}
+        stretch={<>What does the recall-vs-nprobe elbow look like at K=4096?</>}
       />
+
+      <VIS.TrapProblem id="ivf-p12" difficulty="hard"
+        title="P12 — What does IVF-PQ deliberately drop vs HNSW?"
+        scenario={<><em>Discriminating insight: HNSW gives raw-vector distance and high recall ceiling; IVF-PQ gives approximate distance via PQ tables. The drop is distance fidelity in exchange for ~100x memory savings.</em><br/>What does IVF-PQ forfeit?</>}
+        options={[
+          {key:"a", text:"Distance fidelity. PQ approximates true distance through subvector codebook lookups; the error caps recall regardless of nprobe. The gain is per-vector memory dropping from ~3 KB to ~16 bytes - the only way to fit a billion vectors on one box.", correct:true},
+          {key:"b", text:"IVF-PQ forfeits the use of vectors."},
+          {key:"c", text:"IVF-PQ forfeits clustering."},
+          {key:"d", text:"IVF-PQ forfeits the distance metric."},
+        ]}
+        trap={<>(b)(c)(d) miss the property dropped.</>}
+        lens={<>Distance fidelity is the deliberate sacrifice; memory is the gain.</>}
+        stretch={<>What does the PQ-error vs M curve look like?</>}
+      />
+
+      <VIS.TrapProblem id="ivf-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: nprobe dominates the recall floor at query time - too low and the true nearest cell is missed entirely, recall falls off a cliff. M (subvector count) is sticky (set at build time, controls byte budget and approximation error). K (cell count) is robust within a wide range.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"nprobe is most fragile - too low and the right cell is missed and recall collapses, especially in the long tail. M is next (sticky, controls byte budget and error floor). K is most forgiving over a wide range.", correct:true},
+          {key:"b", text:"K is most fragile."},
+          {key:"c", text:"M is most fragile."},
+          {key:"d", text:"Random seed is most fragile."},
+        ]}
+        trap={<>(b) wide-range robust. (c) sticky but predictable. (d) noise.</>}
+        lens={<>nprobe is the production-tunable cliff; M is the build-time floor.</>}
+        stretch={<>What does the recall@1000 vs nprobe curve look like under imbalance?</>}
+      />
+
+      <VIS.TrapProblem id="ivf-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: IVF-PQ assumes the k-means cells partition the embedding distribution evenly enough that nprobe captures the true neighbor. Skewed distributions (e.g., 30% of vectors collapse into 1 cell after a content change) violate this and tail recall craters.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Skewed embedding distribution that produces wildly imbalanced k-means cells. The big cells hold most candidates; nprobe of small cells misses the true neighbor with high probability. The fix is residual rebalancing or retraining the IVF centroids on the current distribution.", correct:true},
+          {key:"b", text:"Vector ids serialized with a different endianness."},
+          {key:"c", text:"Query embeddings normalized but doc embeddings are not (or vice versa)."},
+          {key:"d", text:"Lookup tables stored in the wrong memory tier."},
+        ]}
+        trap={<>(b)(c)(d) generic infra, not IVF-PQ-specific.</>}
+        lens={<>Cluster balance is the load-bearing assumption.</>}
+        stretch={<>What dashboard surfaces cluster size skew?</>}
+      />
+
+      <VIS.TrapProblem id="ivf-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;just raise nprobe to fix recall&rdquo;"
+        scenario={<><em>Discriminating insight: nprobe pushes recall up linearly in latency until you have probed all K cells (which is brute-force scan). If recall@1000 is collapsing because clusters are imbalanced, nprobe up to the elbow helps - but beyond the elbow, latency explodes for marginal recall. Often the real fix is rebalancing or higher M.</em><br/>Why is &ldquo;just bump nprobe&rdquo; usually wrong?</>}
+        options={[
+          {key:"a", text:"nprobe up to the recall-vs-nprobe elbow gives cheap recall. Past the elbow, latency grows linearly for negligible recall gain. If recall is capped by PQ error (M too small) or cluster imbalance, nprobe cannot fix it - rebalance the cells or raise M.", correct:true},
+          {key:"b", text:"nprobe always fixes recall."},
+          {key:"c", text:"nprobe is unrelated to recall."},
+          {key:"d", text:"nprobe is a build-time knob."},
+        ]}
+        trap={<>(b)(c)(d) miss the nprobe elbow.</>}
+        lens={<>nprobe past the elbow is wasted latency.</>}
+        stretch={<>What does the cost-per-recall-point curve look like past the elbow?</>}
+      />
+
+      <VIS.TrapProblem id="ivf-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;IVF-PQ is a black box ANN&rdquo; cascades into (i) skipping cluster balance monitoring (recall craters silently), (ii) shipping default M=8 codes (recall ceiling too low), (iii) under-setting nprobe (recall floor below SLO).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: cluster balance, M (byte budget / recall ceiling), and nprobe (recall floor). Each is load-bearing for IVF-PQ specifically; black-boxing it loses all three.", correct:true},
+          {key:"b", text:"Only cluster balance."},
+          {key:"c", text:"Only nprobe."},
+          {key:"d", text:"Nothing - IVF-PQ IS a black box."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>IVF-PQ has three operational contracts; black-boxing breaks all three.</>}
+        stretch={<>What dashboard panel surfaces these three?</>}
+      />
+
+      <VIS.TrapProblem id="ivf-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior responds to recall@10 great + recall@1000 bad by raising nprobe blindly. A senior measures cluster sizes first: if a handful of cells hold most of the catalog, the long-tail recall problem is cluster imbalance, not nprobe. The diagnostic is cluster-size histogram.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Plot the cluster-size histogram. If a few cells hold most vectors, nprobe cannot rescue tail recall - the true neighbor often lives in a small cell that nprobe skips. Rebalance (retrain centroids on current data, or use residual-IVF). nprobe is the right lever only when cells are roughly balanced.", correct:true},
+          {key:"b", text:"Raise nprobe unconditionally."},
+          {key:"c", text:"Drop nprobe."},
+          {key:"d", text:"Switch to HNSW."},
+        ]}
+        trap={<>(b)(c) skip diagnosis. (d) abandons IVF-PQ.</>}
+        lens={<>Cluster balance is the IVF-PQ-specific tail-recall diagnostic.</>}
+        stretch={<>What does a healthy cluster-size histogram look like?</>}
+      />
+
+      <VIS.TrapProblem id="ivf-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: subvector ordering changed in training"
+        scenario={<><em>Discriminating insight: recall@100 dropped 8 points after a routine codebook retrain. Index was fully rebuilt; nprobe unchanged. Actual cause: the data-loader subtly permuted dimensions before subvector split (a refactor that shuffled feature columns), so the M subvectors now cover different dimension groups than before. The codebooks are valid but cover the wrong subvectors at query time.</em><br/>Recall@100 -8 points after codebook retrain. Index rebuilt, nprobe unchanged. Most likely cause?</>}
+        options={[
+          {key:"a", text:"Codebook training is non-deterministic - rerun.", correct:false},
+          {key:"b", text:"Dimension-ordering drift: the data loader silently permuted dimensions before subvector split. The codebooks now cover different dim-groups than at query time; subvector distances are off. Diagnostic: hash the dim-ordering on every train + serve and alert on mismatch.", correct:true},
+          {key:"c", text:"GPU thermal throttling on the index builder.", correct:false},
+          {key:"d", text:"nprobe value reset to default by config drift.", correct:false},
+        ]}
+        trap={<>(a) plausible blame but reruns reproduce the regression - the bug is upstream. (c)(d) generic infra. The IVF-PQ-specific fingerprint is &ldquo;codebook is valid but covers wrong subvectors.&rdquo;</>}
+        lens={<>Subvector boundaries depend on dim ordering; hash it.</>}
+        stretch={<>What CI gate catches dim-ordering drift between train and serve?</>}
+      />
+
+      <VIS.TrapProblem id="ivf-p19" difficulty="hard"
+        title="P19 — Production gotcha: cluster imbalance under content drift"
+        scenario={<><em>Discriminating insight: k-means cells trained on month-old data become imbalanced as new content arrives. Tail recall collapses silently. The discipline is periodic IVF retraining on the current distribution - rebuilding only PQ codes is not enough.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Periodically retrain the IVF centroids on the current vector distribution - not just the PQ codes. Cells age into imbalance as new content lands; tail recall drops silently. Centroid retrain is cheap relative to PQ retrain; both should be scheduled.", correct:true},
+          {key:"b", text:"Centroids never need retraining."},
+          {key:"c", text:"Only the PQ codes age; centroids are stable."},
+          {key:"d", text:"Both age but neither matters."},
+        ]}
+        trap={<>(b)(c)(d) miss the aging mechanism.</>}
+        lens={<>IVF cells age with content; retrain them.</>}
+        stretch={<>What cadence balances retrain cost vs imbalance?</>}
+      />
+
+      <VIS.TrapProblem id="ivf-p20" difficulty="hard"
+        title="P20 — Failure on Friday: recall@1000 collapsed; recall@10 fine"
+        scenario={<><em>Discriminating insight: recall@10 stays high because the top-10 neighbors usually live in the densest cells that nprobe always hits. Recall@1000 needs the long tail of cells, which nprobe skips when imbalance grows. The fingerprint of cluster imbalance is exactly this divergence.</em><br/>3am page: recall@1000 down to 0.6, recall@10 still 0.95. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Cluster imbalance. Top-10 neighbors live in the densest cells that nprobe always hits; the long tail of recall@1000 needs smaller cells that nprobe skips. The divergence is the fingerprint. Fix: retrain IVF centroids, or raise nprobe (short-term), or use residual-IVF.", correct:true},
+          {key:"b", text:"PQ codebook corruption on a single dim."},
+          {key:"c", text:"Query embeddings drifted but doc embeddings are stable."},
+          {key:"d", text:"Index disk was remounted with different mount options."},
+        ]}
+        trap={<>(b) plausible but a global codebook bug would tank recall@10 too. (c)(d) infra.</>}
+        lens={<>recall@10 high, recall@1000 low = cluster imbalance.</>}
+        stretch={<>What does residual-IVF (IVF-R) do differently?</>}
+      />
+
+      <VIS.TrapProblem id="ivf-p21" difficulty="medium"
+        title="P21 — Library default that bites: M=8 in Faiss"
+        scenario={<><em>Discriminating insight: Faiss IndexIVFPQ defaults to M=8 (8 bytes per vector). That is great for memory but caps recall on 768-dim vectors well below what M=16 or M=32 delivers. Teams ship M=8 and discover the recall ceiling weeks later.</em><br/>Where does the default break IVF-PQ?</>}
+        options={[
+          {key:"a", text:"Default M=8 (~8 bytes/vector) is tuned for memory demos. On 768-dim embeddings, the PQ approximation error caps recall well below what M=16 or M=32 delivers - and M is sticky (set at build time). Teams ship the default and discover the ceiling weeks later.", correct:true},
+          {key:"b", text:"Default M=8 is fine at all dims."},
+          {key:"c", text:"M has no recall impact."},
+          {key:"d", text:"Faiss has no IVF-PQ implementation."},
+        ]}
+        trap={<>(b)(c)(d) deny the default trap.</>}
+        lens={<>Faiss defaults are memory-demos, not production-tuned.</>}
+        stretch={<>What is the recall vs M curve at d=768?</>}
+      />
+
+      <VIS.TrapProblem id="ivf-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) freeze embedding model, (2) train IVF centroids on a representative sample, (3) train PQ codebooks (or OPQ rotation + PQ), (4) encode all vectors and build inverted lists, (5) tune nprobe on a holdout, (6) ramp traffic. Skipping the holdout tune is the classic mistake.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Freeze embedding - train IVF centroids on a representative sample - train PQ codebooks (or OPQ + PQ) - encode and build inverted lists - tune nprobe on a holdout - ramp traffic", correct:true},
+          {key:"b", text:"Ramp traffic first."},
+          {key:"c", text:"Train PQ before IVF."},
+          {key:"d", text:"Skip the holdout nprobe tune."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Embedding then IVF then PQ then encode then tune then ramp.</>}
+        stretch={<>Why train IVF before PQ?</>}
+      />
+
+      <VIS.TrapProblem id="ivf-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks IVF-PQ&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: a small catalog (5M vectors) at recall@10 target 0.99. HNSW fits easily in RAM and delivers 0.995+ recall. IVF-PQ&apos;s memory advantage is meaningless and its PQ error caps recall below the target.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"5M 768-dim vectors with recall@10 = 0.99 target. HNSW fits in ~16 GB RAM and exceeds the recall target with margin. IVF-PQ&apos;s memory edge is irrelevant and its PQ error caps recall below 0.99 even at high nprobe. The claimed advantage requires both scale pressure AND recall headroom.", correct:true},
+          {key:"b", text:"2B vectors, recall@100 = 0.92 (sweet spot)."},
+          {key:"c", text:"100M users with 5k QPS."},
+          {key:"d", text:"Catalog of 50K items where everything is brute-force."},
+        ]}
+        trap={<>(b) sweet spot. (c) user count, not catalog. (d) too small for any ANN to matter.</>}
+        lens={<>IVF-PQ needs scale pressure AND recall headroom; missing either flips the Pareto.</>}
+        stretch={<>What hybrid covers both regimes (HNSW for hot, IVF-PQ for cold)?</>}
+      />
+
+      <VIS.TrapProblem id="ivf-p24" difficulty="hard"
+        title="P24 — Paper-named failure: tail recall collapse under imbalance"
+        scenario={<><em>Discriminating insight: the original IVF-PQ paper acknowledges that cluster imbalance is the dominant failure mode for tail recall. The fix is residual-IVF (encode the cluster residual with PQ, not the raw vector) and periodic centroid retrain.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Tail recall collapse under imbalanced k-means cells. nprobe heuristics miss the small cells that hold long-tail neighbors. The fix is residual-IVF (encode the residual after subtracting the centroid - codes are more uniform across cells) and scheduled centroid retraining.", correct:true},
+          {key:"b", text:"PQ has no tail failure mode."},
+          {key:"c", text:"Imbalance helps recall."},
+          {key:"d", text:"There are no documented failures."},
+        ]}
+        trap={<>(b)(c)(d) deny the named failure.</>}
+        lens={<>Imbalance is the canonical IVF-PQ tail bug; residuals are the canonical fix.</>}
+        stretch={<>How much does residual-IVF lift tail recall in practice?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://www.pinecone.io/learn/series/faiss/product-quantization/" target="_blank" rel="noopener"><strong>Pinecone — Product Quantization Explained</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>The clearest walkthrough of PQ math. Pair with their IVF post.</li>
-        <li><a href="https://lear.inrialpes.fr/pubs/2011/JDS11/jegou_searching_with_quantization.pdf" target="_blank" rel="noopener"><strong>Jégou, Douze, Schmid — Product Quantization for Nearest Neighbor Search</strong></a> <span style={{color:"#64748b", fontSize:14}}>(IEEE TPAMI 2011, paper)</span><br/>The original PQ paper. Skip the introduction; focus on Sections 3 and 4 for the asymmetric-distance trick.</li>
-        <li><a href="https://github.com/facebookresearch/faiss/wiki/Faiss-indexes" target="_blank" rel="noopener"><strong>Faiss wiki — Index types</strong></a> <span style={{color:"#64748b", fontSize:14}}>(docs)</span><br/>The reference for which IVF / PQ / OPQ index to build for your scale. Practitioner-grade.</li>
-        <li><a href="https://www.pingcap.com/article/approximate-nearest-neighbor-ann-search-explained-ivf-vs-hnsw-vs-pq/" target="_blank" rel="noopener"><strong>PingCAP — ANN search explained: IVF vs HNSW vs PQ</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Tradeoff matrix and decision rules from a vector-DB team. Useful one-pager.</li>
-        <li><a href="https://github.com/erikbern/ann-benchmarks" target="_blank" rel="noopener"><strong>ann-benchmarks (Erik Bernhardsson)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(benchmark repo)</span><br/>See where IVF-PQ falls on the recall-vs-latency Pareto vs HNSW and ScaNN on real datasets.</li>
+        <li><a href="https://hal.inria.fr/inria-00514462v2/document" target="_blank" rel="noopener">Jegou et al. - <em>Product Quantization for Nearest Neighbor Search</em> (TPAMI 2011, paper)</a> - the canonical PQ paper. Sections 3-4 cover the subvector decomposition.</li>
+        <li><a href="https://www.pinecone.io/learn/series/faiss/product-quantization/" target="_blank" rel="noopener">Pinecone - <em>Product Quantization</em> (blog)</a> - practitioner walkthrough with diagrams. Best 15-minute primer.</li>
+        <li><a href="https://github.com/facebookresearch/faiss/wiki/Faiss-indexes" target="_blank" rel="noopener">Faiss wiki - <em>Index types and parameter tuning</em></a> - the operator&apos;s manual for IVF-PQ tuning in production.</li>
+        <li><a href="https://www.pingcap.com/article/approximate-nearest-neighbor-ann-search-explained-ivf-vs-hnsw-vs-pq/" target="_blank" rel="noopener">PingCAP - <em>IVF vs HNSW vs PQ explained</em> (blog)</a> - head-to-head with recall, latency, and memory numbers.</li>
+        <li><a href="https://ann-benchmarks.com/" target="_blank" rel="noopener">ann-benchmarks.com (live benchmark)</a> - open recall-vs-latency Pareto across IVF-PQ, HNSW, and ScaNN.</li>
       </ul>
     </VIS.Section>
   </main>

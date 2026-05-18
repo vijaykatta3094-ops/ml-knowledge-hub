@@ -1414,264 +1414,427 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 15
+// ScaNN (Google) — anisotropic vector quantization for inner-product search
+// Unique mechanism: vector quantization where the codebook is trained to
+// minimize quantization error WEIGHTED by inner-product directionality —
+// not uniform L2 reconstruction error. Custom for max-inner-product search
+// (MIPS), which is what two-tower retrieval actually wants.
+// Anchor that survives redaction: "anisotropic vector quantization —
+// quantization error WEIGHTED by inner-product loss directionality, not
+// uniform L2. Custom for max-inner-product search."
+// ANN-trio caution:
+//   HNSW    = proximity graph (RAM-heavy, log-time)
+//   IVF-PQ  = clustering + product quantization (compact but lossy, ISOTROPIC)
+//   ScaNN   = anisotropic quantization (loss-aware, MIP-tuned) [THIS visual]
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · Sparse retrieval / ANN"
-      title="ScaNN — anisotropic quantization for inner-product search"
-      subtitle="Google&apos;s ANN library that quantizes vectors with a loss function tuned to the metric that retrieval actually cares about — maximum inner product."
+      title="ScaNN (Google) — anisotropic quantization for inner-product search"
+      subtitle="Quantize vectors so the error is small in the direction of the inner product - the only direction MIPS cares about. PQ is isotropic; ScaNN is loss-aware."
       byline={[
-        {label: "Source", value: "Guo et al. — Accelerating Large-Scale Inference with Anisotropic Vector Quantization (ICML 2020)"},
-        {label: "Domain", value: "Production-grade ANN for inner-product search"},
+        {label: "Paper", value: "Guo et al., 'Accelerating Large-Scale Inference with Anisotropic Vector Quantization' (ICML 2020); production at Google 2024-2026"},
+        {label: "Surface", value: "Inner-product retrieval (two-tower, dual encoders) at extreme latency budgets"},
+        {label: "Anchor that survives redaction", value: "Anisotropic vector quantization - quantization error WEIGHTED by inner-product loss directionality, not uniform L2"},
       ]}/>
 
     <VIS.TLDR>
-      Plain PQ minimizes <em>average</em> reconstruction error in all directions. <strong>ScaNN</strong> minimizes the error{" "}
-      <em>specifically in the direction of the query</em> for inner-product search — the metric that two-tower retrieval actually scores on. Result: higher recall at the same memory budget for{" "}
-      <VIS.Term def="The retrieval task of finding items that maximize the dot product (inner product) with a query vector. Standard in two-tower neural retrieval.">MIPS</VIS.Term>{" "}
-      tasks.
+      Product quantization minimizes the generic L2 reconstruction error of each subvector - it treats every direction equally. But max-inner-product search (MIPS) does NOT care equally about every direction: error perpendicular to the query barely changes the dot product, while error parallel to the query changes it a lot. <strong>ScaNN&apos;s anisotropic quantization</strong> reweights the loss so the codebook spends its budget on parallel-direction precision and tolerates perpendicular error. Same byte budget as PQ; lower MIPS error. The senior trap: ScaNN is NOT &ldquo;a better PQ for everything.&rdquo; The win is specifically in <em>inner-product retrieval</em> (two-tower recommenders, dual-encoder semantic search) and disappears when the metric is L2 (image retrieval) or when the embedding distribution is itself isotropic.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        ScaNN is a Google-built ANN library that combines partition (tree / IVF style), quantization, and an asymmetric scoring trick. Its distinguishing idea is{" "}
-        <strong>anisotropic vector quantization</strong>: penalize quantization error more heavily in the direction parallel to the data vector (which matters most for inner product) than perpendicular to it.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  Q["Query vector"] --> P["Partition tree — pick top branches"]
-  P --> A["Anisotropic-quantized vectors in branches"]
-  A --> S["Asymmetric inner-product scoring"]
-  S --> RR["Rerank top candidates from float vectors"]
-  RR --> O["Top-k results"]
-      `} />
+    <VIS.Section id="sec-what" title="What it is — anisotropic codebook training">
+      <VIS.Mermaid chart={`flowchart TB
+  V["Vector v"]
+  Q["Query q"]
+  ERR_PAR["Error along q (parallel)"]
+  ERR_PERP["Error perpendicular to q"]
+  L_PQ["PQ loss: ||v - q_hat||^2 (isotropic)"]
+  L_SCANN["ScaNN loss: weight parallel-error >> perpendicular-error"]
+  V --> ERR_PAR
+  V --> ERR_PERP
+  ERR_PAR --> L_PQ
+  ERR_PERP --> L_PQ
+  ERR_PAR --> L_SCANN
+  ERR_PERP --> L_SCANN
+  L_SCANN --> CODEBOOK["Trained codebook (anisotropic)"]
+  CODEBOOK --> RETRIEVE["MIPS lookup over codes"]
+  Q --> RETRIEVE`} />
       <ul>
-        <li><strong>Partition tree</strong> — a coarse partitioning of the corpus (similar to IVF) to skip most of the catalog at query time.</li>
-        <li><strong>Anisotropic quantization</strong> — the quantizer is trained with a loss weighted by direction: parallel-direction errors get higher weight than orthogonal-direction errors.</li>
-        <li><strong>Asymmetric scoring</strong> — like Faiss ADC, the query stays in float; only the corpus is quantized. Lookup tables make scoring fast.</li>
-        <li><strong>Reorder phase</strong> — optionally re-rank the top candidates against full-precision vectors for highest recall.</li>
+        <li><strong>The PQ baseline</strong> trains each subvector codebook by k-means on the subvector population - minimizes uniform L2 reconstruction error.</li>
+        <li><strong>ScaNN reweights the loss</strong> so quantization error parallel to a typical query direction is penalized much more than error perpendicular to it. Same byte budget; codebook entries cluster along high-dot-product axes.</li>
+        <li><strong>Result</strong> - for the same code length, MIPS distance estimate is more accurate; recall at fixed latency lifts a few points over PQ on inner-product workloads.</li>
+        <li><strong>It is not a graph and not a clustering scheme</strong> - it is a quantization-objective change. ScaNN is typically composed with a coarse partitioner (similar to IVF) and an in-memory codebook lookup.</li>
       </ul>
+      <p>The mechanism is the loss function, not the index topology.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from plain PQ / IVF-PQ">
+    <VIS.Section id="sec-diff" title="How ScaNN differs from HNSW and IVF-PQ">
       <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
-        <thead><tr style={{background:"#f1f5f9"}}>
-          <th style={{textAlign:"left",padding:8}}>Property</th>
-          <th style={{textAlign:"left",padding:8}}>Plain PQ / IVF-PQ</th>
-          <th style={{textAlign:"left",padding:8}}>ScaNN</th>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Core mechanism</th>
+          <th style={{textAlign:"left", padding:8}}>Loss</th>
+          <th style={{textAlign:"left", padding:8}}>Sweet spot</th>
         </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Quantizer loss</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Mean squared error (isotropic)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Anisotropic — weighted by direction</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Optimized metric</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>L2 reconstruction</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Inner product</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Recall at fixed memory (MIPS)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Baseline</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Higher</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Recall at fixed memory (L2)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Comparable</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No clear advantage</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Robustness to distribution shift</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>OK</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>More brittle — codebook tied to current distribution</td></tr>
+          <tr><td style={{padding:8}}>HNSW</td><td style={{padding:8}}>Proximity graph</td><td style={{padding:8}}>Greedy walk on raw distance</td><td style={{padding:8}}>Up to hundreds of millions</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>IVF-PQ</td><td style={{padding:8}}>Clusters + product codes</td><td style={{padding:8}}><strong>Isotropic L2</strong> reconstruction</td><td style={{padding:8}}>Billion-scale, generic distance</td></tr>
+          <tr><td style={{padding:8}}><strong>ScaNN</strong></td><td style={{padding:8}}><strong>Coarse partition + anisotropic codes</strong></td><td style={{padding:8}}><strong>Inner-product-aware (anisotropic)</strong></td><td style={{padding:8}}><strong>MIPS, microsecond budgets</strong></td></tr>
         </tbody>
       </table>
-      <p style={{marginTop:12}}>
-        ScaNN&apos;s pitch is sharp and metric-specific. For inner-product retrieval (two-tower recsys, dense retrieval for LLMs), it dominates. For L2 retrieval (image similarity), the gain disappears.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li><strong>Two-tower retrieval</strong> with explicit inner-product scoring — recommended sweet spot.</li>
-        <li>Dense retrieval for LLM-grounded systems where the score is a dot product.</li>
-        <li>Extreme latency budgets — Google reports double-digit-millisecond recall-0.9 retrieval on hundreds of millions.</li>
-        <li>Teams that can manage codebook re-training cadence with embedding upgrades.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Embedding distribution shift</strong> — anisotropic codebooks are tuned to the current distribution; an embedder upgrade often forces a re-train.</li>
-        <li><strong>L2 retrieval gives no advantage</strong> — the math only helps if the score is inner-product. Using ScaNN for image-similarity (L2) yields parity with PQ.</li>
-        <li><strong>Training is more complex</strong> than plain PQ — directional-weighting hyperparameters need tuning.</li>
-        <li><strong>Library ecosystem</strong> is smaller than Faiss / HNSW; fewer community examples for edge cases.</li>
-        <li><strong>Not all hardware</strong> — ScaNN&apos;s SIMD-optimized scoring assumes x86 with AVX2 or AVX-512.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick the right move(s); reveal trap and lens after committing.</p>
-
-      <VIS.TrapProblem
-        id="scann-p1" difficulty="hard"
-        title="P1 — Why does ScaNN&apos;s anisotropic quantization beat generic PQ for two-tower retrieval but not for L2 image retrieval?"
-        scenario={<>You are evaluating ScaNN vs IVF-PQ. On two-tower text retrieval, ScaNN wins by 3 points recall. On image similarity (L2), ScaNN ties IVF-PQ. Why?</>}
+      <VIS.TrapProblem id="scann-p1" difficulty="hard"
+        title="P1 — ScaNN vs PQ: load-bearing difference"
+        scenario={<><em>Discriminating insight: PQ minimizes UNIFORM L2 reconstruction error in each subvector codebook - all directions matter equally. ScaNN minimizes ANISOTROPIC error - parallel-to-query direction matters MORE than perpendicular. Same byte budget, MIPS-aware codebook.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Anisotropic quantization is tuned to inner-product score. For inner product, error parallel to the data vector matters more than orthogonal error; weighting them differently improves the metric that actually drives ranking. For L2, all directions matter equally — anisotropic weighting offers no advantage.", correct:true},
-          {key:"b", text:"ScaNN cannot do L2."},
-          {key:"c", text:"Image embeddings are too high-dimensional."},
-          {key:"d", text:"Two-tower models always beat image similarity."},
+          {key:"a", text:"PQ trains codebooks to minimize generic L2 reconstruction error per subvector - all directions are equally penalized. ScaNN weights the loss so error in the inner-product direction is penalized more than perpendicular error. Same byte budget per vector; MIPS distance is more accurate; L2 distance is no better.", correct:true},
+          {key:"b", text:"PQ and ScaNN train the same codebooks."},
+          {key:"c", text:"ScaNN uses bigger codebooks."},
+          {key:"d", text:"PQ uses a proximity graph; ScaNN does not."},
         ]}
-        trap={<>(b) is false — ScaNN supports L2 but has no special advantage. (c) is unrelated. (d) is a category error.</>}
-        lens={<>The math: under L2, every direction of error contributes equally to the distance. Under inner product, the gradient of the score with respect to the data vector is the query vector — so error in the direction of (loosely) "future queries" matters more. ScaNN&apos;s loss approximates this by weighting parallel-to-data error more. The win is purely metric-specific.</>}
-        stretch={<>Could you adapt the anisotropic idea to L2 by weighting by cluster-radius direction?</>}
+        trap={<>(b)(c)(d) collapse the anisotropic-loss mechanism.</>}
+        lens={<>PQ = isotropic L2 loss. ScaNN = inner-product-direction-weighted loss.</>}
+        stretch={<>What does the anisotropic loss look like in closed form?</>}
       />
 
-      <VIS.TrapProblem
-        id="scann-p2" difficulty="medium" multiSelect
-        title="P2 — When does ScaNN make sense to consider?"
-        scenario={<>Pick the workloads where ScaNN should be on your shortlist.</>}
+      <VIS.TrapProblem id="scann-p2" difficulty="hard"
+        title="P2 — ScaNN vs HNSW: anchor each"
+        scenario={<><em>Discriminating insight: HNSW is a proximity-graph walk over raw vectors - no quantization, RAM-heavy, recall ceiling extremely high. ScaNN is a quantization method whose codebook is loss-aware for MIPS - compact codes, sub-millisecond budgets. Different mechanism class entirely.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Two-tower neural retrieval for recsys.", correct:true},
-          {key:"b", text:"Dense retrieval for LLM-grounded QA (embedding queries against a passage corpus).", correct:true},
-          {key:"c", text:"Production ad retrieval where latency budgets are sub-10ms.", correct:true},
-          {key:"d", text:"Image similarity search using L2 distance."},
-          {key:"e", text:"Exact KNN."},
+          {key:"a", text:"HNSW is a graph-walk over raw vectors; no quantization; RAM-heavy; very high recall ceiling. ScaNN is a quantization method whose codebook is trained to be inner-product-aware; compact codes; built for sub-millisecond MIPS. Different mechanism class entirely.", correct:true},
+          {key:"b", text:"Both walk a proximity graph."},
+          {key:"c", text:"HNSW is anisotropic by default."},
+          {key:"d", text:"They are interchangeable."},
         ]}
-        trap={<>(d) gives no anisotropic advantage; (e) is not an ANN problem.</>}
-        lens={<>Three good fits — all are inner-product-scored, latency-sensitive workloads. Image-L2 retrieval shows no advantage; exact-KNN is a different problem. The pattern: ScaNN is for the metric, not for the scale.</>}
-        stretch={<>How would you measure the metric-specific advantage on your dataset?</>}
+        trap={<>(b)(c)(d) confuse graph walking with quantization.</>}
+        lens={<>HNSW = graph, raw vectors. ScaNN = anisotropic quantization, MIPS-tuned.</>}
+        stretch={<>Why does HNSW dominate L2 retrieval while ScaNN dominates MIPS?</>}
       />
 
-      <VIS.TrapProblem
-        id="scann-p3" difficulty="hard"
-        title="P3 — Embedding distribution shifts"
-        scenario={<>You upgrade your two-tower embedder. ScaNN recall drops from 0.96 to 0.84 overnight. Plain Faiss-PQ in another team&apos;s service drops from 0.94 to 0.90 on the same upgrade. Pick the strongest explanation.</>}
+      <VIS.TrapProblem id="scann-p3" difficulty="medium"
+        title="P3 — Without ScaNN, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: realistic fallbacks for MIPS are IVF-PQ (isotropic but compact), normalize-then-L2 + HNSW (works if you can re-normalize), or learned index (research). ScaNN sits at the &ldquo;optimized for inner product with compact codes&rdquo; corner.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"ScaNN&apos;s anisotropic codebook is tuned more tightly to the prior embedding distribution — when that distribution shifts, the loss-weighted optimum drifts farther than plain PQ. The fix is to re-train the codebook with the new embeddings.", correct:true},
-          {key:"b", text:"ScaNN is broken."},
-          {key:"c", text:"Plain PQ has no quantizer."},
-          {key:"d", text:"ScaNN does not work with new embeddings."},
+          {key:"a", text:"IVF-PQ (compact codes but isotropic loss - leaves recall on the table for MIPS), or normalize-to-unit-sphere then HNSW with L2 (works but RAM-heavy), or coarse learned indices (research). ScaNN owns the &ldquo;compact codes AND inner-product-aware&rdquo; corner.", correct:true},
+          {key:"b", text:"Brute-force MIPS at parity."},
+          {key:"c", text:"Random retrieval."},
+          {key:"d", text:"BM25 only."},
         ]}
-        trap={<>(b), (c), (d) are false or overstated.</>}
-        lens={<>The anisotropic codebook over-fits more strongly to the training distribution than the isotropic PQ codebook — its loss function literally weights some directions more, so when those directions move, the loss increases more sharply. The standard mitigation is to bake codebook re-training into the embedder release process.</>}
-        stretch={<>How would you detect distribution drift before it causes a recall regression?</>}
+        trap={<>(b)(c)(d) under-shoot MIPS at scale.</>}
+        lens={<>ScaNN&apos;s niche is compact + MIPS-aware.</>}
+        stretch={<>How does normalize-then-L2 compare on recall vs ScaNN?</>}
       />
 
-      <VIS.TrapProblem
-        id="scann-p4" difficulty="hard" multiSelect
-        title="P4 — Anisotropic loss intuition"
-        scenario={<>Pick the statements that correctly describe anisotropic quantization loss.</>}
+      <VIS.TrapProblem id="scann-p4" difficulty="hard"
+        title="P4 — Compose ScaNN with a coarse partitioner (tree / IVF-like)"
+        scenario={<><em>Discriminating insight: production ScaNN uses a coarse partitioner (tree or IVF-like) to prune the catalog to a few thousand candidates, then runs the anisotropic-code distance estimate, then RE-RANKS the top few hundred with exact distance on raw vectors. Three stages, each load-bearing.</em><br/>What does the composition achieve?</>}
         options={[
-          {key:"a", text:"Errors in the direction of the original data vector are penalized more heavily than perpendicular errors.", correct:true},
-          {key:"b", text:"It is a single scalar lambda controlling parallel-vs-orthogonal weighting.", correct:true},
-          {key:"c", text:"It reduces to plain MSE when lambda = 1 (equal weighting).", correct:true},
-          {key:"d", text:"It requires the query distribution at training time."},
-          {key:"e", text:"It minimizes the average reconstruction error across all dimensions equally."},
+          {key:"a", text:"Three stages: (1) coarse partitioner prunes the catalog to a few thousand candidates, (2) anisotropic-code distance gives a cheap MIPS estimate over those candidates, (3) top few hundred are re-ranked with exact raw-vector distance. Each stage cuts cost and the final rerank rescues recall lost to quantization.", correct:true},
+          {key:"b", text:"ScaNN is a single stage."},
+          {key:"c", text:"The partitioner is optional and never matters."},
+          {key:"d", text:"Reranking is forbidden."},
         ]}
-        trap={<>(d) is false — the trick assumes future queries are uniformly distributed in direction. (e) describes plain PQ.</>}
-        lens={<>The loss is roughly E[(parallel error)^2] + lambda * E[(orthogonal error)^2], with lambda &lt; 1 to down-weight orthogonal error. The clever step is that this approximates E[(inner-product error)^2] under uniform query directions — a closed-form result in the paper. No query data needed.</>}
-        stretch={<>What changes if queries are NOT uniformly distributed in direction?</>}
+        trap={<>(b)(c)(d) miss the three-stage cascade.</>}
+        lens={<>Partition + anisotropic codes + exact rerank - three load-bearing stages.</>}
+        stretch={<>How many candidates does the rerank touch in production?</>}
       />
 
-      <VIS.TrapProblem
-        id="scann-p5" difficulty="medium"
-        title="P5 — ScaNN vs HNSW for two-tower retrieval"
-        scenario={<>You have 50M items, two-tower embeddings, inner-product score, p99 budget 20ms. Pick the strongest move.</>}
+      <VIS.TrapProblem id="scann-p5" difficulty="medium"
+        title="P5 — Where does ScaNN&apos;s edge over PQ shrink to zero?"
+        scenario={<><em>Discriminating insight: anisotropic quantization is only better than isotropic PQ when the loss is genuinely anisotropic - i.e., the distance metric is inner-product and queries have a directional bias. For L2 image retrieval, the directionality argument disappears and ScaNN reduces to PQ.</em><br/>Where does the edge vanish?</>}
         options={[
-          {key:"a", text:"HNSW will dominate at this scale — RAM fits, recall-vs-latency Pareto wins. ScaNN earns its keep at much larger scale or much tighter memory.", correct:true},
-          {key:"b", text:"ScaNN is always best for inner product."},
-          {key:"c", text:"Brute force."},
-          {key:"d", text:"IVF-PQ without re-rank."},
+          {key:"a", text:"L2 retrieval (e.g., image embeddings used with Euclidean distance). The anisotropic-loss reweighting assumes inner-product is the loss that matters; for L2, every direction is equally important and the reweighting buys nothing. ScaNN reduces to PQ.", correct:true},
+          {key:"b", text:"ScaNN always wins."},
+          {key:"c", text:"Inner-product retrieval is where ScaNN underperforms."},
+          {key:"d", text:"The distance metric does not affect quantization."},
         ]}
-        trap={<>(b) overstates. (c) wastes resource. (d) under-recalls without re-rank.</>}
-        lens={<>At 50M and a 20ms budget, HNSW (with cosine = normalized L2) is the simpler and stronger default. ScaNN&apos;s advantage shows up when scale or memory pressure breaks HNSW. Below that breakpoint, HNSW&apos;s smoother recall curve and simpler ops story usually win.</>}
-        stretch={<>At what corpus size does ScaNN start to dominate HNSW for inner-product?</>}
+        trap={<>(b)(c)(d) miss the metric-dependent argument.</>}
+        lens={<>Anisotropy needs a directional loss; L2 has none.</>}
+        stretch={<>What other metrics share the directionality structure?</>}
       />
 
-      <VIS.TrapProblem
-        id="scann-p6" difficulty="hard" mode="ordered"
-        title="P6 — Order your debugging when ScaNN recall regresses"
-        scenario={<>Production ScaNN recall fell from 0.95 to 0.86 after a tower model retrain. Order your diagnostics.</>}
+      <VIS.TrapProblem id="scann-p6" difficulty="hard"
+        title="P6 — Pick the retrieval architecture"
+        scenario={<><em>Discriminating insight: a 500M-vector two-tower retrieval surface at 50k QPS, p95 latency 2 ms (extreme), recall@100 target 0.9. MIPS-native embedding. HNSW does not fit the 2 ms budget; IVF-PQ leaves recall on the table. ScaNN&apos;s coarse + anisotropic-codes + rerank meets all three.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Confirm the new embeddings were applied AND the ScaNN codebook was re-trained on a fresh sample of those new embeddings.", order:1},
-          {key:"b", text:"Inspect the parallel-vs-orthogonal weighting lambda — was the new distribution well-handled by the prior lambda?", order:2},
-          {key:"c", text:"Roll back the embedder."},
-          {key:"d", text:"Re-tune partitioner cluster count and tree depth.", order:3},
-          {key:"e", text:"Disable ScaNN and switch to brute force."},
+          {key:"a", text:"ScaNN - 500M vectors with MIPS embedding at 2 ms p95 and recall@100=0.9 is its production sweet spot. HNSW exceeds the latency budget. IVF-PQ&apos;s isotropic codes cap recall a few points below target. ScaNN&apos;s anisotropic codebook + coarse partition + small rerank meets all three constraints.", correct:true},
+          {key:"b", text:"HNSW - exceeds the 2 ms latency budget."},
+          {key:"c", text:"IVF-PQ - misses the recall target."},
+          {key:"d", text:"Brute-force - impossible at 500M, 2 ms."},
         ]}
-        trap={<>(c) is over-reactive. (e) is wasteful before diagnosing.</>}
-        lens={<>Ladder: codebook freshness → lambda re-tune → partitioner re-tune. Most ScaNN regressions after embedder upgrade are codebook staleness — addressing this first usually closes the gap.</>}
-        stretch={<>What single metric warns you that codebook is stale before recall drops?</>}
+        trap={<>(b) latency. (c) recall. (d) latency.</>}
+        lens={<>MIPS + extreme latency + recall pressure = ScaNN.</>}
+        stretch={<>What if the embedding switched to L2?</>}
       />
 
-      <VIS.TrapProblem
-        id="scann-p7" difficulty="medium" multiSelect
-        title="P7 — ScaNN production launch checklist"
-        scenario={<>Items that belong on a pre-launch ScaNN checklist.</>}
+      <VIS.TrapProblem id="scann-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;ScaNN should beat PQ on every benchmark&rdquo;"
+        scenario={<><em>Discriminating insight: anisotropic quantization is a MIPS-specific optimization. On L2 image-retrieval benchmarks it ties PQ; on inner-product benchmarks it wins. The blanket claim &ldquo;ScaNN beats PQ&rdquo; is wrong - it depends on the loss the benchmark uses.</em><br/>Why is the blanket claim wrong?</>}
         options={[
-          {key:"a", text:"Recall@k measured against brute-force on a labeled holdout, AT the inner-product score the production system uses.", correct:true},
-          {key:"b", text:"Codebook refresh pipeline plumbed to fire whenever the embedder retrains.", correct:true},
-          {key:"c", text:"Partitioner cluster size histogram inspected for imbalance.", correct:true},
-          {key:"d", text:"Reorder window size chosen and end-to-end recall confirmed.", correct:true},
-          {key:"e", text:"Confirm ScaNN can operate without any codebook."},
+          {key:"a", text:"Anisotropic quantization optimizes the inner-product-direction error. On L2 benchmarks the directional argument vanishes and ScaNN ties PQ. ScaNN&apos;s win is metric-conditional: it shines on MIPS workloads and ties on L2.", correct:true},
+          {key:"b", text:"ScaNN always wins."},
+          {key:"c", text:"ScaNN always loses."},
+          {key:"d", text:"Quantization is metric-independent."},
         ]}
-        trap={<>(e) is wrong — codebook is essential.</>}
-        lens={<>Four real checks; the often-forgotten one is automation of codebook refresh on embedder release.</>}
-        stretch={<>How would you test the codebook-refresh pipeline in staging?</>}
+        trap={<>(b)(c)(d) miss the metric dependency.</>}
+        lens={<>Anisotropy is loss-specific; check the metric before claiming the win.</>}
+        stretch={<>What does the recall-vs-metric chart look like?</>}
       />
 
-      <VIS.TrapProblem
-        id="scann-p8" difficulty="hard"
-        title="P8 — ScaNN&apos;s reorder window"
-        scenario={<>ScaNN&apos;s pipeline has a reorder phase that re-scores top candidates against float vectors. Pick the strongest reason this matters.</>}
+      <VIS.TrapProblem id="scann-p8" difficulty="hard"
+        title="P8 — ScaNN&apos;s anchor (anisotropic loss + coarse partition + rerank): pitch it"
+        scenario={<><em>Discriminating insight: the anchor names all three pieces - anisotropic loss for inner-product, coarse partitioning to prune, and exact rerank on the top few hundred. A pitch missing any one is incomplete.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Anisotropic-quantized scores are an unbiased but noisy estimator of the true inner product. The reorder step re-scores against float vectors to recover the ORDER among the top candidates — the candidates themselves are largely correct.", correct:true},
-          {key:"b", text:"Reorder fixes coarse-partition misrouting."},
-          {key:"c", text:"Reorder replaces ScaNN entirely."},
-          {key:"d", text:"Reorder is decorative."},
+          {key:"a", text:"ScaNN trains a codebook to minimize quantization error weighted by inner-product direction (anisotropic loss), composes it with a coarse partitioner to prune the catalog quickly, then re-ranks the top candidates with exact raw-vector inner-product. Designed end-to-end for MIPS at microsecond budgets.", correct:true},
+          {key:"b", text:"ScaNN is a proximity-graph walk."},
+          {key:"c", text:"ScaNN is brute-force scan."},
+          {key:"d", text:"ScaNN is LSH."},
         ]}
-        trap={<>(b) is wrong — partition routing happens earlier. (c) and (d) overstate.</>}
-        lens={<>The reorder window is the cheap final pass that aligns ScaNN&apos;s approximate score with the true inner product. Without it, ScaNN&apos;s ranking is noisy among nearby candidates. With it, ranking quality matches float to within rounding.</>}
-        stretch={<>How would you tune the reorder window size on a budget?</>}
+        trap={<>(b) is HNSW. (c) is the baseline. (d) is LSH.</>}
+        lens={<>Anisotropic codes + coarse partition + rerank - all three.</>}
+        stretch={<>Which of the three is hardest to engineer well?</>}
       />
 
-      <VIS.TrapProblem
-        id="scann-p9" difficulty="medium"
-        title="P9 — ScaNN vs other anisotropic methods"
-        scenario={<>Several methods quantize for inner-product specifically. Pick the strongest claim about ScaNN&apos;s place.</>}
+      <VIS.TrapProblem id="scann-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use ScaNN. Select all that apply."
+        scenario={<><em>Discriminating insight: ScaNN needs (i) inner-product distance, (ii) extreme latency pressure that justifies the training complexity, (iii) stable embedding distribution. It is wrong for L2 retrieval, rapidly drifting embeddings, or surfaces where the team cannot afford the more complex codebook training pipeline.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"ScaNN packages anisotropic quantization with practical partitioning and SIMD-optimized scoring into a single production library — the engineering matters as much as the math.", correct:true},
-          {key:"b", text:"ScaNN&apos;s math is unique and unreplicated in the literature."},
-          {key:"c", text:"ScaNN is unrelated to PQ."},
-          {key:"d", text:"ScaNN only works on Google TPUs."},
+          {key:"a", text:"L2 image retrieval where the anisotropic argument does not apply - PQ ties ScaNN at lower training complexity.", correct:true},
+          {key:"b", text:"Embedding distribution that drifts weekly - the anisotropic codebook becomes mistuned faster than it can be retrained.", correct:true},
+          {key:"c", text:"Two-tower retrieval with MIPS at 2 ms p95 - the production sweet spot."},
+          {key:"d", text:"Tiny team that cannot maintain a custom codebook-training pipeline; off-the-shelf Faiss IVF-PQ is operationally simpler.", correct:true},
+          {key:"e", text:"Cosine-similarity retrieval where vectors are normalized to unit norm - cosine reduces to inner product."},
         ]}
-        trap={<>(b) overstates — the directional-loss idea has been explored in earlier work. (c) and (d) are false.</>}
-        lens={<>ScaNN&apos;s contribution is partly the loss function, partly the engineering. Recent academic methods have similar quantization losses but lack the partitioner, SIMD scoring, and library ergonomics that make ScaNN a real production tool.</>}
-        stretch={<>How important is SIMD-optimized scoring vs the anisotropic loss itself?</>}
+        trap={<>(c) sweet spot. (e) is exactly where ScaNN works - unit-norm makes inner-product = cosine.</>}
+        lens={<>ScaNN needs MIPS + latency pressure + stable embedding + ops capacity.</>}
+        stretch={<>What signals codebook mistuning in production?</>}
       />
 
-      <VIS.TrapProblem
-        id="scann-p10" difficulty="hard"
-        title="P10 — When NOT to use ScaNN"
-        scenario={<>Pick the strongest case AGAINST ScaNN.</>}
+      <VIS.TrapProblem id="scann-p10" difficulty="hard"
+        title="P10 — Why does inner-product care about direction at all?"
+        scenario={<><em>Discriminating insight: inner product q.v decomposes as |q||v|cos(theta). Quantization error of v perpendicular to q changes |v| only along q-perpendicular - barely changes the dot product. Quantization error along q changes |v| along q - directly changes the dot product. The asymmetry is intrinsic to inner-product geometry.</em><br/>Why direction matters.</>}
         options={[
-          {key:"a", text:"L2 image-similarity retrieval — anisotropic quantization gives no advantage when the score is L2; you pay complexity for no recall gain.", correct:true},
-          {key:"b", text:"Two-tower text retrieval with strict latency."},
-          {key:"c", text:"Billion-scale inner-product ad retrieval."},
-          {key:"d", text:"Dense retrieval for LLM context grounding."},
+          {key:"a", text:"Inner product q.v depends on the projection of v onto q. Quantization error perpendicular to q does not change the projection and barely changes the dot product. Error parallel to q changes the projection directly. The asymmetry is inherent to inner-product geometry and the anisotropic loss exploits it.", correct:true},
+          {key:"b", text:"Direction matters only for L2."},
+          {key:"c", text:"Inner product is direction-blind."},
+          {key:"d", text:"Quantization error is uniform by symmetry."},
         ]}
-        trap={<>(b), (c), (d) are ScaNN sweet spots.</>}
-        lens={<>The clearest "skip ScaNN" signal is "your score is not inner product". L2 retrieval ignores ScaNN&apos;s only differentiator. Use IVF-PQ or HNSW instead.</>}
-        stretch={<>How would you test whether your scoring is truly inner-product or L2 in disguise?</>}
+        trap={<>(b)(c)(d) miss the geometric argument.</>}
+        lens={<>Inner product cares only about the projection onto q.</>}
+        stretch={<>What is the closed-form anisotropic loss?</>}
       />
 
-      <VIS.TrapProblem
-        id="scann-p11" difficulty="medium"
-        title="P11 — ScaNN&apos;s asymmetric scoring"
-        scenario={<>Pick the strongest one-line claim about ScaNN&apos;s asymmetric scoring.</>}
+      <VIS.TrapProblem id="scann-p11" difficulty="hard"
+        title="P11 — Why is the rerank stage non-negotiable?"
+        scenario={<><em>Discriminating insight: anisotropic quantization still has approximation error - the top-1 by anisotropic estimate is not always the true top-1. A small exact rerank over the top candidates is what produces the headline recall numbers. Skipping it costs recall.</em><br/>Why rerank?</>}
         options={[
-          {key:"a", text:"Query stays in full precision; corpus is anisotropically-quantized; query-time scoring uses precomputed lookup tables for fast SIMD evaluation.", correct:true},
-          {key:"b", text:"Both query and corpus are quantized for symmetry."},
-          {key:"c", text:"Scoring is done on the GPU only."},
-          {key:"d", text:"Scoring requires the float vectors at every step."},
+          {key:"a", text:"Anisotropic codes give a cheap MIPS ESTIMATE, not the exact distance. The top-K-by-estimate is not exactly the top-K-by-truth. A small exact rerank over the top few hundred candidates (using raw vectors loaded on demand) rescues most of the recall lost to quantization. Skipping rerank cuts headline recall a few points.", correct:true},
+          {key:"b", text:"Rerank is optional."},
+          {key:"c", text:"Rerank uses anisotropic codes again."},
+          {key:"d", text:"Rerank is for serving, not retrieval."},
         ]}
-        trap={<>(b), (c), (d) are false.</>}
-        lens={<>Asymmetric scoring is standard across Faiss-ADC and ScaNN: keep the query in float (it is a single vector, cheap to handle), quantize the corpus (most of the bytes), and precompute query-to-centroid tables for fast lookup. SIMD lets you score many quantized vectors per cycle.</>}
-        stretch={<>How does asymmetric scoring compare to symmetric in memory and latency?</>}
+        trap={<>(b)(c)(d) collapse the rerank role.</>}
+        lens={<>Anisotropic codes propose; exact rerank ratifies.</>}
+        stretch={<>How big should the rerank pool be?</>}
       />
+
+      <VIS.TrapProblem id="scann-p12" difficulty="hard"
+        title="P12 — What does ScaNN deliberately drop vs HNSW?"
+        scenario={<><em>Discriminating insight: HNSW gives recall ceiling close to 1.0 over raw vectors. ScaNN trades that ceiling for sub-millisecond latency on MIPS - the anisotropic quantization is approximate, and even the exact rerank only sees a top few hundred. The drop is recall ceiling.</em><br/>What does ScaNN forfeit?</>}
+        options={[
+          {key:"a", text:"Recall ceiling. HNSW&apos;s graph walk over raw vectors reaches near-perfect recall at the price of RAM and latency. ScaNN&apos;s anisotropic codes are approximate; the exact rerank only sees the top few hundred; the recall ceiling sits a few points below HNSW. The gain is sub-millisecond MIPS at compact memory.", correct:true},
+          {key:"b", text:"ScaNN forfeits MIPS."},
+          {key:"c", text:"ScaNN forfeits embeddings."},
+          {key:"d", text:"ScaNN forfeits the rerank."},
+        ]}
+        trap={<>(b)(c)(d) miss what is sacrificed.</>}
+        lens={<>Recall ceiling vs latency - ScaNN&apos;s deliberate trade.</>}
+        stretch={<>How far below HNSW is the ceiling?</>}
+      />
+
+      <VIS.TrapProblem id="scann-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: the anisotropic loss WEIGHT (how much parallel-error is penalized relative to perpendicular-error) dominates. Mis-set, the codebook is either generic-PQ (no anisotropic gain) or over-aggressive (catastrophic perpendicular blow-up). Rerank pool size is secondary; K (number of codebooks) is robust within a wide range.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"Anisotropic-loss weight is most fragile - mis-set, the codebook either reverts to generic PQ (no win) or over-emphasizes parallel and explodes perpendicular error. Rerank pool size is next. K (number of codebooks) is most forgiving over a wide range.", correct:true},
+          {key:"b", text:"K is most fragile."},
+          {key:"c", text:"Rerank pool size is most fragile."},
+          {key:"d", text:"Random seed is most fragile."},
+        ]}
+        trap={<>(b) wide-range robust. (c) tunable at query time. (d) noise.</>}
+        lens={<>Anisotropic-loss weight is the load-bearing dial.</>}
+        stretch={<>How is the anisotropic weight typically chosen?</>}
+      />
+
+      <VIS.TrapProblem id="scann-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: ScaNN assumes the embedding distribution is stable enough that the anisotropic codebook trained on yesterday&apos;s data still serves today&apos;s queries. A model retrain that rotates the embedding space invalidates the anisotropic loss reweighting - directions that mattered yesterday no longer matter today.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Embedding distribution shift - a model retrain rotates the embedding space. The anisotropic codebook is trained for yesterday&apos;s direction of inner-product; today&apos;s queries see different directionality; the anisotropic reweighting is mistuned. Fix: retrain the codebook on the new embedding distribution.", correct:true},
+          {key:"b", text:"Vector ids out of range."},
+          {key:"c", text:"Query batch size larger than the rerank pool."},
+          {key:"d", text:"Codebook stored in a different file format."},
+        ]}
+        trap={<>(b)(c)(d) generic infra, not ScaNN-specific.</>}
+        lens={<>The anisotropic codebook is pinned to the embedding direction; retrains invalidate it.</>}
+        stretch={<>What monitor catches embedding rotation early?</>}
+      />
+
+      <VIS.TrapProblem id="scann-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;just use bigger codebooks to fix recall&rdquo;"
+        scenario={<><em>Discriminating insight: bigger codebooks raise the recall ceiling but the anisotropic-loss weight is the load-bearing knob for MIPS quality - if the weight is mis-tuned, no codebook size compensates. ScaNN&apos;s edge is the LOSS, not the codebook capacity.</em><br/>Why is &ldquo;just bigger codebooks&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"Bigger codebooks raise the recall ceiling but ScaNN&apos;s edge over PQ is the anisotropic-LOSS weighting, not codebook capacity. A mis-tuned anisotropic weight kills the win regardless of codebook size. The senior move is to tune the anisotropic loss first, then size codebooks.", correct:true},
+          {key:"b", text:"Bigger codebooks always fix recall."},
+          {key:"c", text:"Codebooks are unrelated to recall."},
+          {key:"d", text:"Codebooks are a build-time decoration."},
+        ]}
+        trap={<>(b)(c)(d) miss the loss-vs-capacity distinction.</>}
+        lens={<>The loss is the ScaNN secret sauce; capacity is the floor.</>}
+        stretch={<>What is the recall vs anisotropic-weight curve?</>}
+      />
+
+      <VIS.TrapProblem id="scann-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;ScaNN is just better PQ&rdquo; cascades into (i) skipping the embedding-distribution audit (the anisotropic loss is direction-pinned), (ii) skipping the rerank pool sizing (recall ceiling stays below SLO), (iii) shipping L2 workloads on ScaNN where it ties PQ but costs more to train.</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: embedding-distribution stability, rerank pool sizing, and metric appropriateness. Each is load-bearing; black-boxing ScaNN as &ldquo;just better PQ&rdquo; loses all three.", correct:true},
+          {key:"b", text:"Only the rerank."},
+          {key:"c", text:"Only the distribution stability."},
+          {key:"d", text:"Nothing - ScaNN IS just better PQ."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>ScaNN has three operational contracts; collapsing them loses all three.</>}
+        stretch={<>What dashboard panel surfaces these?</>}
+      />
+
+      <VIS.TrapProblem id="scann-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior compares ScaNN to PQ on a single benchmark and reports a win or loss. A senior asks which DISTANCE METRIC the benchmark uses and AUDITS the embedding direction-of-inner-product distribution. The win condition is structural, not statistical.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Audit (i) the distance metric (inner-product, cosine, or L2) and (ii) the embedding distribution&apos;s directional bias. ScaNN wins when the metric is inner-product AND the embedding has directional structure. On L2, ScaNN ties PQ. On a benchmark, check the metric before reading the recall delta.", correct:true},
+          {key:"b", text:"Compare benchmark numbers blindly."},
+          {key:"c", text:"Pick PQ for everything."},
+          {key:"d", text:"Pick ScaNN for everything."},
+        ]}
+        trap={<>(b)(c)(d) skip the structural audit.</>}
+        lens={<>Audit metric + embedding structure; the win is conditional.</>}
+        stretch={<>What does &ldquo;directional bias&rdquo; mean in practice?</>}
+      />
+
+      <VIS.TrapProblem id="scann-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: rerank pool too small"
+        scenario={<><em>Discriminating insight: recall@10 looks great in offline eval but recall@100 in production sits 5 points below target. The codebook is fine; the bug is the rerank pool was sized for recall@10 (e.g., 100 candidates) and never lifted for the recall@100 launch (where you need a 500-1000 candidate rerank). The anisotropic codes propose; the rerank ratifies; small pool caps recall.</em><br/>Recall@10 great offline; recall@100 in prod -5 points. Codebook fresh. Most likely cause?</>}
+        options={[
+          {key:"a", text:"Codebook went stale after retrain.", correct:false},
+          {key:"b", text:"Rerank pool too small: the anisotropic codes propose top-K-by-estimate; the exact rerank only sees the top few hundred. If the pool was sized for recall@10 (e.g., 100 candidates) it caps recall@100. Bump rerank pool to 500-1000 and measure.", correct:true},
+          {key:"c", text:"GPU memory leak on the rerank stage.", correct:false},
+          {key:"d", text:"Inner-product sign flipped during deployment.", correct:false},
+        ]}
+        trap={<>(a) plausible but the prompt says codebook is fresh. (c)(d) generic infra. The fingerprint is recall@10 good, recall@K with K bigger than pool-size bad.</>}
+        lens={<>Rerank pool size caps recall@K when K is bigger than pool.</>}
+        stretch={<>What rerank pool size lifts recall@1000 to target?</>}
+      />
+
+      <VIS.TrapProblem id="scann-p19" difficulty="hard"
+        title="P19 — Production gotcha: training complexity"
+        scenario={<><em>Discriminating insight: ScaNN&apos;s training is more complex than PQ&apos;s. Anisotropic loss requires query-distribution statistics that must be collected and refreshed. Teams under-invest in the training pipeline and ship stale codebooks. The discipline is treat the codebook as a regularly-retrained artifact, not a one-shot.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Schedule periodic codebook retraining on fresh query-distribution statistics. ScaNN&apos;s anisotropic loss needs the current direction-of-inner-product; stale codebooks lose the anisotropic edge over time. The training pipeline must be productized, not a one-shot launch artifact.", correct:true},
+          {key:"b", text:"Codebooks never need retraining."},
+          {key:"c", text:"Training pipeline is unnecessary."},
+          {key:"d", text:"Stale codebooks are fine."},
+        ]}
+        trap={<>(b)(c)(d) miss the training-pipeline discipline.</>}
+        lens={<>The codebook is a refreshed artifact; productize the pipeline.</>}
+        stretch={<>What cadence balances retrain cost vs drift?</>}
+      />
+
+      <VIS.TrapProblem id="scann-p20" difficulty="hard"
+        title="P20 — Failure on Friday: recall on inner-product workload cratered"
+        scenario={<><em>Discriminating insight: someone bumped the embedding model upstream; the new embedding rotates the direction-of-inner-product significantly. ScaNN codebook was NOT retrained against the new direction. The anisotropic reweighting is now misaligned; codes that minimized error along OLD inner-product direction are now wasted along an irrelevant axis. Recall craters.</em><br/>3am page: MIPS recall down 15 points right after an upstream embedding upgrade. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Embedding-upgrade rotated the direction-of-inner-product but the ScaNN codebook was not retrained. The anisotropic reweighting now penalizes the wrong direction; codes minimize error along an axis that no longer matters. Fix: retrain codebook on the new embedding, or roll the embedding back until the codebook retrain completes.", correct:true},
+          {key:"b", text:"ScaNN binary needs recompilation."},
+          {key:"c", text:"The partitioner stage went down."},
+          {key:"d", text:"Disk full on rerank store."},
+        ]}
+        trap={<>(b)(c)(d) generic infra, not ScaNN-specific.</>}
+        lens={<>Embedding rotations invalidate the anisotropic codebook.</>}
+        stretch={<>What gate stops this from shipping unannounced?</>}
+      />
+
+      <VIS.TrapProblem id="scann-p21" difficulty="medium"
+        title="P21 — Library default that bites: rerank pool too small"
+        scenario={<><em>Discriminating insight: the open-source ScaNN library defaults to a rerank pool sized for recall@10 demos. Production workloads that need recall@1000 (e.g., candidate generation feeding a heavy ranker) hit the cap and chase the recall gap with downstream tweaks for weeks.</em><br/>Where does the default break ScaNN?</>}
+        options={[
+          {key:"a", text:"Default rerank pool sizes are tuned for recall@10 demos. Candidate-generation surfaces that need recall@1000 hit the rerank pool cap and chase the gap with downstream tweaks for weeks. Bump pool to a few thousand for recall@1000 workloads.", correct:true},
+          {key:"b", text:"Defaults are perfect for all workloads."},
+          {key:"c", text:"Rerank pool is irrelevant to recall."},
+          {key:"d", text:"ScaNN has no library."},
+        ]}
+        trap={<>(b)(c)(d) deny the default trap.</>}
+        lens={<>Defaults assume demo recall@10; production needs recall@K, K bigger.</>}
+        stretch={<>What pool size lifts recall@1000 to 0.95?</>}
+      />
+
+      <VIS.TrapProblem id="scann-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) freeze embedding model, (2) collect query-distribution statistics, (3) train anisotropic codebook on those statistics, (4) build coarse partitioner, (5) tune rerank pool size on a holdout, (6) ramp traffic. Skipping the query-statistics step is the classic mistake - the anisotropic loss has no direction to weight.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Freeze embedding - collect query-distribution statistics - train anisotropic codebook on those statistics - build coarse partitioner - tune rerank pool size on a holdout - ramp traffic", correct:true},
+          {key:"b", text:"Ramp traffic first."},
+          {key:"c", text:"Skip query-distribution collection."},
+          {key:"d", text:"Train codebook before freezing embedding."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Embedding then query-stats then codebook then partitioner then pool then ramp.</>}
+        stretch={<>Why collect query-distribution before codebook training?</>}
+      />
+
+      <VIS.TrapProblem id="scann-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks ScaNN&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: an L2 image-retrieval workload at 10M vectors. The anisotropic argument vanishes (L2 is direction-blind). ScaNN ties PQ on recall, and the additional training complexity is pure overhead. PQ wins on operational simplicity.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"L2 image retrieval at 10M vectors. The anisotropic-loss reweighting is direction-blind to L2; ScaNN ties PQ on recall but adds training-pipeline complexity. PQ wins on simplicity. The claimed ScaNN advantage requires INNER-PRODUCT distance.", correct:true},
+          {key:"b", text:"500M MIPS vectors at 2 ms p95 (sweet spot)."},
+          {key:"c", text:"100M users."},
+          {key:"d", text:"Catalog of 50K items."},
+        ]}
+        trap={<>(b) sweet spot. (c) user count, not catalog. (d) too small.</>}
+        lens={<>ScaNN needs MIPS; L2 collapses the edge.</>}
+        stretch={<>What other metrics share the inner-product directional structure?</>}
+      />
+
+      <VIS.TrapProblem id="scann-p24" difficulty="hard"
+        title="P24 — Paper-named failure: brittleness to embedding distribution shifts"
+        scenario={<><em>Discriminating insight: the paper acknowledges that the anisotropic codebook is direction-pinned to the embedding distribution it was trained on. Significant distribution shift (model retrain, domain change) silently mis-tunes the reweighting and recall drops. The fix is policy: schedule codebook retrains tied to embedding-model versions.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Brittleness to embedding-distribution shifts. The anisotropic loss is direction-pinned; significant shift (model retrain, domain change) silently mis-tunes the reweighting. The fix is scheduled codebook retrains tied to embedding-model versions; treat the codebook as a versioned artifact.", correct:true},
+          {key:"b", text:"ScaNN is immune to distribution shift."},
+          {key:"c", text:"Codebooks self-correct over time."},
+          {key:"d", text:"There are no documented failures."},
+        ]}
+        trap={<>(b)(c)(d) deny the named failure.</>}
+        lens={<>Codebook is direction-pinned; distribution shift is the canonical bug.</>}
+        stretch={<>What CI gate catches embedding shift before codebook retrain?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/1908.10396" target="_blank" rel="noopener"><strong>Guo et al. — Accelerating Large-Scale Inference with Anisotropic Vector Quantization</strong></a> <span style={{color:"#64748b", fontSize:14}}>(ICML 2020, paper)</span><br/>The ScaNN paper. Section 3 derives the anisotropic loss; worth the math.</li>
-        <li><a href="https://research.google/blog/announcing-scann-efficient-vector-similarity-search/" target="_blank" rel="noopener"><strong>Google Research — Announcing ScaNN</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Practitioner overview from the team. Best one-pager.</li>
-        <li><a href="https://github.com/google-research/google-research/tree/master/scann" target="_blank" rel="noopener"><strong>ScaNN GitHub — code and tutorials</strong></a> <span style={{color:"#64748b", fontSize:14}}>(code)</span><br/>The library plus examples. Useful for understanding partitioner + quantizer integration.</li>
-        <li><a href="https://www.pingcap.com/article/approximate-nearest-neighbor-ann-search-explained-ivf-vs-hnsw-vs-pq/" target="_blank" rel="noopener"><strong>PingCAP — IVF vs HNSW vs PQ</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Tradeoff matrix that places ScaNN among the rest. Practitioner-grade decision rules.</li>
-        <li><a href="https://github.com/erikbern/ann-benchmarks" target="_blank" rel="noopener"><strong>ann-benchmarks (Erik Bernhardsson)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(benchmark repo)</span><br/>See ScaNN&apos;s curve vs HNSW and IVF-PQ on glove, sift, deep1B. The metric-specific advantage shows up clearly.</li>
+        <li><a href="https://arxiv.org/abs/1908.10396" target="_blank" rel="noopener">Guo et al. - <em>Accelerating Large-Scale Inference with Anisotropic Vector Quantization</em> (ICML 2020, paper)</a> - the ScaNN paper. Sections 3-5 derive the anisotropic loss.</li>
+        <li><a href="https://blog.research.google/2020/07/announcing-scann-efficient-vector.html" target="_blank" rel="noopener">Google AI Blog - <em>Announcing ScaNN</em> (blog)</a> - the practitioner intro with intuitive diagrams. Best 10-minute primer.</li>
+        <li><a href="https://github.com/google-research/google-research/tree/master/scann" target="_blank" rel="noopener">google-research/scann (repo)</a> - reference implementation; the README documents the rerank pool and partitioner knobs.</li>
+        <li><a href="https://www.pingcap.com/article/approximate-nearest-neighbor-ann-search-explained-ivf-vs-hnsw-vs-pq/" target="_blank" rel="noopener">PingCAP - <em>IVF vs HNSW vs PQ explained</em> (blog)</a> - sets ScaNN against the alternatives with recall and latency numbers.</li>
+        <li><a href="https://ann-benchmarks.com/" target="_blank" rel="noopener">ann-benchmarks.com (live benchmark)</a> - open recall-vs-latency Pareto across ScaNN, HNSW, IVF-PQ. Check the MIPS leaderboards.</li>
       </ul>
     </VIS.Section>
   </main>

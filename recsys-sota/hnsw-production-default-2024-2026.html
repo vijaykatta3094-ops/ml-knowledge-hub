@@ -1414,264 +1414,418 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 15
+// HNSW (Hierarchical Navigable Small World) — production default 2024-2026
+// Unique mechanism: multi-LAYER proximity GRAPH (skip-list flavor). Greedy walk
+// at each layer, descending to denser layers, with bounded-degree edges.
+// Log-time approx-NN, but the FULL graph must live in RAM (memory-hungry).
+// Anchor that survives redaction: "hierarchical proximity graph layers; greedy
+// search at each layer descending; full graph in RAM; log-time approx-NN."
+// ANN-trio caution:
+//   HNSW    = proximity graph (RAM-heavy, log-time greedy walk) [THIS visual]
+//   IVF-PQ  = clustering + product quantization (compact but lossy)
+//   ScaNN   = anisotropic quantization (loss-aware quantization, MIP-tuned)
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · Sparse retrieval / ANN"
-      title="HNSW — production default for ANN (2024-2026)"
-      subtitle="A multi-layer proximity graph that walks from coarse to fine, giving logarithmic nearest-neighbor search at high recall."
+      title="HNSW — production default for ANN, 2024-2026"
+      subtitle="Multi-layer proximity graph with a greedy walk at each layer. Log-time approximate-NN at the cost of holding the full graph in RAM."
       byline={[
-        {label: "Source", value: "Malkov & Yashunin 2018; benchmarked through 2025"},
-        {label: "Domain", value: "Approximate Nearest Neighbor search"},
+        {label: "Paper", value: "Malkov & Yashunin 2018; benchmarked through 2025"},
+        {label: "Surface", value: "ANN over hundreds-of-millions-scale catalogs where recall must stay >95% and RAM is available"},
+        {label: "Anchor that survives redaction", value: "Hierarchical proximity GRAPH layers; greedy walk at each layer descending; FULL graph in RAM; log-time approx-NN"},
       ]}/>
 
     <VIS.TLDR>
-      <strong>HNSW</strong> is a layered "skip-list of proximity graphs" — top layers are sparse and let you{" "}
-      <em>jump</em> across the embedding space; bottom layer is dense and lets you{" "}
-      <em>refine</em>. Result: greedy graph-walks dominate the recall-vs-latency Pareto for up to a few hundred million vectors.
+      <VIS.Term def="Approximate Nearest Neighbor — find the k closest vectors to a query vector without scanning every vector in the index.">ANN</VIS.Term> over big embedding catalogs has three production-grade contenders: HNSW, IVF-PQ, and ScaNN. HNSW&apos;s distinguishing mechanism is a <strong>multi-layer proximity graph</strong> (skip-list flavor) where each node has bounded-degree edges to its neighbors. Search starts at the sparsest top layer, greedily walks toward the query, and descends one layer at a time until the densest bottom layer returns the candidates. That walk is log-time in the catalog size — but every edge and every vector must sit in RAM. The senior trap: HNSW is NOT &ldquo;just an ANN index.&rdquo; It is specifically a <em>graph-walk</em> method whose unique selling point is the recall-vs-latency Pareto crown up to ~hundreds of millions of vectors, paid for in memory. Beyond that, IVF-PQ&apos;s compact quantized codes start winning on cost-per-vector.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        HNSW (Hierarchical Navigable Small World) builds a stack of graphs. Each vector lives in layer 0, and with decreasing probability is also promoted into layers 1, 2, ... Higher layers act like an{" "}
-        <VIS.Term def="A skip list is a probabilistic data structure for ordered data where higher levels skip over many elements, giving logarithmic lookup. HNSW applies the same idea to a graph instead of a list.">express lane</VIS.Term>{" "}
-        — they have far fewer nodes and longer-range edges.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  Q["Query vector"] --> L2["Layer 2 — sparse, long edges"]
-  L2 --> L1["Layer 1 — medium density"]
-  L1 --> L0["Layer 0 — full graph, short edges"]
-  L0 --> A["Top-k nearest neighbors"]
-      `} />
+    <VIS.Section id="sec-what" title="What it is — proximity graph in layers">
+      <VIS.Mermaid chart={`flowchart TB
+  L2["Top layer (sparse, long jumps)"]
+  L1["Middle layer (denser)"]
+  L0["Bottom layer (full graph, all vectors)"]
+  Q["Query vector"]
+  Q --> L2
+  L2 --> L1
+  L1 --> L0
+  L0 --> R["Top-k candidates"]`} />
       <ul>
-        <li><strong>Greedy descent</strong> — start at an entry point in the top layer; move to whichever neighbor is closest to the query; descend a layer when no neighbor improves distance.</li>
-        <li><strong>Beam search at layer 0</strong> — keep the top-ef candidates while traversing the dense bottom layer to recover recall.</li>
-        <li><strong>Build-time M</strong> — each node has ~M out-edges per layer. Larger M = denser graph = better recall but higher memory.</li>
-        <li><strong>Query-time ef</strong> — wider beam = higher recall, more distance computations.</li>
+        <li><strong>Each layer is a graph</strong> — nodes are vectors, edges connect vectors that are near each other under the distance metric. Higher layers are sparser; each vector appears in layer L with geometrically decaying probability.</li>
+        <li><strong>Greedy walk at each layer</strong> — from an entry point, move to the neighbor closest to the query; stop when no neighbor is closer; descend to the next layer using the current node as the new entry.</li>
+        <li><strong>Bounded degree</strong> (parameter M) — keeps memory per node fixed and prevents the graph from becoming an O(N&sup2;) blob.</li>
+        <li><strong>efSearch</strong> — width of the priority queue during search; bigger = higher recall, slower latency.</li>
       </ul>
+      <p>The whole graph (vectors + edges) lives in RAM. There is no on-disk lookup at query time.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from IVF and brute-force">
+    <VIS.Section id="sec-diff" title="How HNSW differs from IVF-PQ and ScaNN">
       <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
-        <thead><tr style={{background:"#f1f5f9"}}>
-          <th style={{textAlign:"left",padding:8}}>Property</th>
-          <th style={{textAlign:"left",padding:8}}>Brute force</th>
-          <th style={{textAlign:"left",padding:8}}>IVF (partition + probe)</th>
-          <th style={{textAlign:"left",padding:8}}>HNSW</th>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Core mechanism</th>
+          <th style={{textAlign:"left", padding:8}}>Memory</th>
+          <th style={{textAlign:"left", padding:8}}>Sweet spot</th>
         </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Search style</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Scan all</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Pick nprobe clusters, scan inside</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Greedy graph walk</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Latency scaling with size</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Linear</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Sub-linear, depends on nprobe</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Roughly logarithmic</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Memory per vector</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>4 * dim bytes</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>4 * dim + cluster id</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>4 * dim + M * neighbor IDs per layer</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Recall@10 Pareto</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Perfect, slow</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Good but slope flattens</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Best until ~10^8-10^9 vectors</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Insertion cost</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Zero</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Cheap</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Expensive (graph rebalance)</td></tr>
+          <tr><td style={{padding:8}}><strong>HNSW</strong></td><td style={{padding:8}}><strong>Proximity graph, greedy walk</strong></td><td style={{padding:8}}><strong>Full vectors + edges in RAM</strong></td><td style={{padding:8}}><strong>Up to ~hundreds of millions</strong></td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>IVF-PQ</td><td style={{padding:8}}>K-means clusters + product-quantized codes</td><td style={{padding:8}}>~16 bytes/vector</td><td style={{padding:8}}>Billion-scale</td></tr>
+          <tr><td style={{padding:8}}>ScaNN</td><td style={{padding:8}}>Anisotropic quantization minimizing inner-product error</td><td style={{padding:8}}>Compact, MIP-tuned</td><td style={{padding:8}}>Inner-product retrieval, extreme latency budgets</td></tr>
         </tbody>
       </table>
-      <p style={{marginTop:12}}>
-        HNSW&apos;s advantage: it does not partition. Partitioning (IVF) has a hard tradeoff between cluster count and probe count; HNSW pays a smooth recall-vs-latency curve instead.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li><strong>Up to a few hundred million vectors</strong> — HNSW remains the default in 2026 for sub-billion scale.</li>
-        <li>Latency budgets where every millisecond matters but recall ≥ 0.95 is required.</li>
-        <li>Read-mostly workloads — frequent inserts degrade graph quality if not periodically rebuilt.</li>
-        <li>Embeddings that fit in RAM — HNSW assumes vectors and graph are memory-resident.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the axis it draws from. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Memory-heavy</strong> — vectors are stored uncompressed plus the graph (M times the average number of layers in pointer bytes per node). For 100M vectors at 768 dims this exceeds 300 GB.</li>
-        <li><strong>Insertion drift</strong> — heavy write workloads cause the graph topology to diverge from optimal; periodic rebuild required.</li>
-        <li><strong>Cold start at billion scale</strong> — past about 10^9 vectors, RAM cost dominates; IVF-PQ becomes more practical.</li>
-        <li><strong>No native filtering</strong> — combining HNSW with attribute filters (e.g., "only items in stock") is awkward; post-filtering hurts recall.</li>
-        <li><strong>ef must be re-tuned per query class</strong> — a single ef cannot serve both head and tail queries optimally.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick the right move(s); reveal trap and lens after committing.</p>
-
-      <VIS.TrapProblem
-        id="hnsw-p1" difficulty="hard"
-        title="P1 — Above what cardinality should you switch from HNSW to IVF-PQ?"
-        scenario={<>You run an embedding search service. Vectors are 768-dim float32. Catalog is growing fast. At what scale does HNSW stop being the right default?</>}
+      <VIS.TrapProblem id="hnsw-p1" difficulty="hard"
+        title="P1 — HNSW vs IVF-PQ: load-bearing difference"
+        scenario={<><em>Discriminating insight: IVF-PQ partitions vector space into clusters and stores quantized codes (~16 bytes/vector); recall comes from probing several clusters. HNSW stores the full uncompressed vectors AND a proximity graph; recall comes from a greedy walk over the graph. The memory profile is orders of magnitude different.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Around 100K vectors — IVF-PQ is always faster."},
-          {key:"b", text:"Around 1M vectors — HNSW does not work above 1M."},
-          {key:"c", text:"Roughly when the working set no longer fits in RAM at acceptable cost — typically a few hundred million to a billion 768-dim vectors. Below that, HNSW dominates the Pareto.", correct:true},
-          {key:"d", text:"Never — HNSW always wins."},
+          {key:"a", text:"HNSW stores full uncompressed vectors plus a proximity graph in RAM; ANN search is a greedy graph walk. IVF-PQ stores ~16-byte quantized codes after clustering; ANN search is centroid lookup + PQ distance approximation. The graph walk wins recall-vs-latency under ~hundreds of millions; PQ wins memory at billion-scale.", correct:true},
+          {key:"b", text:"They are equivalent on the recall-vs-latency Pareto."},
+          {key:"c", text:"HNSW is a special case of IVF-PQ with one cluster."},
+          {key:"d", text:"Both run the same algorithm at query time."},
         ]}
-        trap={<>(a) and (b) understate. (d) ignores the RAM ceiling — at 10B vectors the index would not fit on any single machine.</>}
-        lens={<>The right answer is RAM-driven, not cardinality-driven. HNSW stores vectors uncompressed plus a graph; once that exceeds the budget you can afford, you switch to IVF-PQ (which compresses to ~16 bytes per vector via product quantization). For 768-dim float32, a billion vectors is roughly 3 TB of vectors alone — IVF-PQ shrinks it to under 32 GB at a recall cost.</>}
-        stretch={<>How does the answer change for 128-dim instead of 768-dim?</>}
+        trap={<>(b)(c)(d) collapse the graph-vs-quantization distinction that is the entire load-bearing difference.</>}
+        lens={<>Graph walk (RAM-heavy) vs quantized codes (compact, lossy).</>}
+        stretch={<>At what catalog size does the crossover happen?</>}
       />
 
-      <VIS.TrapProblem
-        id="hnsw-p2" difficulty="medium" multiSelect
-        title="P2 — Which HNSW knobs trade recall for latency?"
-        scenario={<>You need to dial HNSW from "fast and recall=0.9" to "slow and recall=0.99". Which parameters are on the table?</>}
+      <VIS.TrapProblem id="hnsw-p2" difficulty="hard"
+        title="P2 — HNSW vs ScaNN: anchor each"
+        scenario={<><em>Discriminating insight: ScaNN&apos;s anisotropic quantization minimizes quantization error in the direction of the inner product (the loss that matters for max-inner-product search). HNSW does not quantize at all — it is a graph walk over raw vectors. Different mechanism, different sweet spot.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Increase ef_search (the query-time beam width).", correct:true},
-          {key:"b", text:"Increase M (the build-time out-edge budget per node) — but this requires re-indexing.", correct:true},
-          {key:"c", text:"Increase ef_construction (build-time beam) — improves graph quality, re-index needed.", correct:true},
-          {key:"d", text:"Increase the number of layers manually."},
-          {key:"e", text:"Decrease the embedding dimension at query time."},
+          {key:"a", text:"HNSW is a graph-walk method over raw vectors with no quantization; ScaNN is a quantization method whose codebook is tuned to preserve INNER-PRODUCT distance specifically. Choose ScaNN when the embedding is for max-inner-product search and the latency budget is microseconds; choose HNSW when you want raw-vector recall and have the RAM.", correct:true},
+          {key:"b", text:"Both quantize to 16-byte codes."},
+          {key:"c", text:"ScaNN is HNSW with anisotropic edges."},
+          {key:"d", text:"They are interchangeable."},
         ]}
-        trap={<>(d) is incorrect — the number of layers is determined probabilistically per node, not set as a global parameter. (e) breaks the geometry — query and index must share dimensions.</>}
-        lens={<>Three real knobs: query-time ef_search (cheap), build-time M and ef_construction (require re-indexing). The first is the one most production systems tune; the others are set once at index-build time.</>}
-        stretch={<>Which knob would you sweep first when investigating recall regressions?</>}
+        trap={<>(b)(c)(d) confuse quantization with graph walking.</>}
+        lens={<>HNSW = graph over raw vectors. ScaNN = MIP-tuned quantization.</>}
+        stretch={<>Why does ScaNN&apos;s loss-aware quantization beat PQ for inner-product but not for L2?</>}
       />
 
-      <VIS.TrapProblem
-        id="hnsw-p3" difficulty="hard"
-        title="P3 — Insertion-heavy workload"
-        scenario={<>You run HNSW for a marketplace where 50K new items are added per hour. After two weeks, recall has dropped from 0.96 to 0.88 with no code changes. What happened?</>}
+      <VIS.TrapProblem id="hnsw-p3" difficulty="medium"
+        title="P3 — Without HNSW, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: realistic fallbacks are IVF-flat (clustering, no PQ — recall okay, latency mid), IVF-PQ (cheap RAM but recall ceiling), or brute-force scan (O(N) latency, perfect recall, dies at scale). HNSW sits between brute-force and IVF on the Pareto.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"HNSW graphs degrade under high-insertion workloads because greedy insertion is locally optimal but globally suboptimal — periodic rebuild is required to restore quality.", correct:true},
-          {key:"b", text:"The hardware aged."},
-          {key:"c", text:"HNSW does not support insertion."},
-          {key:"d", text:"The embeddings changed."},
+          {key:"a", text:"IVF-flat (clusters with raw vectors) - close to HNSW recall but slower at the same recall target; or IVF-PQ if RAM-bound; or brute-force scan at small scale. HNSW dominates the recall-vs-latency Pareto until you hit RAM limits.", correct:true},
+          {key:"b", text:"Random sampling matches HNSW."},
+          {key:"c", text:"Skip retrieval and rely on full ranking."},
+          {key:"d", text:"BM25 only - exact text match."},
         ]}
-        trap={<>(c) is false — HNSW supports insertion. (b) and (d) are speculation without evidence.</>}
-        lens={<>HNSW insertion uses the same greedy descent as search, then connects M neighbors. Each insertion is locally optimal but does not re-evaluate prior insertion decisions. Over time the graph drifts from the "build from scratch" topology. The standard mitigation is a nightly or weekly rebuild of a fraction of the index, or a full rebuild on a schedule.</>}
-        stretch={<>How would you detect this regression automatically without a holdout set?</>}
+        trap={<>(b)(c)(d) under-shoot ANN.</>}
+        lens={<>HNSW dominates Pareto until RAM gates it out.</>}
+        stretch={<>What recall does IVF-flat give at HNSW&apos;s latency?</>}
       />
 
-      <VIS.TrapProblem
-        id="hnsw-p4" difficulty="medium" multiSelect
-        title="P4 — Memory budget back-of-envelope"
-        scenario={<>50M vectors, 384-dim float32, M=32. Pick the realistic memory claims.</>}
+      <VIS.TrapProblem id="hnsw-p4" difficulty="hard"
+        title="P4 — Compose HNSW with PQ"
+        scenario={<><em>Discriminating insight: HNSW-PQ stores PQ codes at each node, shrinking the per-vector footprint but losing exact distances during the graph walk. The graph topology is unchanged; only the distance computation is approximated. Useful for billion-scale where the full graph fits but raw vectors do not.</em><br/>What does HNSW-PQ achieve?</>}
         options={[
-          {key:"a", text:"Vectors alone: ~75 GB (50M * 384 * 4 bytes).", correct:true},
-          {key:"b", text:"Graph: a few GB to ~10 GB for the neighbor lists across all layers.", correct:true},
-          {key:"c", text:"Total RAM: well under 100 GB — single fat box can hold it.", correct:true},
-          {key:"d", text:"Total RAM: 5 GB — HNSW compresses vectors."},
-          {key:"e", text:"Disk-only HNSW is the standard production approach."},
+          {key:"a", text:"HNSW-PQ keeps the graph topology of HNSW but stores PQ codes at each node so the per-vector memory drops ~10x; the trade is approximate distances during the greedy walk, which trims recall by a few points. Useful when the graph fits but raw vectors do not.", correct:true},
+          {key:"b", text:"HNSW-PQ replaces the graph with PQ codes; the walk disappears."},
+          {key:"c", text:"HNSW-PQ is identical to plain HNSW."},
+          {key:"d", text:"PQ cannot compose with graph methods."},
         ]}
-        trap={<>(d) is false — HNSW does NOT compress vectors. (e) is false in standard deployments — disk-resident HNSW exists (e.g., DiskANN), but the default HNSW is RAM-resident.</>}
-        lens={<>The math: 50M * 384 * 4 = 76.8 GB for vectors. Graph cost is ~M * (avg layers) * 8 bytes per node — under 15 GB. Total under 100 GB fits on a single fat box. This is why HNSW dominates for sub-billion scale — no sharding needed.</>}
-        stretch={<>How does the answer change if you use float16 instead of float32?</>}
+        trap={<>(b)(c)(d) confuse what is preserved (graph) vs what is compressed (vectors).</>}
+        lens={<>Compose graph topology with quantized vectors when RAM is the bottleneck.</>}
+        stretch={<>How many recall points do you pay for the memory win?</>}
       />
 
-      <VIS.TrapProblem
-        id="hnsw-p5" difficulty="hard"
-        title="P5 — HNSW with attribute filtering"
-        scenario={<>A query needs ANN AND attribute filtering ("only items in stock and shipping to US"). Pick the strongest implementation strategy.</>}
+      <VIS.TrapProblem id="hnsw-p5" difficulty="medium"
+        title="P5 — At what catalog size does HNSW stop being the default?"
+        scenario={<><em>Discriminating insight: HNSW&apos;s RAM cost is ~(d * 4 bytes per dim) + (M * 8 bytes per edge) per vector. At a billion vectors with d=768 and M=32, that is ~3+ TB of RAM per replica - IVF-PQ&apos;s 16-byte codes start winning on cost-per-vector even if recall drops a few points.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Run HNSW with a wider beam (ef * 5) and post-filter the results — accept that some queries will under-return because all top-ef were filtered out.", correct:false},
-          {key:"b", text:"Run HNSW with a per-attribute filter applied DURING graph traversal — skip neighbors that fail the filter. This is the production technique (filtered HNSW) used by Milvus, Pinecone, Weaviate.", correct:true},
-          {key:"c", text:"Always brute-force when filters are present."},
-          {key:"d", text:"HNSW cannot do filtering."},
+          {key:"a", text:"At roughly hundreds of millions to a billion vectors, depending on dim and M. Above that, the RAM bill of holding full vectors + bounded-degree edges exceeds what one box can hold; IVF-PQ&apos;s quantized codes amortize better even at a few recall points lower.", correct:true},
+          {key:"b", text:"HNSW always wins."},
+          {key:"c", text:"HNSW stops working at 10,000 vectors."},
+          {key:"d", text:"Catalog size is irrelevant."},
         ]}
-        trap={<>(a) post-filtering is naive and breaks recall when the filter is selective. (c) is wasteful — filter-aware HNSW exists. (d) is false.</>}
-        lens={<>Production HNSW systems (Milvus, Pinecone, Weaviate) all implement filter-aware graph traversal: when expanding a node, neighbors that fail the predicate are skipped without contributing to the beam. This preserves recall when the predicate is moderate; for very selective predicates (under 1% pass rate), prefilter-then-brute-force may win.</>}
-        stretch={<>At what filter selectivity should you switch from filtered-HNSW to brute-force?</>}
+        trap={<>(b)(c)(d) miss the RAM-vs-cardinality contract.</>}
+        lens={<>HNSW scales until RAM gates it; then IVF-PQ.</>}
+        stretch={<>How does dimension d shift the crossover point?</>}
       />
 
-      <VIS.TrapProblem
-        id="hnsw-p6" difficulty="medium"
-        title="P6 — HNSW vs IVF: a one-liner decision rule"
-        scenario={<>When should you pick HNSW over IVF-PQ?</>}
+      <VIS.TrapProblem id="hnsw-p6" difficulty="hard"
+        title="P6 — Pick the retrieval architecture"
+        scenario={<><em>Discriminating insight: a 50M-doc enterprise search at 5k QPS with ~3 TB of RAM available, p95 latency budget 8 ms, and recall@10 target of 0.98. HNSW fits 50M raw 768-dim vectors in ~150 GB; greedy walk meets 8 ms; recall ceiling is well above 0.98. IVF-PQ would hit recall floor.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"When recall matters more than memory and the working set fits comfortably in RAM — HNSW gives a smoother recall-vs-latency curve than IVF for the same memory budget.", correct:true},
-          {key:"b", text:"Always — HNSW is strictly better."},
-          {key:"c", text:"Never — IVF is strictly better."},
-          {key:"d", text:"Pick the one that ships with your vector DB."},
+          {key:"a", text:"HNSW - 50M raw vectors + graph fits in ~150 GB RAM; greedy walk meets 8 ms p95 at recall@10 above 0.98. IVF-PQ would save RAM but cap recall below the 0.98 target. ScaNN if the embedding were strictly inner-product and budget were sub-ms, but at 5k QPS and 8 ms HNSW is the default.", correct:true},
+          {key:"b", text:"Brute-force scan."},
+          {key:"c", text:"IVF-PQ - but recall ceiling fails the 0.98 target."},
+          {key:"d", text:"LSH - recall is worse than IVF-PQ at this scale."},
         ]}
-        trap={<>(b) and (c) are absolutes. (d) is a non-answer — most modern vector DBs ship both.</>}
-        lens={<>The rule is "memory-rich, recall-hungry → HNSW; memory-poor, scale-hungry → IVF-PQ". A second dimension is read/write mix: HNSW prefers read-mostly; IVF tolerates higher write rates because each insertion only updates a single cluster.</>}
-        stretch={<>How does the choice change if your team already operates a different ANN system?</>}
+        trap={<>(b) latency. (c) recall. (d) recall.</>}
+        lens={<>50M + RAM + tight recall = HNSW production default.</>}
+        stretch={<>What changes at 5B vectors?</>}
       />
 
-      <VIS.TrapProblem
-        id="hnsw-p7" difficulty="hard" mode="ordered"
-        title="P7 — Order your debugging when HNSW recall regresses"
-        scenario={<>Production recall@10 dropped from 0.97 to 0.91 overnight. Order your investigation. Wrong moves do not get a number.</>}
+      <VIS.TrapProblem id="hnsw-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;HNSW always wins on recall&rdquo;"
+        scenario={<><em>Discriminating insight: HNSW dominates recall-vs-latency until RAM gates it out. Above that, you cannot fit the graph in RAM and HNSW degenerates - paging makes the greedy walk catastrophically slow. The win is conditional on the RAM budget.</em><br/>Why is the blanket claim wrong?</>}
         options={[
-          {key:"a", text:"Check if the embedding model was redeployed — different embeddings against an old index are the most common cause.", order:1},
-          {key:"b", text:"Check ef_search at query time — was it accidentally lowered by a config push?", order:2},
-          {key:"c", text:"Rebuild the entire index from scratch right now."},
-          {key:"d", text:"Inspect insertion rate over the last 24h and graph degradation indicators (avg neighbor distance).", order:3},
-          {key:"e", text:"Roll back the entire service."},
+          {key:"a", text:"HNSW dominates the Pareto only while the full graph fits in RAM. When the catalog exceeds RAM, the OS pages graph edges to disk and the greedy walk becomes random-IO-bound - orders of magnitude slower. Above the RAM ceiling, IVF-PQ&apos;s compact codes win even at lower recall.", correct:true},
+          {key:"b", text:"HNSW always wins."},
+          {key:"c", text:"Recall is irrelevant to ANN."},
+          {key:"d", text:"Disk-based HNSW is the same as in-RAM HNSW."},
         ]}
-        trap={<>(c) is destructive without diagnosis. (e) is heavy-handed before knowing the cause.</>}
-        lens={<>The diagnostic ladder: did the embedder change → did the search config change → is the graph degrading. Each step is cheap to check and rules out a large bucket of causes. Most "overnight recall drop" cases are an embedder mismatch, not a graph problem.</>}
-        stretch={<>What single metric, watched continuously, would have caught this earlier?</>}
+        trap={<>(b) the seductive overgeneralization. (c)(d) miss the RAM-binding mechanism.</>}
+        lens={<>HNSW&apos;s recall edge is RAM-conditional.</>}
+        stretch={<>What does disk-based HNSW (DiskANN) change?</>}
       />
 
-      <VIS.TrapProblem
-        id="hnsw-p8" difficulty="medium" multiSelect
-        title="P8 — HNSW production launch checklist"
-        scenario={<>Pre-launch checklist for HNSW. Which items belong?</>}
+      <VIS.TrapProblem id="hnsw-p8" difficulty="hard"
+        title="P8 — HNSW&apos;s anchor (graph layers + greedy walk + RAM): pitch it"
+        scenario={<><em>Discriminating insight: the anchor names all three pieces - hierarchical proximity graph, greedy walk at each layer descending, and the full graph in RAM. A pitch that omits any one is a near-miss.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Measure recall@10 against a labeled holdout at the planned ef_search.", correct:true},
-          {key:"b", text:"Measure p99 latency under realistic concurrency, not just single-thread microbenchmark.", correct:true},
-          {key:"c", text:"Verify RAM headroom for graph + vectors + OS + other tenants.", correct:true},
-          {key:"d", text:"Set up a rebuild schedule appropriate to insertion rate.", correct:true},
-          {key:"e", text:"Confirm HNSW supports zero memory use."},
+          {key:"a", text:"HNSW builds a multi-layer proximity graph where each vector has bounded-degree edges to nearby vectors. ANN search is a greedy walk: start at the sparsest top layer, move to the nearest-to-query neighbor, descend to the denser layer, repeat. The whole graph lives in RAM for log-time search. Wins recall-vs-latency up to hundreds of millions of vectors.", correct:true},
+          {key:"b", text:"HNSW quantizes vectors to 16-byte codes."},
+          {key:"c", text:"HNSW partitions space into clusters."},
+          {key:"d", text:"HNSW is brute-force scan."},
         ]}
-        trap={<>(e) is a category error — HNSW is RAM-resident by design.</>}
-        lens={<>Four real checks: recall, latency under load, RAM headroom, rebuild cadence. The most commonly missed is RAM headroom — engineers benchmark on an empty box, forget that the index will share memory with other services in production.</>}
-        stretch={<>How would you size the rebuild cadence quantitatively?</>}
+        trap={<>(b) is IVF-PQ. (c) is IVF. (d) is the baseline HNSW dominates.</>}
+        lens={<>Graph + greedy walk + RAM - all three.</>}
+        stretch={<>Which of the three is hardest to engineer well?</>}
       />
 
-      <VIS.TrapProblem
-        id="hnsw-p9" difficulty="hard"
-        title="P9 — HNSW under cosine vs L2 distance"
-        scenario={<>Your embeddings are L2-normalized and you want cosine similarity. Pick the strongest claim about HNSW with cosine vs L2.</>}
+      <VIS.TrapProblem id="hnsw-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use HNSW. Select all that apply."
+        scenario={<><em>Discriminating insight: HNSW needs (i) RAM for the full graph, (ii) stable enough corpus that periodic graph rebuilds are tolerable, (iii) recall budget that justifies RAM cost. It is wrong for billion-scale on commodity boxes, insertion-heavy workloads without rebuild windows, or inner-product search at microsecond budgets.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"For L2-normalized vectors, cosine ranking is monotonic in L2 distance — you can build the HNSW with L2 and the top-k is identical to cosine-top-k.", correct:true},
-          {key:"b", text:"HNSW does not support cosine — only L2."},
-          {key:"c", text:"You must rebuild the index when switching between cosine and L2."},
-          {key:"d", text:"Cosine is always faster than L2 in HNSW."},
+          {key:"a", text:"Billion-scale catalog on commodity hardware - the full graph does not fit in RAM and the greedy walk pages to disk.", correct:true},
+          {key:"b", text:"Insertion-heavy workload (millions of inserts per hour) with no maintenance window - graph topology degrades and recall drops silently.", correct:true},
+          {key:"c", text:"Inner-product retrieval at sub-millisecond budgets where ScaNN&apos;s loss-aware quantization wins."},
+          {key:"d", text:"50M-doc enterprise search at 5k QPS with ample RAM and weekly rebuild windows - the production sweet spot."},
+          {key:"e", text:"Recall-insensitive lookup where a 16-byte quantized code from IVF-PQ suffices.", correct:true},
         ]}
-        trap={<>(b) and (c) are false — HNSW is metric-agnostic and the L2/cosine identity holds for unit-norm vectors. (d) is unsupported.</>}
-        lens={<>For unit-norm vectors, |a - b|^2 = 2 - 2*cos(a,b), so smaller L2 distance corresponds to larger cosine similarity. Most HNSW libraries internally always normalize then use L2 for cosine. Just ensure your vectors are normalized before insertion.</>}
-        stretch={<>What goes wrong if some vectors are normalized and some are not?</>}
+        trap={<>(c) is borderline - ScaNN wins on the latency tail but HNSW is still competitive at single-digit ms. (d) is the sweet spot.</>}
+        lens={<>HNSW needs RAM + rebuild-tolerant corpus + recall premium.</>}
+        stretch={<>How would you detect graph-quality degradation in production?</>}
       />
 
-      <VIS.TrapProblem
-        id="hnsw-p10" difficulty="hard"
-        title="P10 — Sharding HNSW"
-        scenario={<>Catalog grows to 500M vectors. A single box no longer fits the index. Pick the right sharding strategy.</>}
+      <VIS.TrapProblem id="hnsw-p10" difficulty="hard"
+        title="P10 — Why the HIERARCHY of layers, not a single big graph?"
+        scenario={<><em>Discriminating insight: a single-layer proximity graph forces the greedy walk to take many small steps to reach the query&apos;s neighborhood; latency becomes O(N). The hierarchy gives long-distance jumps in the sparse top layer so the walk converges in O(log N) steps. The layers are a skip-list analog for graphs.</em><br/>Why layers?</>}
         options={[
-          {key:"a", text:"Random sharding into K boxes; each box runs an independent HNSW; query fans out to all K and the gateway merges top-k. Recall is preserved because random sharding is approximately IID.", correct:true},
-          {key:"b", text:"Cluster-based sharding by topic — query only hits the relevant shard. Recall preserved."},
-          {key:"c", text:"Single-machine HNSW always works regardless of memory."},
-          {key:"d", text:"Disable HNSW and brute-force."},
+          {key:"a", text:"A single-layer proximity graph makes the greedy walk traverse many small edges from a random entry point to the query&apos;s neighborhood - latency degenerates toward O(N). The hierarchy lets the top sparse layer take long jumps, then dense layers refine - the walk converges in O(log N) steps. The hierarchy is the skip-list analog of B-trees for graphs.", correct:true},
+          {key:"b", text:"Layers are organizational only."},
+          {key:"c", text:"Layers reduce memory."},
+          {key:"d", text:"Layers are required by the distance metric."},
         ]}
-        trap={<>(b) breaks recall — the right answer for a query may live in a different topic shard than the predicted one. (c) is false. (d) is wasteful.</>}
-        lens={<>Random fan-out sharding is the standard production pattern at this scale. Each shard returns its local top-k; the gateway picks the global top-k from the union. Cost: K-way fanout. Benefit: linear scaling without recall loss. Topic-based sharding seems clever but introduces routing error.</>}
-        stretch={<>How does the fan-out cost change if you can afford to under-recall by 1%?</>}
+        trap={<>(b)(c)(d) miss the log-time mechanism.</>}
+        lens={<>Hierarchy gives log-time convergence; flat graph is O(N).</>}
+        stretch={<>How is the layer membership probability set?</>}
       />
 
-      <VIS.TrapProblem
-        id="hnsw-p11" difficulty="medium"
-        title="P11 — Disk-resident HNSW (DiskANN)"
-        scenario={<>You have 200M vectors but only 64 GB of RAM. Pick the right move.</>}
+      <VIS.TrapProblem id="hnsw-p11" difficulty="hard"
+        title="P11 — Bounded degree (M): what knob does it control?"
+        scenario={<><em>Discriminating insight: M is the maximum out-degree of each node. Larger M means denser graph: more neighbors to check per step, higher recall, higher memory, slower per-step. Smaller M: sparser, faster per-step, lower recall ceiling. Typical M=16-64.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Use DiskANN — a variant of HNSW designed to keep the graph on SSD with only a compressed quantized vector layer in RAM. ~10x more vectors per dollar than RAM-resident HNSW.", correct:true},
-          {key:"b", text:"HNSW always requires RAM — there is no SSD variant."},
-          {key:"c", text:"Use brute-force from disk."},
-          {key:"d", text:"Buy more RAM."},
+          {key:"a", text:"M is the max edges per node. Bigger M = denser graph = higher recall ceiling and more memory; smaller M = sparser graph = faster per-step but lower recall ceiling. Memory scales linearly in M.", correct:true},
+          {key:"b", text:"M controls the number of layers."},
+          {key:"c", text:"M controls the distance metric."},
+          {key:"d", text:"M is the query batch size."},
         ]}
-        trap={<>(b) is false — DiskANN exists. (d) is the brute-force option that does not exploit available alternatives.</>}
-        lens={<>DiskANN (Microsoft, NeurIPS 2019) extends HNSW for the disk-resident case: full vectors stay on SSD, a PQ-compressed copy in RAM is used to prune the graph walk, and the final re-rank uses the on-disk full-precision copies. Trades latency for memory; tolerates an order of magnitude more vectors per box than RAM-HNSW.</>}
-        stretch={<>What workload property must hold for DiskANN&apos;s SSD random reads to not become the bottleneck?</>}
+        trap={<>(b)(c)(d) miss the degree mechanism.</>}
+        lens={<>M trades recall ceiling against memory and per-step cost.</>}
+        stretch={<>What M does Faiss default to?</>}
       />
+
+      <VIS.TrapProblem id="hnsw-p12" difficulty="hard"
+        title="P12 — What does HNSW deliberately drop vs brute-force scan?"
+        scenario={<><em>Discriminating insight: brute-force gives exact top-k by definition. HNSW gives approximate top-k - the greedy walk can get trapped in a local-min region of the graph and miss the true nearest neighbor. The drop is exactness, gained back by tuning efSearch.</em><br/>What does HNSW forfeit?</>}
+        options={[
+          {key:"a", text:"Exactness. The greedy walk can get stuck in a local-min region of the graph and miss the true nearest neighbor. Recall is recovered by widening efSearch (priority-queue width) at the cost of latency - a tunable trade.", correct:true},
+          {key:"b", text:"HNSW forfeits the use of vector embeddings."},
+          {key:"c", text:"HNSW forfeits the distance metric."},
+          {key:"d", text:"HNSW forfeits the ability to handle queries."},
+        ]}
+        trap={<>(b)(c)(d) miss the property dropped.</>}
+        lens={<>Exactness is the deliberate sacrifice; efSearch is the dial.</>}
+        stretch={<>How does efSearch behave on a recall-vs-latency curve?</>}
+      />
+
+      <VIS.TrapProblem id="hnsw-p13" difficulty="hard"
+        title="P13 — Most fragile knob"
+        scenario={<><em>Discriminating insight: efConstruction dominates index quality. Too small: the graph has poor neighbor selection during BUILD, so the topology is permanently degraded and no efSearch can recover the recall. Too large: build time explodes. M and efSearch are secondary.</em><br/>Rank by 2x mis-set breakage.</>}
+        options={[
+          {key:"a", text:"efConstruction is most fragile - it controls neighbor-selection quality during the BUILD; under-setting permanently degrades graph topology and no efSearch can rescue recall. M is next (memory + ceiling). efSearch is most forgiving - tune at query time.", correct:true},
+          {key:"b", text:"M is most fragile."},
+          {key:"c", text:"efSearch is most fragile."},
+          {key:"d", text:"Random seed is most fragile."},
+        ]}
+        trap={<>(b) memory but rebuildable. (c) tunable at query time. (d) noise.</>}
+        lens={<>Build-time knobs (efConstruction) are sticky; query-time knobs (efSearch) are tunable live.</>}
+        stretch={<>What does a healthy recall-vs-efSearch curve look like?</>}
+      />
+
+      <VIS.TrapProblem id="hnsw-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: HNSW assumes the proximity graph captures the embedding distribution. Severe embedding distribution shift between build and serve (e.g., a model retrain that rotates the embedding space) makes the indexed graph topology disagree with query geometry - recall collapses even though the graph is &ldquo;fresh.&rdquo;</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Embedding distribution shift after a model retrain. The graph topology reflects the OLD embedding geometry; queries arriving in NEW geometry hit the wrong neighborhood. The fix is rebuild-on-retrain, not refresh-on-insert.", correct:true},
+          {key:"b", text:"Vectors arrive with a flipped sign convention on the candidate-side embedding only."},
+          {key:"c", text:"Different tokenizer on the query side feeds an upstream encoder."},
+          {key:"d", text:"Larger batch sizes on the encoder than expected."},
+        ]}
+        trap={<>(b)(c)(d) are upstream encoder bugs, not HNSW-specific.</>}
+        lens={<>Embedding-model retrains imply graph rebuilds; topology is geometry-pinned.</>}
+        stretch={<>What monitor catches embedding-space rotation?</>}
+      />
+
+      <VIS.TrapProblem id="hnsw-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;just increase M to fix recall&rdquo;"
+        scenario={<><em>Discriminating insight: bumping M increases recall CEILING but also memory linearly and per-step cost; if the recall regression is due to efConstruction or distribution shift, M cannot fix it. The senior move is to look at the build quality first.</em><br/>Why is &ldquo;just bump M&rdquo; usually wrong?</>}
+        options={[
+          {key:"a", text:"M raises the recall ceiling but cannot rescue a graph built with low efConstruction (build-time topology is degraded) or one that mismatches the current embedding distribution. Memory and per-step cost rise linearly in M. Check build quality and embedding stability first.", correct:true},
+          {key:"b", text:"M always fixes recall."},
+          {key:"c", text:"M is independent of memory."},
+          {key:"d", text:"M is a query-time knob."},
+        ]}
+        trap={<>(b)(c)(d) miss the M semantics.</>}
+        lens={<>M raises ceiling, not floor; ceiling cannot save a broken graph.</>}
+        stretch={<>What does the recall-vs-M curve look like at fixed efConstruction?</>}
+      />
+
+      <VIS.TrapProblem id="hnsw-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;HNSW is just a black-box ANN index&rdquo; cascades into (i) skipping the RAM budget check (graph spills to disk and latency dies), (ii) skipping rebuild policy (graph degrades on inserts), (iii) ignoring efConstruction tuning (build quality is fixed for the life of the index).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: RAM budget, rebuild policy, and efConstruction tuning. Each is load-bearing for HNSW specifically; black-boxing it loses all three.", correct:true},
+          {key:"b", text:"Only RAM."},
+          {key:"c", text:"Only rebuilds."},
+          {key:"d", text:"Nothing - HNSW IS a black box."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>HNSW has three operational contracts; black-boxing breaks all three.</>}
+        stretch={<>What dashboard panel surfaces graph health?</>}
+      />
+
+      <VIS.TrapProblem id="hnsw-p17" difficulty="medium"
+        title="P17 — Senior vs junior framing"
+        scenario={<><em>Discriminating insight: a junior responds to a recall drop by raising efSearch. A senior measures the recall-vs-efSearch curve first: if the curve is flat (efSearch does nothing), the graph topology itself is degraded - rebuild needed. If the curve is steep but the operating point is too far left, efSearch is the right knob.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Plot recall vs efSearch. If the curve is steep and you are operating to the left of the elbow, raise efSearch - cheap latency cost. If the curve is flat, the graph topology is degraded (efConstruction or embedding shift); rebuild is required, no efSearch value will save it.", correct:true},
+          {key:"b", text:"Raise efSearch unconditionally."},
+          {key:"c", text:"Raise M unconditionally."},
+          {key:"d", text:"Switch to IVF-PQ."},
+        ]}
+        trap={<>(b)(c) skip diagnosis. (d) abandons HNSW.</>}
+        lens={<>The recall-vs-efSearch curve diagnoses graph health.</>}
+        stretch={<>What dashboard tracks this curve daily?</>}
+      />
+
+      <VIS.TrapProblem id="hnsw-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: graph-quality drift under inserts"
+        scenario={<><em>Discriminating insight: p95 latency for ANN crept up 40% over six weeks of insertions; recall stable. The team blames a Faiss version bump. Actual cause: bounded-degree edges drift away from optimal during incremental inserts - old edges no longer point to current nearest neighbors, so the greedy walk takes more steps. The graph needs periodic rebuild, not a Faiss downgrade.</em><br/>p95 latency +40% over 6 weeks. Recall stable. Engineers blame Faiss minor-version. Most likely cause?</>}
+        options={[
+          {key:"a", text:"Faiss version bump - downgrade.", correct:false},
+          {key:"b", text:"Graph-topology drift: bounded-degree edges chosen during incremental inserts are no longer optimal as the embedding distribution shifts; greedy walk takes more steps; latency rises while recall holds. Fix: periodic full rebuild (or incremental graph repair). The version bump is a red herring.", correct:true},
+          {key:"c", text:"The hardware NUMA layout changed on the ANN replica.", correct:false},
+          {key:"d", text:"Insert traffic randomly switched to a hotter partition.", correct:false},
+        ]}
+        trap={<>(a) the seductive blame - version bumps are visible in commit logs. (c)(d) generic infra. The fingerprint &ldquo;recall stable, latency rising on insert-heavy index&rdquo; is graph drift.</>}
+        lens={<>Latency rising at stable recall on an insert-heavy HNSW = graph drift, not infra.</>}
+        stretch={<>What rebuild cadence balances rebuild cost vs drift?</>}
+      />
+
+      <VIS.TrapProblem id="hnsw-p19" difficulty="hard"
+        title="P19 — Production gotcha: index size > RAM"
+        scenario={<><em>Discriminating insight: once the index plus the OS page cache exceeds physical RAM, the greedy walk starts hitting page faults on every step. Latency goes from microseconds to milliseconds. The only fix is shard the index across more replicas or switch to a disk-aware ANN (DiskANN) variant.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Size the replica so the full HNSW index + OS overhead fits in physical RAM with headroom. Once the working set spills to disk, the greedy walk becomes random-IO-bound and latency explodes orders of magnitude. Sharding or DiskANN are the only options.", correct:true},
+          {key:"b", text:"RAM is irrelevant for HNSW."},
+          {key:"c", text:"Disk paging has no effect on the graph walk."},
+          {key:"d", text:"Latency drops when paging starts."},
+        ]}
+        trap={<>(b)(c)(d) miss the RAM contract.</>}
+        lens={<>Full index must fit in RAM; spilling kills the graph walk.</>}
+        stretch={<>What is the order-of-magnitude latency hit when paging starts?</>}
+      />
+
+      <VIS.TrapProblem id="hnsw-p20" difficulty="hard"
+        title="P20 — Failure on Friday: recall cratered after a model retrain"
+        scenario={<><em>Discriminating insight: the embedding model was retrained; new query embeddings live in a different region of the space. The HNSW index was NOT rebuilt - graph topology reflects OLD embedding geometry. The greedy walk lands in the wrong neighborhood; recall collapses.</em><br/>3am page: recall down 30% right after an embedding-model retrain. Diagnosis?</>}
+        options={[
+          {key:"a", text:"The HNSW graph topology was built against the OLD embedding distribution; the new model produces queries in a different geometry; the walk lands in the wrong neighborhood. Rebuild the graph against the new embedding distribution, or roll back the model until the rebuild completes.", correct:true},
+          {key:"b", text:"Faiss CPU affinity changed on the box."},
+          {key:"c", text:"The query side started normalizing vectors but the index did not."},
+          {key:"d", text:"The ANN replica ran out of inodes on the index disk."},
+        ]}
+        trap={<>(b) infra noise. (c) plausible but the prompt names retrain as the trigger. (d) infra noise.</>}
+        lens={<>Embedding retrains imply graph rebuilds.</>}
+        stretch={<>What gate prevents this happening unannounced?</>}
+      />
+
+      <VIS.TrapProblem id="hnsw-p21" difficulty="medium"
+        title="P21 — Library default that bites: M=16 in Faiss"
+        scenario={<><em>Discriminating insight: Faiss HNSW defaults to M=16 and efConstruction=40. At 100M+ vectors these values cap recall well below what M=32, efConstruction=200 would deliver. Teams ship the defaults and chase the recall gap with downstream tweaks for weeks.</em><br/>Where does the default break HNSW?</>}
+        options={[
+          {key:"a", text:"Default M=16 and efConstruction=40 are tuned for small-index demos. At 50M+ vectors the recall ceiling is well below what M=32, efConstruction=200 deliver - and the build quality is sticky. Teams ship the defaults and chase recall downstream for weeks.", correct:true},
+          {key:"b", text:"Default M=16 is fine at all scales."},
+          {key:"c", text:"Defaults are loud about needing tuning."},
+          {key:"d", text:"Faiss has no HNSW implementation."},
+        ]}
+        trap={<>(b)(c)(d) deny the default trap.</>}
+        lens={<>Faiss defaults are demo-tuned, not production-tuned.</>}
+        stretch={<>What recall does M=32, efConstruction=200 deliver at 50M?</>}
+      />
+
+      <VIS.TrapProblem id="hnsw-p22" difficulty="hard" ordered
+        title="P22 — Order the rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) embedding model frozen, (2) capacity plan RAM vs index size, (3) build index offline at high efConstruction, (4) shadow-evaluate recall on holdout, (5) traffic ramp behind a feature flag. Starting with the index before freezing the embedding is the classic mistake.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Freeze embedding model - capacity-plan RAM vs index size - build index offline at high efConstruction - shadow-evaluate recall and latency on holdout queries - ramp traffic", correct:true},
+          {key:"b", text:"Ramp traffic first."},
+          {key:"c", text:"Skip capacity planning."},
+          {key:"d", text:"Build index before freezing the embedding."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Embedding then capacity then build then shadow then ramp.</>}
+        stretch={<>Why freeze the embedding first?</>}
+      />
+
+      <VIS.TrapProblem id="hnsw-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks HNSW&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: a billion vectors at 768 dim on a single box with 256 GB RAM. The graph cannot fit. HNSW degenerates to disk paging; IVF-PQ&apos;s 16-byte codes fit comfortably and win even at lower recall.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A billion 768-dim vectors on one 256 GB box. The HNSW graph + raw vectors need ~3 TB; paging to disk turns the greedy walk into random IO. IVF-PQ&apos;s ~16 GB index runs comfortably even at a few recall points lower. HNSW&apos;s claimed Pareto edge collapses.", correct:true},
+          {key:"b", text:"50M vectors, 4 ms latency, RAM headroom - this is the sweet spot."},
+          {key:"c", text:"100M users with low QPS."},
+          {key:"d", text:"Catalog of 10K items where everything is brute-force fast."},
+        ]}
+        trap={<>(b) sweet spot. (c) user count, not catalog. (d) tiny - both methods win, neither matters.</>}
+        lens={<>HNSW needs RAM to hold the graph; bust the RAM and the Pareto flips.</>}
+        stretch={<>What is DiskANN&apos;s answer here?</>}
+      />
+
+      <VIS.TrapProblem id="hnsw-p24" difficulty="hard"
+        title="P24 — Paper-named failure: insertion-heavy degradation"
+        scenario={<><em>Discriminating insight: the original paper acknowledges that long-running incremental inserts degrade the graph quality without periodic rebuild. The fix is a rebuild policy - full rebuild on a cadence proportional to the insert rate.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Insertion-heavy workloads degrade graph topology over time; bounded-degree edges chosen during early inserts no longer reflect the current distribution. The fix is policy: schedule full rebuilds at a cadence proportional to the insert rate (e.g., rebuild after every X% turnover).", correct:true},
+          {key:"b", text:"HNSW is immune to insertion drift."},
+          {key:"c", text:"Reads, not writes, degrade the graph."},
+          {key:"d", text:"There are no documented failures."},
+        ]}
+        trap={<>(b)(c)(d) deny the named failure.</>}
+        lens={<>Graph drift under inserts is the canonical HNSW operational bug.</>}
+        stretch={<>What rebuild cadence balances cost vs drift?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://www.pinecone.io/learn/series/faiss/hnsw/" target="_blank" rel="noopener"><strong>Pinecone — HNSW Explained</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>The clearest practitioner walkthrough of the algorithm with diagrams. Start here.</li>
-        <li><a href="https://arxiv.org/abs/1603.09320" target="_blank" rel="noopener"><strong>Malkov & Yashunin — Efficient and robust approximate nearest neighbor search using HNSW graphs</strong></a> <span style={{color:"#64748b", fontSize:14}}>(IEEE TPAMI 2018, paper)</span><br/>The original paper. Dense but the canonical reference for graph construction details.</li>
-        <li><a href="https://milvus.io/blog/understanding-ivf-vector-index-how-It-works-and-when-to-choose-it-over-hnsw.md" target="_blank" rel="noopener"><strong>Milvus — IVF vs HNSW: when to choose which</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Direct decision-tree from a vector DB team. Best read for the engineering tradeoff.</li>
-        <li><a href="https://github.com/erikbern/ann-benchmarks" target="_blank" rel="noopener"><strong>ann-benchmarks (Erik Bernhardsson)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(benchmark repo)</span><br/>The canonical benchmark site. Lets you see the recall-vs-latency Pareto across HNSW, IVF-PQ, ScaNN, DiskANN on standard datasets.</li>
-        <li><a href="https://suhas.org/sosp19-diskann.pdf" target="_blank" rel="noopener"><strong>Subramanya et al. — DiskANN: Fast Accurate Billion-point Nearest Neighbor Search on a Single Node</strong></a> <span style={{color:"#64748b", fontSize:14}}>(NeurIPS 2019, paper)</span><br/>How to keep HNSW-style search useful when vectors do not fit in RAM.</li>
+        <li><a href="https://arxiv.org/abs/1603.09320" target="_blank" rel="noopener">Malkov &amp; Yashunin - <em>Efficient and robust approximate nearest neighbor search using HNSW graphs</em> (2018, paper)</a> - the canonical HNSW paper. Read sections 3-4 for the layer construction.</li>
+        <li><a href="https://www.pinecone.io/learn/series/faiss/hnsw/" target="_blank" rel="noopener">Pinecone - <em>HNSW for vector search</em> (blog)</a> - practitioner walkthrough with diagrams. Start here if you have not seen the layer picture yet.</li>
+        <li><a href="https://milvus.io/blog/understanding-ivf-vector-index-how-It-works-and-when-to-choose-it-over-hnsw.md" target="_blank" rel="noopener">Milvus - <em>HNSW vs IVF</em> (blog)</a> - head-to-head with RAM and recall numbers.</li>
+        <li><a href="https://ann-benchmarks.com/" target="_blank" rel="noopener">ann-benchmarks.com (live benchmark)</a> - open recall-vs-latency leaderboard. See where HNSW lives on the Pareto.</li>
+        <li><a href="https://github.com/microsoft/DiskANN" target="_blank" rel="noopener">Microsoft DiskANN (repo + paper)</a> - the disk-aware answer for when HNSW spills out of RAM.</li>
       </ul>
     </VIS.Section>
   </main>
