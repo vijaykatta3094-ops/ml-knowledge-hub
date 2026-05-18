@@ -1959,17 +1959,17 @@ flowchart TB
       <VIS.TrapProblem
         id="clf-f3"
         difficulty="hard"
-        title="F3 — Reverse-engineer the symptom"
-        scenario={<>Symptom: CL-Fraud's pretraining loss converges fast (within 5 epochs) and stays flat, but downstream fine-tune AUPRC is at random-baseline. Which CL-Fraud-specific choice is the cause?</>}
+        title="F3 — Reverse-engineer the symptom (sampler side)"
+        scenario={<>Symptom: CL-Fraud pretraining loss looks healthy (not collapsed, decreasing smoothly), augmentation drop is at the validated 0.2, but downstream AUPRC for distinct fraud rings A and B is identical and poor — as if A and B are indistinguishable. Which CL-Fraud-specific choice is the cause?</>}
         options={[
-          {key:"a", text:"Augmentation drop probability is too high — the two views diverge enough that InfoNCE's easy negatives dominate, the loss converges to a near-uniform-representation solution, and the encoder collapses to a constant (which trivially solves InfoNCE: every pair is equally far). Symptom looks like 'easy training' but the representation is dead.", correct:true},
-          {key:"b", text:"The optimizer is wrong."},
-          {key:"c", text:"Too few GPU cores."},
-          {key:"d", text:"Random seed."},
+          {key:"a", text:"The fraud-aware positive sampler's neighborhood radius is set too wide (e.g., 3-hop instead of 1-hop on the cleared-benign-anchored meta-path) — so positives drawn for an anchor in ring A routinely include nodes that actually belong to ring B. The encoder learns to pull A and B together as 'same class', conflating distinct rings. Loss looks fine because positives are still 'close' under InfoNCE; the damage is at the ring-discrimination level downstream.", correct:true},
+          {key:"b", text:"Augmentation drop probability is too high — views diverge and InfoNCE collapses the representation."},
+          {key:"c", text:"The InfoNCE temperature is too low for fraud graphs."},
+          {key:"d", text:"Edge-drop ratio differs across the two views by 0.05."},
         ]}
-        trap={<>(b), (c), (d) miss the collapse signature.</>}
-        lens={<>SSL has a specific failure mode: representation collapse hides as easy convergence. Diagnose with pairwise feature cosine (should NOT be ~1 across batch).</>}
-        stretch={<>What's the canonical diagnostic for SSL collapse?</>}
+        trap={<>(b) is the augmentation-side cause covered in B2 and is ruled out here (drop is 0.2). (c), (d) are generic CL knobs that don't explain A/B conflation specifically.</>}
+        lens={<>CL-Fraud has TWO innovations — meta-path augmentation AND a fraud-aware positive sampler. Ring conflation is a sampler-radius failure, not an augmentation failure. Diagnose by inspecting which nodes the sampler pulls as positives for a known ring-A anchor.</>}
+        stretch={<>How would you bound sampler radius from production telemetry without ring labels?</>}
       />
 
       <VIS.TrapProblem

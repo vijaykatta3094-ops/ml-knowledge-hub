@@ -1760,17 +1760,17 @@ flowchart TB
       <VIS.TrapProblem
         id="gc-d1b"
         difficulty="hard"
-        title="D1b — 'Bigger subgraph = more signal'"
-        scenario={<>A junior says "if subgraphs are good, bigger subgraphs are better — set RWR length to graph diameter." Where does this break?</>}
+        title="D1b — 'GCCAD finds the anomalous node'"
+        scenario={<>A teammate says: "GCCAD scores each transaction; the top-K scores are the fraudulent transactions to investigate." A senior pushes back. What does GCCAD actually score, and why does the teammate's framing mis-target investigations?</>}
         options={[
-          {key:"a", text:"At RWR length ≈ diameter, subgraphs from different pivots heavily OVERLAP (most pairs of subgraphs share >50% of nodes). InfoNCE's positives (perturbed same subgraph) and negatives (overlapping different subgraphs) become structurally similar. The contrastive signal collapses; the encoder learns trivial representations. The subgraph should be SMALL enough that different pivots produce different subgraphs.", correct:true},
-          {key:"b", text:"Bigger is always better."},
-          {key:"c", text:"Length is irrelevant."},
-          {key:"d", text:"Larger length only costs compute."},
+          {key:"a", text:"GCCAD scores SUBGRAPHS (the RWR-sampled neighborhood around a pivot), not individual nodes. An anomalous subgraph score says 'this neighborhood is structurally unusual'; it does NOT say 'this center node is the fraud'. In a 6-node fraud ring, every member is the pivot of a similarly anomalous subgraph — but the central node of the ring may not be more anomalous than its peers. Treating top-K subgraph scores as top-K nodes-to-investigate causes investigators to chase pivots that happen to sit in suspicious neighborhoods (e.g., a benign user with one fraudulent neighbor) rather than the ring members themselves. The correct downstream is: cluster high-scoring subgraphs, then triage the cluster as a unit, not pick pivots.", correct:true},
+          {key:"b", text:"GCCAD scores edges, not subgraphs — the framing is fine."},
+          {key:"c", text:"GCCAD scores subgraphs, but aggregating top-K-pivot scores recovers exact node-level anomaly with no loss."},
+          {key:"d", text:"GCCAD scores nodes directly via a per-node anomaly head; the teammate is correct."},
         ]}
-        trap={<>(b), (c), (d) miss the overlap-breaks-contrastive dynamic.</>}
-        lens={<>Contrastive learning requires distinguishable positive/negative pairs. Subgraph overlap kills that.</>}
-        stretch={<>What's the right diameter ratio for RWR length?</>}
+        trap={<>(b) wrong granularity. (c) the aggregation is lossy (covered in e1) — equating pivot score with member score double-counts ring overlap and under-scores ring members that are not central. (d) misreads GCCAD's architecture; the per-node head is downstream, not the pretraining objective.</>}
+        lens={<>GCCAD's granularity is the FIRST design decision and the first thing investigators must understand. "Anomalous subgraph" and "anomalous node" are not the same question, and the operational downstream differs.</>}
+        stretch={<>How would you communicate subgraph-level scores to an investigator whose tooling is node-centric?</>}
       />
 
       <VIS.TrapProblem
@@ -1959,17 +1959,17 @@ flowchart TB
       <VIS.TrapProblem
         id="gc-f3"
         difficulty="hard"
-        title="F3 — Reverse-engineer the symptom"
-        scenario={<>Symptom: GCCAD trains normally (loss converges), but per-ring AUPRC is at 0.51 (near-random) on rings of size 4-6. Which GCCAD choice is the cause?</>}
+        title="F3 — Reverse-engineer the symptom (restart-prob geometry)"
+        scenario={<>Symptom: GCCAD trains normally, loss converges, subgraph SIZE is well-controlled (max-length cap is 12, validated). Restart probability is 0.05 (low). Per-ring AUPRC on rings of size 4–6 is 0.52 — near-random. The standard "subgraphs too big" failure does not fit because the length cap is enforced. Which GCCAD-specific failure mode fits?</>}
         options={[
-          {key:"a", text:"RWR restart probability is too low (e.g., 0.05 instead of 0.2) — subgraphs are too BIG, covering hundreds of nodes per pivot. Positives and negatives heavily overlap; the contrastive signal collapses; the encoder learns no useful representation. Loss can still go down (the easy task of matching nearly-identical big subgraphs) without learning anything about ring structure.", correct:true},
+          {key:"a", text:"With restart probability 0.05 and a length cap, the RWR almost never restarts within the cap — so the walk behaves like a plain random walk (or a DeepWalk-style trajectory), drifting outward from the pivot. The visited node SET (the subgraph) is the right size, but its STRUCTURE no longer reflects the pivot's local neighborhood — it reflects whichever long-range tendril the walk wandered into. Two subgraphs from the same pivot can be wildly different (high-variance views), so InfoNCE positives are noisy; two subgraphs from adjacent pivots can be nearly identical (drifted to the same hub region), so negatives become positive-like. The contrastive signal degrades on ring-scale structure specifically — exactly where rings of 4–6 nodes need a tight, restart-anchored neighborhood. This is distinct from the 'subgraph too big' failure: the FAILURE here is geometric (wrong walk distribution), not size.", correct:true},
           {key:"b", text:"Optimizer wrong."},
-          {key:"c", text:"GPU."},
-          {key:"d", text:"Random seed."},
+          {key:"c", text:"GPU memory pressure dropping random batches."},
+          {key:"d", text:"Random seed variance."},
         ]}
-        trap={<>(b), (c), (d) miss the restart-prob-too-low signature.</>}
-        lens={<>RWR restart probability mis-tuning leaves a specific signature: loss converges, but downstream AUPRC is at random. The encoder learned trivial subgraph matching.</>}
-        stretch={<>How would you detect the over-large-subgraph problem?</>}
+        trap={<>(b), (c), (d) generic. The key distinction is "wrong walk geometry under a size cap" vs "subgraphs literally too big" (B2/D1b territory).</>}
+        lens={<>Restart probability controls walk GEOMETRY (how localized vs DeepWalk-like), not just SIZE. Even with a size cap, low restart probability turns RWR into a different sampler with different inductive bias.</>}
+        stretch={<>What's the right restart probability for ring-size 4–6 detection, and how does it relate to ring diameter?</>}
       />
 
       <VIS.TrapProblem

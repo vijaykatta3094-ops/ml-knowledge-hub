@@ -1608,17 +1608,17 @@ flowchart TB
       <VIS.TrapProblem
         id="sf-b2"
         difficulty="hard"
-        title="B2 — 'Sounds reasonable' — copy CV's augmentation strength"
-        scenario={<>A teammate sets time-warp magnitude to 2× (gaps multiplied by U(0.5, 2.0)) "because SimCLR's defaults used aggressive aug." Why might this fail specifically here?</>}
+        title="B2 — 'Sounds reasonable' — bump amount-jitter sigma"
+        scenario={<>A teammate increases amount-jitter sigma from 0.1 (log-space) to 0.4 (log-space) "because the encoder needs to be amount-invariant for robustness." Time-warp is unchanged. Why might this fail specifically for SimFraud, even though jitter is one of its own designed augmentations?</>}
         options={[
-          {key:"a", text:"On card-present velocity fraud (rapid-fire small probes), inter-tx gaps in the millisecond-to-second range encode the velocity signature. Time-warp by 2× turns a 100ms-burst into a 50ms-to-200ms-burst — both look like a 'fast sequence' to the encoder, which learns velocity-invariance. Fraud detection now requires distinguishing velocity-fraud from normal-fast-checkout, which the encoder has been trained NOT to do.", correct:true},
-          {key:"b", text:"2× is always optimal."},
-          {key:"c", text:"Time-warp has no effect."},
-          {key:"d", text:"More aug always helps."},
+          {key:"a", text:"Amount-jitter at sigma=0.1 perturbs $100 by roughly ±$10 in log-space — within the natural noise of identical merchants. At sigma=0.4, a $100 tx becomes anywhere from $45 to $222 in either view. The two views can now straddle a fraud-relevant amount threshold (e.g., small-probe < $5 vs normal $50–$500), and the encoder is asked to call them positives. It learns amount-band-invariance, erasing the small-probe vs normal-spend distinction that distinguishes testing-card fraud from benign retail. Loss looks fine — invariance is what InfoNCE rewards — but the downstream small-probe MO becomes invisible.", correct:true},
+          {key:"b", text:"sigma=0.4 is always optimal in jitter papers."},
+          {key:"c", text:"Amount-jitter has no effect on the encoder."},
+          {key:"d", text:"Higher jitter only increases training time, nothing else."},
         ]}
-        trap={<>(b), (c), (d) miss the velocity-feature destruction.</>}
-        lens={<>Augmentation magnitude is bounded above by what destroys fraud-relevant signal. Different fraud MOs need different aug budgets.</>}
-        stretch={<>How would you set time-warp magnitude empirically?</>}
+        trap={<>(b), (c), (d) miss the band-crossing failure that jitter sigma creates once it exceeds the natural amount-noise of identical merchants.</>}
+        lens={<>Even SimFraud's own designed augmentations have magnitudes bounded by fraud-relevant thresholds. The jitter ceiling is "noise within an MCC's natural amount distribution," not a generic SSL default.</>}
+        stretch={<>How would you derive jitter sigma from observed merchant amount variance?</>}
       />
 
       <VIS.TrapProblem
@@ -1708,17 +1708,17 @@ flowchart TB
       <VIS.TrapProblem
         id="sf-c4"
         difficulty="hard"
-        title="C4 — Which knob, mis-set, breaks SimFraud?"
-        scenario={<>Rank by production-breakage severity: (i) time-warp magnitude, (ii) InfoNCE temperature τ, (iii) Transformer depth, (iv) embedding dim.</>}
+        title="C4 — Merchant-swap: which MCC boundary preserves label?"
+        scenario={<>SimFraud's merchant-swap augmentation replaces a transaction's merchant with another from a "similar" set. Pick the swap-set definition that preserves fraud labels, given that benign and fraud rings BOTH exist within most MCCs.</>}
         options={[
-          {key:"a", text:"Time-warp magnitude > τ > Transformer depth > embedding dim. Time-warp is the velocity-signal-destruction lever (mis-set silently kills the signal); τ controls hard-negative emphasis; depth and dim are secondary tuning.", correct:true},
-          {key:"b", text:"Embedding dim dominates."},
-          {key:"c", text:"All equal."},
-          {key:"d", text:"Transformer depth dominates."},
+          {key:"a", text:"Swap only within the same 4-digit MCC AND within the same risk-tier of merchants (where risk-tier is computed offline from historical chargeback rate, NOT from labels in the current pretraining window). Within-MCC alone is insufficient because MCC 5732 (electronics) contains both legitimate big-box retailers and known-fraudulent reshipper merchants — swapping between them turns a benign tx into a fraud tx (or vice versa) and the encoder is told they are positives. Risk-tier-bucketed swap-sets restrict to merchants that behave similarly, so the swap preserves the fraud signal.", correct:true},
+          {key:"b", text:"Swap freely across all merchants — InfoNCE handles label noise."},
+          {key:"c", text:"Swap only within the same 2-digit MCC group (broad category)."},
+          {key:"d", text:"Never swap merchants; use only amount-jitter and time-warp."},
         ]}
-        trap={<>(b), (c), (d) miss the augmentation-policy hierarchy.</>}
-        lens={<>For SimFraud, augmentation knobs dominate. Transformer internals are secondary.</>}
-        stretch={<>How would you set time-warp magnitude per-domain?</>}
+        trap={<>(b) destroys the label entirely. (c) is too coarse — 2-digit groups mix risk-tiers. (d) drops one of SimFraud's four core augmentations and is not what the question asks.</>}
+        lens={<>"Within-MCC" is a necessary but not sufficient invariance for merchant-swap. The full invariant is "same MCC AND same risk-tier," derived from an offline label-free signal so the swap rule doesn't itself contaminate pretraining.</>}
+        stretch={<>How would you build the risk-tier bucketing without using labels?</>}
       />
 
       <VIS.TrapProblem
@@ -1806,17 +1806,17 @@ flowchart TB
       <VIS.TrapProblem
         id="sf-d4"
         difficulty="hard"
-        title="D4 — Plausible misattribution: per-MO recall drop"
-        scenario={<>SimFraud-pretrained Transformer's recall on velocity-fraud drops from 0.71 to 0.34 after a config update. Logs show: (i) batch size doubled, (ii) time-warp magnitude bumped from 1.5× to 2.5×, (iii) optimizer changed Adam → AdamW. Most likely cause?</>}
+        title="D4 — Masked-timestamp: does it confound order or amount?"
+        scenario={<>A junior says: "Masked-timestamp aug is harmless — it just replaces the timestamp field with a [MASK] token; the model still sees position and amount." Independent of time-warp, what does masked-timestamp actually confound in SimFraud's Transformer encoder?</>}
         options={[
-          {key:"a", text:"(ii) Time-warp 2.5× — at this magnitude, inter-tx gaps of 100ms become 250-50ms, eroding velocity signal. The encoder retrained with this aug is blind to velocity. Recall drops on the exact MO whose signature was destroyed. Diagnose: pull the aug-version diff; expect to see a time-warp config change.", correct:true},
-          {key:"b", text:"(i) Batch size."},
-          {key:"c", text:"(iii) Adam vs AdamW."},
-          {key:"d", text:"Random."},
+          {key:"a", text:"It confounds inter-event GAP encoding without touching ORDER or AMOUNT — and that is precisely the problem. The Transformer encodes inter-tx gaps via a learned timestamp embedding added to each token. Masking the timestamp removes the gap signal for that token, so a one-second gap and a one-hour gap become indistinguishable AT THAT POSITION. Sequence position (1st, 2nd, 3rd) is preserved by positional encoding, and amount is a separate field — so neither is affected. The encoder learns a representation that is gap-robust at random positions, which is fine for benign-spend invariance but destroys the inter-arrival signature used by burst-fraud detectors.", correct:true},
+          {key:"b", text:"It confounds ORDER (which tx came first) — the model loses position information."},
+          {key:"c", text:"It confounds AMOUNT — masking the timestamp forces the model to use amount as a proxy for time."},
+          {key:"d", text:"It has no effect at all because the model can reconstruct timestamps from amount alone."},
         ]}
-        trap={<>(b), (c), (d) are plausible but not SimFraud-specific.</>}
-        lens={<>SimFraud's MO-specific recall drops correlate with aug-policy changes, not optimizer/batch changes. Always check aug versions on per-MO regression.</>}
-        stretch={<>What's the right alerting on aug-policy drift?</>}
+        trap={<>(b) confuses timestamp embedding with positional encoding — they are separate fields. (c) is a popular but wrong intuition; amount is its own column. (d) is naive.</>}
+        lens={<>Each SimFraud augmentation kills a specific invariant. Masked-timestamp is the GAP-invariance lever — independent of time-warp's "stretch" lever. Pretraining with both stacks two different gap-invariances; you need to reason about them separately.</>}
+        stretch={<>How would you test whether masked-timestamp is what's hurting burst-fraud recall, controlling for time-warp?</>}
       />
 
       <h3 style={{marginTop:24, color:"#1f3a5f"}}>E. Operations</h3>
@@ -1840,17 +1840,17 @@ flowchart TB
       <VIS.TrapProblem
         id="sf-e2"
         difficulty="hard"
-        title="E2 — Friday: new MO blindspot"
-        scenario={<>Friday: a new card-present velocity-fraud MO emerges (rapid-fire small-amount probes from compromised cards). SimFraud-based scorer is at 11% recall on this MO. Diagnose.</>}
+        title="E2 — Friday: multi-currency amount-jitter regression"
+        scenario={<>Friday: After expanding SimFraud pretraining to EU and JP transaction streams, AUPRC drops by 9 points on the JP fraud set but holds on US and EU. Time-warp is unchanged. Amount-jitter is the default sigma=0.1 (log-space) applied to the raw `amount` field. Diagnose.</>}
         options={[
-          {key:"a", text:"SimFraud's default time-warp aug makes the encoder velocity-invariant. The new MO's signature (high-velocity bursts) was never in the pretraining graph; even if it had been, the aug policy explicitly removed it. Recall is bounded by what the encoder can represent. Mitigation: re-pretrain with time-warp disabled OR amount-jitter only, on the most recent 30 days; retrain head.", correct:true},
-          {key:"b", text:"Roll back to last week."},
-          {key:"c", text:"Add more attention heads."},
-          {key:"d", text:"Page DevOps."},
+          {key:"a", text:"Amount-jitter is being applied to the raw `amount` field — but JP transactions are denominated in JPY where typical retail amounts are 1,000–10,000 yen, while US is in USD at 10–100. A log-space jitter sigma=0.1 is a fraction, not an absolute, so the multiplicative noise is the same in either currency — BUT the fraud-relevant threshold for JP small-probe fraud (300–500 yen) sits at a different log-distance from typical-spend than the US small-probe (under $5). Without currency-aware sigma OR conversion to a common log-amount-z-score per currency, jitter erodes the JP small-probe signature while sparing the US one. Mitigation: standardize amount to log-z-score per (currency × MCC) BEFORE jitter, or set sigma per currency from empirical merchant-amount-noise.", correct:true},
+          {key:"b", text:"Roll back to last week's checkpoint."},
+          {key:"c", text:"Add more attention heads to the encoder."},
+          {key:"d", text:"Page DevOps to check Kafka lag on the JP stream."},
         ]}
-        trap={<>(b), (c), (d) miss the aug-policy mechanism.</>}
-        lens={<>SimFraud's blindspots are encoded in the aug policy. New MOs that violate aug invariances are invisible.</>}
-        stretch={<>What's the right pretraining cadence for SimFraud in a drifting fraud landscape?</>}
+        trap={<>(b), (c), (d) miss the currency-aware augmentation issue. (b) doesn't address why JP specifically regressed.</>}
+        lens={<>Augmentation policies that look "magnitude-invariant" (log-space sigma) still depend on where fraud thresholds sit in log-amount-space, which is currency-specific. SimFraud's published defaults were US-only.</>}
+        stretch={<>What's the right unit for amount-jitter in a multi-currency stream?</>}
       />
 
       <VIS.TrapProblem
@@ -1957,17 +1957,17 @@ flowchart TB
       <VIS.TrapProblem
         id="sf-f3"
         difficulty="hard"
-        title="F3 — Reverse-engineer the symptom"
-        scenario={<>Symptom: SimFraud-pretrained Transformer is at 0.78 AUPRC on CNP fraud but 0.34 on card-present velocity fraud. Which SimFraud choice is the cause?</>}
+        title="F3 — Reverse-engineer the symptom (truncation × aug order)"
+        scenario={<>Symptom: SimFraud pretraining loss is healthy; CNP AUPRC is 0.78; velocity AUPRC is 0.76 (so time-warp is NOT the issue). But the engineer notices that long-running mule sequences (200+ tx over a week) have AUPRC of 0.41 — much worse than short bursts. Max sequence length is 128, truncation is "keep last 128 tx". Augmentation pipeline order is: time-warp → merchant-swap → masked-timestamp → truncate-to-128. Which SimFraud-specific choice fits the symptom?</>}
         options={[
-          {key:"a", text:"The default aug policy applies time-warp uniformly across all training sequences — including card-present ones. Velocity signatures get erased during pretraining; downstream head can't recover what the encoder won't represent. CNP fraud's amount/merchant patterns are preserved (other augs are aligned), so CNP AUPRC is good while velocity AUPRC collapses.", correct:true},
-          {key:"b", text:"Random seed variance."},
-          {key:"c", text:"Optimizer."},
-          {key:"d", text:"Embedding dim."},
+          {key:"a", text:"Augmentation order with truncation last — time-warp re-spaces the gaps and merchant-swap perturbs merchants on the FULL 200-tx sequence, then truncation drops everything but the last 128. The two views are augmented from the same 200-tx sequence, so they retain the same final-128 backbone but with different early-segment perturbations that are then thrown away. Effective augmentation strength on the kept window is much lower than intended; the InfoNCE positive pair is nearly identical, and the encoder gets little contrastive signal on long-mule sequences specifically. Fix: truncate FIRST, then augment, so the aug operates on the window the model actually sees.", correct:true},
+          {key:"b", text:"Random seed variance — long sequences happen to land in unlucky batches."},
+          {key:"c", text:"Optimizer momentum is wrong for long sequences."},
+          {key:"d", text:"Embedding dim is too small to encode 200 tx."},
         ]}
-        trap={<>(b), (c), (d) miss the aug-policy signature.</>}
-        lens={<>Per-MO AUPRC gaps point directly at which aug invariance was learned. CNP good + velocity bad = time-warp problem.</>}
-        stretch={<>What's the right per-MO aug-policy configuration?</>}
+        trap={<>(b), (c) are generic. (d) is wrong — only 128 tx are ever seen by the model.</>}
+        lens={<>Augmentation order matters when sequences exceed the model window. "Truncate last" silently weakens augmentation on long sequences and is a SimFraud-pipeline-specific bug — not a time-warp magnitude issue.</>}
+        stretch={<>How would you unit-test that aug effective-strength matches intended strength after truncation?</>}
       />
 
       <VIS.TrapProblem

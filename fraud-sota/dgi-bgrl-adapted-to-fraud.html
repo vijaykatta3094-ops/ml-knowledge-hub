@@ -1844,17 +1844,17 @@ flowchart TB
       <VIS.TrapProblem
         id="dgi-e2"
         difficulty="hard"
-        title="E2 — Friday: cosine = 1 across the batch"
-        scenario={<>Friday: BGRL training metric shows training cosine = 0.92 (great!), but inter-node pairwise cosine on a held-out batch is also 0.94. Diagnosis?</>}
+        title="E2 — Predictor head capacity mismatch"
+        scenario={<>BGRL is running with EMA decay = 0.99 (fine) and stop-gradient correctly placed (fine). Engineer shrinks the predictor head q from a 2-layer 512-512 MLP to a single linear 512→512 layer to save FLOPs. Pretraining loss plateaus high but does NOT collapse (inter-node cosine stays around 0.4); downstream AUPRC drops by 8 points vs the original predictor. What is the BGRL-specific cause?</>}
         options={[
-          {key:"a", text:"Representation collapse — the encoder is mapping all nodes to nearly the same point. Training cosine looks good because online and target both produce the same constant (cosine of constant with constant is 1). Inter-node cosine ≈ 1 is the smoking gun. Fix: restart with lower learning rate AND lower EMA decay, verify predictor head has non-trivial weights, confirm stop-gradient is in place.", correct:true},
-          {key:"b", text:"Pretraining is going well — ship."},
-          {key:"c", text:"Add more layers."},
-          {key:"d", text:"Increase batch size."},
+          {key:"a", text:"Under-capacity predictor — BGRL's loss requires the online branch's predictor q to learn the nonlinear map from online's representation to target's EMA representation. A single linear layer cannot represent the asymmetry between the two augmented views; the loss plateaus high because q literally cannot fit, and gradients back-propagating into the encoder are biased toward predictor-realizable directions. Encoder under-trains. This is distinct from collapse (cosine ≠ 1) and unique to predictor-asymmetric SSL.", correct:true},
+          {key:"b", text:"The encoder is too small."},
+          {key:"c", text:"The learning rate is wrong."},
+          {key:"d", text:"BGRL always needs huge batches."},
         ]}
-        trap={<>(b) misreads the metric (high cosine + high inter-node cosine = collapse). (c), (d) are unrelated.</>}
-        lens={<>The smoking gun for BGRL collapse is inter-node cosine, not training cosine. Always monitor both.</>}
-        stretch={<>Can you recover from a collapsed BGRL run without restarting?</>}
+        trap={<>(b) wrong layer — encoder is unchanged. (c) generic. (d) unrelated to the symptom.</>}
+        lens={<>BGRL's asymmetric architecture (online has predictor; target does not) means the predictor's expressivity directly bounds usable encoder capacity. DGI doesn't have this failure mode — it has no predictor.</>}
+        stretch={<>How would you size the predictor without grid search?</>}
       />
 
       <VIS.TrapProblem
@@ -1961,17 +1961,17 @@ flowchart TB
       <VIS.TrapProblem
         id="dgi-f3"
         difficulty="hard"
-        title="F3 — Reverse-engineer the symptom"
-        scenario={<>Symptom: BGRL training cosine converges to 0.99 within 20 epochs; held-out inter-node cosine is 0.97; downstream fine-tune AUPRC is at random-baseline. Which BGRL choice is the cause?</>}
+        title="F3 — Reverse-engineer the symptom (asymmetry broken)"
+        scenario={<>Symptom: BGRL training cosine converges to 0.99 within 5 epochs (much faster than the usual 20–40), inter-node cosine is also 0.99, and downstream AUPRC is at random-baseline. EMA is 0.99 (validated). A junior refactored the loss to reuse a shared `forward()` for both branches. Which BGRL-specific cause fits?</>}
         options={[
-          {key:"a", text:"EMA decay too high (close to 1.0) — the target encoder barely updates, so online's predictor q learns to map every input to the same near-constant target output. The training cosine looks fine (constant matches constant), but representations have collapsed. The signature is high-training-cosine AND high-inter-node-cosine simultaneously.", correct:true},
-          {key:"b", text:"Optimizer wrong."},
-          {key:"c", text:"Random seed."},
-          {key:"d", text:"Too few GPU cores."},
+          {key:"a", text:"Stop-gradient was dropped from the target branch in the refactor — both branches now back-propagate, the architecture loses its asymmetry, and the trivial solution (online = target = constant) becomes a fixed point of the gradient flow. Collapse arrives in 5 epochs instead of never, because there is nothing left to prevent it. BGRL's whole anti-collapse argument relies on stop-gradient on the target side; remove it and the method degenerates into 'minimize cosine distance to your own twin' — which is solved by any constant.", correct:true},
+          {key:"b", text:"EMA decay is too high (close to 1.0)."},
+          {key:"c", text:"The augmentation strength is wrong."},
+          {key:"d", text:"Batch size is too small."},
         ]}
-        trap={<>(b), (c), (d) miss the EMA-too-high signature.</>}
-        lens={<>The smoking gun for "EMA too high" is training cosine ≈ inter-node cosine. Knowing this saves a week of debugging.</>}
-        stretch={<>How would you instrument an EMA-decay-too-high alarm?</>}
+        trap={<>(b) is the EMA failure covered in B2 — ruled out here (EMA = 0.99, validated). (c), (d) generic.</>}
+        lens={<>BGRL has three structural anti-collapse mechanisms: predictor asymmetry, EMA target, AND stop-gradient on the target branch. Drop any one and collapse becomes reachable. The 5-epoch-to-collapse signature distinguishes "broken stop-gradient" from "EMA-too-high" (which collapses slowly).</>}
+        stretch={<>How would you unit-test stop-gradient presence in CI?</>}
       />
 
       <VIS.TrapProblem
