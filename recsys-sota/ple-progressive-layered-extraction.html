@@ -1616,16 +1616,16 @@ const App = () => (
 
       <VIS.TrapProblem id="ple-p9" difficulty="hard" multiSelect
         title="P9 — When NOT to use PLE. Select all that apply."
-        scenario={<><em>Discriminating insight: PLE needs (i) 2-4 tasks where seesaw appears, (ii) no extreme latency budget (stacked CGC blocks add depth), (iii) tasks that benefit from both shared and isolated capacity. Wrong with one task, 6+ tasks (HoME wins), or extreme latency budgets.</em><br/>Pick.</>}
+        scenario={<><em>Discriminating insight: PLE&apos;s structural advantage requires multiple tasks, observable seesaw, and a latency budget that admits stacked depth. Four scenarios violate one of those preconditions; one scenario is exactly the regime PLE was designed for. Decoys vary by which precondition they break, not by &ldquo;sweet spot&rdquo; framing.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Single-task setup — no multi-task interference to mitigate.", correct:true},
-          {key:"b", text:"6+ tasks where gate competition across stacks dominates — HoME wins.", correct:true},
-          {key:"c", text:"Sub-5ms latency budget where stacked CGC depth is too expensive.", correct:true},
-          {key:"d", text:"3-task video feed with measurable seesaw (sweet spot)."},
-          {key:"e", text:"Tasks with no benefit from any sharing — per-task towers are simpler.", correct:true},
+          {key:"a", text:"Single-task setup — no multi-task interference to mitigate; shared+specific split is meaningless.", correct:true},
+          {key:"b", text:"6+ tasks where breadth-wise group competition dominates — HoME&apos;s coarse-gate hierarchy is the right axis, PLE&apos;s depth-only stack saturates."},
+          {key:"c", text:"Sub-5ms latency budget where stacked CGC depth blows the SLA — depth is the cost knob PLE pays."},
+          {key:"d", text:"Per-input routing decisions are needed (different topology per request) — that&apos;s AESM²&apos;s axis; PLE&apos;s topology is fixed at graph-design time."},
+          {key:"e", text:"3-task video feed with measurable CTR/watch-time/share-rate seesaw and a comfortable latency budget — exactly PLE&apos;s designed regime, NOT a disqualifier."},
         ]}
-        trap={<>(d) sweet spot.</>}
-        lens={<>PLE needs 2-4 tasks with seesaw and some sharing benefit.</>}
+        trap={<>(e) is the success regime; the other four each violate a different PLE precondition (task count, breadth-axis fit, latency, topology-flexibility).</>}
+        lens={<>PLE needs 2-4 tasks, observable seesaw, fixed topology, and depth-friendly latency budget.</>}
         stretch={<>What latency does each CGC block typically add?</>}
       />
 
@@ -1687,16 +1687,16 @@ const App = () => (
 
       <VIS.TrapProblem id="ple-p14" difficulty="medium"
         title="P14 — Data assumption violations"
-        scenario={<><em>Discriminating insight: PLE assumes tasks have SOME shared structure (otherwise per-task towers win) AND SOME task-specific structure (otherwise shared-bottom wins). If tasks are completely orthogonal, the shared experts learn nothing useful; if tasks are perfectly aligned, the task-specific experts are redundant.</em><br/>Which violation is most direct?</>}
+        scenario={<><em>Discriminating insight: PLE&apos;s &ldquo;progressive&rdquo; piece assumes the shared-vs-specific layer ordering is preserved through the stack — lower layers do gradual sharing, upper layers do task-specific refinement. If a config error inverts that ordering (specific-then-shared), upper layers force task-specific representations back into the shared pool, destroying the gradient-isolation that PLE is designed to provide.</em><br/>Which violation is most direct?</>}
         options={[
-          {key:"a", text:"Tasks are either completely orthogonal (shared experts learn nothing) or perfectly aligned (task-specific experts are redundant). PLE&apos;s structural split assumes both kinds of structure coexist; without that, simpler architectures win.", correct:true},
-          {key:"b", text:"Off-by-one in task IDs."},
-          {key:"c", text:"GPU OOM during gating."},
-          {key:"d", text:"Tokenizer mismatch."},
+          {key:"a", text:"Shared-vs-specific layer-stack ordering inverted: upper layers configured as shared while lower layers are task-specific — gradient isolation is reversed and PLE collapses to noisy shared-bottom.", correct:true},
+          {key:"b", text:"Tasks share label-noise but have disjoint targets — noise correlation is annoying but PLE&apos;s structural split still has meaningful work to do."},
+          {key:"c", text:"One task has 100x more training samples than the others — imbalance is a per-task loss-weighting problem, doesn&apos;t invert PLE&apos;s structural property."},
+          {key:"d", text:"Tasks are sequential (label of t depends on t-1) — this is a temporal-modeling problem orthogonal to PLE&apos;s multi-task split."},
         ]}
-        trap={<>(b)(c)(d) generic.</>}
-        lens={<>PLE needs both shared and task-specific structure to exist.</>}
-        stretch={<>How would you measure shared-vs-specific structure?</>}
+        trap={<>(b)(c)(d) are real data quirks but each leaves PLE&apos;s structural ordering intact; only inverted layer-stack ordering destroys the &ldquo;progressive&rdquo; property.</>}
+        lens={<>PLE&apos;s structural precondition: lower=shared, upper=specific ordering through the stack.</>}
+        stretch={<>How would you assert layer-ordering correctness in code?</>}
       />
 
       <VIS.TrapProblem id="ple-p15" difficulty="hard"
@@ -1770,17 +1770,17 @@ const App = () => (
       />
 
       <VIS.TrapProblem id="ple-p20" difficulty="hard"
-        title="P20 — Failure on Friday: PLE deploy regressed task B"
-        scenario={<><em>Discriminating insight: task B&apos;s task-specific experts were initialized identically to shared experts; gradient symmetry kept them collapsed onto the shared subspace and B&apos;s specific track was dead. Diagnosis: init scheme broke symmetry; not a PLE bug.</em><br/>3am page. Diagnose.</>}
+        title="P20 — 3am page: shared experts started gradient-shocking after a downstream task swap"
+        scenario={<><em>Discriminating insight: a downstream task (task C) was added with an aggressive loss; its gradient now dominates the shared-expert pool through the gates. Task A — which was load-bearing on a SHARED-LAYER feature transformation — loses that signal because the shared experts are being pulled toward C. PLE&apos;s gradient-isolation only protects the task-specific track; the shared track is exposed.</em><br/>3am page. Diagnose.</>}
         options={[
-          {key:"a", text:"Task B&apos;s task-specific experts and shared experts were initialized identically; gradient symmetry kept B&apos;s specific track collapsed onto the shared subspace. Use a different init scheme (or perturbation) to break symmetry.", correct:true},
-          {key:"b", text:"GPU thermal throttling."},
-          {key:"c", text:"Cache TTL changed."},
-          {key:"d", text:"Disk full."},
+          {key:"a", text:"A new downstream task is gradient-shocking the shared-expert pool — task A relied on a shared-layer feature transformation that is now being rewritten toward task C. Cap task C&apos;s loss weight or move its representation into a task-specific expert before the shared layer.", correct:true},
+          {key:"b", text:"Task-specific experts share an init pool with shared experts — symmetry-breaking via init; would show as long-warmup degradation, not a sharp shock after a task swap."},
+          {key:"c", text:"Shared:specific ratio set higher in upper layers than lower — that&apos;s a static config issue; wouldn&apos;t change on a downstream-task swap."},
+          {key:"d", text:"Gate softmax normalization joint across pools — normalization issue; would mis-route everywhere, not just task A."},
         ]}
-        trap={<>(b)(c)(d) miss the init-symmetry diagnostic.</>}
-        lens={<>Symmetry breaks PLE&apos;s isolation; check init.</>}
-        stretch={<>What init scheme avoids this in practice?</>}
+        trap={<>(b)(c)(d) are PLE failure modes but each has the wrong temporal signature for this incident (post-task-swap, task-A-specific).</>}
+        lens={<>PLE&apos;s shared track is exposed to gradient interference from any task with disproportionate loss weight.</>}
+        stretch={<>What pre-deploy invariant would catch a load-bearing shared-layer dependency?</>}
       />
 
       <VIS.TrapProblem id="ple-p21" difficulty="medium"
@@ -1813,15 +1813,15 @@ const App = () => (
 
       <VIS.TrapProblem id="ple-p23" difficulty="hard"
         title="P23 — Smallest input that breaks PLE&apos;s claimed advantage"
-        scenario={<><em>Discriminating insight: a 2-task setup where task A and task B are essentially the same target with different label noise. Tasks are perfectly aligned; task-specific experts learn noise. PLE buys nothing vs shared-bottom + per-task heads.</em><br/>Construct the edge case.</>}
+        scenario={<><em>Discriminating insight: PLE&apos;s structural advantage assumes both shared and specific structure exist. Several plausible-looking edge inputs exist; only one zeroes the advantage. Others fall in success regimes or degrade gracefully.</em><br/>Construct the edge case.</>}
         options={[
-          {key:"a", text:"2-task setup where tasks are essentially the same target with different noise. Tasks are aligned; task-specific experts learn noise. PLE&apos;s structural split is unjustified.", correct:true},
-          {key:"b", text:"3-task feed with seesaw (sweet spot)."},
-          {key:"c", text:"Production multi-task with measurable interference (sweet spot)."},
-          {key:"d", text:"Heterogeneous tasks with both shared and specific structure (sweet spot)."},
+          {key:"b", text:"2-task setup where tasks are essentially the same target with different label noise — tasks perfectly aligned; task-specific experts learn pure noise; PLE buys nothing vs shared-bottom + per-task heads.", correct:true},
+          {key:"a", text:"3-task feed with measurable seesaw — exactly PLE&apos;s designed regime."},
+          {key:"c", text:"Production multi-task with measurable interference — PLE&apos;s home turf; the structural split is justified."},
+          {key:"d", text:"Heterogeneous tasks with both shared and specific structure — PLE&apos;s ideal input."},
         ]}
-        trap={<>(b)(c)(d) sweet spots.</>}
-        lens={<>PLE needs genuine task-specific structure.</>}
+        trap={<>(a)(c)(d) are PLE&apos;s success regimes. Only (b) collapses the structural justification.</>}
+        lens={<>Structural break: PLE needs genuine task-specific structure beyond label noise.</>}
         stretch={<>What alignment metric tells you tasks are too aligned for PLE?</>}
       />
 

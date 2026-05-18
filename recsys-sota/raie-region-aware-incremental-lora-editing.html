@@ -1610,16 +1610,16 @@ const App = () => (
 
       <VIS.TrapProblem id="raie-p9" difficulty="hard" multiSelect
         title="P9 — When NOT to use RAIE. Select all that apply."
-        scenario={<><em>Discriminating insight: RAIE needs (i) well-defined regions, (ii) stable region boundaries, (iii) a reliable router. It is wrong when regions are fluid, when there is one big undifferentiated cohort, or when the router accuracy is low (mis-routing kills the win).</em><br/>Pick.</>}
+        scenario={<><em>Discriminating insight: RAIE&apos;s structural assumption is that regions are real, stable, and routable. Three of the listed scenarios violate one of those three preconditions outright; two are myth-decoys that look plausible but RAIE handles them or composes with them.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"One big undifferentiated user cohort with no meaningful sub-structure — global LoRA is simpler and equally effective.", correct:true},
-          {key:"b", text:"Router accuracy is low (less than 80%) — most requests route to the wrong adapter; the isolation property is wasted.", correct:true},
-          {key:"c", text:"Region boundaries drift weekly — the per-region LoRA gets trained on the wrong cohort definition.", correct:true},
-          {key:"d", text:"Stable 8-region recommender on a frozen LLM backbone with cohort-specific drift (sweet spot)."},
-          {key:"e", text:"Need soft ensembling across multiple experts per request — RAIE&apos;s hard routing forbids this.", correct:true},
+          {key:"a", text:"One big undifferentiated user cohort with no meaningful sub-structure — global LoRA is simpler; the per-region matrices would all converge to the same thing.", correct:true},
+          {key:"b", text:"Router accuracy is low (less than 80%) — most requests reach the wrong adapter; the gradient-isolation property is wasted.", correct:true},
+          {key:"c", text:"Region boundaries genuinely drift week-to-week (mobility-driven user clustering) — per-region LoRA gets trained against the wrong cohort definition every cycle.", correct:true},
+          {key:"d", text:"Backbone is large (70B+) and inference cost is dominated by it — myth-decoy: RAIE is exactly the right tool because LoRA matrices add negligible cost; total cost is backbone-dominated either way."},
+          {key:"e", text:"Need soft ensembling of multiple experts per request — myth-decoy: this is an MMoE/AESM² use case, but RAIE wasn&apos;t aiming at it; choosing RAIE just means you picked the wrong tool, not that RAIE is broken."},
         ]}
-        trap={<>(d) sweet spot.</>}
-        lens={<>RAIE needs stable regions and a reliable router.</>}
+        trap={<>(d) is a backbone-cost confusion; (e) is a target-mismatch, not a failure mode.</>}
+        lens={<>RAIE needs well-defined + stable + routable regions; cost and ensembling concerns aren&apos;t structural disqualifiers.</>}
         stretch={<>What router accuracy is the break-even vs global LoRA?</>}
       />
 
@@ -1681,16 +1681,16 @@ const App = () => (
 
       <VIS.TrapProblem id="raie-p14" difficulty="medium"
         title="P14 — Data assumption violations"
-        scenario={<><em>Discriminating insight: RAIE assumes region preferences are MORE INTERNALLY CONSISTENT than ACROSS regions. If a region is internally heterogeneous (e.g., &ldquo;urban gen-Z&rdquo; mixes night-owl gamers and morning runners), the per-region LoRA learns an average that satisfies neither sub-cohort.</em><br/>Which violation is most direct?</>}
+        scenario={<><em>Discriminating insight: RAIE assumes the region-router&apos;s decision boundary is the SAME at training and inference. If the embedding the router scores against shifts between train and serve (e.g., a backbone-feature embedding is recomputed on a different backbone snapshot), an item that trained in region 3 now routes to region 5 — the per-region LoRA receives traffic it was never trained for.</em><br/>Which violation is most direct?</>}
         options={[
-          {key:"a", text:"Within-region heterogeneity dominates between-region variance. The per-region LoRA learns a useless average; sub-cohorts are silently mis-served. Re-partition regions or accept the loss.", correct:true},
-          {key:"b", text:"GPU OOM during adapter merge."},
-          {key:"c", text:"Off-by-one in region IDs."},
-          {key:"d", text:"Tokenizer mismatch."},
+          {key:"a", text:"Region-boundary mis-match: router embedding at inference comes from a backbone snapshot different from the one used during adapter training, so per-region traffic distribution shifts and adapters serve out-of-domain inputs.", correct:true},
+          {key:"b", text:"Router accuracy drifts mid-cycle from 92% to 78% — a real degradation, but it is a continuous metric problem caught by dashboards, not a structural data violation."},
+          {key:"c", text:"Adapter ranks differ across regions (r=4 for small region, r=16 for large) — creates capacity asymmetry but each adapter still trains and serves on the same boundary."},
+          {key:"d", text:"Backbone weights silently updated by a co-located training job — affects every region uniformly (still a bug, but doesn&apos;t break the region-locality assumption)."},
         ]}
-        trap={<>(b)(c)(d) generic.</>}
-        lens={<>RAIE needs between-region variance to exceed within-region variance.</>}
-        stretch={<>What clustering quality metric tests this?</>}
+        trap={<>(b) is continuous degradation, not boundary-violation; (c)(d) preserve the train/serve boundary identity even if other things break.</>}
+        lens={<>RAIE&apos;s structural precondition: same embedding space defines train-time and serve-time region boundaries.</>}
+        stretch={<>What canary catches a backbone-snapshot mismatch on the router?</>}
       />
 
       <VIS.TrapProblem id="raie-p15" difficulty="hard"
@@ -1764,17 +1764,17 @@ const App = () => (
       />
 
       <VIS.TrapProblem id="raie-p20" difficulty="hard"
-        title="P20 — Failure on Friday: region C latency spikes after a deploy"
-        scenario={<><em>Discriminating insight: the deploy added region D and bumped the adapter count to 9. Runtime adapter cache was sized for 8 adapters; every request to region C now evicts and reloads C&apos;s adapter on a cache miss. Latency on region C spikes despite no change to its adapter. Diagnosis: cache sizing, not adapter logic.</em><br/>3am page. Diagnose.</>}
+        title="P20 — 3am page: NEW item in region D produces irrelevant recs"
+        scenario={<><em>Discriminating insight: a new item-cluster was assigned region D before region D&apos;s LoRA adapter finished training (the rollout sequence skipped the &ldquo;router validation before adapter ready&rdquo; gate). The router now sends region-D traffic through a partially-initialized adapter — recs degrade specifically for that region while other regions stay healthy.</em><br/>3am page. Diagnose.</>}
         options={[
-          {key:"a", text:"Runtime adapter cache is undersized for the new region count; cache misses on region C cause adapter reload-on-every-request. Resize the cache to at least one slot per region (or use precomputed fused weights).", correct:true},
-          {key:"b", text:"GPU thermal throttling."},
-          {key:"c", text:"Disk full."},
-          {key:"d", text:"Random seed changed."},
+          {key:"a", text:"Router started serving new items to region D before region D&apos;s LoRA adapter was fully trained — adapter weights are at init/partial; gradient isolation property meaningless. Pause router for region D, finish adapter training, then re-enable.", correct:true},
+          {key:"b", text:"Router warm-up traffic was skewed toward old regions during canary — region D under-sampled, so router confidence on D is artificially low (but adapter is fine)."},
+          {key:"c", text:"Region D&apos;s LoRA matrices were loaded with the wrong rank (r=8 instead of r=16) — capacity-undersized but still trained; degrades smoothly, not catastrophically."},
+          {key:"d", text:"Shared backbone KV-cache was invalidated per-region after the deploy — adds latency to every region, not just D."},
         ]}
-        trap={<>(b)(c)(d) miss the per-region cache sizing.</>}
-        lens={<>Adapter cache must scale with region count.</>}
-        stretch={<>What runtime metric would catch this earlier?</>}
+        trap={<>(b) explains low router confidence not bad recs; (c) is graceful degradation; (d) is symmetric across regions, not D-specific.</>}
+        lens={<>Router-to-adapter ordering: router must not serve a region until its adapter is trained.</>}
+        stretch={<>What pre-deploy invariant would catch the ordering gap?</>}
       />
 
       <VIS.TrapProblem id="raie-p21" difficulty="medium"
@@ -1807,15 +1807,15 @@ const App = () => (
 
       <VIS.TrapProblem id="raie-p23" difficulty="hard"
         title="P23 — Smallest input that breaks RAIE&apos;s claimed advantage"
-        scenario={<><em>Discriminating insight: if regions are nearly identical (low between-region preference variance), every per-region LoRA learns approximately the same matrices. RAIE then equals global LoRA but pays K-fold parameter cost for nothing.</em><br/>Construct the edge case.</>}
+        scenario={<><em>Discriminating insight: RAIE&apos;s advantage requires that per-region matrices learn DIFFERENT things. Several plausible-looking edge inputs exist; only one actually erases the advantage. The others are tractable or are exactly the regime RAIE was built for.</em><br/>Construct the edge case.</>}
         options={[
-          {key:"a", text:"Regions with near-identical preference distributions — each LoRA converges to roughly the same matrices. RAIE buys nothing but pays K-fold parameter storage and a routing layer.", correct:true},
-          {key:"b", text:"8-region stable LLM recsys (sweet spot)."},
-          {key:"c", text:"Distinct cohorts with cohort-specific drift (sweet spot)."},
-          {key:"d", text:"Stable region boundaries with reliable router (sweet spot)."},
+          {key:"c", text:"Regions with near-identical preference distributions — every per-region LoRA converges to the same matrices. RAIE pays K-fold parameter storage + a router for zero behavioral isolation.", correct:true},
+          {key:"a", text:"8 cohorts with cohort-specific drift on a frozen LLM backbone — this is the canonical regime RAIE was designed for, not an edge case."},
+          {key:"b", text:"One region has 100x the traffic of the others — load-imbalance hurts utilization but each region&apos;s LoRA still learns its own behavior."},
+          {key:"d", text:"Router accuracy hovers around 88% — degrades RAIE smoothly; can be salvaged by router re-calibration; not a structural break."},
         ]}
-        trap={<>(b)(c)(d) sweet spots.</>}
-        lens={<>RAIE needs meaningful between-region variance.</>}
+        trap={<>(a) is the success regime; (b) is operational; (d) is recoverable. Only (c) zeroes the advantage with no fix short of changing the partition.</>}
+        lens={<>The structural break: between-region variance must exceed within-region variance for per-region LoRA to learn distinct matrices.</>}
         stretch={<>What variance ratio tells you RAIE is worth it?</>}
       />
 

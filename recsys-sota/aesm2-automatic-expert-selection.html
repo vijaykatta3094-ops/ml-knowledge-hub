@@ -1617,32 +1617,32 @@ const App = () => (
       />
 
       <VIS.TrapProblem id="aesm-p9" difficulty="hard" multiSelect
-        title="P9 — When NOT to use AESM². Select all that apply."
-        scenario={<><em>Discriminating insight: AESM² needs (i) enough data to train the router, (ii) regularization (entropy / load balancing), (iii) tasks where hand-designed topology would be wrong or unknown. Wrong when data is limited (router undertrained), when hand design is reliable, or when latency forbids Gumbel sampling overhead.</em><br/>Pick.</>}
+        title="P9 — When NOT to use AESM². Select exactly the disqualifiers."
+        scenario={<><em>Discriminating insight: AESM²&apos;s defining win condition is &ldquo;topology is genuinely unknown or shifting AND you have data + regularization budget.&rdquo; The catch is that several listed scenarios LOOK like disqualifiers but actually compose with AESM² or are exactly its target regime. Most options are decoys; only one is a real structural disqualifier.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Limited training data — the router is undertrained and collapses or oscillates.", correct:true},
-          {key:"b", text:"Tasks where PLE&apos;s shared/specific design is known to work — manual prior is safer.", correct:true},
-          {key:"c", text:"Sub-5ms latency budget where Gumbel sampling adds too much overhead.", correct:true},
-          {key:"d", text:"5-task feed with unknown task relationships (sweet spot)."},
-          {key:"e", text:"No engineering capacity to monitor router stability and tune regularization.", correct:true},
+          {key:"a", text:"You have a stable PLE shared/specific topology that already works in production AND task relationships are not shifting — AESM²&apos;s router has nothing to discover; you pay variance + regularization overhead for zero behavioral gain.", correct:true},
+          {key:"b", text:"5-task feed with unknown task relationships — exactly AESM²&apos;s target, not a disqualifier."},
+          {key:"c", text:"Limited training data — degrades router quality but mitigations exist (warmup with hand-designed prior, distill from PLE); not an absolute disqualifier."},
+          {key:"d", text:"Sub-5ms latency budget — Gumbel selection at inference is the SAME cost as hand-designed top-k MoE; latency isn&apos;t a unique AESM² disqualifier."},
+          {key:"e", text:"No engineering capacity to monitor router stability — operational concern; you&apos;d still benefit from AESM² when topology is shifting, just at higher firefighting risk."},
         ]}
-        trap={<>(d) sweet spot.</>}
-        lens={<>AESM² needs data, regularization, and unknown topology to win.</>}
+        trap={<>(b) target regime; (c)(d)(e) are concerns but each has a known mitigation. Only (a) — known stable topology that already works — makes AESM² strictly worse than the alternative.</>}
+        lens={<>AESM²&apos;s sole structural disqualifier is &ldquo;topology is known, stable, and already works.&rdquo;</>}
         stretch={<>What router accuracy does the regularization need to hit?</>}
       />
 
       <VIS.TrapProblem id="aesm-p10" difficulty="hard"
-        title="P10 — How does the router collapse?"
-        scenario={<><em>Discriminating insight: without entropy / load-balancing regularization, the router learns to use a few experts that happen to be initialized well or to receive more gradient early — those experts get better, the router picks them more, the cycle compounds. The remaining experts atrophy. Mitigations: entropy regularization on the routing distribution; load-balancing auxiliary loss; importance weighting.</em><br/>Pick.</>}
+        title="P10 — The Matthew-effect MECHANISM behind router collapse"
+        scenario={<><em>Discriminating insight: this question is about the MECHANISM dynamic, not about whether collapse happens (that&apos;s P24) or whether AESM² is &ldquo;optimal&rdquo; in principle (that&apos;s P15). Concretely: at step 0, a few experts have slightly better init or receive slightly more gradient; the router&apos;s softmax slightly favors them; they receive proportionally more gradient next step; the gap widens; by step N the router is one-hot. Mitigation is whatever DAMPENS that positive-feedback loop while it&apos;s small.</em><br/>Pick the mechanism description.</>}
         options={[
-          {key:"a", text:"The router learns to use a few popular experts that win the early-training Matthew effect; the rest atrophy. Mitigate with entropy regularization on the routing distribution, a load-balancing auxiliary loss, or importance weighting (similar to switch-transformer load-balancing).", correct:true},
-          {key:"b", text:"Routers never collapse in AESM²."},
-          {key:"c", text:"Adding more experts solves collapse."},
-          {key:"d", text:"Lower temperature solves collapse."},
+          {key:"a", text:"Early-step Matthew-effect: small init advantage -> slightly higher routing weight -> proportionally more gradient -> larger expert quality gap -> sharper routing weight, compounding. Entropy reg + load-balancing aux loss DAMPEN this loop before it widens to one-hot.", correct:true},
+          {key:"b", text:"Routers collapse because the dataset is too small — but the same dynamic happens at scale, so size isn&apos;t the mechanism."},
+          {key:"c", text:"Collapse is a Gumbel-noise artifact — but Gumbel noise alone would AVERAGE out; the positive-feedback amplification is what sustains it."},
+          {key:"d", text:"Adam optimizer&apos;s momentum causes collapse — would predict collapse only with momentum-based optimizers, but plain SGD shows the same dynamic."},
         ]}
-        trap={<>(b) denies the failure. (c)(d) deepen the bug.</>}
-        lens={<>Routing collapse is the dominant AESM² failure mode; regularization is mandatory.</>}
-        stretch={<>What load-balancing loss is standard?</>}
+        trap={<>(b)(c)(d) name candidate causes but each is falsifiable: collapse persists at scale (kills b), Gumbel without feedback averages out (kills c), SGD collapses too (kills d). Only positive-feedback Matthew-effect survives.</>}
+        lens={<>The mechanism is positive-feedback amplification, not noise or optimizer choice; dampeners (entropy reg, load-bal) target the feedback loop.</>}
+        stretch={<>What load-balancing loss is standard (switch-transformer style)?</>}
       />
 
       <VIS.TrapProblem id="aesm-p11" difficulty="hard"
@@ -1689,44 +1689,44 @@ const App = () => (
 
       <VIS.TrapProblem id="aesm-p14" difficulty="medium"
         title="P14 — Data assumption violations"
-        scenario={<><em>Discriminating insight: AESM² assumes the data carries enough signal for the router to learn a useful topology. With limited data, the router&apos;s gradient is noisy and it picks experts essentially at random — the &ldquo;automatic&rdquo; selection becomes random selection.</em><br/>Which violation is most direct?</>}
+        scenario={<><em>Discriminating insight: AESM² assumes the Gumbel-temperature SCHEDULE stays consistent with the router&apos;s training regime. After a warm-restart (e.g., resuming from a checkpoint post-incident), the scheduler is commonly mis-set back to the &ldquo;exploration&rdquo; start value while the router itself is already mid-convergence — the router gets re-noised onto an already-committed topology, producing flapping selections.</em><br/>Which violation is most direct?</>}
         options={[
-          {key:"a", text:"Limited training data — the router&apos;s gradient is noisy; expert selection becomes near-random and AESM² degrades to noisy MoE. Hand-designed PLE/HoME is more robust in low-data regimes.", correct:true},
-          {key:"b", text:"Off-by-one in task IDs."},
-          {key:"c", text:"GPU OOM during routing."},
-          {key:"d", text:"Tokenizer mismatch."},
+          {key:"a", text:"Gumbel-temperature schedule mis-set after a warm-restart: scheduler reset to high-T exploration value while router weights are already mid-convergence; router selections start flapping cycle-to-cycle on an already-committed expert set.", correct:true},
+          {key:"b", text:"Task relationships stable but few-shot per task — affects router quality but each task&apos;s gradient signal is still well-defined; AESM² degrades smoothly, not structurally."},
+          {key:"c", text:"Tasks have widely different output cardinalities (binary vs multi-class) — handled by per-task heads; doesn&apos;t affect router-side data assumption."},
+          {key:"d", text:"Per-input features carry no task-discriminative signal — router defaults to per-task prior, equivalent to PLE-without-stack; not a violation."},
         ]}
-        trap={<>(b)(c)(d) generic.</>}
-        lens={<>AESM² needs enough data to learn the router.</>}
-        stretch={<>What data size threshold is typical for AESM² to beat PLE?</>}
+        trap={<>(b)(c)(d) are real concerns but each preserves the schedule-consistency invariant; only (a) silently desynchronizes the schedule from router state.</>}
+        lens={<>AESM²&apos;s structural precondition: Gumbel-temperature schedule and router-training step must stay synchronized.</>}
+        stretch={<>What checkpoint metadata is needed to restore schedule state correctly?</>}
       />
 
       <VIS.TrapProblem id="aesm-p15" difficulty="hard"
-        title="P15 — Intuitive but wrong: &ldquo;AESM² learns the OPTIMAL topology&rdquo;"
-        scenario={<><em>Discriminating insight: AESM² claims &ldquo;automatic&rdquo; selection but the optimization is over a non-convex landscape with collapse modes. The router can learn the WORST topology — a single popular expert per task, no sharing, no specialization. Calling it &ldquo;optimal&rdquo; ignores the failure modes.</em><br/>Why is &ldquo;optimal&rdquo; wrong?</>}
+        title="P15 — Epistemic framing: &ldquo;automatic&rdquo; is not &ldquo;optimal&rdquo;"
+        scenario={<><em>Discriminating insight: this is an EPISTEMIC question, not a mechanism question (P10) or a named-failure question (P24). The argument: input-conditioned selection is only as good as the information in the input. If your per-input features carry NO task-discriminative signal beyond what a hand-designed prior already encodes, AESM²&apos;s &ldquo;automatic&rdquo; topology can be STRICTLY WORSE than a sensible hand-designed PLE prior — because the router introduces variance with no compensating bias reduction.</em><br/>Why is &ldquo;automatic&rdquo; not free?</>}
         options={[
-          {key:"a", text:"&ldquo;Automatic&rdquo; does not mean &ldquo;optimal.&rdquo; The optimization landscape has collapse modes (single popular expert) and oscillation modes (routes flip every cycle). Without proper regularization, AESM² can learn the WORST topology — a degenerate router that beats no baseline.", correct:true},
-          {key:"b", text:"AESM² always learns the optimum."},
-          {key:"c", text:"AESM² never collapses."},
-          {key:"d", text:"AESM² is convex."},
+          {key:"a", text:"&ldquo;Automatic&rdquo; selection is only as informative as the input. When input features are uninformative about which expert helps (vs a hand-designed prior), the router adds variance without reducing bias — a sensible PLE prior strictly dominates. AESM² is a tool for INFORMATIVE-INPUT regimes; calling it &ldquo;optimal&rdquo; outside that regime ignores its precondition.", correct:true},
+          {key:"b", text:"AESM² always beats hand-designed topologies given enough data — false because no amount of data fixes uninformative inputs."},
+          {key:"c", text:"AESM² is optimal because it&apos;s differentiable end-to-end — differentiability is a training property, unrelated to whether the input has the right information."},
+          {key:"d", text:"Optimality follows from the universal approximation theorem applied to the router — UAT is about expressivity not about identifiability from the data."},
         ]}
-        trap={<>(b)(c)(d) deny the failure modes.</>}
-        lens={<>Automatic != optimal; collapse modes exist.</>}
-        stretch={<>What auxiliary loss prevents collapse?</>}
+        trap={<>(b)(c)(d) each lean on a true-but-irrelevant property. The epistemic point is about input-informativeness, not data scale, gradient flow, or expressivity.</>}
+        lens={<>AESM² presupposes that per-input features carry topology-selecting signal; without that signal, automatic = random + variance.</>}
+        stretch={<>What pre-deploy test confirms inputs are informative enough for AESM² to beat PLE?</>}
       />
 
       <VIS.TrapProblem id="aesm-p16" difficulty="hard"
-        title="P16 — Wrong-assumption cascade"
-        scenario={<><em>Discriminating insight: assuming &ldquo;AESM² is just MMoE with Gumbel&rdquo; cascades into (i) skipping entropy regularization (collapse), (ii) keeping temperature high at inference (no actual selection, back to MMoE), (iii) not load-balancing (long-tail experts atrophy). Each piece is load-bearing.</em><br/>What breaks?</>}
+        title="P16 — Wrong-assumption cascade: degenerating to MMoE"
+        scenario={<><em>Discriminating insight: assuming &ldquo;AESM² is just MMoE with Gumbel sprinkled on top&rdquo; — without DISCIPLINING the selection module — cascades into a model that&apos;s structurally MMoE but with extra overhead. The cascade has three pieces: (i) under-train the selection module so it never learns discriminating routes, (ii) skip input-conditioning by feeding the router only task-id (no per-input features), (iii) skip temperature annealing so inference still mixes broadly. Each piece individually pushes AESM² one step closer to flat MMoE; together they erase the entire input-conditioned advantage. This is distinct from routing-collapse (which is the OPPOSITE failure — too-sharp instead of too-soft).</em><br/>What breaks?</>}
         options={[
-          {key:"a", text:"All three: no entropy regularization (collapse), high inference temperature (degenerates to MMoE), no load balancing (long-tail experts atrophy). AESM² needs Gumbel selection + entropy reg + load balancing + temperature annealing together.", correct:true},
-          {key:"b", text:"Only entropy regularization."},
-          {key:"c", text:"Only temperature."},
-          {key:"d", text:"Nothing — AESM² really is just MMoE with Gumbel."},
+          {key:"a", text:"All three pieces cascade AESM² into MMoE-degeneracy: under-trained selection module (no discriminating routes), no input-conditioning (router sees only task-id), no temperature anneal (inference still mixes). Net: AESM² becomes flat MMoE with Gumbel overhead.", correct:true},
+          {key:"b", text:"Only under-training the selection module — but even a well-trained module degenerates if you skip the other two."},
+          {key:"c", text:"Only skipping input-conditioning — but a well-conditioned router still degenerates without anneal."},
+          {key:"d", text:"Nothing — AESM² really is just MMoE with Gumbel, so degenerating to MMoE is correct behavior."},
         ]}
-        trap={<>(d) the seductive misread.</>}
-        lens={<>Gumbel + entropy + load-balancing + temperature anneal — all four load-bearing.</>}
-        stretch={<>What ablation isolates each?</>}
+        trap={<>(d) is the seductive senior misread; (b)(c) are partial truths. All three pieces are independently load-bearing for the input-conditioned-selection axis.</>}
+        lens={<>MMoE-degeneracy is the SOFT failure mode: too much mixing, no selection. Routing-collapse (P10/P24) is the SHARP failure mode: too much selection, no mixing. AESM² lives between them and needs all three disciplines.</>}
+        stretch={<>What ablation isolates which of the three pieces failed?</>}
       />
 
       <VIS.TrapProblem id="aesm-p17" difficulty="medium"
@@ -1772,17 +1772,17 @@ const App = () => (
       />
 
       <VIS.TrapProblem id="aesm-p20" difficulty="hard"
-        title="P20 — Failure on Friday: AESM² accuracy collapsed overnight"
-        scenario={<><em>Discriminating insight: the entropy regularization weight was decayed too quickly by a scheduler bug — within one cycle the router collapsed to one expert per task. Diagnosis: scheduler bug on regularization, not a routing-fundamental flaw.</em><br/>3am page. Diagnose.</>}
+        title="P20 — 3am page: expert utilization went uniform overnight"
+        scenario={<><em>Discriminating insight: the expert-utilization histogram, normally showing distinct per-task peaks, has flattened to roughly uniform across all experts and all tasks. The Gumbel-temperature annealing schedule expired this morning (scheduler hit its terminal step yesterday) — temperature is now at the high &ldquo;exploration&rdquo; floor, not the low &ldquo;commit&rdquo; setpoint, so the router&apos;s discrete selection has decayed into uniform mixing. Distinct from collapse (sharp) — this is the OPPOSITE failure mode: too-soft.</em><br/>3am page. Diagnose.</>}
         options={[
-          {key:"a", text:"Entropy regularization scheduler bug — weight decayed too quickly; router collapsed to one expert per task. Restore the regularization weight and re-train; add a guardrail that prevents the scheduler from going below a floor.", correct:true},
-          {key:"b", text:"GPU thermal throttling."},
-          {key:"c", text:"Cache TTL changed."},
-          {key:"d", text:"Disk full."},
+          {key:"a", text:"Gumbel temperature-annealing schedule expired; T snapped back to exploration value; routing became uniform-mixing. Pin T to its low committed value (or extend the schedule); re-validate per-task accuracy recovers.", correct:true},
+          {key:"b", text:"Router warm-up was disabled by a deploy flag flip — would cause initial-step instability, not steady-state uniform mixing."},
+          {key:"c", text:"Load-balancing aux loss weight zeroed by a config typo — would cause collapse (one expert dominates), not uniform mixing; opposite shape."},
+          {key:"d", text:"Temperature scheduler swapped to constant-T, but with constant LOW T — would HARDEN selection, not soften it; wrong direction."},
         ]}
-        trap={<>(b)(c)(d) miss the regularization-scheduler diagnostic.</>}
-        lens={<>Entropy regularization floor is a load-bearing guardrail.</>}
-        stretch={<>What floor value is typical?</>}
+        trap={<>(b) wrong temporal signature; (c) wrong histogram shape (sharp not flat); (d) wrong direction. Only schedule expiration matches &ldquo;suddenly uniform&rdquo;.</>}
+        lens={<>Uniform-mixing is the soft-failure mode of AESM² — opposite of collapse, both produced by temperature mis-set.</>}
+        stretch={<>What guardrail prevents schedule expiration silently?</>}
       />
 
       <VIS.TrapProblem id="aesm-p21" difficulty="medium"
@@ -1815,29 +1815,29 @@ const App = () => (
 
       <VIS.TrapProblem id="aesm-p23" difficulty="hard"
         title="P23 — Smallest input that breaks AESM²&apos;s claimed advantage"
-        scenario={<><em>Discriminating insight: when task relationships are known and stable (e.g., two perfectly aligned tasks), PLE or even shared-bottom is sufficient. AESM²&apos;s router has nothing to discover — it just adds variance and regularization overhead.</em><br/>Construct the edge case.</>}
+        scenario={<><em>Discriminating insight: AESM² wins when topology must be learned per-input. Several inputs look problematic; only one collapses the structural advantage. Others are operational issues or are exactly AESM²&apos;s target regime.</em><br/>Construct the edge case.</>}
         options={[
-          {key:"a", text:"Two perfectly aligned tasks (e.g., CTR + early-CTR) with stable relationship over time. PLE or shared-bottom suffices; AESM²&apos;s router adds variance and overhead for nothing.", correct:true},
-          {key:"b", text:"5-task feed with unknown task relationships (sweet spot)."},
-          {key:"c", text:"Tasks with seasonal shifts (sweet spot)."},
-          {key:"d", text:"Multi-task where manual topology design is brittle (sweet spot)."},
+          {key:"c", text:"Two perfectly aligned tasks (e.g., CTR + early-CTR) with provably stable relationship over time — PLE or shared-bottom suffices; AESM²&apos;s router has nothing to discover and adds variance for nothing.", correct:true},
+          {key:"a", text:"5-task feed with unknown task relationships — exactly AESM²&apos;s target regime, not an edge case."},
+          {key:"b", text:"Tasks with seasonal shifts — input-conditioned routing is precisely the lever; AESM² adapts where PLE&apos;s fixed topology cannot."},
+          {key:"d", text:"Multi-task where manual topology design is brittle — also AESM²&apos;s home turf."},
         ]}
-        trap={<>(b)(c)(d) sweet spots.</>}
-        lens={<>AESM² needs unknown or shifting relationships.</>}
+        trap={<>(a)(b)(d) are AESM²&apos;s success regimes. Only (c) erases the value of learned routing.</>}
+        lens={<>Structural break: AESM² needs unknown OR shifting task relationships; stable + known eliminates the advantage.</>}
         stretch={<>What test confirms task relationships are stable?</>}
       />
 
       <VIS.TrapProblem id="aesm-p24" difficulty="hard"
-        title="P24 — Named failure: router learns the worst topology"
-        scenario={<><em>Discriminating insight: a well-known AESM²-style failure — without load-balancing, the router learns to route ALL tasks to the SAME single expert (the &ldquo;one-hot-collapse&rdquo;); other experts atrophy; the model behaves as a single-expert MLP. This is the WORST possible topology — strictly worse than MMoE or PLE. Fix: load-balancing auxiliary loss + entropy regularization + temperature annealing.</em><br/>Pick.</>}
+        title="P24 — Named failure: one-hot collapse (canonical)"
+        scenario={<><em>Discriminating insight: this is the CANONICAL named failure — the SHAPE most ML engineers should recognize on sight. Without load-balancing, the router routes ALL tasks to the SAME single expert; other experts atrophy; the model degenerates into a single-expert MLP. This is the dual of P20&apos;s &ldquo;too-soft&rdquo; failure (this is &ldquo;too-sharp&rdquo;), and the asymptotic endpoint of P10&apos;s Matthew-effect mechanism. Fix: load-balancing aux loss + entropy reg + temperature anneal.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"One-hot collapse — all tasks route to the same single expert; other experts atrophy; model degenerates to a single-expert MLP. WORST possible topology — strictly worse than MMoE or PLE. Fix with load-balancing auxiliary loss + entropy reg + temperature annealing.", correct:true},
-          {key:"b", text:"AESM² is immune to collapse."},
-          {key:"c", text:"Add more experts."},
-          {key:"d", text:"Lower temperature solves it."},
+          {key:"a", text:"One-hot collapse: all tasks route to the same single expert; remaining experts atrophy; model degenerates to a single-expert MLP. Strictly worse than MMoE or PLE. Fix with load-balancing aux loss + entropy reg + temperature annealing.", correct:true},
+          {key:"b", text:"Routing oscillation between two experts per task cycle-to-cycle — real failure mode, but it&apos;s the OSCILLATION failure (caused by entropy reg too high), not the canonical collapse named in AESM² papers."},
+          {key:"c", text:"Two experts dominate per task with stable routing — this is the HEALTHY state for AESM², not a failure."},
+          {key:"d", text:"Each task uses all experts with uniform weight — that&apos;s the soft-failure (P20), not the canonical one-hot collapse."},
         ]}
-        trap={<>(b) denies the failure. (c)(d) deepen it.</>}
-        lens={<>One-hot collapse is the canonical AESM² failure; load-balancing is the fix.</>}
+        trap={<>(b)(c)(d) are real adjacent states but only (a) matches the &ldquo;one-hot collapse&rdquo; name. The senior signal is distinguishing the four states (one-hot / oscillation / healthy / uniform).</>}
+        lens={<>One-hot collapse is the AESM² named failure — strictly distinct from oscillation, healthy multi-expert, and uniform-mixing.</>}
         stretch={<>What load-balancing auxiliary loss is standard (e.g., from switch-transformer)?</>}
       />
 

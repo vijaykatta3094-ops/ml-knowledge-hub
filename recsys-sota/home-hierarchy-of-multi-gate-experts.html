@@ -1632,16 +1632,16 @@ const App = () => (
 
       <VIS.TrapProblem id="home-p9" difficulty="hard" multiSelect
         title="P9 — When NOT to use HoME. Select all that apply."
-        scenario={<><em>Discriminating insight: HoME needs (i) 6+ tasks where seesaw appears, (ii) engineering budget to design groups, (iii) heterogeneous feature/task structure that maps to natural groups. Wrong when tasks are few, when grouping is arbitrary, or when latency is the binding constraint (extra gating adds ms).</em><br/>Pick.</>}
+        scenario={<><em>Discriminating insight: HoME&apos;s win condition is many tasks with EXPLOITABLE breadth-wise grouping. Every listed scenario violates at least one HoME precondition — there is no &ldquo;sweet spot&rdquo; option here. Recognize that HoME is a narrow-applicability tool: when none of its preconditions hold, every listed case is genuinely the wrong place for it.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"2-3 tasks where flat MMoE has no seesaw — hierarchy is overkill.", correct:true},
-          {key:"b", text:"Tasks with no natural semantic clustering — groups would be arbitrary.", correct:true},
-          {key:"c", text:"Sub-10ms latency budget where coarse + fine gates add too much compute.", correct:true},
-          {key:"d", text:"Short-video platform with 8 tasks showing clear seesaw (sweet spot)."},
-          {key:"e", text:"No engineering budget to design and maintain expert groups.", correct:true},
+          {key:"a", text:"2-3 tasks where flat MMoE has no observable seesaw — coarse gates add latency for no behavioral gain.", correct:true},
+          {key:"b", text:"Tasks with no natural semantic clustering (e.g., one watch-time task + one revenue task + one moderation task) — coarse gates have nothing to group over.", correct:true},
+          {key:"c", text:"Sub-10ms latency budget where coarse + fine gates add too much compute on every request.", correct:true},
+          {key:"d", text:"No engineering or maintenance budget to design, label, and re-audit expert groups quarterly.", correct:true},
+          {key:"e", text:"Routing decisions must be input-conditioned per request (not per task) — that&apos;s AESM²&apos;s axis; HoME&apos;s breadth grouping cannot do per-input topology.", correct:true},
         ]}
-        trap={<>(d) sweet spot.</>}
-        lens={<>HoME needs many tasks, natural groups, and engineering budget.</>}
+        trap={<>No sweet-spot decoy here — recognizing &ldquo;every case is wrong for HoME&rdquo; is itself the senior signal.</>}
+        lens={<>HoME needs many tasks AND natural groups AND latency budget AND group-design budget — missing any one is a disqualifier.</>}
         stretch={<>How does latency compare to MMoE at production traffic?</>}
       />
 
@@ -1703,16 +1703,16 @@ const App = () => (
 
       <VIS.TrapProblem id="home-p14" difficulty="medium"
         title="P14 — Data assumption violations"
-        scenario={<><em>Discriminating insight: HoME assumes tasks naturally cluster into groups that share signal type. If every task is heterogeneous (e.g., one watch-time task plus one revenue task plus one moderation task), the &ldquo;group&rdquo; abstraction is forced and the coarse gate cannot find useful structure.</em><br/>Which violation is most direct?</>}
+        scenario={<><em>Discriminating insight: HoME assumes the coarse-gate temperature stays at the calibrated value that yields a sharp-but-not-collapsed group distribution. If gate temperatures drift differently across coarse and fine gates (e.g., warmup schedule reset the fine-gate T but not the coarse-gate T), the coarse gate over-softens and several groups end up with utilization &lt; 1% — effectively converting HoME back to a flat shared pool with extra overhead.</em><br/>Which violation is most direct?</>}
         options={[
-          {key:"a", text:"Tasks have no natural semantic grouping (every task uses different signals); the coarse gate cannot find useful structure and HoME degenerates into flat MMoE with extra latency. Use PLE or flat MMoE instead.", correct:true},
-          {key:"b", text:"Off-by-one in task IDs."},
-          {key:"c", text:"GPU OOM during gating."},
-          {key:"d", text:"Tokenizer mismatch."},
+          {key:"a", text:"Group-router gate-temperature drift: coarse-gate T softens while fine-gate T sharpens, so several groups end up with under-1% utilization and HoME degenerates to flat MMoE-with-overhead.", correct:true},
+          {key:"b", text:"Tasks have natural groupings but groupings overlap heavily (one task fits both content-group and interaction-group) — boundaries fuzzy but still trainable; degrades gracefully."},
+          {key:"c", text:"One task spans multiple business groups conceptually — solvable by allowing multi-group membership, not a structural violation."},
+          {key:"d", text:"Task volume distribution is heavily skewed across groups (one group gets 80% of traffic) — utilization imbalance hurts but doesn&apos;t break group-routing semantics."},
         ]}
-        trap={<>(b)(c)(d) generic.</>}
-        lens={<>HoME needs natural task groupings; without them, hierarchy buys nothing.</>}
-        stretch={<>How would you measure &ldquo;natural groupings exist&rdquo;?</>}
+        trap={<>(b)(c)(d) are real fuzziness issues but degrade gracefully; only temperature drift silently collapses the hierarchy without alerting.</>}
+        lens={<>HoME&apos;s structural precondition: coarse and fine gate temperatures must stay co-calibrated.</>}
+        stretch={<>What dashboard catches coarse/fine-gate temperature divergence?</>}
       />
 
       <VIS.TrapProblem id="home-p15" difficulty="hard"
@@ -1786,17 +1786,17 @@ const App = () => (
       />
 
       <VIS.TrapProblem id="home-p20" difficulty="hard"
-        title="P20 — Failure on Friday: watch-time metric tanks after HoME deploy"
-        scenario={<><em>Discriminating insight: watch-time task was assigned to a content-group but its coarse gate weight on the interaction-group was clipped to zero by an accidentally aggressive sparsity regularizer; the task lost access to interaction features that were load-bearing. Diagnosis is sparsity reg on coarse gates, not a HoME design flaw.</em><br/>3am page. Diagnose.</>}
+        title="P20 — 3am page: coarse-gate utilization histogram collapsed overnight"
+        scenario={<><em>Discriminating insight: the coarse-gate utilization histogram (group-share per task) has collapsed — one group is taking 95% of weight across most tasks, the other groups starved. This is the canonical HoME breadth-side failure: coarse-gate collapse, distinct from leaf-expert collapse. Cause is usually a non-task-balanced batch sampler that started favoring one task-cluster.</em><br/>3am page. Diagnose.</>}
         options={[
-          {key:"a", text:"Sparsity regularization on coarse gates was too aggressive; the watch-time task lost access to the interaction group. Loosen the sparsity penalty or whitelist required group access per task.", correct:true},
-          {key:"b", text:"GPU thermal throttling."},
-          {key:"c", text:"Cache TTL changed."},
-          {key:"d", text:"Disk full."},
+          {key:"a", text:"Coarse-gate output histogram collapsed: one group now monopolizes the gate across tasks. Check task-balanced sampling in the batch sampler; re-introduce entropy reg on the coarse gate; verify no task was silently removed from the loss head.", correct:true},
+          {key:"b", text:"Entropy regularization weight was set per-task differently across coarse and fine gates — but a per-task mis-set causes per-task asymmetry, not a global histogram collapse."},
+          {key:"c", text:"Group expert pool was re-shuffled mid-training — would cause loss spikes during the swap, not the steady-state collapse we observe."},
+          {key:"d", text:"Per-task loss weights changed alongside HoME deploy — could cause a metric move, but doesn&apos;t structurally collapse the coarse-gate distribution."},
         ]}
-        trap={<>(b)(c)(d) miss the coarse-gate diagnostic.</>}
-        lens={<>Coarse-gate sparsity is a load-bearing knob; over-aggressive regularization starves tasks.</>}
-        stretch={<>How would you whitelist required group access per task safely?</>}
+        trap={<>(b) asymmetry not collapse; (c) transient not steady-state; (d) wrong layer (loss vs gate).</>}
+        lens={<>Coarse-gate collapse is the breadth-side dual of leaf collapse; the diagnostic is the group-utilization histogram.</>}
+        stretch={<>What canary metric catches coarse-gate concentration?</>}
       />
 
       <VIS.TrapProblem id="home-p21" difficulty="medium"
@@ -1829,15 +1829,15 @@ const App = () => (
 
       <VIS.TrapProblem id="home-p23" difficulty="hard"
         title="P23 — Smallest input that breaks HoME&apos;s claimed advantage"
-        scenario={<><em>Discriminating insight: a 2-task setup where the tasks are highly aligned (e.g., CTR and conversion-CTR). MMoE has no seesaw; HoME&apos;s hierarchy adds latency and group-design effort for no gain.</em><br/>Construct the edge case.</>}
+        scenario={<><em>Discriminating insight: HoME&apos;s advantage requires both many-tasks AND group structure. Without seesaw, the hierarchy adds latency for nothing. Several other inputs LOOK harmful but actually fall into regimes HoME handles or doesn&apos;t target.</em><br/>Construct the edge case.</>}
         options={[
-          {key:"a", text:"2-task model with highly aligned tasks (CTR + conversion-CTR). MMoE has no seesaw; HoME&apos;s hierarchy is wasted latency and engineering effort.", correct:true},
-          {key:"b", text:"8-task short-video model (sweet spot)."},
-          {key:"c", text:"6-task feed model with clear seesaw (sweet spot)."},
-          {key:"d", text:"Production multi-task system with heterogeneous signals (sweet spot)."},
+          {key:"d", text:"2 highly-aligned tasks (CTR + conversion-CTR) — no seesaw to mitigate; HoME&apos;s hierarchy is pure overhead with zero behavioral gain.", correct:true},
+          {key:"a", text:"8-task short-video model with seesaw — the canonical HoME regime, not an edge case."},
+          {key:"b", text:"6-task feed model with mixed signal types — exactly where HoME&apos;s coarse-gate grouping helps."},
+          {key:"c", text:"Production multi-task system where one task has 10x training data — handled by per-task loss weighting; not a structural break for HoME."},
         ]}
-        trap={<>(b)(c)(d) sweet spots.</>}
-        lens={<>HoME needs many tasks AND seesaw.</>}
+        trap={<>(a)(b) are HoME&apos;s success regimes; (c) is operational. Only (d) erases the advantage entirely.</>}
+        lens={<>Structural break: HoME needs seesaw to mitigate AND groups to mitigate it through.</>}
         stretch={<>What is the breakeven task count vs MMoE?</>}
       />
 

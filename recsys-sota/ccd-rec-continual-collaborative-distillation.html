@@ -1612,16 +1612,16 @@ const App = () => (
 
       <VIS.TrapProblem id="ccd-p9" difficulty="hard" multiSelect
         title="P9 — When NOT to use CCD-Rec. Select all that apply."
-        scenario={<><em>Discriminating insight: CCD-Rec needs (i) a refresh cadence faster than full retrain, (ii) a previous-refresh checkpoint, (iii) some stable user preferences worth preserving. It is wrong when the data distribution genuinely shifts every cycle (e.g., breaking news) or when retraining from scratch is cheap.</em><br/>Pick.</>}
+        scenario={<><em>Discriminating insight: CCD-Rec breaks when preference structure is genuinely non-stationary cycle-to-cycle or when no prior checkpoint exists. Most other &ldquo;bad&rdquo;-looking situations actually compose with CCD-Rec; the only real disqualifiers are (i) preferences with no temporal autocorrelation and (ii) absence of a teacher.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Breaking-news ranking where yesterday&apos;s preferences are LITERALLY obsolete today — KD anchoring is wrong.", correct:true},
+          {key:"a", text:"Breaking-news ranking where yesterday&apos;s preferences are LITERALLY obsolete today — KD anchoring drags student toward dead distribution.", correct:true},
           {key:"b", text:"Cold-start models with no production deploy yet — there is no teacher to distill from.", correct:true},
-          {key:"c", text:"Full retrain budget is cheap enough — KD adds engineering complexity for little gain.", correct:true},
-          {key:"d", text:"Hourly refresh of a long-term-user feed with stable preference signal (sweet spot)."},
-          {key:"e", text:"Rapid-cycle A/B exploration where every cycle must explore fresh strategies; KD pulls back to last cycle.", correct:true},
+          {key:"c", text:"Long-tail item-explore loop where exploration is the entire training signal — CCD-Rec composes fine (KD on stable head, free exploration on tail)."},
+          {key:"d", text:"Highly-bursty event commerce (Black Friday) with otherwise stable users — CCD-Rec composes fine (KD smooths burst noise)."},
+          {key:"e", text:"Sequence-aware model where each cycle adds a new attention horizon — CCD-Rec composes fine on the shared horizon."},
         ]}
-        trap={<>(d) sweet spot.</>}
-        lens={<>CCD-Rec assumes stable-preference signal exists and a previous checkpoint is available.</>}
+        trap={<>(c)(d)(e) compose; CCD-Rec only fails the two structural preconditions.</>}
+        lens={<>CCD-Rec needs (i) temporal autocorrelation of preferences AND (ii) a prior checkpoint to distill from.</>}
         stretch={<>What signal would tell you preferences are too unstable for CCD-Rec?</>}
       />
 
@@ -1683,16 +1683,16 @@ const App = () => (
 
       <VIS.TrapProblem id="ccd-p14" difficulty="medium"
         title="P14 — Data assumption violations"
-        scenario={<><em>Discriminating insight: CCD-Rec assumes stable preferences ACTUALLY EXIST in the population. For an audience that churns every week (e.g., short-lived games marketplace), the &ldquo;stable&rdquo; signal the teacher encodes is a fiction and KD propagates noise as if it were stable.</em><br/>Which violation is most direct?</>}
+        scenario={<><em>Discriminating insight: CCD-Rec assumes the teacher and student see the SAME calibrated signal across the time-window. If the temperature applied to teacher logits drifts across cycles (e.g., one cycle uses T=2 logits archived from the prior run, the next cycle re-derives with T=4 because library default changed), the KD term silently optimizes a moving target — the student is now distilling toward an inconsistent score scale.</em><br/>Which violation is most direct?</>}
         options={[
-          {key:"a", text:"User base churns faster than the refresh cycle — there are no stable preferences for the teacher to encode. KD then anchors the student to ghost preferences and underperforms plain incremental fine-tune.", correct:true},
-          {key:"b", text:"Off-by-one in date partitioning."},
-          {key:"c", text:"GPU OOM during distillation."},
-          {key:"d", text:"Tokenizer mismatch."},
+          {key:"a", text:"Teacher-student temperature drift across time-windows — archived T from cycle t-1 differs from re-computed T this cycle, so KD loss optimizes toward a moving score-scale target.", correct:true},
+          {key:"b", text:"Catalog churns daily but user population stays stable — teacher logits for new items have no prior signal, but stable users mean the KD term is still well-defined on the shared support."},
+          {key:"c", text:"Refresh cadence slower than full-retrain cadence — KD then has nothing time-coupled to anchor; the &ldquo;continual&rdquo; structure collapses."},
+          {key:"d", text:"Seasonal preference cycle is longer than R&apos;s coverage window — R repeatedly samples one phase of the cycle, encoding seasonal bias as stable signal."},
         ]}
-        trap={<>(b)(c)(d) generic.</>}
-        lens={<>CCD-Rec needs a population with actual stable preferences.</>}
-        stretch={<>What metric detects ghost-preference anchoring?</>}
+        trap={<>(b) doesn&apos;t break KD; (c)(d) are real but indirect (cadence + sampling), not direct calibration violations.</>}
+        lens={<>CCD-Rec needs consistent teacher-side calibration across cycles for KD to mean the same thing.</>}
+        stretch={<>What metric detects teacher-temperature drift across cycles?</>}
       />
 
       <VIS.TrapProblem id="ccd-p15" difficulty="hard"
@@ -1766,17 +1766,17 @@ const App = () => (
       />
 
       <VIS.TrapProblem id="ccd-p20" difficulty="hard"
-        title="P20 — Failure on Friday: returning-user CTR drops 6% after refresh"
-        scenario={<><em>Discriminating insight: KD weight lambda was bumped to 0.7 for &ldquo;extra anti-forgetting&rdquo;; the model became over-anchored to last week&apos;s preferences and stopped absorbing this week&apos;s new behavior; new-user CTR also stagnates. Diagnosis is lambda mis-set, not a CCD-Rec bug.</em><br/>3am page. Diagnose.</>}
+        title="P20 — 3am page: student loss curve looks like training from scratch"
+        scenario={<><em>Discriminating insight: the previous-refresh teacher checkpoint failed to upload to S3 last cycle (silent CI step). The training job did not abort — the data loader treated the missing checkpoint as &ldquo;no teacher, KD weight = 0&rdquo; and the student forked back to plain incremental fine-tune from a random init. Returning-user CTR collapses while new-user CTR is stable because KD anchoring vanished.</em><br/>3am page. Diagnose.</>}
         options={[
-          {key:"a", text:"lambda was raised too high; the student is over-anchored to the teacher and underweights new behavior. Roll lambda back to baseline and verify both returning-user AND new-user CTR recover.", correct:true},
-          {key:"b", text:"GPU thermal throttling."},
-          {key:"c", text:"Cache TTL changed."},
-          {key:"d", text:"Disk full."},
+          {key:"a", text:"Previous-refresh teacher checkpoint missing in S3; KD term silently zeroed; student is effectively training from scratch. Check artifact-upload step in the prior cycle and restore the teacher.", correct:true},
+          {key:"b", text:"Shared support R was sampled with stale popularity head — R is now dominated by week-old hot items, so KD anchors a stale taste."},
+          {key:"c", text:"Teacher logits were computed AFTER student training began — KD then chases a teacher that has already drifted toward the student."},
+          {key:"d", text:"Embedding table was re-initialized mid-cycle by a parallel migration job — student and teacher embeddings now live in different spaces."},
         ]}
-        trap={<>(b)(c)(d) miss the KD-weight diagnostic.</>}
-        lens={<>Over-anchoring is the most common CCD-Rec failure mode after a lambda change.</>}
-        stretch={<>What canary would catch this before full rollout?</>}
+        trap={<>(b) would warp ranking shape but not flatten the loss curve; (c) ordering bug shows up as oscillation, not loss-from-scratch; (d) misaligns embeddings (NaN/divergence pattern) — not the &ldquo;trained from scratch&rdquo; signature.</>}
+        lens={<>Lost-teacher = silent-zero-KD is the canonical CCD-Rec disappearance failure.</>}
+        stretch={<>What canary would catch teacher-absent before full rollout?</>}
       />
 
       <VIS.TrapProblem id="ccd-p21" difficulty="medium"
@@ -1809,15 +1809,15 @@ const App = () => (
 
       <VIS.TrapProblem id="ccd-p23" difficulty="hard"
         title="P23 — Smallest input that breaks CCD-Rec&apos;s claimed advantage"
-        scenario={<><em>Discriminating insight: if the new data window perfectly covers the same items as R AND the teacher&apos;s outputs on R are noisy, KD on R fights the task loss without adding signal. CCD-Rec collapses to noise injection in that regime.</em><br/>Construct the edge case.</>}
+        scenario={<><em>Discriminating insight: CCD-Rec&apos;s advantage comes from KD on R supplying gradient in a region the new window UNDER-COVERS. Several plausible failure inputs exist; only one collapses CCD-Rec to noise injection. Three alternatives are real edge cases but degrade gracefully or are caught by other guardrails.</em><br/>Construct the edge case.</>}
         options={[
-          {key:"a", text:"New window covers exactly the items in R, and the teacher&apos;s scores on R are noisy (e.g., teacher was undertrained yesterday). KD then injects noisy gradients into a well-covered region — strictly worse than plain incremental fine-tune.", correct:true},
-          {key:"b", text:"Long-term user feed with stable preferences (sweet spot)."},
-          {key:"c", text:"Daily refresh with curated R (sweet spot)."},
-          {key:"d", text:"Mature production model with clean teacher (sweet spot)."},
+          {key:"b", text:"R contains only items the new window already covers densely, AND the teacher&apos;s scores on R are noisy (undertrained prior cycle). KD now injects noise into a region task-loss already learns — strictly worse than plain fine-tune.", correct:true},
+          {key:"a", text:"Long-tail user with one interaction in the new window but rich history in R — KD on R actually helps; this is exactly the regime CCD-Rec was designed for."},
+          {key:"c", text:"Teacher and student diverge by one cycle (t-2 vs t-1) — KD pulls slightly toward the older teacher but degrades gracefully, caught by the staleness dashboard."},
+          {key:"d", text:"R covers seasonal lull items not in the new window — KD anchors out-of-season; harmful but reverts at next refresh once seasonality flips."},
         ]}
-        trap={<>(b)(c)(d) sweet spots.</>}
-        lens={<>CCD-Rec needs R to cover a region the new window DOES NOT see well.</>}
+        trap={<>(a) is the success regime, not a failure; (c)(d) degrade but recover. Only (b) collapses CCD-Rec into pure noise injection without recovery.</>}
+        lens={<>The structural break: R must cover a region the new window UNDER-COVERS, and the teacher on R must be calibrated. Both conditions fail together in (b).</>}
         stretch={<>How would you measure R-window overlap automatically?</>}
       />
 
