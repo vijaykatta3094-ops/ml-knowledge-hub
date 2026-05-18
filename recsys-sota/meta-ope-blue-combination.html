@@ -1541,17 +1541,17 @@ flowchart LR
       />
 
       <VIS.TrapProblem id="mope-a4" difficulty="hard"
-        title="A4 — Compose Meta-OPE with Switch-DR"
-        scenario={<>Switch-DR has a τ hyperparameter that controls a bias-variance trade. Meta-OPE could absorb Switch-DR at multiple τ values as separate estimators. What happens?</>}
+        title="A4 — Compose Meta-OPE with nested cross-validation"
+        scenario={<>You want to nest Meta-OPE inside K-fold CV (compute Σ̂ on inner folds, evaluate combined estimate on outer fold). What property of BLUE breaks under nested CV that doesn't break for a single estimator?</>}
         options={[
-          {key:"a", text:"Including Switch-DR(τ=5), Switch-DR(τ=10), Switch-DR(τ=20) as three estimators violates the BLUE unbiasedness assumption — they're each biased differently. The estimator becomes a 'best-linear' over biased inputs and may amplify the bias direction shared across τ values.", correct:true},
-          {key:"b", text:"It's a perfect composition."},
-          {key:"c", text:"It saves the τ-choice problem."},
-          {key:"d", text:"It's faster than running them separately."},
+          {key:"a", text:"BLUE weights w = Σ̂⁻¹1 / 1ᵀΣ̂⁻¹1 are themselves random variables; in nested CV, weights estimated on the inner fold are correlated with the estimators evaluated on the outer fold (both depend on the same outer split). This makes the combined estimator no longer linear in the estimators (the coefficients move with the data), so unbiasedness no longer follows from each component's unbiasedness.", correct:true},
+          {key:"b", text:"Nested CV is identical to single-pass BLUE."},
+          {key:"c", text:"Nested CV always reduces variance."},
+          {key:"d", text:"BLUE doesn't have weights."},
         ]}
-        trap={<>(b)(c) miss the unbiasedness violation. (d) is unrelated.</>}
-        lens={<>BLUE is designed for unbiased estimators. Including biased estimators with shared bias direction is a known failure mode in meta-analysis. Use ONLY unbiased estimators in Meta-OPE, or use a bias-corrected variant.</>}
-        stretch={<>What's the bias-corrected variant of BLUE for biased inputs?</>}
+        trap={<>(b) ignores the weight-randomness. (c) over-states. (d) is wrong.</>}
+        lens={<>Meta-OPE's clean unbiasedness story assumes deterministic weights given Σ. In any pipeline where Σ̂ is recomputed from the same data used for evaluation, weights become random and the combined estimator inherits a small-sample bias of order O(1/n). Honest CI requires nested resampling at both levels, not just the inner Σ̂.</>}
+        stretch={<>Sketch the double-bootstrap that gives honest CI for Meta-OPE-inside-CV.</>}
       />
 
       <VIS.TrapProblem id="mope-a5" difficulty="hard"
@@ -1686,31 +1686,31 @@ flowchart LR
 
       <VIS.TrapProblem id="mope-c4" difficulty="hard"
         mode="ordered"
-        title="C4 — Rank Meta-OPE knobs by 'production-breaking if mis-set'"
-        scenario={<>Order from most catastrophic to least: (a) bootstrap sample count for Σ̂, (b) estimator portfolio (which estimators included), (c) regularization for singular Σ̂, (d) random seed.</>}
+        title="C4 — Rank Meta-OPE knobs by 'Σ̂ conditioning impact'"
+        scenario={<>Σ̂ has condition number 10⁶ — its inverse is unstable. Order the fixes by how much they improve Σ̂ conditioning per unit of bias introduced: (a) Ledoit-Wolf shrinkage toward diagonal, (b) Σ̂ resampling unit (impression vs session vs user), (c) drop one near-collinear estimator, (d) add white noise diagonal.</>}
         options={[
-          {key:"a", text:"Estimator portfolio — including biased estimators violates BLUE's unbiasedness assumption; the BLUE result is no longer 'best' and may be worse than picking any single unbiased one.", order:1},
-          {key:"b", text:"Regularization for singular Σ̂ — under-regularization causes inverse to blow up, over-regularization pulls toward simple average.", order:2},
-          {key:"c", text:"Bootstrap count — too few makes Σ̂ noisy; too many is just expensive.", order:3},
-          {key:"d", text:"Random seed — affects reproducibility but not point estimate at large bootstrap count."},
+          {key:"a", text:"Drop one near-collinear estimator — removes the rank-deficient direction at zero bias cost (the dropped estimator was contributing no independent info).", order:1},
+          {key:"b", text:"Σ̂ resampling unit — switching impression→session typically lowers effective n but reduces within-cluster correlation in Σ̂; medium improvement, small bias.", order:2},
+          {key:"c", text:"Ledoit-Wolf shrinkage — closed-form, large conditioning improvement, but pulls weights toward diagonal (loses some covariance correction).", order:3},
+          {key:"d", text:"White-noise diagonal — crude; helps conditioning but introduces unprincipled bias in the weights."},
         ]}
-        trap={<>Many candidates rank bootstrap count first because it's the most-tuned knob.</>}
-        lens={<>The portfolio choice is the silent killer — including a biased estimator silently degrades Meta-OPE's headline guarantee. Σ-related knobs are visible (CI either tightens or widens), portfolio is invisible.</>}
-        stretch={<>How would you audit a Meta-OPE pipeline for portfolio correctness?</>}
+        trap={<>Many candidates rank Ledoit-Wolf first because it's the most-named fix.</>}
+        lens={<>The Σ̂ conditioning hierarchy is 'portfolio surgery before shrinkage'. A near-singular Σ̂ is usually a portfolio diagnosis (you have redundant estimators) — fix the portfolio. Only after dropping collinear members do shrinkage techniques pay their bias cost cleanly.</>}
+        stretch={<>What pairwise correlation threshold across bootstrap estimates triggers 'drop this estimator' vs 'shrink'?</>}
       />
 
       <VIS.TrapProblem id="mope-c5" difficulty="hard"
-        title="C5 — Data assumption violations"
-        scenario={<>Which violation breaks Meta-OPE most severely?</>}
+        title="C5 — Data assumption violation: non-iid logging window across estimators"
+        scenario={<>Three of your four estimators were computed on the full 90-day log; the fourth (DR) was retrained nightly and recomputed only on the trailing 7-day window. What does this do to Meta-OPE's BLUE guarantee?</>}
         options={[
-          {key:"a", text:"Including a biased estimator (clipped IPS, Switch-DR, DM under model mis-spec) — BLUE assumes unbiasedness; the combined estimator inherits a weighted bias that's hard to bound.", correct:true},
-          {key:"b", text:"Estimators trained on different data."},
-          {key:"c", text:"Different propensity-model architectures."},
-          {key:"d", text:"User-segment heterogeneity."},
+          {key:"a", text:"BLUE assumes the estimators are unbiased measurements of the SAME underlying parameter V(π) on the SAME population. The trailing-7-day DR estimates V(π) on a different context distribution than the 90-day estimators; combining them gives a weighted-average over two parameters that aren't equal — the combined estimate is no longer interpretable as 'V(π) on either window'.", correct:true},
+          {key:"b", text:"Different windows are fine; BLUE just absorbs it."},
+          {key:"c", text:"The trailing window is always better."},
+          {key:"d", text:"BLUE only requires same n."},
         ]}
-        trap={<>(b)(c)(d) are real concerns but don't violate BLUE's headline assumption.</>}
-        lens={<>The unbiasedness assumption is non-negotiable. Either include only unbiased estimators (IPS, DR with correct components, SNIPS asymptotically) or use a bias-corrected variant.</>}
-        stretch={<>What's the bias-corrected BLUE variant?</>}
+        trap={<>(b)(c)(d) miss the same-parameter requirement.</>}
+        lens={<>BLUE's headline assumes shared estimand. Mixing window lengths silently makes the estimators address different estimands. Audit: every estimator in the portfolio must compute on the same logging slice. If you want trailing-DR for freshness, run TWO Meta-OPEs (one per window) and reason about both separately.</>}
+        stretch={<>How would you detect 'different estimand' programmatically across estimators?</>}
       />
 
       <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
@@ -1746,17 +1746,17 @@ flowchart LR
       />
 
       <VIS.TrapProblem id="mope-d3" difficulty="hard"
-        title="D3 — Junior fix: 'add more estimators'. Senior fix?"
-        scenario={<>Meta-OPE CI is still too wide. Junior adds Switch-DR(τ=5), Switch-DR(τ=20), and Switch-DR(τ=50) to the portfolio. Senior reaches for ?</>}
+        title="D3 — Junior fix: 'tune Σ̂ regularization'. Senior fix?"
+        scenario={<>Meta-OPE CI wobbles week-to-week. Junior says "let me re-tune Ledoit-Wolf shrinkage intensity each week so Σ̂⁻¹ is stable." Senior reaches for ?</>}
         options={[
-          {key:"a", text:"Audit the portfolio for unbiasedness — Switch-DR is biased; adding three of them violates BLUE's assumption and may amplify the disclosed bias direction. Senior either fixes the propensity-side problem or accepts that no estimator is tight enough yet.", correct:true},
-          {key:"b", text:"Add more estimators."},
+          {key:"a", text:"Audit Σ̂ STABILITY (not its inverse) — if the shrinkage intensity needs to change weekly, the underlying covariance structure between estimators is shifting, which means correlations between IPS / DR / SNIPS / DM are not stationary. Refit Σ̂ on a longer window or use a rolling Σ̂ with explicit smoothing; weekly re-tuning of shrinkage is curve-fitting the symptom.", correct:true},
+          {key:"b", text:"Tune shrinkage harder."},
           {key:"c", text:"Switch to BMA."},
           {key:"d", text:"Run more bootstrap samples."},
         ]}
-        trap={<>(b)(c)(d) miss the bias-violation point.</>}
-        lens={<>Junior treats Meta-OPE as a CI-shrinking machine. Senior treats it as a calibration tool with strict input requirements.</>}
-        stretch={<>When IS it legitimate to add Switch-DR to a Meta-OPE portfolio?</>}
+        trap={<>(b) doubles down on the symptom. (c)(d) sidestep.</>}
+        lens={<>Junior treats Σ̂ as a knob to retune. Senior treats Σ̂ instability as a diagnostic about the estimator portfolio's joint behavior. Re-tuning hides the signal that the portfolio's covariance has drifted — which is itself informative about underlying log dynamics.</>}
+        stretch={<>What's the minimum Σ̂ rolling-window length that produces stable BLUE weights on a daily Meta-OPE refresh?</>}
       />
 
       <VIS.TrapProblem id="mope-d4" difficulty="hard"
@@ -1907,17 +1907,17 @@ flowchart LR
       />
 
       <VIS.TrapProblem id="mope-f5" difficulty="hard"
-        title="F5 — Community-found: 'biased estimators in portfolio'"
-        scenario={<>The 2025 follow-up discussions point out one practitioner failure mode that's specifically harmful for Meta-OPE. Without recalling the paper, infer from BLUE's unbiasedness assumption.</>}
+        title="F5 — Community-found: Meta-OPE lost a real-world OPE bake-off"
+        scenario={<>A 2025 industry bake-off compared Meta-OPE against a single well-tuned DR estimator. Meta-OPE LOST on RMSE despite its theoretical advantage. Without recalling the paper, infer the most likely cause.</>}
         options={[
-          {key:"a", text:"Practitioners routinely include clipped IPS / Switch-DR / DM in the portfolio without recognizing they violate BLUE's unbiasedness premise; the combined estimator inherits a hard-to-bound bias and the calibrated-CI guarantee silently fails.", correct:true},
+          {key:"a", text:"Σ̂ was estimated on too few bootstrap resamples relative to portfolio size — the estimated covariance had high variance, BLUE weights inherited it, and the combined estimate became NOISIER than the single DR estimate. A well-tuned DR with hand-validated q̂ beat a noisy Meta-OPE because the Σ̂-estimation overhead exceeded the variance reduction from combination.", correct:true},
           {key:"b", text:"GPU contention."},
           {key:"c", text:"Bootstrap is too slow."},
           {key:"d", text:"BLUE doesn't work for OPE."},
         ]}
-        trap={<>(b)(c)(d) miss the unbiasedness violation.</>}
-        lens={<>The "include everything" reflex is the modal practitioner failure. The discipline is "audit portfolio for unbiasedness; reject biased estimators or use bias-corrected variants."</>}
-        stretch={<>Sketch the bias-corrected variant.</>}
+        trap={<>(b)(c)(d) miss the Σ̂-estimation overhead.</>}
+        lens={<>Meta-OPE pays a 'Σ̂-estimation tax' that scales with portfolio size squared. The variance reduction from combining only beats a single estimator when (n_bootstrap × n_estimators) is large enough to make Σ̂ stable. Below that threshold, a hand-tuned single estimator wins. The discipline is to verify the Σ̂ resampling SE before claiming Meta-OPE's CI is honest.</>}
+        stretch={<>What ratio of n_bootstrap / n_estimators² is needed for Σ̂ to be 'stable enough' for Meta-OPE to dominate a single DR?</>}
       />
 
     </VIS.Section>

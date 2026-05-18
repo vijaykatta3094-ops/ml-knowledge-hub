@@ -1590,17 +1590,17 @@ flowchart LR
       />
 
       <VIS.TrapProblem id="ips-b2" difficulty="hard"
-        title="B2 — Sounds reasonable, isn't: 'more data fixes IPS variance'"
-        scenario={<>A teammate says "IPS variance is high — let's wait three months and collect more data." Why does this often NOT solve the problem for IPS specifically?</>}
+        title="B2 — Sounds reasonable, isn't: 'fit a better π₀ model and variance drops'"
+        scenario={<>A teammate sees wide IPS CIs and proposes "let's fit a deeper propensity model to get sharper π̂₀ — that should tighten variance." Why does this often make IPS worse, not better, for IPS specifically?</>}
         options={[
-          {key:"a", text:"IPS variance is driven by max weight, not by n alone — if π₀ near-zero events appear with constant rate, more data brings proportionally more high-weight events; the worst-case weight does not shrink with n.", correct:true},
-          {key:"b", text:"More data always fixes variance."},
-          {key:"c", text:"You'd be evaluating an old policy."},
-          {key:"d", text:"Data collection costs money."},
+          {key:"a", text:"A sharper π̂₀ produces smaller estimated propensities on rare actions; smaller π̂₀ means LARGER 1/π̂₀ weights, which raises variance and can also introduce a propensity-model bias that's no longer corrected anywhere downstream.", correct:true},
+          {key:"b", text:"Better models always reduce variance."},
+          {key:"c", text:"Deeper models are slower."},
+          {key:"d", text:"Propensities don't affect variance."},
         ]}
-        trap={<>(b) is the textbook law-of-large-numbers reflex. (c)(d) are unrelated to the variance mechanism.</>}
-        lens={<>For most estimators variance is O(σ²/n). For IPS variance is bounded by O((max 1/π₀)² · σ²/n) — and max 1/π₀ doesn't shrink as data grows. Clipping, SNIPS, or DR shrink max 1/π₀; more data alone does not.</>}
-        stretch={<>What rate does CI width shrink at for clipped IPS vs vanilla IPS as n grows?</>}
+        trap={<>(b) is the ML-reflex "better-fit beats worse-fit." (c)(d) are unrelated.</>}
+        lens={<>Propensity-model improvement is a bias play, not a variance play — and for IPS specifically it can backfire. Variance is set by 1/min(π̂₀); a sharper model has a smaller min. The right cure for variance is clipping / SNIPS / DR; for propensity-bias the right cure is DR (the q̂ component compensates), not deeper π̂₀.</>}
+        stretch={<>Sketch what happens to max 1/π̂₀ when you replace a calibrated logistic with a deep network that hits 0.001 on rare actions.</>}
       />
 
       <VIS.TrapProblem id="ips-b3" difficulty="medium"
@@ -1618,17 +1618,17 @@ flowchart LR
       />
 
       <VIS.TrapProblem id="ips-b4" difficulty="hard"
-        title="B4 — When NOT to use IPS"
-        scenario={<>Identify the surface where IPS is the wrong baseline and a simpler estimator wins.</>}
+        title="B4 — When NOT to use IPS: drifting/seasonal propensities"
+        scenario={<>You have stochastic π₀ with logged propensities — IPS's textbook prerequisites. But the surface is highly seasonal (holiday vs. baseline), and your log window straddles the boundary. Why is IPS still the wrong default here?</>}
         options={[
-          {key:"a", text:"Deterministic top-1 logging (production was greedy, no exploration) — IPS has zero support coverage; you can only evaluate π on the exact actions π₀ chose, which means almost no meaningful counterfactual.", correct:true},
-          {key:"b", text:"100M-event bandit with logged propensities."},
-          {key:"c", text:"Small-N segment with stochastic π₀."},
-          {key:"d", text:"Any surface where you want to evaluate ranking changes."},
+          {key:"a", text:"IPS reweights to the new policy π but does NOT correct for the context-distribution shift between log and target traffic — events with seasonal contexts get unbiased policy-correction but the WRONG context mix; the estimate answers 'what would π have earned on yesterday's traffic', not 'what will π earn on next month's traffic'.", correct:true},
+          {key:"b", text:"IPS only works on holidays."},
+          {key:"c", text:"Stochastic π₀ is incompatible with IPS."},
+          {key:"d", text:"100M-event logs invalidate IPS."},
         ]}
-        trap={<>(b)(c)(d) are all surfaces where IPS works fine.</>}
-        lens={<>Support is non-negotiable. Deterministic logging is the canonical failure — only a DM model can produce any counterfactual estimate there, and even that requires assumptions you can't verify. The fix is mandatory exploration at logging time.</>}
-        stretch={<>What's the smallest exploration epsilon that makes IPS viable on a top-1-heavy surface?</>}
+        trap={<>(b)(c)(d) miss that IPS assumes the marginal over contexts P(x) is shared between log and target — only π changes, not P(x).</>}
+        lens={<>IPS corrects action selection given x. It does NOT correct for shift in P(x). When the log spans a regime change, even a perfect IPS estimate forecasts the past, not the future. The cure is either a doubly-robust covariate-shift correction or restricting the log to the target regime — both lose statistical power.</>}
+        stretch={<>How would you diagnose 'context drift' separately from 'policy difference' on a 6-month log?</>}
       />
 
       <VIS.TrapProblem id="ips-b5" difficulty="medium"
@@ -1721,17 +1721,17 @@ flowchart LR
       <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
 
       <VIS.TrapProblem id="ips-d1" difficulty="hard"
-        title="D1 — Intuitive but wrong: 'unbiased is always best'"
-        scenario={<>A junior data scientist insists on vanilla IPS because "unbiased is the gold standard." Why is this intuition wrong for IPS specifically?</>}
+        title="D1 — Intuitive but wrong: 'IPS sign matches our prior → estimator is validated'"
+        scenario={<>A junior runs IPS, sees the sign of the estimate matches the team's directional prior (both positive), and concludes "the estimator agrees with intuition — ship." Why is this validation logic specifically broken for IPS?</>}
         options={[
-          {key:"a", text:"MSE = bias² + variance. IPS's variance can be so large that a biased-but-low-variance estimator (DM, clipped IPS, DR) has lower MSE — and CI you can actually decide with.", correct:true},
-          {key:"b", text:"Unbiasedness is a myth."},
-          {key:"c", text:"Bias and variance are unrelated to decision-making."},
-          {key:"d", text:"Vanilla IPS is always best in practice."},
+          {key:"a", text:"IPS estimates can be entirely driven by a handful of high-weight events; the sign is fragile to including or dropping a single 1/π₀ outlier. Sign-agrees-with-prior is consistent with a noisy estimator that flips on resampling — exactly IPS's signature pathology. The validation must be 'sign is stable under bootstrap' AND 'top-1% of weights don't drive >50% of the estimate'.", correct:true},
+          {key:"b", text:"Sign matching is sufficient validation."},
+          {key:"c", text:"Bias and variance are unrelated to validation."},
+          {key:"d", text:"Priors invalidate the estimator."},
         ]}
-        trap={<>(b)(c)(d) are over-corrections or false.</>}
-        lens={<>Unbiasedness is a property of the estimator, not the decision. The decision needs a usable CI. A tight biased CI is more decision-useful than a wide unbiased one — provided the bias is disclosed and bounded.</>}
-        stretch={<>What's the smallest tolerable bias for a typical 1% effect-size ranker decision?</>}
+        trap={<>(b) is the casual reflex. (c)(d) are over-corrections.</>}
+        lens={<>For most estimators, sign-stability is a reasonable sanity check. For IPS, sign can flip on resampling because 1/π₀ outliers dominate. Validation discipline: (1) bootstrap CI excludes zero, (2) leave-top-1%-weights-out estimate has same sign, (3) max weight &lt; clip-cap-equivalent. Sign-matches-prior is the weakest of all of these.</>}
+        stretch={<>What's the cheapest leave-one-out diagnostic to confirm the sign isn't a single-weight artifact?</>}
       />
 
       <VIS.TrapProblem id="ips-d2" difficulty="hard"
@@ -1750,17 +1750,17 @@ flowchart LR
       />
 
       <VIS.TrapProblem id="ips-d3" difficulty="hard"
-        title="D3 — Junior fixes: more data. Senior fixes: ?"
-        scenario={<>Vanilla IPS gives CI [-3%, +9%] on a 50M-event log. Effect of interest: 2%. Junior says "collect 200M events." Senior reaches for ?</>}
+        title="D3 — Junior fixes: 'just clip harder'. Senior reaches for ?"
+        scenario={<>Clipped IPS at M=50 still has CI [-2%, +6%]. Effect of interest: 1.5%. Junior says "drop M to 5 — that'll really tighten it." Senior reaches for ?</>}
         options={[
-          {key:"a", text:"Switch to clipped IPS or DR — the variance bound is set by max 1/π₀, not n; the junior's plan won't tighten CI proportionally.", correct:true},
-          {key:"b", text:"Run A/B test."},
+          {key:"a", text:"Switch estimator family (DR / SNIPS) instead of pushing clip cap lower. Dropping M shrinks variance but the disclosed bias grows monotonically with how aggressively you clip; at M=5 the bias from clipped events typically exceeds the 1.5% effect of interest, so the tight CI is around a biased number.", correct:true},
+          {key:"b", text:"Drop M to 1."},
           {key:"c", text:"Use a deeper model."},
-          {key:"d", text:"Email the data team for more logs."},
+          {key:"d", text:"Email the data team."},
         ]}
-        trap={<>(b) bypasses OPE. (c)(d) are unrelated.</>}
-        lens={<>Variance reduction at the estimator level (clip, SNIPS, DR) is the right surgical tool. n-scaling is the brute-force lever — slower and weaker because the bound is governed by max-weight, not n.</>}
-        stretch={<>By how much does clipping at M=20 typically tighten CI on a real bandit log?</>}
+        trap={<>(b) takes the junior fix further. (c)(d) are unrelated.</>}
+        lens={<>Clipping is a bias-variance dial; cranking it tightens CI by raising disclosed bias. The right move at the variance frontier is a different estimator (DR adds an outcome model that captures what the clipped weights drop). Senior recognizes that 'tighter CI' isn't decision-useful if you've spent the room on bias.</>}
+        stretch={<>At what M does the disclosed bias typically equal the CI half-width? That's the optimum clip cap for decision MSE.</>}
       />
 
       <VIS.TrapProblem id="ips-d4" difficulty="hard"
@@ -1809,17 +1809,17 @@ flowchart LR
       />
 
       <VIS.TrapProblem id="ips-e3" difficulty="hard"
-        title="E3 — Implementation specifics: the 1/p trap in code"
-        scenario={<>Your IPS implementation reads <code>weights = pi_new / pi_logged</code>. What's the most common silent bug?</>}
+        title="E3 — Implementation specifics: per-impression vs per-session aggregation"
+        scenario={<>Your IPS code computes mean over IMPRESSIONS (one weight × reward per logged event). Your eval metric (e.g., session-level CTR) is defined PER SESSION. What silently goes wrong?</>}
         options={[
-          {key:"a", text:"<code>pi_logged</code> contains zeros for unobserved actions, producing inf weights; numpy silently propagates inf in the mean unless explicitly filtered. The fix is a propensity floor AND a filter-with-disclosure for events that violate support.", correct:true},
+          {key:"a", text:"Impression-level IPS upweights heavy-impression sessions (one session contributing 30 impressions counts 30× toward the estimate); the per-session metric you reported assumed equal session weights. To match the metric, weight each event by 1/(session-length) before the IPS reweighting, or aggregate to session level first.", correct:true},
           {key:"b", text:"Floating-point precision."},
           {key:"c", text:"GPU vs CPU mismatch."},
           {key:"d", text:"Threading bug."},
         ]}
         trap={<>(b)(c)(d) are red herrings.</>}
-        lens={<>The 0/0 and 1/0 cases are where IPS code dies silently. Always add (1) propensity floor at training/eval time, (2) explicit check for inf weights, (3) disclosed handling of support violations. Never silently filter low-propensity events.</>}
-        stretch={<>What floor value would you set for a 100M-event log?</>}
+        lens={<>IPS's unit-of-analysis is the unit where π₀ defined the action. If logging is per-impression but the metric is per-session, the naive code conflates two grain levels. Make the IPS unit match the metric unit, OR add a session-length normalizer. Reviewers should always ask 'what's the unit of the mean?' before accepting an IPS number.</>}
+        stretch={<>How would you express the session-level unbiased IPS estimator algebraically?</>}
       />
 
       <VIS.TrapProblem id="ips-e4" difficulty="hard"

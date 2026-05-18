@@ -1691,17 +1691,17 @@ flowchart LR
 
       <VIS.TrapProblem id="sdr-c4" difficulty="hard"
         mode="ordered"
-        title="C4 — Rank Switch-DR / DRos knobs by 'production-breaking if mis-set'"
-        scenario={<>Order from most catastrophic to least: (a) τ value, (b) outcome model q̂ quality, (c) propensity-floor handling, (d) bootstrap CI count.</>}
+        title="C4 — Rank Switch-DR audit steps by 'leading-indicator strength for an unstable rollout'"
+        scenario={<>You're auditing a Switch-DR pipeline before launch. Order by which signal earliest predicts an unstable production rollout: (a) bootstrap stability of the τ-sweep curve, (b) count of events within ±10% of τ, (c) q̂ training-window freshness vs logging window, (d) overall point estimate magnitude.</>}
         options={[
-          {key:"a", text:"Outcome model q̂ — bad tail accuracy on switched events biases the estimate silently; the bias doesn't show up in standard CV metrics.", order:1},
-          {key:"b", text:"τ value — discontinuity around τ makes the estimate sensitive to a small change; pick via held-out sweep.", order:2},
-          {key:"c", text:"Propensity-floor handling — silent inf weights still pollute, but easier to detect.", order:3},
-          {key:"d", text:"Bootstrap count — affects CI width estimate but not point estimate."},
+          {key:"a", text:"Bootstrap stability of the τ-sweep — if the entire bias-variance curve wobbles across resamples, every fixed-τ pick is a coin flip; this surfaces routing instability before you commit to a τ.", order:1},
+          {key:"b", text:"Count of events within ±10% of τ — these are the events one resample-flip away from changing branch; high count → fragile estimate at chosen τ.", order:2},
+          {key:"c", text:"q̂ freshness — stale q̂ silently biases the switched branch; symptom appears only after deployment when drift compounds.", order:3},
+          {key:"d", text:"Point estimate magnitude — lagging indicator; you only see this after the other signals have decayed."},
         ]}
-        trap={<>Many candidates rank τ first because it's the obvious knob. The silent-bias risk of q̂ tail accuracy is worse.</>}
-        lens={<>Switch-DR shifts the locus of risk from "high-weight events dominating" to "q̂ tail accuracy on those events." The risk hierarchy must track the new locus, not the old one.</>}
-        stretch={<>What single diagnostic would surface a bad q̂ tail?</>}
+        trap={<>Many candidates rank point estimate first because it's the headline number. The τ-sweep stability is the leading indicator.</>}
+        lens={<>Switch-DR's specific operational risk is routing instability — small shifts in either the log or q̂ flip which events go where. The leading indicators are 'curve stability' and 'fraction-of-events-near-τ'; the lagging indicator is the point estimate. Reverse the diagnostic order and you ship by inspecting symptoms.</>}
+        stretch={<>What's the count-near-τ threshold (% of n) above which you'd require DRos instead of Switch-DR?</>}
       />
 
       <VIS.TrapProblem id="sdr-c5" difficulty="hard"
@@ -1795,17 +1795,17 @@ flowchart LR
       />
 
       <VIS.TrapProblem id="sdr-e2" difficulty="hard"
-        title="E2 — Friday 3am: Switch-DR estimate flipped from +0.4% to -0.5%"
-        scenario={<>Overnight refresh: Switch-DR estimate moved from +0.4% to -0.5%. Logs nominal, propensities nominal, q̂ unchanged. What's the Switch-DR-specific cause?</>}
+        title="E2 — Friday 3am: Switch-DR moved 1% after a 'silent' q̂ feature add"
+        scenario={<>Overnight: Switch-DR moves from +0.4% to -0.5%. τ is unchanged. The feature team mentions they added a new contextual feature to the q̂ model "for an unrelated launch" — but didn't bump the OPE pipeline. What's the Switch-DR-specific cause?</>}
         options={[
-          {key:"a", text:"A small number of high-weight events newly crossed the τ threshold — they used to be in the IPS branch contributing positively; now they're in the q̂ branch contributing differently. The discontinuity at τ flipped the estimate.", correct:true},
+          {key:"a", text:"The new q̂ predicts DIFFERENT values on high-weight events than the old q̂; in Switch-DR those events are routed to q̂, so the predicted-reward replacement changed, even though τ and the log didn't. The DR-style 'either-component-right' guarantee doesn't shield Switch-DR here, because routing made q̂ load-bearing for the tail.", correct:true},
           {key:"b", text:"GPU thermal."},
           {key:"c", text:"Random seed."},
-          {key:"d", text:"q̂ silent corruption."},
+          {key:"d", text:"The new feature broke propensity logging."},
         ]}
-        trap={<>(b)(c)(d) are ops red herrings.</>}
-        lens={<>The τ discontinuity is a Switch-DR-specific failure mode. DRos's continuous shrinkage avoids it. Always report the count of events within ±10% of τ alongside the estimate.</>}
-        stretch={<>What's the monitoring metric you'd add for τ-stability in production?</>}
+        trap={<>(b)(c) are ops red herrings. (d) is unrelated to the q̂ change.</>}
+        lens={<>Switch-DR makes q̂ a versioned production dependency, not a passive component. Every q̂ change requires a side-by-side OPE re-run and a delta-report. The pipeline should pin q̂ artifact hash; any change triggers a recompute + announce.</>}
+        stretch={<>What's the q̂-change-control policy that would have surfaced this overnight?</>}
       />
 
       <VIS.TrapProblem id="sdr-e3" difficulty="hard"
@@ -1870,17 +1870,17 @@ flowchart LR
       />
 
       <VIS.TrapProblem id="sdr-f2" difficulty="hard"
-        title="F2 — Adversarial: design a log that Switch-DR misjudges"
-        scenario={<>Design a log where Switch-DR estimates +5% but the true effect is 0%.</>}
+        title="F2 — Adversarial: choose τ to manipulate, not estimate"
+        scenario={<>An adversary inside the team chooses τ AFTER seeing the data, with the goal of producing a +5% headline on a true-0% effect. Without changing log, π, or q̂, how do they do it?</>}
         options={[
-          {key:"a", text:"Inject high-weight high-reward events that q̂ underpredicts — Switch-DR routes them to q̂ (suppressing the IPS correction), the underpredicted q̂ value dominates the fallback contribution, biasing the estimate upward.", correct:true},
+          {key:"a", text:"Build the per-event contribution curve as a function of τ, find the τ value where a single high-weight high-reward event sits just below the threshold (so it stays in the IPS branch and contributes weighted reward fully), then pick that τ. The 'optimal' τ becomes the one maximising the headline rather than the one minimising MSE.", correct:true},
           {key:"b", text:"Use more data."},
           {key:"c", text:"Use a different reward."},
           {key:"d", text:"Run Switch-DR with τ=1."},
         ]}
-        trap={<>(b)(c)(d) don't construct an adversarial scenario.</>}
-        lens={<>The exploit is q̂'s tail. Switch-DR's bias depends on q̂'s accuracy on switched events; an adversary who controls q̂'s training data can plant systematic underprediction in the tail.</>}
-        stretch={<>How would you defend against this attack in production?</>}
+        trap={<>(b)(c)(d) don't exploit τ as a free parameter.</>}
+        lens={<>τ is a continuous adversarial input. Defence is procedural, not statistical: pre-register τ on a held-out segment BEFORE seeing the test estimate, treat τ as a pre-launch decision, and require sign-off if τ changes between pre-registration and report. DRos's smoothness reduces the exploit surface but doesn't eliminate it (the shrinkage rate is the new dial).</>}
+        stretch={<>What's the pre-registration policy you'd require for τ in a peer-reviewed OPE submission?</>}
       />
 
       <VIS.TrapProblem id="sdr-f3" difficulty="hard"

@@ -1661,17 +1661,17 @@ flowchart TB
       />
 
       <VIS.TrapProblem id="gsr-c2" difficulty="hard"
-        title="C2 — Loss / objective: PG over slates"
-        scenario={<>Policy gradient on a slate has one reward per slate but K log-probability terms. What variance reduction is critical?</>}
+        title="C2 — Loss / objective: entropy bonus is not 'just regularization' for slates"
+        scenario={<>The standard PG objective adds an entropy bonus -β·H(π). A junior treats it as "L2-style regularization" and tunes β by validation loss. Why is this view wrong for AUTOREGRESSIVE slate decoding specifically?</>}
         options={[
-          {key:"a", text:"Baseline subtraction — subtract a state-dependent baseline b(s) from the reward to reduce variance without bias: ∇J = E[(R - b(s)) · Σ_k ∇log π(a_k | …)]. Without baseline, even small reward variance amplifies via the K log-prob sum.", correct:true},
+          {key:"a", text:"Autoregressive slate decoding has a mode-collapse failure where π becomes peaked on a single high-reward slate sequence and never explores alternatives. The entropy bonus is the only operator that keeps log π for non-modal actions in the gradient. Tuning β by validation loss alone (which the modal slate dominates) hides the collapse; you need a separate slate-diversity metric (e.g., unique slates in top-1% by likelihood) to set β.", correct:true},
           {key:"b", text:"Use Adam."},
           {key:"c", text:"More layers."},
           {key:"d", text:"Larger batch."},
         ]}
-        trap={<>(b)(c)(d) help generically but don't address PG variance.</>}
-        lens={<>Baseline (value-function head) is the standard PG variance reduction. Advantage normalization comes second. Without these, training is unstable and diverges.</>}
-        stretch={<>What's the bias-variance trade of advantage normalization?</>}
+        trap={<>(b)(c)(d) help generically but don't address autoregressive mode collapse.</>}
+        lens={<>Entropy bonus in slate-RL is structurally load-bearing, not cosmetic. The autoregressive decoder is one short pre-collapse step away from generating the same slate forever; entropy is what prevents that. Tune it against diversity, not against scalar validation loss.</>}
+        stretch={<>What's a diversity metric you'd track jointly with reward to detect onset of slate-mode-collapse?</>}
       />
 
       <VIS.TrapProblem id="gsr-c3" difficulty="hard"
@@ -1750,17 +1750,17 @@ flowchart TB
       />
 
       <VIS.TrapProblem id="gsr-d3" difficulty="hard"
-        title="D3 — Junior fix: 'more data'. Senior fix?"
-        scenario={<>Slate-RL gradient is noisy; training is unstable. Junior says "10× more data." Senior says ?</>}
+        title="D3 — Junior fix: 'switch to off-policy with importance weights'. Senior fix?"
+        scenario={<>Slate-RL training is unstable. Junior says "let's just collect a big log of slate-reward pairs, switch to fully off-policy with IS weights — no more interactive sampling." Senior reaches for ?</>}
         options={[
-          {key:"a", text:"Add a baseline head (value function) to subtract reward variance; the PG variance scales with reward variance, not n alone. Pre-train with behavior cloning then RL-finetune to bootstrap stable gradients before scaling data.", correct:true},
-          {key:"b", text:"10× more data."},
+          {key:"a", text:"Behavior-cloning pretrain THEN on-policy RL fine-tune. Off-policy IS weights on K-length autoregressive slates compound to Π_k 1/π₀(a_k|·); the slate-level weight variance is K× worse than per-action and dominates any gradient signal. BC-pretrain stabilises the policy near π₀ so on-policy fine-tuning starts in a low-divergence region; the variance never explodes because the IS ratios stay ≈ 1.", correct:true},
+          {key:"b", text:"Switch to fully off-policy."},
           {key:"c", text:"Use Adam."},
           {key:"d", text:"Bigger learning rate."},
         ]}
-        trap={<>(b) is the data-scaling reflex. (c)(d) are generic.</>}
-        lens={<>PG variance is governed by reward variance, baseline quality, and exploration. Adding baseline head is the surgical fix; more data helps only marginally if the variance source is reward shape.</>}
-        stretch={<>How does GAE (generalized advantage estimation) compare to a vanilla baseline?</>}
+        trap={<>(b) is the textbook off-policy reflex — but slate-length compounds the variance. (c)(d) are generic.</>}
+        lens={<>Slate-RL's slate-length amplifies every variance pathology RL already has. Off-policy with IS is a non-starter at K=5+. The accepted pattern is BC-pretrain (cheap, supervised) followed by on-policy fine-tune (stable, low-divergence). The senior knows the K-product is the cliff.</>}
+        stretch={<>For a K=10 slate, what's the typical variance amplification factor of slate-level IS vs per-action IS?</>}
       />
 
       <VIS.TrapProblem id="gsr-d4" difficulty="hard"

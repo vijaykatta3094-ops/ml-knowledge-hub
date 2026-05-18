@@ -1668,17 +1668,17 @@ flowchart TB
       />
 
       <VIS.TrapProblem id="rlaif-c3" difficulty="hard"
-        title="C3 — What's dropped vs RLHF? What replaces it?"
-        scenario={<>RecLAIF drops the per-label human cost AND drops the per-label human ground-truth. What replaces the ground-truth?</>}
+        title="C3 — What's dropped vs RLHF: the per-labeler timing signal"
+        scenario={<>RLHF labels carry a hidden signal each judge label does NOT: the human labeler's response TIME on each pair. What does RecLAIF lose by dropping this?</>}
         options={[
-          {key:"a", text:"Small human-calibration set + LLM judge serving as scalable label generator. The ground-truth is now 'judge agrees with held-out humans on N% of pairs'; the judge isn't ground truth, the calibration audit is.", correct:true},
-          {key:"b", text:"Nothing — there's no ground truth."},
-          {key:"c", text:"LLM judge IS the ground truth."},
-          {key:"d", text:"More compute."},
+          {key:"a", text:"Labeler response time is a confidence proxy — fast labels mean obvious preferences, slow labels mean ambiguous pairs. RLHF Bradley-Terry training can weight ambiguous pairs less or sample them more; RecLAIF gets no analogous signal because LLM judges output uniformly fast logits. This loses the ability to detect the ambiguity region where the reward model is uncertain, and silently over-fits to easy pairs.", correct:true},
+          {key:"b", text:"Nothing — timing data is noise."},
+          {key:"c", text:"LLM judges have implicit timing."},
+          {key:"d", text:"Timing is irrelevant for Bradley-Terry."},
         ]}
-        trap={<>(b)(c)(d) misread.</>}
-        lens={<>The architecture explicitly shifts the source of truth from "per-label human" to "per-judge-version calibration audit." Smaller, cheaper, but requires the audit to be real.</>}
-        stretch={<>What's the audit frequency you'd require?</>}
+        trap={<>(b)(d) under-state. (c) is wrong — sampling logits is deterministic-time.</>}
+        lens={<>The pivot is the SIGNAL geometry, not the ground-truth dichotomy. RLHF has a 'confidence per label' from time; RecLAIF needs to reconstruct it (judge logprob spread, multi-sample judge variance) or accept a flatter weighting that over-trains on easy pairs.</>}
+        stretch={<>What's the judge-side proxy for labeler time that's cheap to compute?</>}
       />
 
       <VIS.TrapProblem id="rlaif-c4" difficulty="hard"
@@ -1727,33 +1727,33 @@ flowchart TB
       />
 
       <VIS.TrapProblem id="rlaif-d2" difficulty="hard"
-        title="D2 — Wrong-assumption cascade: 'RecLAIF is just RLHF with cheap labels'"
-        scenario={<>A staff eng frames RecLAIF as "RLHF with the cost problem solved." List the wrong downstream consequences.</>}
+        title="D2 — Wrong-assumption cascade: 'RecLAIF audit cadence can match RLHF's'"
+        scenario={<>A staff eng plans RecLAIF audits at the same quarterly cadence used for RLHF. List the WRONG downstream consequences of this audit-cadence assumption.</>}
         multiSelect
         options={[
-          {key:"a", text:"Assumes the reward model is calibrated to humans — wrong, it's calibrated to the judge.", correct:true},
-          {key:"b", text:"Assumes no calibration audit is needed — wrong, it's the new locus of risk.", correct:true},
-          {key:"c", text:"Assumes prompt engineering doesn't matter — wrong, prompt changes silently shift labels.", correct:true},
-          {key:"d", text:"Assumes the judge can be a black box — wrong, judge updates / drift need monitoring.", correct:true},
-          {key:"e", text:"Assumes you can use the same PPO / DPO trainer — fine, downstream RL is identical."},
+          {key:"a", text:"Assumes human-eval rubric can be reused as the calibration metric — wrong, the rubric was designed to ELICIT labels, not to JUDGE labeler agreement; calibration needs an inter-rater-agreement metric (Cohen's κ on human-vs-judge pairs).", correct:true},
+          {key:"b", text:"Assumes label volume between audits is comparable — wrong, RecLAIF generates 100×+ more labels between audits than RLHF, so each missed audit accumulates 100× more polluted reward-model updates before detection.", correct:true},
+          {key:"c", text:"Assumes drift signal accumulates at the same rate — wrong, hosted-LLM judges can silently change behaviour at the vendor's release schedule (weeks), not the team's audit schedule (quarters).", correct:true},
+          {key:"d", text:"Assumes audit cost is the same — wrong, RLHF audits piggyback on continuing labeler relationships; RecLAIF audits need fresh humans because reused humans become biased toward judge-style outputs.", correct:true},
+          {key:"e", text:"Assumes the audit framework runs on the same compute — fine, both are CPU-bound annotation tooling."},
         ]}
         trap={<>(e) is the only one unchanged.</>}
-        lens={<>The 'cheap labels' framing under-states the architectural change. RecLAIF moves risk from "label cost" to "judge governance" — a different operational discipline.</>}
-        stretch={<>Which cascade item is the easiest to retrofit, which the hardest?</>}
+        lens={<>RLHF and RecLAIF differ on audit ECONOMICS, not just on labels. The 'cheap labels' framing under-counts the cost of governance: more labels per quarter × faster judge drift × distinct calibration metric × fresher human pool. Most teams under-fund RecLAIF audit and learn this the hard way.</>}
+        stretch={<>Sketch a dollar comparison: RLHF quarterly audit vs RecLAIF weekly audit for the same reward-model quality bar.</>}
       />
 
       <VIS.TrapProblem id="rlaif-d3" difficulty="hard"
-        title="D3 — Junior fix: 'add more judge labels'. Senior fix?"
-        scenario={<>RecLAIF reward model is mis-calibrated against humans. Junior says "10× more judge labels." Senior says ?</>}
+        title="D3 — Junior fix: 'one judge, more bootstraps'. Senior fix?"
+        scenario={<>Reward-model accuracy plateaus. Junior says "let me bootstrap-sample the judge — call the same LLM judge 5× per pair with different temperatures and average." Senior says ?</>}
         options={[
-          {key:"a", text:"More judge labels just amplify the judge's bias — the bias direction doesn't shrink with n. Senior debugs the judge (prompt audit, bias evaluation, human-set agreement) and either fixes the prompt, switches judge, or adds human labels to anchor the calibration.", correct:true},
-          {key:"b", text:"Add more labels."},
+          {key:"a", text:"Bootstrap on one judge captures only sampling noise around that judge's mean preference — it does NOT shrink the judge's systematic biases (verbosity, position, etc.). Senior switches to MULTI-JUDGE CONSENSUS: query 3 distinct judge families (e.g., GPT-4, Claude, Llama) and require 2/3 agreement before accepting a label. Disagreement is informative; force-route disagreements to human labelers.", correct:true},
+          {key:"b", text:"Bootstrap more."},
           {key:"c", text:"Use a deeper reward model."},
           {key:"d", text:"Train longer."},
         ]}
-        trap={<>(b) is the n-scaling reflex. (c)(d) are generic.</>}
-        lens={<>The reward model accurately captures whatever the judge produces. Fixing it requires fixing the upstream label source, not scaling labels.</>}
-        stretch={<>What's the bias evaluation suite you'd run on the judge?</>}
+        trap={<>(b) is the same-judge sampling reflex. (c)(d) are generic.</>}
+        lens={<>Single-judge bootstrap reduces variance, not bias. Multi-judge consensus reduces shared bias only across the dimensions where judges disagree (so it doesn't fix verbosity, which they all share, but it does catch domain blind spots). Disagreement-routing is the practical lever — it converts judge uncertainty into a queue of human-labelable items.</>}
+        stretch={<>What fraction of pairs should fall in 'disagreement' to know the consensus is doing real work?</>}
       />
 
       <VIS.TrapProblem id="rlaif-d4" difficulty="hard"
@@ -1862,17 +1862,17 @@ flowchart TB
       />
 
       <VIS.TrapProblem id="rlaif-f2" difficulty="hard"
-        title="F2 — Adversarial: design a recsys input that fools RecLAIF"
-        scenario={<>Design an input that the recommender will rate highly via RecLAIF but humans rate poorly.</>}
+        title="F2 — Adversarial: sycophancy prompt that makes the judge agree with anything"
+        scenario={<>Design a recsys prompt-template attack that makes the LLM judge accept ANY recommended item as "preferred", regardless of its actual quality.</>}
         options={[
-          {key:"a", text:"Inject content that satisfies judge biases — verbose explanations with high formal language and citation-style structure; the judge prefers it, the reward model rewards it, recommender surfaces it; humans actually prefer concise direct content but won't see it.", correct:true},
+          {key:"a", text:"Embed the user's prior query / preference signal verbatim in the candidate's metadata (e.g., 'Item description: matches your stated interest in fast-paced action films exactly'). Sycophantic LLM judges weight 'matches the user's stated query' above object-level quality; the judge prefers any item whose metadata textually echoes the user, even garbage items. Attack succeeds without touching reward model or PPO.", correct:true},
           {key:"b", text:"Random input."},
           {key:"c", text:"Empty input."},
           {key:"d", text:"Long input."},
         ]}
-        trap={<>(b)(c)(d) are incomplete attacks.</>}
-        lens={<>The attack surface is judge biases. Verbosity, formal language, citation-style, sycophancy — each is a documented LLM judge bias. The recommender finds these naturally given enough optimization pressure.</>}
-        stretch={<>What's the adversarial test suite for judge biases?</>}
+        trap={<>(b)(c)(d) are not concept-attacks. (d) overlaps verbosity (covered by E2).</>}
+        lens={<>Sycophancy is distinct from verbosity. Verbosity exploits 'longer = better'; sycophancy exploits 'aligns-with-user-query = better'. The attack is at the metadata-construction layer (anything that writes item descriptions) and is invisible to PPO and the reward model. Mitigation: judge prompt explicitly says 'ignore claims about user fit, evaluate only on item quality'.</>}
+        stretch={<>Name two other 'agreement bias' axes besides sycophancy that produce similar attacks.</>}
       />
 
       <VIS.TrapProblem id="rlaif-f3" difficulty="hard"
