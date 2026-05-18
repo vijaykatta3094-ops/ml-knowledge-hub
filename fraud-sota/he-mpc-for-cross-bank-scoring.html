@@ -1414,316 +1414,580 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// HE / MPC for cross-bank scoring — Fraud SOTA · Privacy-preserving fraud detection
-// CKKS homomorphic encryption on transaction features so cross-bank scoring works without plaintext.
+// HE/MPC for cross-bank scoring — two (or more) banks jointly compute a
+// fraud score on a SHARED customer without either revealing its features.
+// Concept-specific anchors that must survive redaction:
+//   (1) ciphertexts NEVER decrypt during compute — the math is on ciphertexts
+//   (2) HE = single party computes on encrypted inputs; MPC = multiple parties
+//       co-evaluate via secret-shared inputs
+//   (3) ONLY THE OUTPUT (a score) is revealed; inputs and intermediates stay
+//       cryptographically hidden
+//   (4) NOT noise (that's DP-SGD), NOT pairwise masking (that's secure-agg)
+// Strip "compute-on-ciphertext / never decrypt / inputs stay hidden" and the
+// answers must NOT still work.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="Fraud SOTA · Privacy-preserving fraud detection"
-      title="HE / MPC for cross-bank scoring"
-      subtitle="CKKS homomorphic encryption (or MPC) so a cross-bank model can score a transaction without seeing plaintext features."
+      pill="Fraud SOTA · Cross-party private inference"
+      title="HE/MPC for cross-bank scoring"
+      subtitle="Two banks compute a joint fraud score on a shared customer without either revealing its features. Ciphertexts never decrypt during compute; only the score is revealed."
       byline={[
-        {label: "Paper", value: "HE for Real-time Fraud Scoring, CCS 2024"},
-        {label: "Year", value: "2024"},
-        {label: "L3", value: "Encrypted inference"},
+        {label: "Source", value: "Gentry FHE (STOC 2009) + CKKS/BFV/TFHE schemes + Yao GMW SPDZ MPC line"},
+        {label: "L3", value: "Compute-on-ciphertext (HE) or secret-shared compute (MPC) — inputs stay hidden"},
+        {label: "Anchor", value: "Mechanism: encrypted compute — NOT noise, NOT aggregation masking"},
       ]}/>
 
     <VIS.TLDR>
-      Sanctions screening and cross-jurisdiction fraud scoring cannot legally share plaintext transaction features. CKKS{" "}
-      <VIS.Term def="A class of cryptography that lets you compute on encrypted values directly. Ciphertext plus ciphertext equals encryption of plaintext plus plaintext, without ever decrypting in the middle.">homomorphic encryption</VIS.Term>{" "}
-      lets one bank send encrypted features to another's model and receive an encrypted score back. The cost: every multiplication is roughly 100-1000x slower than plaintext, and only polynomial circuits work cleanly — so logistic regression is tractable, XGBoost less so, deep nets effectively no. The 2024 production deployments use HE for a final cross-bank confirmation step, with a fast in-bank model doing the bulk filtering.
+      Bank A has half a customer's features (e.g., card activity), bank B has the other half (e.g., account activity). They want a joint fraud score WITHOUT either revealing its features to the other. The mechanism:{" "}
+      <VIS.Term def="Homomorphic Encryption — a class of cryptosystems where mathematical operations on ciphertexts correspond to operations on plaintexts. Compute happens on the encrypted data; decryption at the end reveals the result.">HE</VIS.Term>{" "}
+      — bank A encrypts its features under a public key; bank B computes the (linear or polynomial) score function directly on ciphertexts; only the final ciphertext is decrypted by the key holder. Or{" "}
+      <VIS.Term def="Multi-Party Computation — a family of cryptographic protocols where multiple parties compute a function jointly on their secret inputs without revealing inputs to each other. Achieved via secret-sharing, Yao garbled circuits, or BMR/GMW protocols.">MPC</VIS.Term>{" "}
+      — both banks secret-share their features and run a joint protocol; intermediate values are split between parties so neither sees inputs or intermediates. In both, INPUTS AND INTERMEDIATES STAY CRYPTOGRAPHICALLY HIDDEN; only the OUTPUT (the score) is revealed. This is DIFFERENT from DP-SGD (which adds noise) and DIFFERENT from secure aggregation (which hides individual contributions to a sum). Cost: HE is 100x-10000x compute overhead; MPC is round-comm-heavy. Used at inference, not training.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        Imagine bank A wants to score a $50K wire transfer using a model trained at bank B (which has stronger fraud signal for that corridor). Sending the transaction features in plaintext to B is illegal under cross-border data rules. Sending only the score is fine, but how does B compute a score without seeing the features?
-      </p>
-      <p>
-        Homomorphic encryption is the answer. Bank A encrypts each feature under a CKKS key it controls and ships the ciphertexts to B. B runs the model arithmetic directly on the ciphertexts — every dot product, every activation — without decrypting. The output is an encrypted score that only A can decrypt. B never sees plaintext at any step.
-      </p>
-      <p>
-        <VIS.Term def="A secure multi-party computation protocol where multiple parties jointly compute a function without revealing their private inputs. Uses techniques like secret-sharing and garbled circuits.">MPC</VIS.Term>{" "}
-        is the alternative: instead of one party computing on encrypted data, multiple parties exchange messages to jointly compute the function. MPC is faster for some workloads but requires both parties online and stateful.
-      </p>
+    <VIS.Section id="sec-what" title="What it is — two flavors of encrypted compute">
+      <ol>
+        <li><strong>Threat:</strong> bank A and bank B share customer X; A's features and B's features are individually sensitive (regulated, competitive). They want score(A_features, B_features) without either party seeing the other's inputs.</li>
+        <li><strong>HE flavor:</strong> bank A encrypts its features <code>x_A</code> with public key pk; sends ciphertext <code>Enc(x_A)</code> to bank B. B computes <code>Enc(score(x_A, x_B)) = score(Enc(x_A), x_B)</code> directly on the ciphertext (HE supports +, &times;, sometimes &nbsp;eval-of-polynomials). B sends the resulting ciphertext back to A; A decrypts to learn the score. Schemes: BFV/BGV (exact integer), CKKS (approximate float), TFHE (boolean).</li>
+        <li><strong>MPC flavor:</strong> both banks secret-share each feature: <code>x_A = a_1 + a_2</code> where A holds <code>a_1</code> and B holds <code>a_2</code> (each share alone reveals nothing). They run a protocol (SPDZ, ABY, Yao garbled circuits) where each gate of the score function is evaluated on shares; only at the end do they reconstruct the output. SPDZ supports arithmetic circuits; Yao supports boolean circuits via garbled lookup tables.</li>
+        <li><strong>What gets revealed:</strong> ONLY the score (and what the score itself implies about inputs). Inputs, intermediates, and gradients never decrypt during compute.</li>
+        <li><strong>Trust assumption:</strong> typically semi-honest (parties follow protocol). Malicious-secure variants exist (SPDZ-style with MACs, malicious-HE) at higher cost.</li>
+      </ol>
 
       <VIS.Mermaid chart={`
 flowchart TB
-  A1["Bank A: transaction features"]
-  A1 --> E["Encrypt under A's CKKS key"]
-  E --> B1["Bank B receives ciphertexts"]
-  B1 --> C["Run model arithmetic on ciphertexts"]
-  C --> ES["Encrypted score"]
-  ES --> A2["Bank A decrypts score"]
-  style E fill:#fee2e2,stroke:#dc2626,stroke-width:2px
-  style C fill:#fee2e2,stroke:#dc2626,stroke-width:2px
-      `} />
-      <p>The red boxes are HE operations; nothing in the protocol ever exposes A's plaintext features to B.</p>
-
-      <VIS.Equation display tex={`\\text{Enc}(x) \\cdot \\text{Enc}(y) = \\text{Enc}(x \\cdot y), \\quad \\text{Enc}(x) + \\text{Enc}(y) = \\text{Enc}(x + y)`} />
-      <p>Multiplicative and additive homomorphism let any polynomial in x and y be evaluated directly on ciphertexts. Non-polynomial functions (ReLU, sigmoid) must be approximated by polynomials, which is where most of the practical pain lives.</p>
+  A["Bank A features x_A"]
+  B["Bank B features x_B"]
+  A --> E1["Encrypt or secret share"]
+  B --> E2["Encrypt or secret share"]
+  E1 --> C["Joint compute on ciphertext or shares"]
+  E2 --> C
+  C --> D["Decrypt only the OUTPUT"]
+  D --> R["Fraud score revealed"]
+  style C fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+  style D fill:#fee2e2,stroke:#dc2626,stroke-width:2px
+  style R fill:#fef3c7,stroke:#d97706,stroke-width:2px
+      `}/>
+      <p>Blue = the compute happens on ENCRYPTED data; no decryption mid-protocol. Red = the only decryption point — the output. Yellow = what's revealed: the score only. Inputs and intermediates are cryptographically hidden throughout.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
+    <VIS.Section id="sec-why" title="Why HE/MPC for cross-bank scoring specifically">
+      <p>
+        Cross-bank fraud scoring has a structural problem: the most informative features for fraud on a shared customer LIVE IN DIFFERENT BANKS. Bank A has the card-side activity; bank B has the account-side activity. Joint scoring beats either bank alone by 5-15pt recall (depending on dataset). But sharing raw features across banks is blocked by regulation (PII, banking-secrecy laws) AND by competition (banks don't want to leak their customer base). Plain sharing is off the table; trusted-third-party brokers shift but don't solve the trust problem.
+      </p>
+      <p>
+        HE and MPC are the only cryptographic mechanisms that let two banks compute the joint score without exposing inputs to anyone — including each other. The ciphertexts never decrypt during compute; only the score is revealed.
+      </p>
+      <p>
+        The redaction litmus for this whole visual: <em>if you can strip "compute-on-ciphertext / inputs stay hidden during compute" from a problem and the answer is unchanged, the problem is generic privacy-preserving ML and belongs in a different visual.</em> Every problem here must hinge on encrypted-compute specifically — circuit-depth limits, multiplicative depth, bootstrapping, ciphertext expansion, round complexity of MPC, or the "what about the output itself" residual leak.
+      </p>
+
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
         <thead>
           <tr style={{background:"#1f3a5f", color:"#fff"}}>
             <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Plaintext scoring</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>HE-based scoring</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>HE (e.g., CKKS)</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>MPC (e.g., SPDZ)</th>
           </tr>
         </thead>
         <tbody>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Server sees features</td>
-            <td style={{padding:"8px 10px"}}>Yes, plaintext</td>
-            <td style={{padding:"8px 10px"}}>No, only ciphertexts</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Compute cost</td>
-            <td style={{padding:"8px 10px"}}>1x baseline</td>
-            <td style={{padding:"8px 10px"}}>100-1000x slower</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Supported models</td>
-            <td style={{padding:"8px 10px"}}>Any</td>
-            <td style={{padding:"8px 10px"}}>Polynomials (LR, small CNN with poly activation)</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Ciphertext size</td>
-            <td style={{padding:"8px 10px"}}>N/A</td>
-            <td style={{padding:"8px 10px"}}>10-100KB per feature vector</td>
-          </tr>
+          <tr style={{background:"#e8f0fa"}}><td style={{padding:"6px 10px"}}>Who computes</td><td style={{padding:"6px 10px"}}>One party on encrypted inputs</td><td style={{padding:"6px 10px"}}>Multiple parties on secret shares</td></tr>
+          <tr><td style={{padding:"6px 10px"}}>Comm rounds</td><td style={{padding:"6px 10px"}}>O(1) — send ctxt, get ctxt back</td><td style={{padding:"6px 10px"}}>O(depth) — one round per multiplication</td></tr>
+          <tr style={{background:"#e8f0fa"}}><td style={{padding:"6px 10px"}}>Compute overhead</td><td style={{padding:"6px 10px"}}>1000x-10000x vs plaintext</td><td style={{padding:"6px 10px"}}>100x-1000x but more comm</td></tr>
+          <tr><td style={{padding:"6px 10px"}}>Circuit depth limit</td><td style={{padding:"6px 10px"}}>Bounded by noise budget (need bootstrap)</td><td style={{padding:"6px 10px"}}>Bounded by comm rounds, no noise issue</td></tr>
+          <tr style={{background:"#e8f0fa"}}><td style={{padding:"6px 10px"}}>Best for</td><td style={{padding:"6px 10px"}}>Shallow linear/polynomial scoring</td><td style={{padding:"6px 10px"}}>Deeper or boolean circuits</td></tr>
+          <tr><td style={{padding:"6px 10px"}}>Output</td><td style={{padding:"6px 10px"}}>Encrypted result, decrypted by key holder</td><td style={{padding:"6px 10px"}}>Plaintext result after reconstruction</td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick">
-      <ul>
-        <li><strong>Cross-jurisdiction sanctions screening</strong> — Office of Foreign Assets Control compliance can require encrypted feature exchange.</li>
-        <li><strong>Vendor scoring services where the customer cannot share plaintext</strong> — e.g., a fraud vendor running models for multiple banks who must not see each others' data.</li>
-        <li><strong>Final-step confirmation only</strong> — use a fast in-bank tabular model for 99% of traffic, route the suspicious 1% to HE-based cross-bank scoring.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <VIS.Callout kind="gotcha" title="Latency overhead is the deal-breaker">
-        Even a linear model on 200 features takes 100-500ms per HE-encrypted score versus less than 1ms plaintext. CKKS-friendly libraries (Microsoft SEAL, OpenFHE, HElib) can hit 50-100ms for tuned LR; XGBoost-equivalent depth-6 trees blow out to seconds.
+    <VIS.Section id="sec-limits" title="Limits and gotchas — the HE/MPC-specific ones">
+      <VIS.Callout kind="gotcha" title="HE has a multiplicative-depth budget that's NOT optional">
+        Every HE scheme has a NOISE BUDGET — each multiplication grows ciphertext noise. After enough multiplications, the ciphertext is too noisy to decrypt correctly. Linear scoring (logistic-regression-style) fits in a small budget; deep neural nets exceed it. Bootstrapping resets the noise but costs minutes per ciphertext. Pick scoring architectures that fit the budget.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="Non-polynomial activations need approximation">
-        ReLU and sigmoid are not polynomials. Approximate with degree-3 or degree-5 polynomials on a bounded input range; expect 0.5-1.5 AUC degradation on deep nets. Linear models bypass this entirely.
+      <VIS.Callout kind="warn" title="Non-linearities are expensive — sigmoid/ReLU need polynomial approximation">
+        HE supports + and &times;. ReLU is not polynomial; sigmoid is not polynomial. They must be APPROXIMATED by polynomials (typically degree 3-5), and each approximation costs multiplications (= noise budget). Decision boundaries near zero become imprecise. Practical fraud-scoring under HE uses polynomial-approximated logistic regression or small polynomial networks, not arbitrary deep nets.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="Bootstrapping is expensive">
-        CKKS noise grows with multiplication depth. Past a circuit depth ceiling you must "bootstrap" the ciphertext to refresh, which takes seconds and dominates total time. Keep circuits shallow.
+      <VIS.Callout kind="warn" title="MPC's round cost scales with circuit depth">
+        Each multiplication gate in SPDZ-like protocols requires one comm round between parties (for triple consumption). A score function with 100 multiplications = 100 round-trips. WAN latency dominates wall-clock. Use circuit-depth-aware compilation; batch many scores in one circuit; pick fewer-but-wider gates.
+      </VIS.Callout>
+      <VIS.Callout kind="warn" title="Ciphertext expansion: a single int becomes a kilobyte">
+        HE ciphertexts are 100-10000x larger than the plaintext (~kilobytes per encrypted scalar in BFV/CKKS). Banks transmit ciphertexts over the wire. A "feature vector" of 100 floats becomes ~100KB-1MB. Plan bandwidth accordingly; batch (CKKS-SIMD packing) helps amortize.
+      </VIS.Callout>
+      <VIS.Callout kind="gotcha" title="The OUTPUT is plaintext — it can still leak">
+        HE/MPC hide inputs and intermediates. The OUTPUT — the fraud score — is revealed. Repeated queries on the same customer with varying inputs let the querying bank reverse-engineer the other bank's features by oracle attack. Defense: query rate-limiting, DP on the output, hash-bucketed customer IDs to prevent linkage.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+    <VIS.Section id="sec-drill" title="Drill — concept-specific trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Ten interview-grade traps on HE / MPC for cross-bank fraud scoring.
+        Every problem hinges on something only HE/MPC do: compute-on-ciphertext, secret-shared compute, circuit-depth budget, polynomial approximations of non-linearities, ciphertext expansion, MPC round complexity, or output-leakage from repeated queries. Strip "compute-on-ciphertext / inputs hidden during compute" and the answer must no longer work.
       </p>
 
       <VIS.TrapProblem
         id="he-p1"
         difficulty="hard"
-        title="P1 — HE supports LR but not XGBoost. Three workarounds."
-        scenario={<>Your production fraud model is XGBoost with depth-6 trees. Compliance requires moving to HE-based scoring for one cross-jurisdiction product line. Direct HE on XGBoost is too slow. Walk through three workarounds.</>}
+        title="P1 — Bank B's CRO asks: 'Why HE/MPC and not just send pseudonymized features to a trusted broker?' Pick the pitch."
+        scenario={<><em>Discriminating insight: a trusted broker is itself a trust assumption — the broker sees both banks' raw features and is a regulatory + competitive liability. HE/MPC eliminates the trusted third party entirely: ciphertexts never decrypt; no party sees the other's features, not even an intermediary. Strip "compute-on-ciphertext / no trusted party" and the pitch reduces to "more privacy" generic.</em><br/><br/>Pick the pitch.</>}
         options={[
-          {key:"a", text:"(i) Distill XGBoost into a logistic regression with the same calibrated outputs and run LR under HE. (ii) Use a hybrid: run XGBoost in plaintext on a federated worker, only the final score crosses borders via HE. (iii) Switch this product line to a polynomial-friendly architecture (logistic + crafted features) at lower performance.", correct:true},
-          {key:"b", text:"Just run XGBoost in HE; modern HE handles trees fine."},
-          {key:"c", text:"Drop the cross-jurisdiction product line."},
-          {key:"d", text:"Ignore compliance; performance comes first."},
+          {key:"a", text:"HE/MPC is faster than a trusted broker."},
+          {key:"b", text:"A trusted broker IS a trust assumption — the broker SEES both banks' raw features in cleartext. That's a regulatory liability (one breach, both banks' data leaks), a competitive liability (the broker now knows both banks' customer bases), and a compliance burden (the broker must satisfy banking-secrecy regulations in both jurisdictions). HE/MPC eliminates the trusted third party: bank A encrypts its features under its own key; bank B computes the score directly on the ciphertext; only the FINAL SCORE is decrypted. Inputs and intermediates never exist in cleartext anywhere. The cryptographic guarantee is provable: even if bank B is fully compromised, the attacker sees only ciphertexts. This is structurally stronger than 'trusted broker + contracts' because there's nothing to leak — the cleartext doesn't exist.", correct:true},
+          {key:"c", text:"HE/MPC encrypts the network channel."},
+          {key:"d", text:"It satisfies GDPR Article 6."},
         ]}
-        trap={<>(b) is false — depth-6 trees blow up CKKS noise budgets. (c) and (d) abdicate the actual decision.</>}
-        lens={<>(a) — the three real options. Distillation works if you accept ~0.5 AUC loss; hybrid (the JPM 2024 pattern) keeps XGBoost in plaintext locally and only encrypts the final cross-border score; native LR loses more performance but is the simplest engineering path. Senior MLEs should know all three live in the toolkit.</>}
-        stretch={<>What other model families compose cleanly with CKKS besides LR?</>}
+        trap={<>(a) is wrong direction — HE/MPC is much slower than a broker. (c) is TLS-level confusion. (d) is legally vague.</>}
+        lens={<>The B3 pitch must redact-test: strip "compute-on-ciphertext / no decryption mid-protocol" and only (b) loses its meaning. Only (b) names the mechanism.</>}
+        stretch={<>What's the regulator's audit story under HE/MPC vs trusted broker — what artifacts exist?</>}
       />
 
       <VIS.TrapProblem
         id="he-p2"
         difficulty="hard"
-        multiSelect
-        title="P2 — Which CKKS-friendly tricks improve throughput?"
-        scenario={<>Your HE-LR scoring takes 400ms per transaction. Latency SLA is 50ms p99. Which optimizations help?</>}
+        title="P2 — Team conflates HE with secure aggregation. Distinguish."
+        scenario={<><em>Discriminating insight: HE encrypts INPUTS so compute can happen on ciphertexts; secure aggregation hides INDIVIDUAL CONTRIBUTIONS to a SUM via pairwise masks that cancel. Different stage (inference vs training), different mechanism (compute-on-ciphertext vs algebraic cancellation), different cost.</em><br/><br/>Distinguish.</>}
         options={[
-          {key:"a", text:"Batch SIMD: pack 8192 transactions per ciphertext slot and score in parallel.", correct:true},
-          {key:"b", text:"Reduce multiplicative depth via algebraic rewrites (compute dot product as Frobenius inner product on packed ciphertexts).", correct:true},
-          {key:"c", text:"Quantize model weights to int8 before encryption.", correct:true},
-          {key:"d", text:"Use a faster RAM."},
-          {key:"e", text:"Switch from CKKS to BFV (integer-only scheme)."},
+          {key:"a", text:"They're equivalent — both are crypto."},
+          {key:"b", text:"Different mechanisms for different problems. SECURE AGGREGATION: training-time protocol where pairwise PRG masks cancel in the SUM of clients' gradients; the aggregator learns only the sum. No actual cryptography on the gradient values — they're masked then unmasked. Used to hide individual contributions during federated training. Cheap (linear in N). HE: inference-time mechanism where ciphertexts admit + and × operations; compute happens directly on encrypted inputs, never decrypted mid-protocol. Used to compute a function (a score) jointly on inputs from different parties without revealing inputs. Expensive (100x-10000x compute overhead). Different stage, different mechanism, different cost. They can be COMBINED in a single pipeline (HE during cross-bank inference + secure-agg during federated training).", correct:true},
+          {key:"c", text:"HE is faster."},
+          {key:"d", text:"Secure aggregation is HE with masks."},
         ]}
-        trap={<>(d) is the textbook irrelevant answer. (e) is plausible-looking but BFV is typically slower for real-valued ML — its bitwise-decomposition operations dominate.</>}
-        lens={<>(a)-(c) are the three production tools. SIMD packing buys two orders of magnitude. Depth reduction directly fights noise growth. Weight quantization shrinks ciphertext-by-plaintext multiplications. Microsoft SEAL and Lattigo docs walk through all three.</>}
-        stretch={<>Why is SIMD packing essentially free in CKKS?</>}
+        trap={<>(a)(c)(d) collapse the distinction.</>}
+        lens={<>Secure-agg = aggregation-time masking. HE = compute-on-ciphertext. Both crypto, different jobs.</>}
+        stretch={<>Could you implement secure aggregation using HE? What's the cost delta?</>}
       />
 
       <VIS.TrapProblem
         id="he-p3"
-        difficulty="medium"
-        title="P3 — Where to insert HE in the existing pipeline"
-        scenario={<>Existing fraud pipeline: rules engine (10ms) -> XGBoost (5ms) -> human-review queue (slow). You add cross-bank HE scoring. Where does it fit?</>}
+        difficulty="hard"
+        title="P3 — You implement scoring with a 50-layer neural net inside HE. After deployment, decryption returns garbage. Why?"
+        scenario={<><em>Discriminating insight: every HE multiplication grows ciphertext noise. A 50-layer network has multiplicative depth far exceeding the BFV/CKKS budget without bootstrapping. The ciphertext is too noisy to decrypt correctly. Fix: shallower polynomial model OR bootstrapping (minutes per ctxt).</em><br/><br/>Diagnose.</>}
         options={[
-          {key:"a", text:"After XGBoost: only call HE scoring on the ~1% of transactions that XGBoost flags as borderline; this keeps total latency reasonable and concentrates compute on hard cases.", correct:true},
-          {key:"b", text:"Before XGBoost — HE first."},
-          {key:"c", text:"In parallel with XGBoost."},
-          {key:"d", text:"In the rules engine."},
+          {key:"a", text:"Use a smaller key."},
+          {key:"b", text:"Multiplicative-depth exhaustion. HE schemes (BFV, CKKS, TFHE) have a NOISE BUDGET in each ciphertext — each multiplication grows the noise term by a factor of ~q (the modulus chain step). After depth D multiplications, the noise exceeds the decryption threshold and the ciphertext decrypts to garbage. A 50-layer neural net with ReLU (which requires polynomial approximation of degree 3-5, each costing additional multiplications) blows the budget by orders of magnitude. Two fixes: (1) RESTRUCTURE — replace the deep net with a shallow polynomial model (logistic-regression-style or 2-3 layer polynomial network), or (2) BOOTSTRAPPING — periodically refresh the ciphertext to reset the noise budget. Bootstrapping is slow (minutes per ciphertext in BFV/CKKS, ~10ms in TFHE) but eliminates the depth limit. Choose architecture to fit the budget; don't paper over with bootstrap unless you've accepted the cost.", correct:true},
+          {key:"c", text:"Decryption is non-deterministic."},
+          {key:"d", text:"Reduce batch size."},
         ]}
-        trap={<>(b) makes the slow step gate everything. (c) wastes HE compute on 99% trivial cases. (d) confuses the role of rules.</>}
-        lens={<>(a) is the cascade pattern. HE scoring is expensive; route only the suspicious tail to it. The plaintext XGBoost in your perimeter handles bulk traffic; HE confirms ambiguous cases by consulting a cross-bank model. This is exactly the CCS 2024 production architecture.</>}
-        stretch={<>How do you decide the XGBoost score threshold for routing to HE?</>}
+        trap={<>(a)(c)(d) miss the noise-budget mechanism.</>}
+        lens={<>HE's multiplicative depth is a hard physical constraint. Model architecture must fit the budget OR pay for bootstrapping.</>}
+        stretch={<>What architectural changes make a fraud scorer HE-friendly without losing too much utility?</>}
       />
 
       <VIS.TrapProblem
         id="he-p4"
         difficulty="hard"
-        title="P4 — HE versus MPC versus TEE"
-        scenario={<>Your CISO offers three options: HE, two-party MPC (using garbled circuits), or running everything inside an Intel SGX trusted execution environment. Match technology to scenario.</>}
+        title="P4 — Score function uses sigmoid. HE complains: 'unsupported operation.' Fix?"
+        scenario={<><em>Discriminating insight: HE supports + and &times; (polynomial functions). Sigmoid is non-polynomial. Replace with a polynomial approximation (e.g., Taylor expansion degree 3-5 around zero, or Chebyshev fit on [-6, 6]). Accuracy near the decision boundary suffers; calibrate.</em><br/><br/>Fix.</>}
         options={[
-          {key:"a", text:"HE: party-A sends encrypted features to party-B who computes alone; B has the model, no online state. MPC: both A and B online, lower compute, more bandwidth. TEE: trust the hardware; very fast but vulnerable to side-channel attacks and requires hardware attestation.", correct:true},
-          {key:"b", text:"HE and MPC are interchangeable; pick whichever the vendor sells."},
-          {key:"c", text:"TEE is strictly better — always pick it."},
-          {key:"d", text:"Use all three simultaneously."},
+          {key:"a", text:"Use a different HE library."},
+          {key:"b", text:"Replace sigmoid with a polynomial approximation. HE schemes natively support + and × (i.e., polynomial functions of plaintexts). Sigmoid is non-polynomial (involves exp), so it cannot be evaluated directly. Standard practice: replace σ(x) with a degree-3 to degree-5 polynomial approximation, typically a Chebyshev or minimax fit on the input range (e.g., [-6, 6] where logistic output is meaningful). Each evaluation costs (degree-1) multiplications in the noise budget. Trade-off: approximation error near the decision boundary, recalibration may be needed for downstream thresholding. Same pattern for ReLU (use x² or quadratic spline approximations) and softmax. The 'HE-friendly model' is one whose forward pass is provably polynomial.", correct:true},
+          {key:"c", text:"Move sigmoid outside HE."},
+          {key:"d", text:"Use bootstrapping."},
         ]}
-        trap={<>(b) misses the asymmetric vs interactive distinction. (c) ignores the SGX vulnerability history (Foreshadow, SGAxe). (d) is unimplementable.</>}
-        lens={<>(a) — these three have different sweet spots. HE for asymmetric, offline-friendly settings; MPC when both parties can stay online and bandwidth is cheap; TEE when you accept hardware trust and need plaintext-speed compute. Banks usually pick HE for cross-jurisdiction and MPC for intra-consortium.</>}
-        stretch={<>Name one production fraud product that uses each.</>}
+        trap={<>(a) misses the structural constraint. (c) leaks the pre-sigmoid value. (d) doesn't make sigmoid polynomial.</>}
+        lens={<>HE-friendly architectures use only + and ×. Non-linearities = polynomial approximations.</>}
+        stretch={<>What polynomial degree gives 99% AUPRC retention vs cleartext sigmoid?</>}
       />
 
       <VIS.TrapProblem
         id="he-p5"
         difficulty="hard"
-        title="P5 — Noise budget runs out mid-circuit"
-        scenario={<>You implement a 10-layer HE-evaluated neural net. Layer 7 outputs garbage on decryption — earlier layers work. The CKKS scheme parameters are fixed at poly-modulus degree 16384, coeff modulus 5 levels. What's wrong?</>}
+        title="P5 — Bank A and B finish the protocol, decrypt the score = 0.97. Bank A repeats with slightly different inputs to learn bank B's features. Detect the attack."
+        scenario={<><em>Discriminating insight: HE/MPC hides INPUTS during compute, but the OUTPUT is plaintext. Repeated queries with varying inputs let one party probe the score function and reverse-engineer the other's features (oracle attack). This is residual leakage AT THE OUTPUT — orthogonal to the cryptographic guarantee on the compute.</em><br/><br/>Detect/defend.</>}
         options={[
-          {key:"a", text:"CKKS noise grows with multiplication depth; after roughly 5 multiplicative levels the ciphertext exceeds the noise budget and decryption returns garbage. Either bootstrap (refresh noise) or pick larger parameters (poly degree 32768, more levels) at higher compute cost.", correct:true},
-          {key:"b", text:"Bug in PyTorch."},
-          {key:"c", text:"Random seed issue."},
-          {key:"d", text:"Layer 7 is too wide."},
+          {key:"a", text:"The protocol is broken."},
+          {key:"b", text:"This is the OUTPUT-LEAKAGE attack — orthogonal to the cryptographic guarantee. HE/MPC promise that INPUTS AND INTERMEDIATES are cryptographically hidden during compute; the OUTPUT (the score) is intentionally revealed and IS plaintext. An adversary that can query the protocol many times with chosen inputs can probe the score function as an oracle and reconstruct the other party's features (linear-regression-style for linear scores; gradient-based for differentiable scores). Defenses (orthogonal to crypto): (1) query rate-limiting per (bank, customer) pair, (2) DP NOISE on the output (small ε turns the score into a noisy estimate so oracle queries can't sharpen), (3) policy: only release a coarse band (low/medium/high) rather than a precise score, (4) customer hashing so repeated queries on 'similar' customers can't be linked. The cryptographic mechanism is intact; the threat is at the system level.", correct:true},
+          {key:"c", text:"Use stronger HE keys."},
+          {key:"d", text:"Repeated queries don't leak anything."},
         ]}
-        trap={<>(b)-(d) are common misattributions. The trap is candidates who do not yet know CKKS has a noise budget at all.</>}
-        lens={<>(a) — every CKKS operation adds noise; the parameter "levels" sets how many multiplications you can do before the noise overwhelms the signal. Either bootstrap (slow), increase parameters (slow + bigger ciphertexts), or restructure the network for lower depth (fewer layers, ReLU approximations of lower degree).</>}
-        stretch={<>What is the wall-clock cost of bootstrapping a CKKS ciphertext?</>}
+        trap={<>(a)(c) misdiagnose; (d) ignores the channel.</>}
+        lens={<>HE/MPC don't bound OUTPUT-DERIVED leakage. The score itself is a side channel.</>}
+        stretch={<>How does DP-on-the-output compose with HE — what ε is appropriate?</>}
       />
 
       <VIS.TrapProblem
         id="he-p6"
-        difficulty="medium"
-        multiSelect
-        title="P6 — Which threats does HE NOT solve?"
-        scenario={<>Your fraud team deploys CKKS-based cross-bank scoring. The privacy officer wants a clear scope of guarantees. Which threats are OUT of scope for HE alone?</>}
+        difficulty="hard"
+        title="P6 — MPC protocol for a 100-multiplication score function. Wall-clock is 12s over WAN. Decompose the cost."
+        scenario={<><em>Discriminating insight: SPDZ-like MPC requires one comm round per multiplication. With 100 multiplications and ~100ms WAN RTT, you spend ~10s in network round-trips. Compute is fast; comm dominates. Optimization: depth reduction, batching, preprocessing (offline triples).</em><br/><br/>Decompose.</>}
         options={[
-          {key:"a", text:"Inversion attacks on the model output (a sufficiently rich score still leaks features).", correct:true},
-          {key:"b", text:"Membership inference on the trained model itself.", correct:true},
-          {key:"c", text:"A malicious party-B substituting a different model.", correct:true},
-          {key:"d", text:"Network eavesdroppers reading ciphertexts.", correct:false},
-          {key:"e", text:"Party B reading plaintext features in real time.", correct:false},
+          {key:"a", text:"All compute, no comm."},
+          {key:"b", text:"In SPDZ-like arithmetic-MPC, ONE COMM ROUND per multiplication gate is the dominant cost: each mult consumes a 'Beaver triple' (a, b, c=ab) that's preprocessed offline, and the protocol exchanges share-masking values over the wire to evaluate the gate. With 100 mults and ~100ms WAN RTT, that's 100 sequential round-trips ≈ 10s of pure network. Local compute on shares is sub-second. Optimizations: (1) DEPTH REDUCTION — restructure the circuit so independent mults batch in one round (parallel rounds), (2) PREPROCESSING — generate triples offline so the online phase only does fast linear ops, (3) BATCH MANY SCORES — amortize round-trips across many customers in one protocol run. Yao garbled circuits flip the cost: O(1) round but huge ciphertext (one boolean circuit). Pick MPC flavor by circuit shape.", correct:true},
+          {key:"c", text:"Compute dominates over comm."},
+          {key:"d", text:"Storage dominates."},
         ]}
-        trap={<>(d) and (e) ARE in scope and protected. The trap is candidates who think "encryption" solves all privacy problems.</>}
-        lens={<>HE protects feature confidentiality during inference (d, e). It does NOT protect against model-output inversion (a), membership inference on the trained model (b), or model integrity (c). Compose with DP-SGD (for b), verifiable computation (for c), and rate limits (for a).</>}
-        stretch={<>What is one verifiable-computation primitive that composes with HE?</>}
+        trap={<>(a)(c)(d) misread the bottleneck.</>}
+        lens={<>MPC's wall-clock = (depth × RTT) for SPDZ-arith. Depth is the lever.</>}
+        stretch={<>If you batch 10k customers in one circuit, how does wall-clock change per customer?</>}
       />
 
       <VIS.TrapProblem
         id="he-p7"
-        difficulty="hard"
-        title="P7 — Encrypted similarity for sanctions screening"
-        scenario={<>You need to check whether a transaction's beneficiary matches anyone on an OFAC sanctions list. The list is private to your compliance vendor; the beneficiary name is private to your bank. Plaintext join is illegal. How?</>}
+        difficulty="medium"
+        title="P7 — Picking between HE and MPC for a logistic-regression cross-bank score. Lean which way?"
+        scenario={<><em>Discriminating insight: logistic regression is shallow polynomial (sum of products plus a sigmoid approximation). HE handles this cheaply with one round of comm. MPC would require many rounds for the same circuit. HE is the right pick.</em><br/><br/>Choose.</>}
         options={[
-          {key:"a", text:"Private Set Intersection (PSI) via OPRF or other MPC protocol; both parties learn only whether the intersection is non-empty, not the names involved.", correct:true},
-          {key:"b", text:"Hash the names with SHA-256 and compare."},
-          {key:"c", text:"HE-encrypt the names and equality-compare on ciphertext."},
-          {key:"d", text:"Send the whole sanctions list, do the join locally."},
+          {key:"a", text:"MPC — always faster."},
+          {key:"b", text:"HE for this case. Logistic regression is dot product (shallow polynomial: sum of N multiplications, depth ~log N or depth 1 if SIMD-packed) plus a sigmoid (replaced by polynomial approximation, depth 3-5). Total multiplicative depth ~5-10 fits comfortably in a CKKS noise budget without bootstrapping. HE flow: bank A encrypts feature vector with CKKS, sends ONE ciphertext to bank B (~1MB after SIMD packing); B computes dot+poly-sigmoid locally on the ciphertext; B returns one ciphertext to A; A decrypts. Round complexity: ONE round-trip. MPC for the same circuit: ~10 mults × 1 round each = ~10 round-trips. HE wins on round complexity; trades off local compute (B does all the work) vs even split. Pick HE for shallow circuits and asymmetric compute/network; pick MPC for deeper circuits, boolean ops, or symmetric trust.", correct:true},
+          {key:"c", text:"Toss a coin."},
+          {key:"d", text:"Use both simultaneously."},
         ]}
-        trap={<>(b) is broken — small key space makes the hash dictionary-recoverable. (c) works mathematically but is overkill; PSI is the dedicated primitive. (d) violates the vendor's confidentiality.</>}
-        lens={<>(a) — Private Set Intersection is the correct primitive. OPRF-based PSI (Oblivious Pseudo-Random Function) is production-ready in libraries like ECHO or libPSI. Both parties learn only the intersection (or even just its size), nothing else.</>}
-        stretch={<>How does fuzzy name matching (typos, transliterations) interact with PSI?</>}
+        trap={<>(a) wrong default; (c)(d) abdicate.</>}
+        lens={<>HE = shallow, asymmetric. MPC = deeper, symmetric. Circuit shape decides.</>}
+        stretch={<>For a 5-layer polynomial network, where does the crossover happen?</>}
       />
 
       <VIS.TrapProblem
         id="he-p8"
-        difficulty="medium"
-        title="P8 — Key management for CKKS in production"
-        scenario={<>You ship a CKKS-based cross-bank fraud product. Which key-management decision matters most?</>}
+        difficulty="hard"
+        title="P8 — HE library lets you encrypt a vector of 8192 floats in one ciphertext (CKKS-SIMD packing). Implication for cost?"
+        scenario={<><em>Discriminating insight: SIMD packing amortizes per-ciphertext compute across the slots. A dot product over a 1000-dim feature vector inside one packed ciphertext costs the same as a single addition. Throughput per cost drops by 1000x for vectorizable ops.</em><br/><br/>Exploit.</>}
         options={[
-          {key:"a", text:"Bank A holds the secret key; bank B holds only the public + evaluation keys. Rotate keys per session or per day; HSM-back the secret key with sealed access.", correct:true},
-          {key:"b", text:"Both banks share the same secret key for convenience."},
-          {key:"c", text:"Use long-lived (multi-year) keys to avoid rotation cost."},
-          {key:"d", text:"Generate keys on each transaction."},
+          {key:"a", text:"No effect — slots are independent."},
+          {key:"b", text:"SIMD-packing amortizes per-ciphertext compute across the 8192 slots. A componentwise addition or multiplication on a packed ciphertext costs the SAME as one HE operation — but produces 8192 results simultaneously. Throughput per cost drops by ~8000x for naturally vectorizable ops. To compute a DOT PRODUCT of two packed vectors: componentwise multiply (cheap, 1 op) then HORIZONTAL SUM via 'rotation + add' (log2(slots) rotations × 1 add each = ~13 ops). Total dot product = ~14 HE ops to score 8192 customers' features in parallel. The architectural lesson: design HE pipelines to map onto the SIMD slot structure — pack features of multiple customers, pack multiple features of one customer, or both. Without packing, HE is impractical; with packing, it's competitive for shallow models.", correct:true},
+          {key:"c", text:"It makes decryption slower."},
+          {key:"d", text:"It breaks the security guarantee."},
         ]}
-        trap={<>(b) defeats the asymmetric design (B would see plaintext). (c) creates a fat blast radius if the secret key leaks. (d) is wasteful and slow.</>}
-        lens={<>(a) — CKKS has a public/secret keypair plus evaluation keys for relinearization and rotation. Only A holds the secret; B uses public + eval keys. Rotation policy matches your incident-response tolerance; daily rotation is the conservative default for financial workloads.</>}
-        stretch={<>What goes wrong if you reuse keys across sessions for years?</>}
+        trap={<>(a)(c)(d) miss the throughput-amortization mechanism.</>}
+        lens={<>SIMD packing is what makes HE practical. It's the LATENT throughput lever.</>}
+        stretch={<>How do you pack non-vectorizable ops (lookup tables)?</>}
       />
 
       <VIS.TrapProblem
         id="he-p9"
         difficulty="hard"
-        title="P9 — Cost defense to the CFO"
-        scenario={<>HE scoring increases compute cost 200x and infra spend by $400K/year for the cross-jurisdiction product line. The CFO asks: "Why are we paying this?" Defend the spend.</>}
+        title="P9 — Junior: 'Use TLS — that encrypts the data between banks.' Why isn't TLS the answer?"
+        scenario={<><em>Discriminating insight: TLS protects the CHANNEL. The receiving party decrypts at the endpoint and sees the cleartext data. HE/MPC protects the COMPUTE itself — the receiving party can compute on the data WITHOUT ever decrypting.</em><br/><br/>Diagnose.</>}
         options={[
-          {key:"a", text:"Frame as compliance cost: enables a regulated product line that generates $X revenue otherwise inaccessible. Compare to the alternative (manual review, slower clearing, or losing the corridor) and quantify the difference.", correct:true},
-          {key:"b", text:"HE is mathematically interesting."},
-          {key:"c", text:"All competitors do it."},
-          {key:"d", text:"Drop HE; risk the fines."},
+          {key:"a", text:"TLS is sufficient."},
+          {key:"b", text:"TLS protects the CHANNEL — bank A's data is encrypted in transit to bank B, then DECRYPTED AT BANK B'S ENDPOINT for compute. Bank B sees the cleartext data. The threat model HE/MPC addresses (bank B is not allowed to see bank A's features) is exactly the threat TLS does NOT cover. HE/MPC keep the data ENCRYPTED THROUGHOUT THE COMPUTE: bank B operates on ciphertexts; never decrypts; sends back ciphertexts. Only bank A's key holder decrypts the final output. TLS = transport security; HE/MPC = compute-time confidentiality. Different threats. Production systems use BOTH: TLS for the wire, HE/MPC for the compute confidentiality.", correct:true},
+          {key:"c", text:"TLS is slower."},
+          {key:"d", text:"TLS doesn't work over WAN."},
         ]}
-        trap={<>(b) is technically correct but business-naive. (c) is unverifiable. (d) is reckless and may exceed $400K in fines per incident.</>}
-        lens={<>(a) — frame HE as the enabling compliance technology that unlocks revenue. The senior framing: HE is not a cost center, it's the toll for a regulated revenue stream. Compute the unit economics of that revenue stream and compare to the HE infra bill.</>}
-        stretch={<>What is the simplest A/B test to validate the revenue impact?</>}
+        trap={<>(a)(c)(d) misread.</>}
+        lens={<>TLS = transport. HE/MPC = compute-time. Different threats, both useful.</>}
+        stretch={<>What does the auditor see in the logs under TLS-only vs HE+TLS?</>}
       />
 
       <VIS.TrapProblem
         id="he-p10"
-        difficulty="hard"
-        title="P10 — When NOT to use HE"
-        scenario={<>A startup proposes HE for all internal fraud scoring (single bank, single jurisdiction). Defend the right answer.</>}
+        difficulty="medium"
+        title="P10 — Compare HE/MPC to DP-SGD for the cross-bank scoring problem."
+        scenario={<><em>Discriminating insight: DP-SGD bounds what a released TRAINING-TIME model leaks; HE/MPC enables INFERENCE-TIME computation without revealing inputs. Different problems entirely. DP-SGD doesn't address cross-party input privacy; HE/MPC doesn't address model-release leakage.</em><br/><br/>Compare.</>}
         options={[
-          {key:"a", text:"Inside a single trust boundary, HE buys nothing — you can score in plaintext on your own infrastructure. Save HE for cross-trust-boundary scenarios where the receiving party must not see plaintext.", correct:true},
-          {key:"b", text:"HE everywhere is the most secure posture."},
-          {key:"c", text:"Use HE for half the model and plaintext for the other half."},
-          {key:"d", text:"HE pays for itself via marketing."},
+          {key:"a", text:"Same thing."},
+          {key:"b", text:"Different problems. DP-SGD: training-time mechanism that adds noise to per-sample-clipped gradients so the FINAL TRAINED MODEL has an (ε,δ)-DP guarantee against an attacker with model access. DOES NOT address two-party scoring where neither party wants to reveal inputs to the other. HE/MPC: inference-time mechanism where two parties jointly compute a function on encrypted/shared inputs without revealing inputs. DOES NOT address model-release leakage — the model itself is shared in cleartext within each party, and the OUTPUT score is plaintext. In a full privacy stack, you'd use BOTH: DP-SGD on each party's local training so the model has a model-release guarantee; HE/MPC at inference for the joint scoring without revealing the inputs.", correct:true},
+          {key:"c", text:"DP-SGD is faster."},
+          {key:"d", text:"HE replaces DP-SGD."},
         ]}
-        trap={<>(b) is the security-theater anti-pattern. (c) is nonsense — partial encryption usually leaks the unprotected half. (d) is not a real argument.</>}
-        lens={<>(a) — HE is a cross-trust-boundary tool. Inside a single bank (one CISO, one data residency, one trust zone), encrypt at rest and in transit, but compute in plaintext. HE's 100-1000x cost only pays off when the alternative is "do not compute at all."</>}
-        stretch={<>What internal scenarios STILL benefit from HE even inside a single bank?</>}
+        trap={<>(a)(c)(d) collapse the distinction.</>}
+        lens={<>DP = noise for model-release privacy. HE/MPC = crypto for input-during-compute privacy. Different problems.</>}
+        stretch={<>Design a privacy stack that uses all three mechanisms.</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p11"
+        difficulty="hard"
+        title="P11 — Threat model: which party trusts whom in a 2-party HE protocol?"
+        scenario={<><em>Discriminating insight: in 2-party HE (bank A encrypts, bank B computes), A trusts its OWN key; B has no key. B is the COMPUTING PARTY; cannot decrypt anything. A is the DATA OWNER + KEY HOLDER; learns the output. Semi-honest assumption: B follows the protocol.</em><br/><br/>Specify.</>}
+        options={[
+          {key:"a", text:"A and B trust each other fully."},
+          {key:"b", text:"Asymmetric trust. Bank A: OWNS the secret key, encrypts its features under the public key, decrypts the final output. Trusts only itself with the key — bank B never has the secret key. Bank B: the COMPUTING party. Has the public key (for ciphertext operations) and bank A's encrypted features. CANNOT DECRYPT anything mid-protocol. Bank B contributes its own features in cleartext locally (since it's computing) or also encrypted if mutual privacy is needed (2-key HE / threshold HE). Semi-honest assumption: B follows the protocol — doesn't try to use auxiliary inputs to probe A's ciphertext. Malicious B would require additional zero-knowledge proofs of correct computation. Bank A learns the OUTPUT (the score); B learns nothing more than it provided as input. This is the asymmetric 2PC pattern; MPC restores symmetry via secret-sharing.", correct:true},
+          {key:"c", text:"B trusts A."},
+          {key:"d", text:"No trust required."},
+        ]}
+        trap={<>(a)(c)(d) misread.</>}
+        lens={<>2-party HE is asymmetric: key holder vs computer. MPC is symmetric.</>}
+        stretch={<>How does threshold HE restore symmetry — and what's the cost?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p12"
+        difficulty="hard"
+        title="P12 — Banks want to JOINTLY TRAIN a model on their pooled features (not just inference). Use HE?"
+        scenario={<><em>Discriminating insight: HE during training requires computing gradients on ciphertexts, including back-prop through the loss — far deeper circuits than inference, and depth scales with epochs &times; layers. Practically infeasible without massive bootstrapping. MPC variants or federated + secure aggregation are typical alternatives.</em><br/><br/>Choose.</>}
+        options={[
+          {key:"a", text:"Yes — HE training is standard."},
+          {key:"b", text:"Generally NO for full HE training. Training requires evaluating the forward pass, the loss, AND the backward pass (gradients) on ciphertexts — and repeating for many epochs. Multiplicative depth scales with (layers × epochs), blowing past any practical noise budget without continuous bootstrapping (minutes per ctxt per step). The compute overhead reaches 10⁵-10⁷ × cleartext for non-trivial models. Practical alternatives: (1) FEDERATED LEARNING + SECURE AGGREGATION — each bank trains locally on its own cleartext data, gradients aggregated via secure-agg; each bank's training data is local, no cross-party encrypted compute on raw data, (2) MPC-BASED TRAINING (SecureML, ABY3) — secret-shared compute makes round-cost dominate but depth is not a noise issue, viable for moderate-size models, (3) HYBRID — feature extraction local + final layer in HE/MPC. Pure HE training is research-stage, not production.", correct:true},
+          {key:"c", text:"Yes, but with TFHE."},
+          {key:"d", text:"No, HE is impossible."},
+        ]}
+        trap={<>(a)(c) overclaim; (d) too strong.</>}
+        lens={<>HE is for INFERENCE on shallow polynomial models. Training is impractical.</>}
+        stretch={<>Where's the boundary between 'training is too deep for HE' and 'still feasible with MPC'?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p13"
+        difficulty="medium"
+        title="P13 — Approximate CKKS gives 0.94 AUPRC; exact BFV gives 0.96. Pick which for fraud scoring?"
+        scenario={<><em>Discriminating insight: CKKS approximates floats and naturally fits ML models. BFV is exact on integers but requires fixed-point quantization. For fraud scoring (continuous features, polynomial sigmoid approximations), CKKS is the standard pick — accept the 2pt loss for the architectural fit.</em><br/><br/>Pick.</>}
+        options={[
+          {key:"a", text:"BFV always."},
+          {key:"b", text:"CKKS is the standard choice for ML scoring. Reasons: (1) CKKS natively supports APPROXIMATE FLOAT ARITHMETIC, which matches the continuous features and polynomial-approximated sigmoids in fraud scoring. (2) BFV requires fixed-point quantization (scale floats to int32, round, encrypt as integers) — possible but error-prone for ML, and accumulates quantization errors through deep circuits. (3) The 2pt AUPRC delta is typically NOT from CKKS's approximation noise (which is ~10⁻⁵ relative) but from your polynomial sigmoid approximation; you'd lose those 2pt under BFV too. (4) CKKS's SIMD packing is more developer-friendly for ML primitives. Choose BFV/BGV when you need exact integer arithmetic (counts, IDs, set intersection); choose CKKS for ML.", correct:true},
+          {key:"c", text:"CKKS — but only for images."},
+          {key:"d", text:"Neither — use TFHE."},
+        ]}
+        trap={<>(a)(c)(d) miss the ML-fit reason.</>}
+        lens={<>CKKS = approximate float, ML fit. BFV/BGV = exact integer. TFHE = boolean. Pick by data type.</>}
+        stretch={<>When would TFHE be the right choice for a scoring model?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p14"
+        difficulty="hard"
+        multiSelect
+        title="P14 — Security pitfalls in an HE/MPC PR. Select ALL that break the privacy guarantee."
+        scenario={<><em>Discriminating insight: typical pitfalls — re-encryption oracles, decryption of intermediates for debugging, fixed (deterministic) randomness in encryption, sharing the secret key, output revealed to wrong party, side-channels on bootstrap timing.</em><br/><br/>Select all.</>}
+        options={[
+          {key:"a", text:"Engineer adds a log statement that decrypts an intermediate ciphertext for debugging.", correct:true},
+          {key:"b", text:"Encryption uses a deterministic randomness source (same plaintext always encrypts to same ciphertext).", correct:true},
+          {key:"c", text:"Secret key shared with the computing party 'for convenience.'", correct:true},
+          {key:"d", text:"Public key shared with the computing party (this is the correct pattern)."},
+          {key:"e", text:"Final ciphertext decrypted by the data owner and returned to both parties as plaintext.", correct:true},
+          {key:"f", text:"Bootstrap timing varies with the ciphertext's noise level (side channel)."},
+        ]}
+        trap={<>(d) is CORRECT pattern — public keys are public. (f) is a possible side channel but typically out of scope for semi-honest threat models.</>}
+        lens={<>Critical breakages: decrypting intermediates, deterministic encryption, leaked secret key, wrong-party output.</>}
+        stretch={<>Which of these is most often slipped into 'debug builds' in practice?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p15"
+        difficulty="hard"
+        title="P15 — A new bank wants to join the 2-bank scoring consortium. Cost?"
+        scenario={<><em>Discriminating insight: 2-party HE generalizes to k-party with threshold HE or k-party MPC. Each additional party multiplies setup cost; in MPC, round comm grows with O(k) per multiplication for naive protocols, O(log k) for tree-aggregation.</em><br/><br/>Cost.</>}
+        options={[
+          {key:"a", text:"No additional cost."},
+          {key:"b", text:"Real costs scale with k. THRESHOLD HE (t-of-k decryption key distributed): setup requires k pairwise key-exchanges and Shamir-style distribution of the decryption key; ciphertext operations cost is similar to 2-party HE. Decryption requires t parties to collaborate. MPC: each multiplication gate now requires O(k) (or O(log k) with tree-based protocols) comm exchanges; total cost ~k× the 2-party MPC cost. ALSO: the threat model changes — collusion of t-1 parties in threshold HE breaks decryption-side privacy; collusion of >half the MPC parties breaks privacy in honest-majority MPC. Pick t carefully. Bank-consortium joining is a real engineering task, not a free expansion.", correct:true},
+          {key:"c", text:"Cost scales like 2^k."},
+          {key:"d", text:"Only one bank can be added."},
+        ]}
+        trap={<>(a)(c)(d) misread.</>}
+        lens={<>2-party generalizes to k-party but the costs grow with k. Linear or log, not constant.</>}
+        stretch={<>For a 5-bank consortium, threshold HE or 5-party MPC — which?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p16"
+        difficulty="hard"
+        title="P16 — 'Bootstrap once per million inferences; amortize.' Sound?"
+        scenario={<><em>Discriminating insight: bootstrapping refreshes ONE ciphertext at a time (or a SIMD-packed batch of them). You cannot amortize across separate ciphertexts unless they're co-packed at bootstrap time. The amortization claim is true only within a single packed bootstrap.</em><br/><br/>Diagnose.</>}
+        options={[
+          {key:"a", text:"Sound — bootstrap amortizes across all queries."},
+          {key:"b", text:"Wrong in general. Bootstrapping refreshes ONE ciphertext at a time. In CKKS, that ciphertext can hold THOUSANDS of plaintext slots via SIMD packing, so a single bootstrap can refresh thousands of in-flight values IF they're co-packed at bootstrap time. But you cannot 'bootstrap once and serve a million separate ciphertexts' — each independent ciphertext has its own noise. To get amortization, you must DESIGN THE PIPELINE so many customer scores live in the slots of one packed ciphertext when bootstrap fires. Otherwise bootstrapping is per-ciphertext, and for a 50-layer model you might bootstrap every 10 layers = 5 bootstraps per inference = minutes per inference. Architecture must be designed around bootstrap economics.", correct:true},
+          {key:"c", text:"Sound — bootstrap is free."},
+          {key:"d", text:"Unsound — bootstrap is impossible."},
+        ]}
+        trap={<>(a)(c) overstate amortization; (d) is wrong.</>}
+        lens={<>Bootstrap amortizes across SIMD slots, not across separate ciphertexts.</>}
+        stretch={<>Design a packing strategy that maximizes bootstrap amortization for fraud scoring.</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p17"
+        difficulty="medium"
+        title="P17 — Where does HE/MPC introduce NEW risks not present in cleartext compute?"
+        scenario={<><em>Discriminating insight: HE/MPC adds risks: bootstrap correctness bugs, polynomial approximation errors changing decisions silently, ciphertext-format-version mismatches breaking compatibility, side-channel timing leaks. These are new attack surfaces compared to cleartext.</em><br/><br/>Identify.</>}
+        options={[
+          {key:"a", text:"No new risks."},
+          {key:"b", text:"New risks specific to encrypted compute: (1) BOOTSTRAP CORRECTNESS BUGS — a buggy bootstrap can silently corrupt ciphertexts; downstream scores are wrong without any error. (2) POLYNOMIAL APPROXIMATION ERROR — your sigmoid approximation may behave correctly in cleartext but the HE-computed approximation has additional precision losses; decisions near the boundary flip silently. (3) CIPHERTEXT FORMAT VERSIONING — upgrading the HE library can change ciphertext layouts; old ciphertexts may decrypt to wrong values without error. (4) TIMING SIDE-CHANNELS — bootstrap takes longer when noise is high; an observer measuring response times can learn the depth of operations on the ciphertext. (5) MALLEABILITY — many HE schemes are malleable; an adversary modifying ciphertexts in transit can flip predictions in predictable ways unless authenticated encryption is layered on top. Defenses: end-to-end test vectors, MAC on ciphertexts, constant-time bootstrap variants.", correct:true},
+          {key:"c", text:"Fewer risks than cleartext."},
+          {key:"d", text:"Only performance risks."},
+        ]}
+        trap={<>(a)(c)(d) understate.</>}
+        lens={<>Cryptographic compute trades cleartext bugs for crypto bugs. Different surface, not zero surface.</>}
+        stretch={<>Which of these is hardest to test for in CI?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p18"
+        difficulty="hard"
+        title="P18 — Joint score = w_A · x_A + w_B · x_B + b. Both banks have their own weights AND features. Map to HE/MPC."
+        scenario={<><em>Discriminating insight: each bank has its own (weights, features). They want a joint score where neither reveals either. Pattern: bank A encrypts (w_A, x_A); B computes its part on its own cleartext (w_B, x_B); B uses A's ciphertext for the cross terms. Simpler than full MPC because weights can be combined locally then with ciphertext.</em><br/><br/>Architect.</>}
+        options={[
+          {key:"a", text:"Bank A sends features to bank B in cleartext."},
+          {key:"b", text:"Two-party HE pattern. Bank A encrypts its (w_A, x_A) — or just the dot product w_A·x_A as a scalar ciphertext — under its own public key and sends to bank B. Bank B computes its share w_B·x_B locally in cleartext (its own weights and features). Bank B then ADDS the encrypted scalar from A to its own scalar (which it first encrypts under A's public key for compatibility, or uses a homomorphic addition with cleartext) plus the bias. B returns the resulting ciphertext to A; A decrypts the final score. Round complexity: ONE ROUND TRIP. Comm: O(d) for the encrypted features, or O(1) if A sends only the dot product. Privacy: B never sees x_A or w_A in cleartext; A never sees x_B or w_B in cleartext. Both learn the output score. The protocol is asymmetric (A is the key holder); use threshold HE or MPC for symmetric variants.", correct:true},
+          {key:"c", text:"Use bootstrapping for each weight."},
+          {key:"d", text:"This problem is unsolvable."},
+        ]}
+        trap={<>(a) defeats privacy; (c)(d) misread feasibility.</>}
+        lens={<>Linear scoring across parties is the LEAST expensive HE/MPC pattern. Build from this.</>}
+        stretch={<>How does the protocol change if the score function is non-linear?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p19"
+        difficulty="hard"
+        title="P19 — Production logs of HE-based scoring show 30s p99 latency. SLO is 200ms. What's left?"
+        scenario={<><em>Discriminating insight: HE inference latency is dominated by ciphertext ops. Reductions: SIMD packing, fewer multiplications (model simplification), GPU-accelerated HE libs, asynchronous pipelines (precompute partial ciphertexts).</em><br/><br/>Cut 150x.</>}
+        options={[
+          {key:"a", text:"HE is just slow — accept it."},
+          {key:"b", text:"Multi-axis attack. (1) SIMD PACKING — if not already, pack many features per ciphertext (8192 slots in CKKS); this can give 1000-8000x throughput when batching scores. (2) SIMPLIFY THE MODEL — every multiplication is expensive; collapse layers, reduce parameters, eliminate non-linearities. Polynomial-LR with degree-3 sigmoid is often as good as a deep net on tabular fraud. (3) HARDWARE — GPU-accelerated HE libs (HEXL, cuFHE, OpenFHE-GPU) give 5-20x speedup. (4) PIPELINE PRECOMPUTATION — bank A pre-encrypts feature templates during idle; the online step is just a scalar fill-in and a small computation. (5) BOOTSTRAP AMORTIZATION — design ops to share bootstrap across many slots (P16). 30s → 200ms is plausible if multiple of these compose. If none get you there, HE is the wrong tool; consider MPC with offline preprocessing, or revisit the architecture (e.g., dual-pipeline: cheap-cleartext scoring + selective HE for hard cases).", correct:true},
+          {key:"c", text:"Replace HE with TLS."},
+          {key:"d", text:"Use a smaller key — privacy doesn't matter."},
+        ]}
+        trap={<>(a) gives up; (c)(d) break the threat model.</>}
+        lens={<>HE latency budget = SIMD pack × model size × bootstrap freq. Multi-axis optimization.</>}
+        stretch={<>What latency is achievable on commodity hardware for shallow polynomial LR on a 100-feature fraud model?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p20"
+        difficulty="medium"
+        title="P20 — Operator: 'Switch from HE to MPC to gain malicious security.' Trace the cost-benefit."
+        scenario={<><em>Discriminating insight: MPC has well-developed malicious-security protocols (SPDZ with MACs). HE also has malicious variants but they're less standard. The switch is partially justified — but MPC has its own malicious-security cost (typically 5-10x more comm and compute). Don't switch without quantifying the new cost.</em><br/><br/>Decide.</>}
+        options={[
+          {key:"a", text:"Switch — MPC is malicious-secure by default."},
+          {key:"b", text:"Trace the cost-benefit. MPC has WELL-DEVELOPED malicious-secure protocols (SPDZ with MACs, ABY3 with replicated sharing) and is the typical choice when active security is required. BUT: malicious-secure MPC costs 5-10x more comm and compute than semi-honest MPC, and MPC was already round-trip-bound. Net: malicious-MPC vs semi-honest-HE wall-clock difference can be 50-500x; the choice depends on the threat. If the threat is an actively malicious bank (rare in regulated consortia), MPC is justified. If the threat is honest-but-curious (typical), HE is cheaper and sufficient. Quantify: (1) measure baseline HE latency, (2) estimate malicious-MPC latency (round-count × WAN RTT × malicious-overhead), (3) decide based on regulatory + threat-model needs. Don't switch by default.", correct:true},
+          {key:"c", text:"Switch — MPC is always cheaper."},
+          {key:"d", text:"Don't switch — HE has malicious variants."},
+        ]}
+        trap={<>(a) misreads default; (c) factually wrong; (d) ignores that malicious HE is less standard.</>}
+        lens={<>Threat model decides crypto. Semi-honest most often suffices for regulated cross-bank settings.</>}
+        stretch={<>What's the cheapest path to malicious security in an HE-based pipeline?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p21"
+        difficulty="hard"
+        title="P21 — Auditor: 'Show me the actual ciphertext flow, the multiplicative depth budget, and the polynomial degrees.' What artifacts?"
+        scenario={<><em>Discriminating insight: HE auditability requires (1) a CIRCUIT description (the score function expressed as +,× gates), (2) the chosen HE scheme + parameters (modulus chain, ring degree, security level — 128-bit standard), (3) the polynomial approximations with error bounds, (4) bootstrap placement, (5) test vectors.</em><br/><br/>Enumerate.</>}
+        options={[
+          {key:"a", text:"Just the key."},
+          {key:"b", text:"Five artifacts. (1) CIRCUIT TRACE — the score function as a DAG of +/× gates, showing where every ciphertext lives and its noise level. (2) SCHEME PARAMETERS — CKKS/BFV/TFHE choice, ring degree (N), modulus chain (Q), security level (target 128-bit per HE-Standard), scaling factor for CKKS. (3) POLYNOMIAL APPROXIMATIONS — for each non-linearity (sigmoid, ReLU), the chosen polynomial degree, fit range, and max approximation error vs cleartext. (4) BOOTSTRAP PLACEMENT — where in the circuit bootstrap is invoked and the noise budget before/after. (5) TEST VECTORS — random inputs run through cleartext circuit AND HE circuit; outputs must agree within the approximation-error bound. Without these, an auditor cannot verify the privacy claim is real (the wrong parameters could give 80-bit security; the wrong polynomial could change decisions silently).", correct:true},
+          {key:"c", text:"A flowchart suffices."},
+          {key:"d", text:"Nothing — HE is self-certifying."},
+        ]}
+        trap={<>(a)(c)(d) under-document.</>}
+        lens={<>HE audit requires the circuit + parameters + polynomial fits + bootstrap + test vectors. All five.</>}
+        stretch={<>How would you express the circuit in a portable format other auditors can re-verify?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p22"
+        difficulty="hard"
+        title="P22 — Reverse engineering: HE score function = polynomial in x_A (bank A's features). Adversary B has scoring access. What can B reconstruct about A?"
+        scenario={<><em>Discriminating insight: if the score function is polynomial in x_A and B can query with many x_B, B can solve for x_A by interpolation. The circuit's structure leaks through the output. This is the output-side reconstruction attack — orthogonal to the cryptographic guarantee.</em><br/><br/>Diagnose.</>}
+        options={[
+          {key:"a", text:"Nothing — HE protects against it."},
+          {key:"b", text:"Reconstructible — and the cryptographic guarantee does NOT prevent this. If score = polynomial of degree d in x_A and B controls x_B and observes the output, B can vary x_B and use the resulting score sequence to solve for x_A (polynomial interpolation, ~d+1 queries per unknown). HE ensures that during compute, x_A is never seen in cleartext; it does NOT bound what B can infer from many query-and-output pairs. This is the OUTPUT-ORACLE attack (related to P5). Defenses: (1) score function is a one-way / hard-to-invert polynomial, (2) DP NOISE on output makes interpolation unreliable, (3) rate-limit B's queries per customer, (4) only release coarse buckets not exact scores. The cryptographic mechanism handles 'B cannot see x_A during compute'; the SYSTEM must handle 'B cannot extract x_A from many outputs.'", correct:true},
+          {key:"c", text:"Only the score itself."},
+          {key:"d", text:"Cannot reconstruct — HE prevents."},
+        ]}
+        trap={<>(a)(c)(d) ignore the inversion channel.</>}
+        lens={<>HE's compute-side guarantee is not an output-side guarantee. Plan both.</>}
+        stretch={<>For a logistic-regression score, how many queries to recover one feature?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p23"
+        difficulty="hard"
+        title="P23 — Counterfactual: if HE/MPC didn't exist, what's the best cross-bank scoring story?"
+        scenario={<><em>Discriminating insight: pre-HE/MPC, cross-bank scoring used either (a) trusted-third-party brokers, (b) federated learning with secure aggregation + DP-SGD (good for training but doesn't solve inference-time joint compute), or (c) feature-hashing + private-set-intersection for narrow cases (overlap detection but not full scoring). None match HE/MPC's "joint compute with neither party seeing input."</em><br/><br/>Counterfactual.</>}
+        options={[
+          {key:"a", text:"Cleartext sharing under NDA."},
+          {key:"b", text:"Three partial substitutes, each with gaps. (1) TRUSTED THIRD-PARTY BROKER — a regulated intermediary sees both banks' features and returns the score. Works operationally but has the trust + breach concentration risk HE/MPC eliminate. (2) FEDERATED TRAINING + SECURE AGGREGATION + DP-SGD — solves model training across banks with each bank's data local; does NOT solve inference-time joint scoring when neither party wants to reveal inputs. (3) PRIVATE SET INTERSECTION (PSI) — narrowly lets two parties find overlap of customer sets without revealing non-overlap; insufficient for general scoring but useful for related sub-problems. The full 'joint scoring without inputs revealed' problem is what HE/MPC uniquely solve cryptographically; before them, you accept a trust assumption (broker) or shrink the problem (PSI-only). The mechanism this visual hinges on is precisely the gap others can't fill.", correct:true},
+          {key:"c", text:"There was no way."},
+          {key:"d", text:"Plain TLS solved it."},
+        ]}
+        trap={<>(a)(d) misread; (c) too defeatist.</>}
+        lens={<>HE/MPC fill a specific gap: joint compute without revealing input to any party. Substitutes always shrink the problem.</>}
+        stretch={<>Why didn't PSI close the gap fully — what does it lose?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p24"
+        difficulty="hard"
+        title="P24 — A consortium uses HE for scoring, then publishes the score on a public dashboard. Privacy?"
+        scenario={<><em>Discriminating insight: HE protects INPUTS during compute. Once the output is decrypted and PUBLISHED, the protection ends. Public scores are public information; combined with bank-side knowledge, they leak features (P22, P5).</em><br/><br/>Diagnose.</>}
+        options={[
+          {key:"a", text:"Privacy is preserved — HE protects everything."},
+          {key:"b", text:"Publishing breaks the privacy story. HE's guarantee is that during the COMPUTE PHASE, ciphertexts never decrypt and inputs stay hidden. After decryption, the output is PLAINTEXT. Publishing it gives everyone (other banks, the press, attackers) the score in cleartext. Anyone with side information (some features of the customer) can use the public score to infer the OTHER features via the same inversion logic as P22 — and now without rate limits. Fixes: (1) don't publish, (2) publish only coarse buckets or noised values (output-DP with calibrated ε), (3) k-anonymize the score by binning many customers together. HE protects the COMPUTE; the OUTPUT POLICY is a separate problem.", correct:true},
+          {key:"c", text:"Publish at higher precision."},
+          {key:"d", text:"Re-encrypt the published score."},
+        ]}
+        trap={<>(a)(c)(d) misread the boundary of HE's guarantee.</>}
+        lens={<>HE guarantees compute-time confidentiality. Output release is OUT OF SCOPE.</>}
+        stretch={<>What DP noise on the published score makes the inversion attack impractical?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p25"
+        difficulty="medium"
+        title="P25 — Pick a library and justify."
+        scenario={<><em>Discriminating insight: HE libs — Microsoft SEAL (BFV, CKKS, well-documented), OpenFHE (BFV/CKKS/TFHE, broad), HElib (BGV, IBM, mature), TFHE-rs (TFHE, Zama). MPC: MP-SPDZ (research-stage, many protocols), SCALE-MAMBA, MPyC, EzPC. Match library to scheme to threat model.</em><br/><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Write your own."},
+          {key:"b", text:"Use a battle-tested library — Microsoft SEAL (BFV, CKKS — well-documented, broad adoption, easy CKKS API for ML), OpenFHE (multi-scheme — BFV/CKKS/TFHE in one library, large community), HElib (IBM's mature BGV implementation), TFHE-rs (Zama's TFHE — best for boolean circuits), MP-SPDZ for MPC. Writing your own HE/MPC implementation is a five-alarm bug factory: noise-budget bugs, ring-arithmetic off-by-ones, side-channels, and parameter-choice errors all lead to broken security or wrong decryption. Choice between SEAL and OpenFHE is mostly ecosystem; if you need TFHE for boolean ops, TFHE-rs is the obvious choice. For MPC research, MP-SPDZ has the most protocol coverage. Hire a cryptographer for parameter selection regardless of library; defaults are not always 128-bit secure.", correct:true},
+          {key:"c", text:"Use whichever is fastest in microbenchmarks."},
+          {key:"d", text:"All libraries are interchangeable."},
+        ]}
+        trap={<>(a) is the bug factory. (c)(d) gloss critical differences.</>}
+        lens={<>Match library to scheme to threat model. Don't homebrew.</>}
+        stretch={<>How do you validate a library is at the parameters' claimed security level?</>}
+      />
+
+      <VIS.TrapProblem
+        id="he-p26"
+        difficulty="hard"
+        title="P26 — Symptom: HE-based scoring works in dev, fails in prod with wrong scores. Both use the same library. What changed?"
+        scenario={<><em>Discriminating insight: prod likely has different scale factors, modulus chain, or noise levels — perhaps because someone tuned parameters for performance and accidentally reduced the security or noise budget. Or test vectors are missing.</em><br/><br/>Trace.</>}
+        options={[
+          {key:"a", text:"The library is bugged."},
+          {key:"b", text:"Likely a PARAMETER drift between dev and prod. Common causes: (1) someone tuned CKKS scale factor or modulus chain for performance in prod (smaller chain = less depth budget; smaller scale = more precision loss), without re-running validation; (2) prod uses a different security level (128 vs 80) and the parameters changed; (3) bootstrap was disabled in prod for speed but the circuit depth now overflows; (4) the polynomial approximation was changed in prod for speed and the decisions near the boundary flipped; (5) ciphertext format version bumped between dev and prod library builds. Investigation order: diff the HE parameter blob between environments, re-run TEST VECTORS (cleartext circuit ↔ HE circuit) on prod parameters, check bootstrap call sites, audit any 'optimization' commits to the circuit. The lesson: HE deployments need parameter PINNING and test-vector CI gates, not just unit tests.", correct:true},
+          {key:"c", text:"Re-encrypt everything."},
+          {key:"d", text:"Switch to MPC."},
+        ]}
+        trap={<>(a)(c)(d) misdiagnose.</>}
+        lens={<>HE parameters are load-bearing. Pin them; test them; never tune in prod without revalidation.</>}
+        stretch={<>What's the minimum CI gate that would catch this kind of drift?</>}
       />
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
         <li>
-          <a href="https://dl.acm.org/doi/10.1145/3658644.3690370" target="_blank" rel="noopener">
-            <strong>HE for Real-time Fraud Scoring</strong>
+          <a href="https://crypto.stanford.edu/craig/" target="_blank" rel="noopener">
+            <strong>Craig Gentry — Fully Homomorphic Encryption Using Ideal Lattices</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, CCS 2024)</span>
-          <br/>The 2024 production-deployment paper. Read Sec 4 (cascade architecture) — the "HE only on the suspicious tail" pattern is the practical takeaway.
+          <span style={{color:"#64748b", fontSize:14}}>(STOC 2009, paper / thesis)</span>
+          <br/>The foundational FHE paper. Dense, but the introduction is approachable. Establishes that compute-on-ciphertext is possible.
         </li>
         <li>
-          <a href="https://blog.openmined.org/what-is-homomorphic-encryption/" target="_blank" rel="noopener">
-            <strong>OpenMined Blog — What is Homomorphic Encryption?</strong>
+          <a href="https://www.microsoft.com/en-us/research/project/microsoft-seal/" target="_blank" rel="noopener">
+            <strong>Microsoft SEAL — HE library + tutorials</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(library + docs)</span>
+          <br/>The most accessible HE library. CKKS tutorials walk through polynomial approximation, SIMD packing, depth budget. Best starting point.
+        </li>
+        <li>
+          <a href="https://www.zama.ai/post/tfhe-deep-dive-part-1" target="_blank" rel="noopener">
+            <strong>Zama — TFHE Deep Dive blog series</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(blog series)</span>
+          <br/>The clearest practitioner intro to TFHE (boolean / fast-bootstrap HE). Includes worked code and circuits.
+        </li>
+        <li>
+          <a href="https://eprint.iacr.org/2017/396" target="_blank" rel="noopener">
+            <strong>Cheon, Kim, Kim, Song — CKKS (Homomorphic Encryption for Arithmetic of Approximate Numbers)</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(ASIACRYPT 2017, paper)</span>
+          <br/>The original CKKS paper. The scheme used in most ML-on-HE work.
+        </li>
+        <li>
+          <a href="https://www.cs.umd.edu/~jkatz/imc.html" target="_blank" rel="noopener">
+            <strong>Lindell — Secure Multiparty Computation tutorial</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(tutorial)</span>
+          <br/>The clearest MPC overview. Covers semi-honest vs malicious, Yao vs GMW vs SPDZ. Required for P11 + P20.
+        </li>
+        <li>
+          <a href="https://blog.openmined.org/" target="_blank" rel="noopener">
+            <strong>OpenMined — PETs blog</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
-          <br/>The friendliest plain-English intro to HE concepts (CKKS, BFV, BGV) with code snippets. Start here.
-        </li>
-        <li>
-          <a href="https://github.com/microsoft/SEAL" target="_blank" rel="noopener">
-            <strong>Microsoft SEAL — CKKS / BFV reference library</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(code + docs)</span>
-          <br/>The most-cited production HE library. Examples directory has SIMD packing, weight quantization, and bootstrapping. The README alone is a great primer on parameter choice.
-        </li>
-        <li>
-          <a href="https://www.youtube.com/watch?v=487NeOyckRY" target="_blank" rel="noopener">
-            <strong>Craig Gentry — A Decade and a Half of Homomorphic Encryption (video)</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(video, ~45 min)</span>
-          <br/>The inventor of FHE giving the canonical retrospective. Best 45 minutes to understand why HE took so long to become practical.
-        </li>
-        <li>
-          <a href="https://eprint.iacr.org/2017/715" target="_blank" rel="noopener">
-            <strong>Cheon et al. — Homomorphic Encryption for Arithmetic of Approximate Numbers (CKKS)</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, ASIACRYPT 2017)</span>
-          <br/>The original CKKS paper. Hard going; read the Cheon followups and the SEAL tutorials before this one.
+          <br/>Worked examples mixing HE/MPC with DP-SGD and secure aggregation — the trio in this batch.
         </li>
       </ul>
     </VIS.Section>

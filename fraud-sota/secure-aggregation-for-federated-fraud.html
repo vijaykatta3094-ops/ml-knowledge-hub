@@ -1414,283 +1414,536 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// Secure Aggregation for Federated Fraud — Fraud SOTA · Privacy-preserving fraud detection
-// Threshold secret-sharing so the server only sees the aggregated gradient, not per-bank.
+// Secure aggregation for federated fraud — cryptographic protocol where the
+// server sees ONLY the SUM of client gradient updates, never individual
+// contributions. The privacy primitive is pairwise-masking-with-cancellation
+// (Bonawitz et al. 2017), not noise and not encryption-of-inputs.
+// Concept-specific anchors that must survive redaction:
+//   (1) pairwise random masks added by each client pair, cancelling in the sum
+//   (2) Shamir secret sharing for dropout-robust mask recovery
+//   (3) the SERVER LEARNS ONLY THE SUM — single-client privacy from masking
+//   (4) NOT noise (that's DP), NOT input encryption (that's HE/MPC)
+// Strip "server sees only sum / pairwise mask / Shamir" and the answers must
+// NOT still work.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="Fraud SOTA · Privacy-preserving fraud detection"
+      pill="Fraud SOTA · Federated cryptographic aggregation"
       title="Secure aggregation for federated fraud"
-      subtitle="Threshold secret-sharing protocol so the aggregator only sees the sum of gradients, never per-bank updates."
+      subtitle="Cryptographic protocol — the server sees only the SUM of client gradient updates, never any individual gradient. Pairwise masks cancel in the sum; Shamir secret sharing handles dropouts."
       byline={[
-        {label: "Paper", value: "Bonawitz et al., CCS 2017"},
-        {label: "Production", value: "JPMorgan FedFraud 2025"},
-        {label: "L3", value: "Federated privacy"},
+        {label: "Source", value: "Bonawitz et al., Practical Secure Aggregation for Privacy-Preserving Machine Learning (CCS 2017) + Google federated-learning stack"},
+        {label: "L3", value: "Pairwise PRG masks with Shamir-shared seeds; server learns only the sum"},
+        {label: "Anchor", value: "Mechanism: cryptographic masking — NOT noise, NOT encrypted compute"},
       ]}/>
 
     <VIS.TLDR>
-      Vanilla{" "}
-      <VIS.Term def="A federated-learning algorithm where each client trains locally on its own data and sends its model update to a central server, which averages all clients' updates.">FedAvg</VIS.Term>{" "}
-      sends each bank's gradient to a central server. A curious server can run gradient-inversion to reconstruct training rows from a single bank's update. Secure aggregation (SecAgg) wraps every gradient in pairwise additive masks via threshold secret-sharing — the masks cancel only after the server sums all banks' contributions. The server learns the aggregate, nothing else. Cost: O(n squared) communication and a fragile dropout-recovery protocol.
+      Secure aggregation is a{" "}
+      <VIS.Term def="A cryptographic protocol — a structured exchange of messages between parties using cryptographic primitives to achieve a security goal an adversary cannot break, even with arbitrary compute.">cryptographic protocol</VIS.Term>{" "}
+      that lets N banks (or N devices) jointly compute the SUM of their gradient updates such that the aggregating server sees ONLY the sum — never any individual bank's gradient. Mechanism: each pair of clients (i, j) agrees on a random{" "}
+      <VIS.Term def="Pseudo-Random Generator — a deterministic algorithm that expands a short seed into a long pseudo-random stream. Two parties with the same seed produce identical streams.">PRG</VIS.Term>{" "}
+      seed; client i adds +PRG(seed_ij) to its gradient, client j adds -PRG(seed_ij). When the server sums all clients' masked gradients, the +/-PRG terms CANCEL exactly and only the true sum of gradients remains. Shamir secret sharing handles client dropouts so the protocol completes even if some clients fail. Privacy guarantee: each client's gradient is information-theoretically hidden from the server as long as at least one other honest client participated. This is NOT noise (no utility loss) and NOT input encryption (the math happens in cleartext after masks cancel). Distinct from DP-SGD (which adds noise) and HE/MPC (which encrypts inputs).
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        Imagine five banks computing a shared fraud model. Each bank computes a local gradient on its own customer data. They want the server to compute the sum but learn nothing about any individual bank's contribution.
-      </p>
-      <p>
-        SecAgg's trick: for every pair of banks (i, j), the two banks agree on a shared random mask s_ij using a{" "}
-        <VIS.Term def="A cryptographic protocol where two parties exchange messages to derive a shared secret over an insecure channel — without ever transmitting the secret itself. Diffie-Hellman is the canonical example.">Diffie-Hellman key exchange</VIS.Term>.{" "}
-        Bank i adds s_ij to its gradient; bank j subtracts the same s_ij. When the server sums all banks, every mask cancels with its pair, and only the true sum remains.
-      </p>
-      <p>
-        The hard part is what happens when bank j drops out mid-round (network failure, dead laptop). Now bank i's mask s_ij has nothing to cancel against, and the sum is corrupted. SecAgg solves this with{" "}
-        <VIS.Term def="A cryptographic technique where a secret is split into n shares, any t of which can reconstruct the secret but fewer than t reveal nothing. SecAgg uses Shamir's scheme to handle client dropout.">Shamir secret-sharing</VIS.Term>:{" "}
-        each bank's mask seed is split into n shares with threshold t; if at least t banks remain, the server can reconstruct the dropouts' masks and subtract them.
-      </p>
+    <VIS.Section id="sec-what" title="What it is — pairwise masks that cancel in the sum">
+      <ol>
+        <li><strong>Pairwise key agreement:</strong> all N clients run{" "}
+          <VIS.Term def="A 2-party protocol where two participants establish a shared secret over a public channel without revealing it to eavesdroppers. The basis of TLS key exchange.">Diffie-Hellman key exchange</VIS.Term>{" "}
+          pairwise. Client i and client j now share a secret seed s_ij (the server never learns it).</li>
+        <li><strong>Mask generation:</strong> each client i computes mask <code>m_i = &#931;_{`{j > i}`} PRG(s_ij) - &#931;_{`{j < i}`} PRG(s_ji)</code>. The PRG expands the seed into a long pseudo-random vector the size of the gradient.</li>
+        <li><strong>Masked upload:</strong> client i sends <code>y_i = g_i + m_i</code> (masked gradient) to the server. From the server's view, y_i is uniformly random — it learns nothing about g_i.</li>
+        <li><strong>Server sums:</strong> <code>&#931;_i y_i = &#931;_i g_i + &#931;_i m_i = &#931;_i g_i + 0</code>. The masks were designed so each PRG(s_ij) appears once with + sign (from client i) and once with - sign (from client j), so they cancel exactly across the sum.</li>
+        <li><strong>Dropout recovery via Shamir:</strong> if client k drops out, the pairs involving k never produced their - or + counterpart. The remaining clients use{" "}
+          <VIS.Term def="Shamir Secret Sharing — a cryptographic scheme that splits a secret into N shares such that any t of them reconstruct the secret, but t-1 reveal nothing. Used here so dropped clients' masks can be recovered without trusting any single party.">Shamir secret sharing</VIS.Term>{" "}
+          of seeds to reconstruct k's contribution to the masks and remove it from the sum.</li>
+      </ol>
 
       <VIS.Mermaid chart={`
 flowchart TB
-  S["Round start"]
-  S --> K["Pairwise DH key exchange"]
-  K --> M["Each bank: mask gradient"]
-  M --> SS["Shamir-share mask seeds"]
-  SS --> U["Send masked gradient + shares"]
-  U --> A["Server sums masked grads"]
-  A --> R["Reconstruct dropout masks"]
-  R --> O["Output: true aggregate"]
-  style M fill:#fee2e2,stroke:#dc2626,stroke-width:2px
-  style SS fill:#fee2e2,stroke:#dc2626,stroke-width:2px
-  style R fill:#fee2e2,stroke:#dc2626,stroke-width:2px
-      `} />
-      <p>The red boxes are the SecAgg-specific crypto layer; everything else is vanilla federated learning.</p>
+  K["Pairwise DH key exchange"]
+  K --> M["Each client i builds mask"]
+  M --> U["Upload g_i plus mask to server"]
+  U --> S["Server sums masked gradients"]
+  S --> C["Masks cancel pairwise"]
+  C --> R["Server learns only the SUM"]
+  style M fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+  style C fill:#fee2e2,stroke:#dc2626,stroke-width:2px
+  style R fill:#fef3c7,stroke:#d97706,stroke-width:2px
+      `}/>
+      <p>Blue = each client constructs its mask locally from pairwise seeds. Red = the algebraic cancellation that hides every individual gradient. Yellow = the only thing the server learns — the SUM. There is no noise injected; no utility is lost; the sum is exact.</p>
 
-      <VIS.Equation display tex={`y_i = g_i + \\sum_{j > i} s_{ij} - \\sum_{j < i} s_{ji} \\pmod{p}, \\quad \\sum_i y_i = \\sum_i g_i`} />
-      <p>Each bank sends y_i (masked gradient mod p). Pairwise masks cancel in the aggregate sum.</p>
+      <VIS.Equation display tex={String.raw`\sum_{i=1}^{N} y_i \;=\; \sum_{i=1}^{N} \Big( g_i \;+\; \sum_{j > i} \mathrm{PRG}(s_{ij}) \;-\; \sum_{j < i} \mathrm{PRG}(s_{ji}) \Big) \;=\; \sum_{i=1}^{N} g_i`} />
+      <p>Each PRG(s_ij) appears with +1 (from client i, j&gt;i) and -1 (from client j, i&lt;j). They cancel. The sum is exact, not noisy.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
+    <VIS.Section id="sec-why" title="Why federated fraud needs secure aggregation specifically">
+      <p>
+        In a federated fraud consortium of banks (or a federated mobile-device fraud-detection system), each client trains locally and ships gradient updates to a central server. Without secure aggregation, the server sees each bank's gradient — and gradient inversion attacks (Zhu et al., Geiping et al.) can reconstruct individual training records from one gradient. A bank that shipped a clean gradient just leaked its customers' transaction patterns to the server. Secure aggregation closes that channel: the server cryptographically cannot see any one bank's gradient; only the sum across all banks.
+      </p>
+      <p>
+        The redaction litmus for this whole visual: <em>if you can strip "server sees only the sum / pairwise masks / Shamir" from a problem and the answer is unchanged, the problem is generic federated learning and belongs in a different visual.</em> Every problem here must hinge on the secure-aggregation cryptography specifically — pairwise masking, Shamir-based dropout, t-of-N collusion thresholds, or the sum-only learning capability.
+      </p>
+
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
         <thead>
           <tr style={{background:"#1f3a5f", color:"#fff"}}>
             <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Vanilla FedAvg</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>SecAgg-FedAvg</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Plain FedAvg</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Secure aggregation</th>
           </tr>
         </thead>
         <tbody>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Server sees</td>
-            <td style={{padding:"8px 10px"}}>Per-client gradients</td>
-            <td style={{padding:"8px 10px"}}>Aggregate sum only</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Communication / round</td>
-            <td style={{padding:"8px 10px"}}>O(n) gradient sends</td>
-            <td style={{padding:"8px 10px"}}>O(n squared) for pairwise keys</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Dropout handling</td>
-            <td style={{padding:"8px 10px"}}>Skip dropped client</td>
-            <td style={{padding:"8px 10px"}}>Reconstruct mask via Shamir shares</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Privacy unit</td>
-            <td style={{padding:"8px 10px"}}>None vs server</td>
-            <td style={{padding:"8px 10px"}}>Per-client unlinkability</td>
-          </tr>
+          <tr style={{background:"#e8f0fa"}}><td style={{padding:"6px 10px"}}>What server sees</td><td style={{padding:"6px 10px"}}>Each client's individual gradient</td><td style={{padding:"6px 10px"}}>Only the sum across clients</td></tr>
+          <tr><td style={{padding:"6px 10px"}}>Mechanism</td><td style={{padding:"6px 10px"}}>None (plaintext upload)</td><td style={{padding:"6px 10px"}}>Pairwise PRG masks; Shamir for dropout</td></tr>
+          <tr style={{background:"#e8f0fa"}}><td style={{padding:"6px 10px"}}>Utility loss</td><td style={{padding:"6px 10px"}}>None</td><td style={{padding:"6px 10px"}}>None (sum is exact)</td></tr>
+          <tr><td style={{padding:"6px 10px"}}>Privacy threat addressed</td><td style={{padding:"6px 10px"}}>n/a</td><td style={{padding:"6px 10px"}}>Honest-but-curious server</td></tr>
+          <tr style={{background:"#e8f0fa"}}><td style={{padding:"6px 10px"}}>Protects against released model leak</td><td style={{padding:"6px 10px"}}>No</td><td style={{padding:"6px 10px"}}>No — that's DP-SGD's job</td></tr>
+          <tr><td style={{padding:"6px 10px"}}>Round complexity</td><td style={{padding:"6px 10px"}}>1 (upload)</td><td style={{padding:"6px 10px"}}>4 rounds (key, mask, upload, unmask)</td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick">
-      <ul>
-        <li><strong>Multi-bank consortia with an untrusted aggregator</strong> — e.g., a vendor running FraudNet across competitor FIs.</li>
-        <li><strong>When DP-SGD alone is not enough</strong> — DP protects against post-hoc attacks; SecAgg protects against the server seeing per-bank updates in flight.</li>
-        <li><strong>Cross-silo (not cross-device)</strong> — designed for tens to hundreds of clients, not millions of phones; O(n squared) explodes at scale.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <VIS.Callout kind="gotcha" title="Dropout cascade can stall a round">
-        If too many banks drop and the remaining set falls below threshold t, the server cannot reconstruct masks and the entire round is aborted. Choose t conservatively (e.g., t equals two-thirds of n) but expect 5-15% of rounds to fail in production.
+    <VIS.Section id="sec-limits" title="Limits and gotchas — the secure-aggregation-specific ones">
+      <VIS.Callout kind="gotcha" title="Secure aggregation does NOT defend against released-model attacks">
+        The server learns the SUM of gradients. Over many rounds, the released model still encodes information about individual training records (membership inference, model inversion). Secure aggregation hides per-round gradients from the server, but the FINAL MODEL is just as leaky as plain FedAvg. To bound model-release leakage you must ALSO apply DP-SGD (noise inside each client). The two are complementary, not substitutes.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="O(n squared) communication is the real ceiling">
-        At 100 clients, pairwise keys mean each client sends 99 mask messages per round. At 1000 clients this becomes infeasible. Bonawitz et al. and follow-ups (e.g., SecAgg+, Turbo-Aggregate) bring this down with overlap or sparsified pairings.
+      <VIS.Callout kind="warn" title="Collusion threshold: t-of-N corrupt clients break privacy">
+        Bonawitz's protocol uses Shamir t-of-N secret sharing of seeds; the server can reconstruct seeds for dropped clients only with help from t honest clients. If the server colludes with t-1 clients, it can recover ANY single client's gradient. Pick t carefully (typically t = ceil(N/2)+1) — too low and the threat model breaks; too high and the protocol fails under realistic dropout rates.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="SecAgg does NOT defend against the aggregate leaking info">
-        The server only sees the sum, but the sum can still leak — e.g., reconstruction attacks on FedSGD output. Stack SecAgg with DP-SGD per client for end-to-end privacy.
+      <VIS.Callout kind="warn" title="Dropout during the protocol is the operational pain point">
+        If a client drops AFTER sending its masked gradient but BEFORE the unmask round, its mask is "stuck" in the sum — and the remaining clients must reconstruct its seeds via Shamir to subtract it out. A dropout rate &gt; threshold makes the round fail entirely. Mobile federated systems (Google's gboard) tune this carefully; cross-bank settings have lower dropout and less of a problem.
+      </VIS.Callout>
+      <VIS.Callout kind="warn" title="Communication cost: O(N) masks per client per round">
+        Each client must agree on a seed with every other client (O(N) DH exchanges) and store O(N) PRG seeds. Doesn't scale beyond ~1000 clients without bucketing (subgroup secure aggregation) or topology constraints (e.g., star graphs).
+      </VIS.Callout>
+      <VIS.Callout kind="gotcha" title="Quantization is mandatory — masks live in a finite field">
+        Pairwise masks are sampled from a finite field (e.g., integers mod 2^32). Gradients must be quantized to that field before adding the mask, or addition wraps around incorrectly. Naive float32 gradients give wrong sums.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+    <VIS.Section id="sec-drill" title="Drill — concept-specific trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Ten interview-grade traps on SecAgg as deployed across federated fraud consortia.
+        Every problem hinges on something only secure aggregation does: pairwise PRG masking, the server-sees-only-sum property, Shamir-based dropout recovery, t-of-N collusion thresholds, finite-field quantization, or the cleartext-sum-after-cancel mechanism. Strip "server sees only the sum / pairwise mask / Shamir" and the answer must no longer work.
       </p>
 
       <VIS.TrapProblem
         id="sa-p1"
         difficulty="hard"
-        title="P1 — Walk through a SecAgg round with one drop"
-        scenario={<>Five banks (A, B, C, D, E) start a SecAgg round with threshold t equals four. Each runs DH key exchange with every other, generates pairwise masks, sends the masked gradient. Mid-round, bank C goes offline before sending. What does the server do?</>}
+        title="P1 — A consortium of 12 banks asks: 'Why secure aggregation? We already trust the aggregator legally.' Pick the pitch."
+        scenario={<><em>Discriminating insight: legal trust does not stop gradient inversion. Secure aggregation gives a CRYPTOGRAPHIC guarantee — the server cannot see any individual bank's gradient even if it wants to. The pitch must invoke the sum-only-mechanism, not "more privacy" generically.</em><br/><br/>Pick the pitch that justifies secure aggregation to a CRO who trusts the consortium operator.</>}
         options={[
-          {key:"a", text:"Server asks the remaining four banks for their Shamir shares of C's mask seed; reconstructs C's pairwise masks; subtracts them from the masked aggregate to get the true sum of A, B, D, E gradients.", correct:true},
-          {key:"b", text:"Server aborts the round and retries."},
-          {key:"c", text:"Server includes a guess of C's gradient (zero vector)."},
-          {key:"d", text:"Server proceeds without subtracting masks, yielding a corrupted sum."},
+          {key:"a", text:"Secure aggregation makes training faster."},
+          {key:"b", text:"Legal trust is contractual but a contract cannot stop a curious engineer at the aggregator from inspecting individual gradients and running gradient-inversion to reconstruct customer transactions from a single bank's update. Secure aggregation gives a CRYPTOGRAPHIC guarantee: the server provably learns ONLY the SUM of all banks' gradients. Pairwise PRG masks are added by each client; they cancel exactly in the sum across clients; the server's view of any single bank's gradient is uniformly random. No utility loss (the sum is exact, not noisy). A regulator-grade story: 'even a malicious aggregator with full operational access cannot read any single bank's gradient' is something a contract cannot offer. Pair with DP-SGD to also bound what the released model leaks.", correct:true},
+          {key:"c", text:"Secure aggregation encrypts the gradients with HE."},
+          {key:"d", text:"It avoids GDPR."},
         ]}
-        trap={<>(b) is wasteful — the protocol explicitly handles this. (c) is wrong: the missing piece is C's MASKS, not C's gradient. (d) returns garbage.</>}
-        lens={<>(a) is the canonical recovery path. C's mask seed was Shamir-shared with threshold t at round start; four surviving banks can reconstruct C's seed, derive C's pairwise masks via DH, and subtract them. The output is the sum of A, B, D, E only — C's contribution is genuinely lost, but the protocol does not stall.</>}
-        stretch={<>What is the privacy implication of recovering C's masks?</>}
+        trap={<>(a) wrong direction — secure aggregation adds round-trips. (c) confuses with HE/MPC. (d) is legally vague.</>}
+        lens={<>The B3 pitch must redact-test: strip "server sees only the sum / pairwise mask" and only (b) loses its meaning. Only (b) names the cryptographic mechanism.</>}
+        stretch={<>What does the aggregator's regulator-facing audit log look like under secure aggregation vs plain FedAvg?</>}
       />
 
       <VIS.TrapProblem
         id="sa-p2"
         difficulty="hard"
-        multiSelect
-        title="P2 — Which threats does SecAgg defend against?"
-        scenario={<>Your bank joins a federated fraud consortium with SecAgg. Which adversary models does SecAgg protect against?</>}
+        title="P2 — Engineer proposes: each client adds Gaussian noise to its gradient before upload, calls it 'secure aggregation.' Diagnose."
+        scenario={<><em>Discriminating insight: noise on a single client's gradient is DP, not secure aggregation. Secure aggregation uses pairwise masks that CANCEL in the sum — no noise, no utility loss. Calling noise "secure aggregation" misnames the mechanism.</em><br/><br/>Diagnose.</>}
         options={[
-          {key:"a", text:"Honest-but-curious server inferring per-bank gradients.", correct:true},
-          {key:"b", text:"Up to t-1 colluding banks plus a curious server (depending on threshold parameters).", correct:true},
-          {key:"c", text:"Gradient-inversion attacks on the aggregated sum.", correct:false},
-          {key:"d", text:"A malicious bank submitting a poisoned gradient.", correct:false},
-          {key:"e", text:"Network eavesdroppers reading messages in transit.", correct:true},
+          {key:"a", text:"Correct — adding noise hides the gradient."},
+          {key:"b", text:"Wrong on mechanism. What the engineer described is local DP (or DP-SGD on the client) — adds noise, loses utility, gives an (ε,δ)-DP guarantee. Secure aggregation is a different mechanism: each PAIR of clients agrees on a shared secret seed, each client adds a PRG-derived mask to its gradient, the masks are constructed so that ACROSS THE CLIENTS they SUM TO ZERO, so when the server sums all masked gradients only the true sum of gradients remains. No noise, no utility loss, sum is exact. The guarantee is cryptographic (information-theoretic given honest majority): the server learns nothing about any individual gradient. The two are complementary — production systems run BOTH (secure-agg on the wire, DP inside each client).", correct:true},
+          {key:"c", text:"Correct — but use Laplace instead of Gaussian."},
+          {key:"d", text:"Correct — and skip the server."},
         ]}
-        trap={<>(c) is the dangerous misconception — SecAgg hides per-client gradients, but inversion on the aggregate is still possible. (d) is a Byzantine-robustness problem; SecAgg does nothing for it.</>}
-        lens={<>SecAgg's threat model is honest-but-curious server plus a small fraction of curious clients (a, b). It also encrypts wire traffic (e). Aggregate-inversion (c) and poisoning (d) need orthogonal defenses (DP-SGD for the first, Krum or Median or trimmed mean for the second).</>}
-        stretch={<>Name one Byzantine-robust aggregator that composes with SecAgg.</>}
+        trap={<>(a)(c)(d) all conflate noise-based privacy with cryptographic aggregation.</>}
+        lens={<>Secure aggregation = cryptography (pairwise mask cancellation). DP = noise. They look similar at the API but are different guarantees.</>}
+        stretch={<>If you want BOTH guarantees, where do you put the noise vs the masks?</>}
       />
 
       <VIS.TrapProblem
         id="sa-p3"
-        difficulty="medium"
-        title="P3 — Communication explodes at 1000 banks"
-        scenario={<>JPMorgan's FedFraud successfully runs SecAgg across 50 banks. The CISO wants to scale to 1000 banks. What's the right architectural move?</>}
+        difficulty="hard"
+        title="P3 — Client 7 of 20 drops out after the masking step. Sum will be wrong. Fix?"
+        scenario={<><em>Discriminating insight: client 7's mask was added to its (now-lost) gradient; the +mask half persists in pair-mates' uploads while client 7's -mask half is gone. Shamir secret sharing of seeds lets the remaining clients reconstruct client 7's seeds and subtract its mask contribution from the sum.</em><br/><br/>Recover.</>}
         options={[
-          {key:"a", text:"Use a sparser communication graph — SecAgg+ or Turbo-Aggregate — where each client only pairs with O(log n) others, dropping cost from O(n squared) to O(n log n).", correct:true},
-          {key:"b", text:"Increase server bandwidth — communication is linear."},
-          {key:"c", text:"Drop SecAgg; use DP-SGD only."},
-          {key:"d", text:"Reduce the gradient dimension via quantization."},
+          {key:"a", text:"Discard the round — wait for next."},
+          {key:"b", text:"Use Shamir secret sharing of seeds for dropout recovery. At setup, each client splits its mask seeds into Shamir t-of-N shares and distributes shares to other clients; the server learns no share alone. When client 7 drops, the server collects enough shares (any t of the remaining 19) from honest clients to reconstruct client 7's pairwise seeds, regenerate its mask contribution, and SUBTRACT IT from the sum. The remaining sum is then correct. This is Bonawitz et al.'s 'practical secure aggregation' — the dropout-robust variant. Picking t = ceil(N/2)+1 balances collusion threshold against tolerable dropout rate.", correct:true},
+          {key:"c", text:"Each remaining client sends its mask in cleartext."},
+          {key:"d", text:"Add Gaussian noise to compensate."},
         ]}
-        trap={<>(b) ignores that O(n squared) per round is in pairwise keys, not bandwidth alone. (c) sacrifices the cross-bank guarantee that motivated SecAgg. (d) helps payload size but not pairing count.</>}
-        lens={<>(a) — the post-Bonawitz literature solved exactly this. SecAgg+ (Bell et al. 2020) uses random graphs with O(log n) neighbors; Turbo-Aggregate uses Lagrange coding. Both bring per-round cost down to O(n log n) or O(n) at the price of slightly weaker privacy bounds (probabilistic vs worst-case).</>}
-        stretch={<>What privacy guarantee weakens when you drop to sparser pairing?</>}
+        trap={<>(a) wastes the round. (c) breaks the privacy guarantee. (d) doesn't fix the math.</>}
+        lens={<>Dropout robustness IS what makes secure aggregation practical. Shamir is the trick.</>}
+        stretch={<>What happens if MORE than N-t clients drop?</>}
       />
 
       <VIS.TrapProblem
         id="sa-p4"
         difficulty="hard"
-        title="P4 — Choosing the threshold t"
-        scenario={<>Ten banks participate; you must set Shamir threshold t. Higher t means stronger privacy against colluding clients but more likely to fail when banks drop. What's the right balance?</>}
+        title="P4 — Server colludes with k clients. At what k can the server reconstruct one honest client's gradient?"
+        scenario={<><em>Discriminating insight: privacy holds as long as at least one HONEST OTHER client participated and the collusion is below the Shamir threshold. With Shamir t-of-N sharing of seeds, the server needs t-1 corrupt clients to recover an honest client's seeds; below that, the gradient is information-theoretically hidden.</em><br/><br/>Compute the threshold.</>}
         options={[
-          {key:"a", text:"Set t around two-thirds of n; tolerates dropout from up to one-third of banks and protects against collusion up to one-third (Byzantine-fault classic).", correct:true},
-          {key:"b", text:"Set t equals n — strongest privacy."},
-          {key:"c", text:"Set t equals two — minimum so the protocol completes."},
-          {key:"d", text:"Set t equals one — any single bank can reconstruct."},
+          {key:"a", text:"k=1 — any collusion breaks privacy."},
+          {key:"b", text:"With Shamir t-of-N secret sharing of mask seeds, the server can reconstruct a target honest client's pairwise seeds only by collecting at least t shares — server already has its own copy plus k corrupted-client shares, so it can recover honest gradients when k >= t-1. Practical Bonawitz protocols pick t = ceil(N/2)+1, so the protocol is secure against up to floor((N-1)/2) corrupt clients; for N=20, secure against up to 9 colluding clients. Tune t to your threat model: high t means more privacy but less dropout tolerance.", correct:true},
+          {key:"c", text:"k=N-1 — privacy holds until everyone is corrupt."},
+          {key:"d", text:"k is independent of t."},
         ]}
-        trap={<>(b) makes the protocol abort on any single dropout. (c) and (d) give almost no privacy — any small collusion reconstructs masks.</>}
-        lens={<>(a) is the Byzantine-tolerance sweet spot. Two-thirds threshold is the classic Lamport / Pease bound; SecAgg deployments at scale (Google, Apple) sit near it.</>}
-        stretch={<>How does t interact with the expected per-round dropout rate?</>}
+        trap={<>(a)(c) misread the threshold. (d) misses the parameter.</>}
+        lens={<>t is the SECURITY-vs-DROPOUT knob in Bonawitz secure aggregation.</>}
+        stretch={<>What if the server wants to learn the average instead of the sum — does the protocol change?</>}
       />
 
       <VIS.TrapProblem
         id="sa-p5"
         difficulty="hard"
-        title="P5 — SecAgg hides gradients. Does it hide model updates?"
-        scenario={<>After 100 SecAgg-FedAvg rounds, the global model improves. An attacker who is a participating client downloads the global model every round. What can they infer about other banks' data?</>}
+        title="P5 — Team uses float32 gradients with pairwise masks sampled from Z_(2^32). Sum is wrong. Why?"
+        scenario={<><em>Discriminating insight: pairwise masks live in a finite field (mod 2^32). Float32 addition is not modular; the mask-plus-gradient sum doesn't cancel correctly in float arithmetic. Gradients must be QUANTIZED to the same field before masking.</em><br/><br/>Diagnose.</>}
         options={[
-          {key:"a", text:"Aggregate gradient inversion still applies — successive deltas of the global model are masked aggregates that can leak in low-client settings; mitigate with DP-SGD per client.", correct:true},
-          {key:"b", text:"Nothing — SecAgg encrypts everything."},
-          {key:"c", text:"Only the model architecture is visible."},
-          {key:"d", text:"Each round's update is encrypted with HE."},
+          {key:"a", text:"Use float64 instead."},
+          {key:"b", text:"Mask cancellation requires the gradients and masks to live in the SAME finite (modular) field. PRG masks are sampled uniformly in some ring Z_q (typically q = 2^32 or a prime ~2^32). Mask addition is modular: (g_i + m_i) mod q. If you use float32 gradients, you get float-add (non-modular), and the +mask / -mask cancellation does not happen — the sum has residual mask. Fix: QUANTIZE gradients to fixed-point in Z_q before adding masks (typical: scale by 2^16, round to int32). After the server gets the sum, dequantize back to float. Bonawitz et al. spell out the quantization scheme; getting it wrong is one of the top implementation bugs.", correct:true},
+          {key:"c", text:"PRG seeds are too short."},
+          {key:"d", text:"DH key exchange failed."},
         ]}
-        trap={<>(b) is the most common misconception. (c) is wrong — the weights themselves are visible. (d) confuses SecAgg with homomorphic encryption.</>}
-        lens={<>(a) — SecAgg hides per-client updates; it does NOT hide the resulting model. With few clients, the aggregate update is close to one client's, and inversion attacks (Geiping et al. 2020) can recover training rows. The standard fix is per-client DP-SGD plus SecAgg.</>}
-        stretch={<>At what client count does aggregate inversion become hard?</>}
+        trap={<>(a)(c)(d) miss the field-mismatch root cause.</>}
+        lens={<>Cryptographic masking lives in a discrete algebraic field. Float arithmetic breaks the algebra.</>}
+        stretch={<>What's the quantization precision tradeoff — too few bits vs too many?</>}
       />
 
       <VIS.TrapProblem
         id="sa-p6"
         difficulty="medium"
-        multiSelect
-        title="P6 — Things that compose with SecAgg"
-        scenario={<>You are designing a federated fraud system. Which of these compose cleanly with SecAgg?</>}
+        title="P6 — N=10000 mobile clients. Each client does O(N) DH exchanges. Round time blows up. Fix?"
+        scenario={<><em>Discriminating insight: per-pair DH gives O(N^2) total pairs and O(N) per client. For large N, use subgroup secure aggregation (bucketize into groups of ~100, do secure-agg within each group, aggregate group sums) or topology constraints (star graphs).</em><br/><br/>Scale.</>}
         options={[
-          {key:"a", text:"DP-SGD per client.", correct:true},
-          {key:"b", text:"Trimmed-mean aggregation for Byzantine robustness.", correct:false},
-          {key:"c", text:"Gradient quantization to 8-bit.", correct:true},
-          {key:"d", text:"Krum aggregation for Byzantine robustness.", correct:false},
-          {key:"e", text:"Top-k gradient sparsification.", correct:true},
+          {key:"a", text:"Skip DH — use no masks."},
+          {key:"b", text:"Use subgroup secure aggregation: partition N clients into G groups of size N/G (e.g., G=100 groups of 100 clients each). Each group runs full Bonawitz secure aggregation internally, producing a per-group sum that's privacy-preserving within the group. Then aggregate the G group sums (either in cleartext, or with another layer of secure-agg between group servers). Per-client cost drops from O(N) DH to O(N/G); per-round comm drops similarly. Trade-off: privacy is now group-level — if all clients in a group except one are corrupt, that one client's gradient is exposed. Pick G so each group has enough honest mass.", correct:true},
+          {key:"c", text:"Add more DH rounds."},
+          {key:"d", text:"Drop secure aggregation entirely."},
         ]}
-        trap={<>(b) and (d) — Byzantine-robust aggregators need per-client visibility to detect outliers, which SecAgg explicitly forbids. There are SecAgg-compatible variants (e.g., HoneyCrisp) but vanilla trimmed-mean and Krum do NOT compose. The trap is candidates who think "more privacy + more robustness = better."</>}
-        lens={<>(a) (c) (e) all operate on the per-client gradient before masking; SecAgg just sums whatever the client sends. Byzantine robustness (b, d) needs per-client visibility — fundamental tension with SecAgg.</>}
-        stretch={<>How does HoneyCrisp work around the SecAgg + Byzantine tension?</>}
+        trap={<>(a)(d) abandon privacy; (c) doesn't reduce cost.</>}
+        lens={<>Secure aggregation has O(N) per-client cost; subgroup/hierarchical aggregation is the standard scaling trick.</>}
+        stretch={<>Where do you place the boundary between subgroup-secure-agg vs full-N — what threat model justifies which?</>}
       />
 
       <VIS.TrapProblem
         id="sa-p7"
         difficulty="hard"
-        title="P7 — Re-keying overhead"
-        scenario={<>SecAgg requires fresh DH keys per round (otherwise the same mask reused across rounds becomes guessable). 50 banks, 1000 rounds, 10M-parameter model. What dominates wall-clock?</>}
+        title="P7 — A bank with 90% of consortium volume joins. Sum learning is now near-equivalent to seeing that bank's gradient. Fix?"
+        scenario={<><em>Discriminating insight: secure aggregation protects each client's gradient as long as no client DOMINATES the sum. If one bank's gradient is ~the entire sum, "server sees only the sum" effectively means "server sees that bank's gradient." Mitigation: composition with DP-SGD on the dominant client, or reweighting.</em><br/><br/>Diagnose.</>}
         options={[
-          {key:"a", text:"DH key exchange and Shamir share distribution dominate the round latency; the cryptographic setup is typically 1-3 seconds per round even at 50 banks, while gradient communication is much smaller.", correct:true},
-          {key:"b", text:"Gradient transmission dominates; everything else is negligible."},
-          {key:"c", text:"GPU training time dominates."},
-          {key:"d", text:"Server-side mask reconstruction dominates."},
+          {key:"a", text:"Not a problem — secure aggregation guarantees privacy."},
+          {key:"b", text:"It IS a problem because secure aggregation's privacy guarantee is 'the server sees only the SUM' — when one client contributes ~90% of the sum, the server can essentially infer that client's gradient from the sum. The cryptographic protocol is intact but the INFORMATION-FLOW threat model assumes no dominant participant. Fixes: (1) apply DP-SGD on each client (especially the dominant one) so the gradient is already noised before secure-agg, (2) reweight gradients so each client's contribution to the sum is bounded (per-client clipping in the protocol), (3) require N >> dominant share in the participation policy. Secure aggregation + DP-SGD is the composition that handles this.", correct:true},
+          {key:"c", text:"Increase t."},
+          {key:"d", text:"Use HE instead."},
         ]}
-        trap={<>(b) is the naive guess. (c) assumes GPU bottleneck but at this client count crypto setup dominates. (d) only kicks in on dropouts.</>}
-        lens={<>(a) — measured deployments show DH and Shamir setup is the bottleneck at small-to-medium n. Optimizations: cache long-term DH keys, batch share verification, parallelize key exchange. Google's production SecAgg report has good numbers.</>}
-        stretch={<>Why must DH keys be refreshed each round if the masks already depend on round number?</>}
+        trap={<>(a) over-trusts; (c) doesn't address sum dominance; (d) over-corrects.</>}
+        lens={<>Secure aggregation's threat model has an unstated assumption: no client dominates the sum. Real consortia violate this.</>}
+        stretch={<>What's the right per-client gradient norm cap to prevent sum-dominance?</>}
       />
 
       <VIS.TrapProblem
         id="sa-p8"
-        difficulty="medium"
-        title="P8 — Onboarding a new bank mid-training"
-        scenario={<>Round 200 completes. Bank K wants to join for round 201. What is required for K to start contributing without breaking the protocol?</>}
+        difficulty="hard"
+        title="P8 — Auditor: 'Show me the privacy proof.' What do you cite?"
+        scenario={<><em>Discriminating insight: secure aggregation has a SIMULATION-BASED security proof — an adversary's view (server colluding with up to k clients) can be SIMULATED from only the SUM and the colluding clients' inputs. This is a standard MPC-style proof, not an (&#949;,&#948;) guarantee.</em><br/><br/>Cite.</>}
         options={[
-          {key:"a", text:"Bank K runs DH key exchange with every existing bank, gets the current global model from the server, distributes its Shamir shares, then participates from round 201 on.", correct:true},
-          {key:"b", text:"K joins silently; SecAgg auto-discovers new clients."},
-          {key:"c", text:"Round 200 must be replayed including K."},
-          {key:"d", text:"K's contribution is added in plaintext."},
+          {key:"a", text:"(ε,δ)-DP at ε=4."},
+          {key:"b", text:"Simulation-based security in the semi-honest (honest-but-curious) model: Bonawitz et al. 2017 prove that for any adversary corrupting up to t-1 clients plus the server, the adversary's view can be SIMULATED given ONLY (a) the sum of all gradients and (b) the corrupt clients' own inputs. Therefore the adversary learns no more than what the sum and its own inputs already reveal — in particular, NOTHING about any single honest client's gradient. This is a cryptographic-MPC-style proof, not an (ε,δ)-DP claim. Cite the paper, the corruption threshold t, and the assumption (honest-but-curious server, semi-honest clients).", correct:true},
+          {key:"c", text:"There's no formal proof — it's heuristic."},
+          {key:"d", text:"It's a TLS-based guarantee."},
         ]}
-        trap={<>(b) is wishful thinking. (c) is wasteful. (d) defeats the purpose.</>}
-        lens={<>(a) — onboarding is a per-round setup operation. New clients must complete the crypto handshake before their first round; no historical replay is needed because each round is independent in SecAgg.</>}
-        stretch={<>What is the smallest n at which a new bank can join without revealing it is new?</>}
+        trap={<>(a) confuses with DP; (c)(d) misread the proof technique.</>}
+        lens={<>Cryptographic protocols have simulation-based proofs. Statistical-privacy mechanisms have (&#949;,&#948;) proofs. Know the difference.</>}
+        stretch={<>What's the malicious-security variant — and what's the cost delta?</>}
       />
 
       <VIS.TrapProblem
         id="sa-p9"
-        difficulty="hard"
-        title="P9 — Collusion attack: server plus three banks"
-        scenario={<>You set Shamir threshold t equals five among ten banks. The server colludes with three banks (B, C, D). Can they reconstruct another bank A's gradient?</>}
+        difficulty="medium"
+        title="P9 — Compare secure aggregation to homomorphic encryption (HE) for cross-bank scoring."
+        scenario={<><em>Discriminating insight: secure aggregation hides INDIVIDUAL contributions during training; HE encrypts INPUTS and computes on ciphertexts during inference. Different stages, different mechanism, different cost profile.</em><br/><br/>Compare.</>}
         options={[
-          {key:"a", text:"No — the colluding set has only three Shamir shares of any non-colluder's seed; threshold five is not met, so they cannot reconstruct A's masks. A's gradient remains hidden.", correct:true},
-          {key:"b", text:"Yes — the server has access to all shares."},
-          {key:"c", text:"Yes — three is more than half of ten."},
-          {key:"d", text:"Depends on the gradient norm."},
+          {key:"a", text:"Identical — both encrypt gradients."},
+          {key:"b", text:"Different mechanisms for different stages of the pipeline. SECURE AGGREGATION: cryptographic protocol where pairwise PRG masks cancel in the sum; server learns ONLY the sum of gradients. Used during federated TRAINING. Constant-time on the wire (just additions in a finite field after key setup). Compute happens IN CLEARTEXT after masks cancel. HOMOMORPHIC ENCRYPTION: ciphertexts admit addition (and limited multiplication) without decryption. Two banks send encrypted inputs; a compute party performs the score function in ciphertext space; only the output is decrypted. Used during INFERENCE / SCORING. Orders of magnitude slower (100x-10000x). They solve different problems: secure-agg = 'hide my individual gradient from the aggregator during training,' HE = 'never reveal my input even during compute.'", correct:true},
+          {key:"c", text:"HE is just a synonym for secure aggregation."},
+          {key:"d", text:"Secure aggregation requires encryption keys."},
         ]}
-        trap={<>(b) misunderstands the protocol — the server has access to the shares that ALL participants send, but cannot use shares it does not also collude with. (c) confuses majority voting with the cryptographic threshold. (d) is unrelated.</>}
-        lens={<>(a) — Shamir secret-sharing's threshold is its design point. Colluders with fewer than t shares learn nothing about the seed. Setting t equals five with ten banks tolerates up to four colluders.</>}
-        stretch={<>What happens if you set t equals four and the colluding set is also four?</>}
+        trap={<>(a)(c) collapse the distinction; (d) is a misread.</>}
+        lens={<>SecAgg = aggregation-time cryptography. HE = compute-time cryptography. Both crypto, different stages.</>}
+        stretch={<>Could you use HE in place of secure aggregation? Why is it usually a bad fit?</>}
       />
 
       <VIS.TrapProblem
         id="sa-p10"
-        difficulty="hard"
-        title="P10 — Deploying SecAgg vs centralized DP"
-        scenario={<>The CTO asks: "Why not just send all banks' data to a central server with DP guarantees, instead of this complicated SecAgg setup?" Defend SecAgg.</>}
+        difficulty="medium"
+        title="P10 — When NOT to use secure aggregation."
+        scenario={<><em>Discriminating insight: secure aggregation pays a 4-round comm cost for cryptographic hiding of individual gradients. If the aggregator is fully trusted (e.g., inside your own org) or if the per-client gradient already passed through DP-SGD locally, secure aggregation is over-engineered.</em><br/><br/>When to skip.</>}
         options={[
-          {key:"a", text:"Centralizing raw data crosses regulatory boundaries (GDPR, data-residency, banking-secrecy laws) that DP does not solve; SecAgg lets the data stay local while still enabling joint training. Privacy is one of several issues; jurisdiction is the bigger one.", correct:true},
-          {key:"b", text:"DP is weaker than SecAgg."},
-          {key:"c", text:"DP requires too much compute."},
-          {key:"d", text:"SecAgg gives better fraud recall."},
+          {key:"a", text:"Always use it."},
+          {key:"b", text:"Skip secure aggregation when: (1) all clients are inside the same trust boundary (same org) and the aggregator is fully trusted — the cryptographic guarantee is solving a threat that doesn't apply, (2) each client already applies LOCAL DP-SGD with strong ε (e.g., ε=1) — the gradient is already private at upload, secure aggregation gives only marginal additional protection on a noisy upload, (3) N is tiny (N=2) — a sum of two values trivially reveals one given the other, so the secure-agg guarantee is vacuous, (4) round latency is critical (mobile real-time) — the 4-round protocol blows the latency budget. Use it when the aggregator is honest-but-curious and you need cryptographic single-gradient privacy without DP's utility cost.", correct:true},
+          {key:"c", text:"Never use it."},
+          {key:"d", text:"Use it only for N less than 10."},
         ]}
-        trap={<>(b) is wrong — they protect different things. (c) is empirically false. (d) is unrelated to privacy.</>}
-        lens={<>(a) — the senior-engineer framing. SecAgg lives because raw data cannot leave a bank's perimeter under banking secrecy law, regardless of any post-hoc privacy guarantee. DP is orthogonal — you do both (per-client DP-SGD + SecAgg) and explain to the CTO what each one buys.</>}
-        stretch={<>Name two jurisdictions where SecAgg is effectively required by regulation.</>}
+        trap={<>(a)(c)(d) over- or under-apply.</>}
+        lens={<>Secure aggregation addresses a SPECIFIC threat model (honest-but-curious aggregator). Match the tool to the threat.</>}
+        stretch={<>What's a real example of a federated system that explicitly does NOT use secure aggregation, and why?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p11"
+        difficulty="hard"
+        title="P11 — Malicious client sends g_i = 10^9 (huge). Sum is poisoned. Does secure aggregation defend? Distinguish privacy from integrity."
+        scenario={<><em>Discriminating insight: secure aggregation defends PRIVACY (the server can't see individual gradients) but NOT INTEGRITY (it can't tell if a client lied about its gradient). Robust aggregation (median, trimmed mean, clipping) is needed for integrity; secure aggregation is orthogonal.</em><br/><br/>Distinguish.</>}
+        options={[
+          {key:"a", text:"Secure aggregation prevents the attack."},
+          {key:"b", text:"Secure aggregation provides PRIVACY — the aggregator cannot see any individual gradient. It does NOT provide INTEGRITY — a malicious client can mask any value (including 10^9) and contribute it to the sum, and the protocol has no way to detect the outlier because the contribution is hidden. Defenses for integrity are ORTHOGONAL: (1) per-client gradient norm bound enforced cryptographically via zero-knowledge proofs (expensive but possible), (2) post-aggregation robust statistics (Krum, trimmed mean) — but these require seeing individual contributions, which secure-agg hides, contradicting the goal, (3) reputation-based client weighting outside the protocol. Production systems often use secure aggregation + per-client norm clip enforced via a ZK proof (Roth et al., RoFL 2022).", correct:true},
+          {key:"c", text:"Secure aggregation prevents malicious clients by design."},
+          {key:"d", text:"Malicious clients are not a real threat."},
+        ]}
+        trap={<>(a)(c) conflate privacy with integrity; (d) ignores the attack.</>}
+        lens={<>Privacy and integrity are orthogonal in federated learning. Secure aggregation is privacy-only.</>}
+        stretch={<>Which is more important to enforce in a cross-bank consortium — privacy or integrity?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p12"
+        difficulty="hard"
+        title="P12 — Replay attack: server reuses a client's masked upload across two rounds. Privacy still holds?"
+        scenario={<><em>Discriminating insight: the masks must be FRESH per round (new DH seeds and new PRG outputs). Replaying an upload with old masks against a new round's other clients does not cancel correctly, revealing the difference of two gradients. The protocol requires per-round freshness.</em><br/><br/>Diagnose.</>}
+        options={[
+          {key:"a", text:"Yes — masks are random, replays are fine."},
+          {key:"b", text:"No — replays break privacy. If a server reuses client i's masked upload y_i = g_i^(round1) + m_i across both round 1 and round 2, and the OTHER clients in round 2 use fresh masks tied to round 2's seeds, the cancellation fails in round 2: client i's mask m_i (built from round 1's seeds) is in the round 2 sum, but no -m_i counterpart exists. Worse: if the server can also observe the cleartext sum of both rounds, subtraction reveals (g_i^(round1) - g_i^(round2)) modulo whatever cancels — leaking gradient differences. Defense: per-round fresh DH or per-round seeded PRG, server-signed round identifiers in mask derivation, replay-attack detection in the protocol.", correct:true},
+          {key:"c", text:"Yes — but only with N greater than 100."},
+          {key:"d", text:"No — but only for adversarial servers."},
+        ]}
+        trap={<>(a)(c) miss the freshness requirement; (d) understates.</>}
+        lens={<>Cryptographic protocols are stateful. Freshness, ordering, and round tags matter.</>}
+        stretch={<>What's the simplest way to bind a mask to a round identifier?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p13"
+        difficulty="medium"
+        title="P13 — 'Secure aggregation gives me differential privacy.' True or false?"
+        scenario={<><em>Discriminating insight: false. Secure aggregation hides INDIVIDUAL gradients from the server during training, but the released MODEL (which is a function of the sums of gradients) can still memorize and leak. DP-SGD is needed for the (&#949;,&#948;) bound on the model.</em><br/><br/>Resolve.</>}
+        options={[
+          {key:"a", text:"True — both protect privacy."},
+          {key:"b", text:"False. Secure aggregation provides a CRYPTOGRAPHIC guarantee on what the AGGREGATOR SEES during training (only the sum). It provides NO (ε,δ)-DP guarantee on the RELEASED MODEL — the trained model, derived from sums of gradients, can still memorize and leak individual training examples (membership inference, model inversion). Differential privacy requires noise in the training process (DP-SGD). The two are COMPLEMENTARY: secure aggregation hides per-round gradients from a curious aggregator; DP-SGD bounds what the released model leaks to anyone who has it. Production privacy stacks use both.", correct:true},
+          {key:"c", text:"True — but only at ε=0."},
+          {key:"d", text:"False — neither protects privacy."},
+        ]}
+        trap={<>(a)(c)(d) collapse the distinction.</>}
+        lens={<>Privacy stacks have multiple LAYERS. Secure-agg is one; DP is another. Both, not either.</>}
+        stretch={<>What's the threat each one closes that the other doesn't?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p14"
+        difficulty="medium"
+        title="P14 — Where does secure aggregation impose its O(N) cost — comm, compute, or storage?"
+        scenario={<><em>Discriminating insight: each client must hold N-1 pairwise seeds and run N-1 DH exchanges; that's O(N) comm at setup AND O(N) storage of seeds AND O(N) PRG calls per round. Per-round upload is O(d) (gradient size), not O(N). The bottleneck for large N is setup comm and seed storage.</em><br/><br/>Identify.</>}
+        options={[
+          {key:"a", text:"Only compute."},
+          {key:"b", text:"All three but the bottleneck is COMM + STORAGE per client. Each client runs N-1 Diffie-Hellman key exchanges (O(N) comm at setup), stores N-1 pairwise seeds (O(N) memory), and calls a PRG N-1 times per round to construct its mask (O(N*d) compute where d is gradient size). Per-round upload is just O(d) (one masked gradient). For N=10k, setup is the bottleneck; for N=1M (cross-device), even storage is infeasible without bucketing. Subgroup secure-agg (P6) brings all three down to O(N/G).", correct:true},
+          {key:"c", text:"Only storage."},
+          {key:"d", text:"Only the server's compute."},
+        ]}
+        trap={<>(a)(c)(d) name single bottlenecks.</>}
+        lens={<>O(N) per client is the binding constraint. Bucketing is the standard workaround.</>}
+        stretch={<>What's the asymptotic with t-of-N Shamir included?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p15"
+        difficulty="hard"
+        multiSelect
+        title="P15 — Code-review battery for a secure-aggregation PR. Select ALL bugs that break privacy."
+        scenario={<><em>Discriminating insight: typical implementation bugs — non-fresh seeds, missing Shamir for dropout, gradients in float not field, mask reuse across rounds, t too low. Each breaks privacy in a specific way.</em><br/><br/>Select all bugs.</>}
+        options={[
+          {key:"a", text:"Pairwise seeds derived deterministically from client IDs (no fresh per-round randomness).", correct:true},
+          {key:"b", text:"Shamir threshold t=2 with N=20 (collusion of 1 client + server breaks privacy).", correct:true},
+          {key:"c", text:"Gradients quantized to int32 before masking (correct field arithmetic)."},
+          {key:"d", text:"Mask = PRG(round_id || seed), but the round_id is not authenticated by the server (allows replay).", correct:true},
+          {key:"e", text:"Server logs each client's upload for debugging (still hides the gradient if masks are correct)."},
+          {key:"f", text:"DH key exchange done over an unauthenticated channel (man-in-the-middle can substitute seeds).", correct:true},
+        ]}
+        trap={<>(c) is the CORRECT pattern (int32 = correct field). (e) is fine — logs of masked uploads are uniform random.</>}
+        lens={<>Bugs that break privacy: deterministic seeds, low t, replay-vulnerable round_id, unauth DH channel.</>}
+        stretch={<>Of these, which is hardest to detect in code review?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p16"
+        difficulty="hard"
+        title="P16 — Junior: 'Just use TLS — it encrypts the gradients in transit.' Why isn't that secure aggregation?"
+        scenario={<><em>Discriminating insight: TLS hides gradients from network eavesdroppers but decrypts them AT THE SERVER. The server sees each client's gradient in cleartext. Secure aggregation hides gradients FROM THE SERVER itself.</em><br/><br/>Diagnose.</>}
+        options={[
+          {key:"a", text:"TLS is equivalent — both encrypt the channel."},
+          {key:"b", text:"TLS protects against NETWORK EAVESDROPPERS — gradients are encrypted in transit between client and server, decrypted at the server. The SERVER sees each individual gradient in cleartext. Secure aggregation protects against the SERVER ITSELF (and any compromise or insider access to it): the server learns only the SUM of gradients, never any individual gradient, even though gradients arrive at the server. The threat models are different: TLS = network-level confidentiality, secure aggregation = server-level confidentiality of individual contributions. Production systems use BOTH: TLS for transport security + secure-agg for server-side privacy.", correct:true},
+          {key:"c", text:"TLS is faster, use it."},
+          {key:"d", text:"TLS doesn't work for gradients."},
+        ]}
+        trap={<>(a)(c)(d) miss the threat-model distinction.</>}
+        lens={<>TLS = transport. Secure-agg = endpoint. Different threats, both useful.</>}
+        stretch={<>What if your threat is BOTH network and server? What's the minimal stack?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p17"
+        difficulty="hard"
+        title="P17 — Secure aggregation but with N=2 banks. Server learns the sum. Bank A learns its own gradient. Bank A can subtract its own from the sum to recover bank B's gradient. Bug?"
+        scenario={<><em>Discriminating insight: secure aggregation's privacy guarantee assumes enough honest participants that the SUM doesn't trivially reveal any individual. N=2 violates this — knowing the sum and one input gives the other. The cryptographic protocol is intact; the THREAT MODEL is wrong for N=2.</em><br/><br/>Diagnose.</>}
+        options={[
+          {key:"a", text:"Bug — fix the protocol."},
+          {key:"b", text:"Not a protocol bug — it's a THREAT MODEL violation. Secure aggregation's privacy property is 'server learns only the SUM.' With N=2, sum minus my own gradient = the other party's gradient, so 'only the sum' trivially leaks. The protocol is correctly implemented; the application is misusing it. For N=2 cross-bank scoring, use MPC or HE instead — they protect against this 'subtract your own input' attack because the OUTPUT isn't the sum, it's a joint function (a fraud score) of both inputs. Secure aggregation is appropriate when N is large enough that 'sum minus my own' is still hidden by other contributors' aggregate (N >= 10-20 in practice, depending on dominance).", correct:true},
+          {key:"c", text:"Bug — use larger keys."},
+          {key:"d", text:"Bug — add noise."},
+        ]}
+        trap={<>(a)(c)(d) treat a threat-model issue as a protocol bug.</>}
+        lens={<>Threat model first. Secure-agg solves a specific problem; misapplied it leaks trivially.</>}
+        stretch={<>Where's the right N threshold for secure aggregation to be privacy-meaningful?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p18"
+        difficulty="hard"
+        title="P18 — N=100 banks, federated training with secure aggregation, model membership inference shows AUC 0.68 vs 0.5 expected. Where's the leak?"
+        scenario={<><em>Discriminating insight: secure aggregation does NOT bound model-release leakage. MIA on the released model is not a secure-agg bug; it's a missing-DP-SGD bug. Add DP-SGD on each client.</em><br/><br/>Diagnose.</>}
+        options={[
+          {key:"a", text:"Secure aggregation is broken."},
+          {key:"b", text:"Secure aggregation is NOT broken — it does what it advertises (server saw only sums, not individual gradients during training). MIA on the released MODEL is a different threat: an attacker with model access (not server access) infers whether a record was in training. Defenses for this threat are not secure-agg; they are DP-SGD applied locally at each client BEFORE the gradient is masked and sent. The released model then inherits an (ε,δ)-DP guarantee bounding MIA AUC. Secure-agg hides per-round gradients from the AGGREGATOR; DP-SGD bounds what the FINAL MODEL can leak to MODEL HOLDERS. Different threats, different mechanisms; need both.", correct:true},
+          {key:"c", text:"Add more clients."},
+          {key:"d", text:"Replace secure aggregation with HE."},
+        ]}
+        trap={<>(a)(c)(d) misdiagnose.</>}
+        lens={<>Secure-agg's promise is bounded — it covers aggregator-side leaks, not model-release leaks.</>}
+        stretch={<>What ε should the per-client DP-SGD target to get MIA AUC back to 0.5?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p19"
+        difficulty="hard"
+        title="P19 — Two banks need to compute joint fraud risk on a SHARED customer at inference time. Use secure aggregation?"
+        scenario={<><em>Discriminating insight: secure aggregation is for TRAINING (aggregating gradients). For joint INFERENCE on a single shared input where neither bank reveals its features, use HE/MPC. Wrong tool for the job.</em><br/><br/>Choose.</>}
+        options={[
+          {key:"a", text:"Yes — secure aggregation works for any joint computation."},
+          {key:"b", text:"No — wrong tool. Secure aggregation is designed for AGGREGATING gradient updates ACROSS CLIENTS in training; its security property is 'aggregator learns only the SUM.' Joint inference on a single shared customer is a different problem: two banks each have features about the customer, want to compute a single score, neither reveals its features. The correct tool is HE/MPC (next visual) — homomorphic encryption lets bank B compute on encrypted features from bank A without decrypting; MPC lets both parties evaluate a function on their joint inputs without revealing inputs. Secure aggregation does not address this — it's a training-time mechanism, not an inference-time one.", correct:true},
+          {key:"c", text:"Yes — but only with N=2."},
+          {key:"d", text:"No — use plain TLS."},
+        ]}
+        trap={<>(a)(c) misapply secure-agg; (d) ignores the privacy goal.</>}
+        lens={<>Secure-agg = training-time. HE/MPC = inference-time. Different mechanisms for different stages.</>}
+        stretch={<>Could you reduce two-bank joint inference to a secure-aggregation problem? What breaks?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p20"
+        difficulty="medium"
+        title="P20 — Production cadence: a round takes 8 minutes. Why?"
+        scenario={<><em>Discriminating insight: secure aggregation has 4 protocol rounds (setup, mask, upload, unmask). Each waits for a quorum of N to respond. With mobile/bank clients, p99 response time per round is minutes. Optimization: client selection, parallelization, asynchronous variants.</em><br/><br/>Optimize.</>}
+        options={[
+          {key:"a", text:"The aggregation itself is slow."},
+          {key:"b", text:"The 4-round structure is the cost. Bonawitz's protocol has 4 message rounds: (1) DH key exchange, (2) masked-gradient upload, (3) reveal-of-shares-for-dropouts, (4) final sum. Each round waits for a quorum of clients to respond, and the slowest client per round sets the wall-clock cost. Optimizations: (a) client selection — only invite clients with recent low p99 to participate, (b) hierarchical / subgroup secure-agg — many small groups in parallel, (c) asynchronous variants (FedBuff + secure-agg) — relax the synchronous quorum, (d) prefetch DH setup at idle. Bank consortia tolerate slower rounds than mobile (banks don't drop); mobile FL needs the parallel/async variants.", correct:true},
+          {key:"c", text:"PRG is slow."},
+          {key:"d", text:"DH is slow."},
+        ]}
+        trap={<>(a) generic; (c)(d) wrong single bottleneck.</>}
+        lens={<>The COMM round count, not the compute, is the wall-clock killer.</>}
+        stretch={<>How does FedBuff modify the round structure to reduce wall-clock?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p21"
+        difficulty="hard"
+        title="P21 — Client trains a 100M-parameter model locally; gradient is 400MB. Secure aggregation per-round cost?"
+        scenario={<><em>Discriminating insight: each pairwise mask has the gradient's dimension. Each client's mask = sum of N-1 PRG outputs of 400MB each. Storage of masks is O(d), not O(Nd) (sum them up); but PRG calls and arithmetic are O(N*d). At N=1000, d=100M, this is 10^11 PRG evaluations per client per round.</em><br/><br/>Quantify.</>}
+        options={[
+          {key:"a", text:"Negligible — masks are cheap."},
+          {key:"b", text:"Per-client per-round cost is O(N * d) PRG calls + O(d) storage of the final mask + O(d) upload. With N=1000 clients and d=100M params, that's 10^11 PRG calls per client per round (the mask construction). On a fast PRG (AES-CTR) this is ~10s of CPU per client — feasible per round but not free. STORAGE is O(d) for the accumulated mask (you sum the +PRG and -PRG entries on the fly, never materializing N copies). UPLOAD is O(d) per round (the masked gradient, same size as the original). For very large models, model compression / sparse uploads must happen BEFORE masking — and the compression must be deterministic across mask and gradient or the cancellation breaks.", correct:true},
+          {key:"c", text:"O(N^2 * d) — quadratic in clients."},
+          {key:"d", text:"O(d^2) — quadratic in dimension."},
+        ]}
+        trap={<>(a) trivializes; (c)(d) wrong scalings.</>}
+        lens={<>Secure-agg scales linearly with N*d per client. Model size matters.</>}
+        stretch={<>How do you combine gradient compression (top-k sparsification) with secure aggregation?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p22"
+        difficulty="hard"
+        title="P22 — Reverse engineering: protocol completes, sum is correct, but a researcher reports that running enough rounds (100k+) on the same client lets them recover the client's gradient. Where's the leak?"
+        scenario={<><em>Discriminating insight: over many rounds, the server sees many sums. If the same client participates in many rounds with overlapping participant sets, the server can solve a system of linear equations to recover individual gradients (sum subtraction attack). Defense: random client selection, large enough N per round, DP-SGD layering.</em><br/><br/>Diagnose.</>}
+        options={[
+          {key:"a", text:"Protocol is broken."},
+          {key:"b", text:"The cryptographic protocol holds round-by-round (each round's sum is privacy-preserving), but ACROSS ROUNDS the server collects many sums each over different participant subsets. If the same target client participates in many rounds, and the OTHER participants change, the server can in principle solve a linear system: sum_1 - sum_2 = (g_target + g_{rest_1}) - (g_target + g_{rest_2}) = g_{rest_1} - g_{rest_2}. Repeated subtractions can isolate components. Defenses: (1) random participant selection so the server can't pick correlated subsets, (2) ensure N per round is large enough that linear-system attacks are infeasible, (3) layer DP-SGD on each client — even unlimited rounds give bounded leakage. Pure cryptographic secure-agg has no multi-round bound; DP-SGD does.", correct:true},
+          {key:"c", text:"Add more PRG bits."},
+          {key:"d", text:"Replace Shamir with Reed-Solomon."},
+        ]}
+        trap={<>(a)(c)(d) miss the multi-round leakage channel.</>}
+        lens={<>Cryptographic privacy is per-round. Multi-round bounds need DP-SGD.</>}
+        stretch={<>How quickly does the linear-system attack succeed as a function of N and rounds?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p23"
+        difficulty="medium"
+        title="P23 — Operator asks: 'Can I use the same setup phase (DH exchange) for many rounds?' What's the safe answer?"
+        scenario={<><em>Discriminating insight: DH gives a shared key; per-round masks should be derived from key+round_id via a key derivation function. Reusing the same RAW mask values across rounds breaks privacy (P12 replay). Reusing the SETUP (key exchange) is fine if per-round masks are properly derived.</em><br/><br/>Resolve.</>}
+        options={[
+          {key:"a", text:"No — re-run DH every round."},
+          {key:"b", text:"Yes, the SETUP can be reused — DH gives a long-term shared key between each pair of clients. PER-ROUND MASKS must be FRESHLY DERIVED from (shared_key, round_id) via a key-derivation function (e.g., HKDF) or a PRG seeded with (shared_key, round_id). Different round_id → different mask values, so the cancellation works only within a single round and replay across rounds is harmless. Re-running full DH every round is wasteful — DH setup is the expensive step (~ms per pair), per-round PRG is fast. The standard pattern: DH once at setup, KDF or PRG-with-round-id every round for the actual mask values.", correct:true},
+          {key:"c", text:"Yes — and reuse masks too."},
+          {key:"d", text:"No — DH is single-use."},
+        ]}
+        trap={<>(a) wastes; (c) is the replay bug; (d) wrong on DH primitives.</>}
+        lens={<>Long-term key vs per-round mask is the standard cryptographic separation.</>}
+        stretch={<>What KDF do you use, and why does it need to be deterministic?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p24"
+        difficulty="hard"
+        title="P24 — Honest-but-curious vs malicious threat model: which does Bonawitz cover, and what changes for the stronger model?"
+        scenario={<><em>Discriminating insight: Bonawitz et al. assume honest-but-curious — parties follow the protocol but may try to learn from what they see. Malicious security (parties may deviate) requires verifiable secret sharing, ZK proofs of correct mask construction, and committed inputs. Cost ~10x.</em><br/><br/>Distinguish.</>}
+        options={[
+          {key:"a", text:"Both — same protocol."},
+          {key:"b", text:"Bonawitz covers HONEST-BUT-CURIOUS (semi-honest): parties follow the protocol step-by-step but try to learn from messages they receive. For MALICIOUS security (active adversaries who may deviate — send wrong shares, lie about dropouts, send malformed masks), additional cryptography is needed: (1) verifiable secret sharing (VSS) so shares can be checked for consistency, (2) zero-knowledge proofs that each client constructed its mask correctly from its committed seed, (3) commitments to gradients so a client can't later change its input. Cost is typically 5-10x the semi-honest variant. RoFL (Roth et al. 2022) is a practical malicious-secure variant. Most production federated systems use semi-honest secure-agg + monitoring for protocol deviations.", correct:true},
+          {key:"c", text:"Bonawitz is malicious-secure."},
+          {key:"d", text:"There's no difference."},
+        ]}
+        trap={<>(c)(d) misread the model.</>}
+        lens={<>Threat model is a parameter of the protocol. Semi-honest is the cheap default; malicious is rare.</>}
+        stretch={<>In a bank consortium, which threat model is realistic — and why?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p25"
+        difficulty="hard"
+        title="P25 — A new bank joins mid-training. Re-run secure aggregation setup?"
+        scenario={<><em>Discriminating insight: the new bank has no pairwise keys with existing banks. It must run DH with each before participating. Setup-cost is O(N) for the new bank but only O(1) extra per existing bank.</em><br/><br/>Handle.</>}
+        options={[
+          {key:"a", text:"Restart all DH for everyone."},
+          {key:"b", text:"The new bank must run pairwise DH with every existing bank (O(N) DH exchanges for the joiner; one extra DH per existing bank). Existing banks keep their existing pairwise keys. The new bank also receives Shamir shares of its own seed from existing banks (and the new bank distributes Shamir shares of its seeds to them). After setup, the joiner participates in subsequent rounds normally. No need to restart anything — the protocol is incremental in N. The same logic applies to leavers: revoke the leaver's keys at all existing banks; subsequent rounds proceed with N-1 participants.", correct:true},
+          {key:"c", text:"Reject the new bank."},
+          {key:"d", text:"Run a special hand-off round."},
+        ]}
+        trap={<>(a) wastes; (c) excludes legitimate participants; (d) is unnecessary.</>}
+        lens={<>Protocol setup is per-pair, so joiners and leavers are O(N) for the changing party only.</>}
+        stretch={<>How does the Shamir secret sharing need to update when N changes?</>}
+      />
+
+      <VIS.TrapProblem
+        id="sa-p26"
+        difficulty="hard"
+        title="P26 — Why doesn't Google's gboard publish individual gradients to its analytics team even though it uses secure aggregation? (Trace the chain of reasoning.)"
+        scenario={<><em>Discriminating insight: secure aggregation operationally enforces "no individual gradient visible" at the server, but analytics teams INSIDE the same org might be tempted to extract individual gradients for "research." Secure aggregation makes this technically impossible — the unmasked individual gradients NEVER EXIST anywhere in the server pipeline.</em><br/><br/>Trace.</>}
+        options={[
+          {key:"a", text:"They don't have permission."},
+          {key:"b", text:"Secure aggregation makes individual gradients CRYPTOGRAPHICALLY UNAVAILABLE to anyone on the server side — no analytics engineer, no production engineer, no auditor, no court order can extract them because they never exist in cleartext at the aggregator. The aggregator's storage only ever contains masked uploads (uniform random from the server's view) and sums. Even with full root access on the aggregator's machines, an attacker can pull only sums, not individual contributions. This is a STRUCTURAL guarantee, not a policy one: 'we can't show you individual gradients even if compelled.' That's the regulatory and PR value over plain FedAvg + access controls — access controls can be bypassed by insiders or subpoenas; cryptographic structure cannot.", correct:true},
+          {key:"c", text:"Google's policy."},
+          {key:"d", text:"GDPR forbids it."},
+        ]}
+        trap={<>(a)(c)(d) miss the cryptographic-structure argument.</>}
+        lens={<>The whole point of cryptographic guarantees over policy guarantees: 'I cannot' is stronger than 'I will not.'</>}
+        stretch={<>What's the equivalent argument for cross-bank fraud consortia under regulator pressure?</>}
       />
     </VIS.Section>
 
@@ -1700,36 +1953,43 @@ flowchart TB
           <a href="https://eprint.iacr.org/2017/281" target="_blank" rel="noopener">
             <strong>Bonawitz et al. — Practical Secure Aggregation for Privacy-Preserving Machine Learning</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, CCS 2017)</span>
-          <br/>The original SecAgg paper. Read Sec 3 (protocol) and Sec 4 (dropout). Sec 5 has communication-cost analysis worth knowing.
+          <span style={{color:"#64748b", fontSize:14}}>(CCS 2017, paper)</span>
+          <br/>The canonical secure-aggregation paper. Defines the 4-round protocol, Shamir-based dropout recovery, semi-honest security proof. Required.
         </li>
         <li>
           <a href="https://ai.googleblog.com/2017/04/federated-learning-collaborative.html" target="_blank" rel="noopener">
-            <strong>Google AI Blog — Federated Learning: Collaborative Machine Learning without Centralized Training Data</strong>
+            <strong>Google AI Blog — Federated Learning</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
-          <br/>The friendliest intro to FedAvg + SecAgg. Read this first if you have not deployed federation before.
+          <br/>Plain-English intro to the system that motivated secure aggregation at scale. Read this before the paper.
+        </li>
+        <li>
+          <a href="https://blog.openmined.org/secure-aggregation-from-scratch/" target="_blank" rel="noopener">
+            <strong>OpenMined — Secure Aggregation from Scratch</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(blog, worked example)</span>
+          <br/>The practitioner walkthrough: pairwise masks, dropout, Shamir, all worked out in code. The best companion if Bonawitz feels dense.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2107.06917" target="_blank" rel="noopener">
+            <strong>Roth et al. — RoFL: Robustness of Secure Federated Learning</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(IEEE S&amp;P 2023, paper)</span>
+          <br/>Malicious-secure variant with norm-bound ZK proofs. Closes the privacy-vs-integrity gap (P11).
+        </li>
+        <li>
+          <a href="https://eprint.iacr.org/1979/179" target="_blank" rel="noopener">
+            <strong>Shamir — How to Share a Secret</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(CACM 1979, paper)</span>
+          <br/>The 1979 paper introducing Shamir secret sharing. Short and accessible; foundation for the dropout-recovery in P3.
         </li>
         <li>
           <a href="https://arxiv.org/abs/1912.04977" target="_blank" rel="noopener">
             <strong>Kairouz et al. — Advances and Open Problems in Federated Learning</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(survey, FnTML 2021)</span>
-          <br/>The canonical federated-learning survey. Sec 4 covers SecAgg variants (SecAgg+, Turbo-Aggregate) and their tradeoffs in depth.
-        </li>
-        <li>
-          <a href="https://www.youtube.com/watch?v=89BGjQYA0uE" target="_blank" rel="noopener">
-            <strong>Peter Kairouz — Federated Learning: Challenges, Methods, and Future Directions (video)</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(video, ~50 min)</span>
-          <br/>The clearest video walkthrough of FedAvg + SecAgg + DP composition. Whiteboard-style.
-        </li>
-        <li>
-          <a href="https://flower.dev/docs/" target="_blank" rel="noopener">
-            <strong>Flower — open-source federated learning framework</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(code + docs)</span>
-          <br/>Production-grade federation library with SecAgg strategy implementations. Use to prototype before building in-house crypto.
+          <span style={{color:"#64748b", fontSize:14}}>(FnT ML 2021, survey)</span>
+          <br/>The comprehensive survey. Sections on secure aggregation place it within the broader privacy stack (DP, HE, MPC).
         </li>
       </ul>
     </VIS.Section>
