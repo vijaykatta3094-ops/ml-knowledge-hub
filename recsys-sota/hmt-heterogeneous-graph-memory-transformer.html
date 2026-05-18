@@ -1796,17 +1796,17 @@ flowchart TB
       />
 
       <VIS.TrapProblem id="hmt-e2" difficulty="hard"
-        title="E2 — Friday 3am: cold-tail recall down, NDCG up — why HMT?"
-        scenario={<>HMT shipped Thursday. Friday 3am page: cold-tail-item recall down 6%, NDCG@10 up 1.5%, latency unchanged, GPU util unchanged. Why HMT-specifically?</>}
+        title="E2 — Tuesday page: memory-cache hit-rate drops 40% after sharding change"
+        scenario={<>HMT in prod for 3 weeks. SRE re-sharded the per-user memory store from 16 shards to 64 (to reduce p99 hot-shard contention). Tuesday: memory-cache hit-rate falls 92% → 52%, p50 latency +8ms, NDCG flat. Why HMT-specifically?</>}
         options={[
-          {key:"a", text:"HMT's memory eviction (FIFO by default) drops the user's earliest interactions — those are the foundational signals pointing at rare-tail items. The supervised loss + NDCG@10 don't penalize this; only cold-tail-recall does. HGT doesn't have this surface because it has no memory to evict — long-range info goes through message-passing each time.", correct:true},
-          {key:"b", text:"HMT randomly predicts the wrong items."},
-          {key:"c", text:"GPU thermal throttling at 3am."},
-          {key:"d", text:"Friday-specific data drift."},
+          {key:"a", text:"HMT serves by reading the user's memory bank from a sharded KV store; the rehash changed each user's shard mapping, so 75% of pre-warmed entries miss until the cache repopulates. Until then, requests hit the slow path (recompute memory from the interaction log) — that's the latency jump. NDCG holds because the recompute is correct, just slow. HGT doesn't have this surface because there's nothing user-keyed cached between requests.", correct:true},
+          {key:"b", text:"HMT's attention weights changed."},
+          {key:"c", text:"GPU thermal throttling."},
+          {key:"d", text:"Random model drift."},
         ]}
-        trap={<>(b)/(c)/(d) are red herrings.</>}
-        lens={<>The eviction-driven cold-tail-collapse is the canonical HMT production page. Fix: priority-aware eviction + per-slot age limits.</>}
-        stretch={<>What's the shadow test that catches this Tuesday instead of 3am Friday?</>}
+        trap={<>(b)/(c)/(d) are red herrings — none explain hit-rate dropping precisely on the rehash event.</>}
+        lens={<>HMT's per-user memory is a stateful serving artifact. Re-sharding is a cache-invalidation event the team forgot to model. Fix: consistent-hash rehash, or warm-replay before flipping traffic.</>}
+        stretch={<>How would you stage the rehash to keep hit-rate above 85% throughout?</>}
       />
 
       <VIS.TrapProblem id="hmt-e3" difficulty="hard"

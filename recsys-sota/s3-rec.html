@@ -1616,7 +1616,7 @@ flowchart TB
         scenario={<>Your CTO asks why pretraining is worth a 4x compute spend over BERT4Rec. Single sentence that <em>requires</em> understanding S3-Rec's MI-task mechanism.</>}
         options={[
           {key:"a", text:"'It's pretraining like ChatGPT.' (Generic — survives redaction.)"},
-          {key:"b", text:"'S3-Rec's four MI-max pretext tasks explicitly fuse item-attribute metadata into the sequence representation BEFORE the next-item head sees it — that means our attribute-rich catalog (every book has genre + author + series) becomes a free signal multiplier on top of click data, and we measure that in 30%+ NDCG lift on the cold-launch slice that BERT4Rec provably cannot recover with masked-item pretraining alone.'", correct:true},
+          {key:"b", text:"'S3-Rec's four MI-max tasks fuse attribute metadata into the sequence representation before the head — turning our genre/author/series catalog into a 30% NDCG lift on the cold-launch slice that BERT4Rec can't recover.'", correct:true},
           {key:"c", text:"'+5% NDCG offline.'"},
           {key:"d", text:"'Used at Alibaba.'"},
         ]}
@@ -1773,17 +1773,17 @@ flowchart TB
       />
 
       <VIS.TrapProblem id="s3-d4" difficulty="hard"
-        title="D4 — Online NDCG flat after fine-tune — diagnose"
-        scenario={<>You pretrain S3-Rec, fine-tune. Pretraining loss converged nicely; fine-tune NDCG matches a from-scratch baseline. Most likely cause?</>}
+        title="D4 — Fine-tune NDCG flat; MAP-task loss spiked at epoch 2 — diagnose"
+        scenario={<>You pretrain S3-Rec, fine-tune. Aggregate pretraining loss converged, BUT in the per-task curves the MAP (Masked Attribute Prediction) loss spiked back up at epoch 2 of pretraining; the other three MI-tasks (AAP, MIP, SP) kept dropping. Fine-tune NDCG matches from-scratch. Most likely cause?</>}
         options={[
-          {key:"a", text:"Catastrophic forgetting during fine-tuning: fine-tune LR was set the same as a from-scratch baseline (e.g., 1e-3) and the first few hundred gradient steps overwrote the pretrained attribute fusion. Use 1e-4 with warm-up.", correct:true},
-          {key:"b", text:"Pretraining didn't converge."},
-          {key:"c", text:"Wrong loss."},
+          {key:"a", text:"Attribute labels are noisy/sparse — MAP optimizes mutual info between an item and its attributes, but if 25% of catalog attribute rows are stale or wrong, MAP cannot drive that MI term down. Worse, MAP's gradients fight the other three tasks (which CAN learn from clean click sequences), and because the four objectives share an encoder, the contested attribute-fusion weights end up no better than from-scratch. The aggregate loss looks fine because AAP+MIP+SP mask MAP's failure.", correct:true},
+          {key:"b", text:"Pretraining didn't converge — but the aggregate curve says it did."},
+          {key:"c", text:"Wrong attention type — would affect all four tasks symmetrically."},
           {key:"d", text:"GPU OOM."},
         ]}
-        trap={<>(b) contradicted by 'pretraining loss converged'. (c)/(d) red herrings.</>}
-        lens={<>The signature: pretrain looks fine; fine-tune erases it.</>}
-        stretch={<>Sketch a layer-wise LR schedule for S3-Rec fine-tuning.</>}
+        trap={<>(b) contradicted by the aggregate curve. (c)/(d) red herrings.</>}
+        lens={<>S3-Rec's four MI-tasks are NOT interchangeable. MAP is the one that depends on attribute QUALITY; AAP/MIP/SP depend on sequence quality. A single noisy task can poison the shared representation while the aggregate loss looks healthy. Always track per-task curves.</>}
+        stretch={<>How would you down-weight MAP when attribute confidence is low, without retraining?</>}
       />
 
       <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
@@ -1908,17 +1908,17 @@ flowchart TB
       />
 
       <VIS.TrapProblem id="s3-f3" difficulty="hard"
-        title="F3 — Reverse engineering: pretrain loss converges, fine-tune NDCG flat"
-        scenario={<>Symptom: pretraining loss converges; fine-tune NDCG matches a from-scratch BERT4Rec. Which S3-Rec design choice is most likely responsible?</>}
+        title="F3 — Pretrain loss strong; fine-tune NDCG flat; embedding cosine-sim to pretrain checkpoint stays 0.99"
+        scenario={<>Pretraining loss converged across all four MI-tasks. After fine-tune, NDCG matches from-scratch BERT4Rec — but the cosine similarity between the fine-tuned encoder weights and the pretrained checkpoint is 0.99 (so it's NOT catastrophic forgetting; weights barely moved). Which S3-Rec design choice is responsible?</>}
         options={[
-          {key:"a", text:"Fine-tune LR was carried over from a from-scratch recipe — catastrophic forgetting wiped the pretrained representation in early fine-tune steps.", correct:true},
+          {key:"a", text:"Objective imbalance between pretrain and fine-tune. Pretraining drives four MI-tasks jointly (AAP, MIP, MAP, SP), which together produce a representation tuned for attribute-rich item identification. Fine-tune uses only the next-item-prediction head — that loss alone can't expose the attribute-fusion subspace because its gradients flow through one head with no signal favoring attribute structure. So the pretrained features are preserved (cosine 0.99) but UNUSED by the head; the model effectively re-derives BERT4Rec from a frozen-ish trunk. Fix: keep an auxiliary MAP/AAP loss term during fine-tune.", correct:true},
           {key:"b", text:"Wrong attention type."},
           {key:"c", text:"Item-ID embedding dim."},
           {key:"d", text:"Sequence ordering."},
         ]}
-        trap={<>(b)/(c)/(d) misread.</>}
-        lens={<>The signature: pretrain works; fine-tune erases it.</>}
-        stretch={<>How would you instrument fine-tune to catch this in 1 epoch?</>}
+        trap={<>(b)/(c)/(d) don't explain 0.99 cosine.</>}
+        lens={<>The four MI-tasks build a richer representation than next-item alone can READ. Without auxiliary objectives at fine-tune, the head ignores the attribute-fusion subspace — pretraining was "free" but unused. Cosine-to-checkpoint is the diagnostic that separates forgetting (low cosine) from non-utilization (high cosine).</>}
+        stretch={<>Pick a weighting between next-item-CE and auxiliary MAP at fine-tune. Justify.</>}
       />
 
       <VIS.TrapProblem id="s3-f4" difficulty="hard"

@@ -1653,17 +1653,17 @@ flowchart TB
       />
 
       <VIS.TrapProblem id="sgl-c2" difficulty="hard"
-        title="C2 — Why InfoNCE specifically, not a different contrastive loss?"
-        scenario={<>SGL picks InfoNCE. What does this loss give that triplet/margin loss does not?</>}
+        title="C2 — Why InfoNCE specifically for SGL's bipartite graph?"
+        scenario={<>SGL augments the user-item bipartite graph (node-drop / edge-drop) and pulls two views of the SAME node together. Why InfoNCE rather than triplet/margin loss for this objective?</>}
         options={[
-          {key:"a", text:"InfoNCE simultaneously compares one positive against ALL in-batch negatives via the softmax — it's a multi-class classification loss. Triplet loss only compares against one negative at a time, requiring expensive triplet mining. With recsys's large batch (1024+) InfoNCE gets cheap implicit hard negatives 'for free'.", correct:true},
+          {key:"a", text:"On the bipartite graph, the 'hard negatives' are other popular items the user didn't click — they're already mixed into any random batch. InfoNCE's softmax-over-batch turns every other node in the batch into an implicit negative, so the popular-item shortcut (just predict head items) is penalized in every step. Triplet loss compares one negative at a time and needs an explicit miner; on a bipartite graph with skewed degrees the miner keeps re-picking the same popular items, so the popularity shortcut survives.", correct:true},
           {key:"b", text:"InfoNCE is faster on GPU."},
           {key:"c", text:"Triplet loss doesn't work on graphs."},
           {key:"d", text:"They are equivalent up to constants."},
         ]}
-        trap={<>(b) is a side effect. (c) is false. (d) is false.</>}
-        lens={<>InfoNCE's batch-as-negatives makes it the natural fit when you have large batches and no triplet sampler.</>}
-        stretch={<>What batch size is too small for InfoNCE to work well? Why?</>}
+        trap={<>(b) is a side effect. (c)/(d) are false.</>}
+        lens={<>SGL's whole point is breaking the popularity shortcut via structural augmentation. InfoNCE compounds that: large batches on the user-item graph contain popular items as automatic negatives, so the loss directly punishes "predict popular." A triplet miner re-introduces the bias it's supposed to remove.</>}
+        stretch={<>What happens if batch size drops to 64 on a long-tail catalog? Which loss degrades faster?</>}
       />
 
       <VIS.TrapProblem id="sgl-c3" difficulty="hard"
