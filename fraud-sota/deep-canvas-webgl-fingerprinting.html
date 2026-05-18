@@ -1797,17 +1797,17 @@ flowchart TB
       <VIS.TrapProblem
         id="cwf-p17"
         difficulty="medium"
-        title="P17 — Inference budget is 50ms p99 server-side. Encoder is 8ms, ANN is 3ms. What's the dominant time?"
-        scenario={<><em>Discriminating insight: in practice the client-side probe RUN dominates — drawing the canvas + WebGL scenes + offline-audio rendering takes 60-200ms on mid-tier hardware. The 50ms server budget is rarely the bottleneck.</em><br/><br/>Server-side budget: 50ms. Encoder 8ms, ANN 3ms, network 10ms. Why might your end-to-end p99 still be 300ms?</>}
+        title="P17 — Cold-GPU first-paint adds 80-300ms to the WebGL probe; warm-cache sessions complete in &lt;20ms. How do you set the p99 budget?"
+        scenario={<><em>Discriminating insight: this latency profile is canvas/WebGL-FP-UNIQUE. The first WebGL draw on a fresh tab forces a driver-side shader-cache miss — vendor compilers (ANGLE/Mesa/Metal) compile the GLSL → SPIR-V/DXIL on demand, adding 80-300ms. Warm-cache sessions hit the compiled-shader cache and run in &lt;20ms. Hash FP doesn't render so it never pays this cost. The right p99 is set on cold-cache sessions, not the warm-cache median.</em><br/><br/>Your dashboard shows canvas/WebGL probe p50=18ms, p99=290ms. Trace shows the long tail is dominated by FIRST WebGL draw in fresh tabs. Pick the dominant explanation + the right p99 design.</>}
         options={[
-          {key:"a", text:"The ANN index is cold."},
-          {key:"b", text:"The CLIENT-SIDE probe run dominates. Rendering the canvas scene, running the offline AudioContext FFT, enumerating fonts and reading them back takes 60-200ms on mobile, sometimes &gt;1s on cold tabs. Server-side is fine; the latency lives in the browser. The fix is probe parallelization client-side and dropping the costliest probes when total time exceeds a budget.", correct:true},
+          {key:"a", text:"ANN index is cold; pre-warm the server-side index."},
+          {key:"b", text:"Cold-GPU shader-compilation latency. The first WebGL draw on a fresh tab triggers a driver-side shader-cache miss — the GPU vendor's GLSL→SPIR-V/DXIL compiler runs synchronously on the render thread, adding 80-300ms ONLY on cold-cache sessions. Warm sessions hit the cached compiled shader and run &lt;20ms. This is canvas/WebGL-FP-specific: hash FP doesn't render. Design: budget p99 on the COLD-cache cohort (rare-shader probes WILL miss the cache every time), pre-warm by issuing a cheap dummy WebGL draw early in page load so the costly probe shaders compile in parallel with the rest of the form rendering.", correct:true},
           {key:"c", text:"TLS handshake."},
-          {key:"d", text:"Encoder forward pass on the server."},
+          {key:"d", text:"AudioContext FFT dominates — drop it."},
         ]}
-        trap={<>(a)(c)(d) are sub-dominant.</>}
-        lens={<>Server budget is the easy part; client-side probe execution dominates and is the lever you actually pull.</>}
-        stretch={<>What probes can you drop with the least entropy loss?</>}
+        trap={<>(a) is server-side, the long tail is client-side render. (c) is dwarfed by shader compile. (d) audio FFT is ~10-15ms even cold; the shader compile is the dominant tail.</>}
+        lens={<>Cold-cache vs warm-cache is the canvas/WebGL-specific latency dichotomy. Rare-shader probes (Mandelbrot / SDF — the same ones that defeat anti-detect spoofs) ALWAYS miss the cache, so the p99 design has to assume cold every probe session.</>}
+        stretch={<>Why does pre-warming the shader cache via a dummy draw NOT defeat the anti-detect defense?</>}
       />
 
       {/* axis D2 — canvas hash IS the FP */}

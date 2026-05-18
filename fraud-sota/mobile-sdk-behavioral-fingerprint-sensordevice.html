@@ -1888,17 +1888,17 @@ flowchart TB
       <VIS.TrapProblem
         id="msbf-p24"
         difficulty="hard"
-        title="P24 — Block at cosine &lt; 0.85 vs cosine &lt; 0.92 — what does that decision swing?"
-        scenario={<><em>Discriminating insight: tighter threshold (0.92) cuts FPR (fewer good users falsely blocked) at the cost of higher FNR (more bots get through). The right point is the cost-ratio between FP and FN.</em><br/><br/>Pick the right framing for the threshold decision.</>}
+        title="P24 — Block before the stationary-baseline window converges (day 1-7), or wait until day 30? What's the cost-ratio implication unique to this FP?"
+        scenario={<><em>Discriminating insight: mobile SDK behavioral FP has a CALIBRATION WINDOW unique to this concept — the stationary-baseline sensor distribution (gyro DC bias mean+std, temp-drift slope, mic noise-floor PSD) converges to its silicon-true value only after 7-30 days of accumulated probe samples across temperatures and boot sessions. Cosine-vs-stored-baseline is unreliable inside that window. A canvas/WebGL FP has no such window — it's a single render. The cost-ratio decision is concept-specific: block-during-warm-up vs allow-until-day-30 has no parallel in stateless FPs.</em><br/><br/>A new install. Day-3 cosine = 0.84 (just under threshold). Day-30 cosine on the same device = 0.97. Pick the framing.</>}
         options={[
-          {key:"a", text:"0.92 is always better — higher confidence."},
-          {key:"b", text:"0.85 catches more bots but blocks more legitimate users; 0.92 lets some bots through but rarely blocks legit users. The right point is the cost ratio: at a bank where each fraud=$5k and each false-block=$10 of CX cost, 0.85 wins; at a free game where each fraud=$1 and false-block=$0.10 of lost retention, 0.92 wins. Tune per-product.", correct:true},
+          {key:"a", text:"Block at 0.85; that's the standard threshold."},
+          {key:"b", text:"The stationary-baseline window is the binding constraint here. Days 1-7: probe samples cover too few temperature/boot states for the per-device baseline std to converge; cosine is dominated by within-device noise, not silicon difference — block-during-warm-up FPR runs 3-5x the steady-state rate. Days 7-30: baseline tightens, cosine becomes a reliable identity test. Cost-ratio implication: a tight day-1 threshold costs you (good_user_false_block_rate x install_volume) for the warm-up period; a permissive day-1 threshold costs you (fraudster_install_rebate_per_install x ATO_per_day). For a $1/install rebate fraud this swings the right operating point HARD toward 'allow until baseline converges, gate downstream events instead'. Stateless FPs (canvas/WebGL) don't face this decision.", correct:true},
           {key:"c", text:"0.85 always — better recall."},
           {key:"d", text:"0.92 always — better precision."},
         ]}
-        trap={<>(a)(c)(d) ignore the cost ratio.</>}
-        lens={<>Operating point is a cost decision, not a model decision.</>}
-        stretch={<>How do you make this auto-tune online?</>}
+        trap={<>(a)(c)(d) ignore the warm-up window that defines this technique.</>}
+        lens={<>Stationary-baseline convergence creates a time-dependent operating point unique to multi-day passive-sensor FP. The cost-ratio math runs over the warm-up window, not a single decision.</>}
+        stretch={<>What downstream events (first cashout, first device-bound auth) are the right places to GATE inside the warm-up window instead of blocking install?</>}
       />
     </VIS.Section>
 

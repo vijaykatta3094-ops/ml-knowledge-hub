@@ -1662,17 +1662,17 @@ flowchart TB
       <VIS.TrapProblem
         id="genp-p11"
         difficulty="medium"
-        title="P11 — Fairness audit shows image channel FPR is 2x higher on Group A. Mitigation?"
-        scenario={<><em>Discriminating insight: image detectors trained on Western-face-dominated GAN datasets have higher FPR on under-represented ethnicities. Mitigate via training-data rebalancing or per-group thresholds.</em><br/><br/>Image-channel per-group audit: Group A FPR = 2x baseline. Fix.</>}
+        title="P11 — Text channel FPR is 3x higher on non-English narratives. Why is this LANGUAGE-OF-TRAINING-DATA bias and not a generic group-fairness issue?"
+        scenario={<><em>Discriminating insight: this is GenAI-persona-detector-UNIQUE bias from a specific source — the text channel's discriminating features (per-token surprisal flatness, lexical-diversity collapse, sentence-length uniformity) were calibrated on English LLM output (GPT-4 / Claude / Llama predominantly trained on English corpora). Non-English second-language writers produce grammatical patterns (over-uniform sentence length, restricted vocabulary, careful "textbook-grammar" phrasing) that match LLM-typical English-grammar overcorrection. The detector flags REAL non-native English writers as LLM-generated. The bias is stylistic-feature-bias rooted in WHICH language the training corpus came from — not a per-demographic feature artifact you can scrub.</em><br/><br/>Group A (non-native English speakers) gets 3x baseline FPR on the text channel. Pick the correct framing.</>}
         options={[
-          {key:"a", text:"Disable the image channel for Group A."},
-          {key:"b", text:"Rebalance training data with more Group A real-selfie negatives, OR use per-group thresholds where Group A's threshold is set higher (less aggressive), OR adversarial fairness training (Zafar et al.) that penalizes group-conditional FPR during training. Document the audit + mitigation for regulator review.", correct:true},
+          {key:"a", text:"Generic demographic-fairness issue — strip protected-class features."},
+          {key:"b", text:"Language-of-training-data bias. The text channel's shape features (surprisal flatness, TTR collapse, sentence-length uniformity) were calibrated against an English LLM-vs-English-human contrast. Non-native English writers exhibit textbook-grammar patterns — restricted vocabulary, more uniform sentence lengths, fewer idioms — that overlap with LLM-typical English. The detector is correctly identifying 'LLM-typical English style', but that style ALSO describes careful L2 writers. Stripping demographic features doesn't help; the feature IS the writing style. Mitigations specific to this root cause: (1) calibrate per writer's declared / detected first-language baseline of human L2 English (not English L1), (2) reduce text-channel weight for non-English-fluent applicants in the fusion head, (3) train channel-specific baselines on multilingual human corpora so the shape features are language-relative.", correct:true},
           {key:"c", text:"Ignore — fraud detection is exempt."},
           {key:"d", text:"Block all Group A applications."},
         ]}
-        trap={<>(a) creates per-group coverage gaps. (c)(d) are not acceptable.</>}
-        lens={<>Fairness audit + mitigation is part of the deployment, not optional.</>}
-        stretch={<>Which mitigation has the smallest performance cost?</>}
+        trap={<>(a) is the wrong root cause; the bias source is the training corpus's language, not protected-class features. (c)(d) not acceptable.</>}
+        lens={<>The bias source matters for the mitigation. Image channel's bias is Western-face training data; text channel's bias is English-corpus training data. Different mitigations per channel-source.</>}
+        stretch={<>What auxiliary signal (detected L1 from name+geography, or written-script features) gates the right per-applicant text-channel calibration?</>}
       />
 
       <VIS.TrapProblem

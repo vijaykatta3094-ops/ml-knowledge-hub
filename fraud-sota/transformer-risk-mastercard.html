@@ -1692,17 +1692,17 @@ flowchart TB
       <VIS.TrapProblem
         id="trk-p11"
         difficulty="medium"
-        title="P11 — Would an LSTM over the auth tape work just as well?"
-        scenario={<><em>Discriminating insight: LSTM can encode order but its inductive bias compresses through a fixed-size hidden state; auth-tape patterns are long-range (yesterday's gas station, today's CNP). Attention with causal mask preserves the explicit link.</em><br/><br/>Junior teammate proposes LSTM over the same token tape. Diagnose.</>}
+        title="P11 — LSTM on continuous-vector auth events vs transformer on TOKENIZED auth events. Which architectural choice forces the win, and why doesn't LSTM benefit from the same tokenization?"
+        scenario={<><em>Discriminating insight: the choice that determines the LSTM-vs-transformer outcome is TOKENIZATION, which is auth-tape-specific. Auth events tokenized as (BIN, merchant_id, MCC, geo_h3, time_delta_bucket, channel) tuples define a discrete vocabulary the transformer can build an embedding table over — and attention's softmax-over-keys is content-addressable lookup into that vocabulary. LSTM, by contrast, must compress all of (BIN, merchant_id, MCC, geo, time, channel, amount) into a continuous hidden state; tokenization doesn't help it because there's no key-value lookup mechanism — the hidden state averages tokens regardless of grain. The merchant_id-vs-MCC-vs-BIN choice controls how granular a vocabulary the transformer can exploit. Strip the tokenization argument and the LSTM-vs-transformer pitch collapses to a generic long-range-sequence argument.</em><br/><br/>Junior teammate: 'Both LSTM and transformer encode the auth-tape sequence — why prefer transformer?' Diagnose with the tokenization framing.</>}
         options={[
           {key:"a", text:"Equivalent — both encode sequence."},
-          {key:"b", text:"LSTM compresses history through a fixed-size hidden state; long-range auth patterns (the gas-station card-present 18 hours ago that anchors today's CNP risk) leak through compression. Transformer attention with causal mask keeps a direct, content-addressable link to that 18-hour-old token. For auth-tape fraud the relevant antecedents are often the OLDEST events in the window; LSTM degrades there. The win is empirical (3-5pt recall) and architectural.", correct:true},
+          {key:"b", text:"Tokenization is the lever, and only transformer exploits it. The auth-tape's discrete vocabulary — merchant_id (high-card, primary), MCC + BIN (coarse fallbacks) — defines an embedding table the transformer's attention indexes via content-addressable softmax: scoring a CNP-luxury-watch event can directly query 'was there a card-present gas-station event by THIS merchant_id 18 hours ago?'. LSTM compresses the same tokenized stream through a fixed-size hidden state — there is no content-addressable lookup; long-range tokens are averaged into the hidden state regardless of merchant_id granularity. As a result, finer tokenization (merchant_id over MCC) gives transformer monotonic recall gains while LSTM stays flat — the LSTM is bottlenecked by hidden-state compression, not by vocabulary. The 3-5pt empirical win comes specifically from the (tokenization x attention) interaction; without tokenization the transformer's edge collapses to the long-range argument that applies to any sequence task.", correct:true},
           {key:"c", text:"LSTM cannot handle categorical inputs."},
           {key:"d", text:"LSTM doesn't support GPU."},
         ]}
-        trap={<>(c)(d) are factually wrong.</>}
-        lens={<>RNN's compression vs attention's direct addressing — for long-range auth-tape signals attention wins.</>}
-        stretch={<>Why don't S4 / Mamba state-space models replace transformer here despite their long-range claims?</>}
+        trap={<>(a) ignores the tokenization lever specific to auth events. (c)(d) factually wrong.</>}
+        lens={<>The auth-tape transformer's win is (token vocabulary x attention lookup). LSTM never benefits from tokenization because its mechanism is hidden-state compression, not key-value addressing. Strip 'tokenization' and the pitch reduces to a generic long-range-sequence claim.</>}
+        stretch={<>If merchant_id were collapsed to MCC only, by how much would the transformer's edge over LSTM shrink, and why is that an empirically testable prediction of this framing?</>}
       />
 
       {/* A3 — counterfactual: no transformer */}

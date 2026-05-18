@@ -1737,17 +1737,17 @@ flowchart TB
       <VIS.TrapProblem
         id="sgnn-p15"
         difficulty="medium"
-        title="P15 — Privacy: regulator asks if SybilGNN flagging discriminates by zip code. Audit path."
-        scenario={<><em>Discriminating insight: shared-address is the most common ring edge AND co-varies with low-income zip codes. Audit for protected-class disparate impact; consider a fairness post-processing step.</em><br/><br/>Regulator asks for disparate-impact audit on ring flags by zip code. Approach.</>}
+        title="P15 — Does a small immigrant remittance corridor (8 cousins, shared address, 1 phone) generate the SAME modularity + triangle-closure signature as a fraud ring?"
+        scenario={<><em>Discriminating insight: the disparate-impact problem here is SybilGNN-UNIQUE because the bias does not come from node features — it comes from community-DETECTION bias. Legitimate tight community structures (immigrant remittance corridors, joint-family co-applicants, factory-worker bunkhouses) produce IDENTICAL high-triangle-closure + high-k-core + bipartite-shared-phone signatures to a fraud ring. A feature-bias audit (drop zip, drop ethnicity proxies) does NOT fix it because the signal lives in the EDGES. The audit must check whether community-structural signatures are stratified across legitimate-community types.</em><br/><br/>Regulator asks for disparate-impact audit. Pick the right audit framing.</>}
         options={[
-          {key:"a", text:"Skip — fraud detection is exempt."},
-          {key:"b", text:"Run a per-zip flag-rate audit: flag rate per zip / overall flag rate. High-density urban zips often have shared address (apartment buildings, multi-unit dwellings) and over-trigger the shared-address edge. If disparate impact appears, post-process: gate ring-flag decisions through a fairness layer that re-weights by population-density, or require human review for high-impact zips. Document the audit + mitigation for the regulator.", correct:true},
+          {key:"a", text:"Audit by stripping protected-class features — standard for fraud models."},
+          {key:"b", text:"Wrong frame — this is community-DETECTION bias, not feature bias. SybilGNN flags whole subgraphs using triangle-closure + k-core + shared-phone bipartite structure. A small immigrant remittance corridor (8 cousins, shared apartment address, 1 family phone for unbanked relatives) produces the SAME structural signature as an 8-node fraud ring. Stripping zip / ethnicity does nothing — the signal is in the edges. Right audit: enumerate known legitimate-community archetypes (remittance corridor, joint-family co-application, bunkhouse, refugee resettlement cluster), compute their structural signatures, measure SybilGNN's per-archetype flag rate. Mitigate via a legitimate-community discriminator head trained on labeled exemplars, NOT via feature removal.", correct:true},
           {key:"c", text:"Remove zip from features."},
           {key:"d", text:"Drop SybilGNN."},
         ]}
-        trap={<>(a) misreads ECOA. (c) doesn't fix it — zip leaks via address graph. (d) loses signal.</>}
-        lens={<>Fraud models are subject to disparate-impact rules. Audit + mitigate.</>}
-        stretch={<>What's the right reweighting target?</>}
+        trap={<>(a) is the wrong audit — community-structure bias is not feature bias. (c) doesn't fix it; zip leaks via the address-edge structure itself. (d) loses signal.</>}
+        lens={<>Community-detection models need community-level fairness audits, not feature-level. A legitimate-community discriminator on top of the ring-detector is the right architecture.</>}
+        stretch={<>What edge-pattern distinguishes a remittance corridor from a ring at the structural level (hint: the BENEFICIARY edges look different)?</>}
       />
 
       <VIS.TrapProblem
@@ -1800,18 +1800,18 @@ flowchart TB
 
       <VIS.TrapProblem
         id="sgnn-p19"
-        difficulty="medium"
-        title="P19 — Engineering: GNN training over 1B-node graph. How is it feasible?"
-        scenario={<><em>Discriminating insight: mini-batch via subgraph sampling (NeighborSampler / Cluster-GCN), not full-graph forward.</em><br/><br/>How do you train SybilGNN on a 1B-node graph?</>}
+        difficulty="hard"
+        title="P19 — K-hop NeighborSampler with uniform per-layer fanout reduces Sybil F1 by 15-25 points vs ring-aware sampling. Why is this concept-specific?"
+        scenario={<><em>Discriminating insight: this failure mode is Sybil-GNN-UNIQUE. A standard NeighborSampler picks K random neighbors per layer; for a node-classification task (toxicity, citation) this samples enough of the local distribution. For SybilGNN the discriminating signal is the WHOLE ring subgraph (all 8-12 nodes wired by triangle closure); uniform-random neighbor sampling at K=10 misses ring members with high probability, breaking the very structural signature the model needs. Generic citation-graph or product-graph node classifiers don't have this problem because their signal lives in node features + 1-2 neighbors, not a tight 8-12 node community.</em><br/><br/>You wire SybilGNN onto PyG's NeighborSampler (fanout 10/10/10). Validation F1 was 0.91 on full-batch; mini-batch drops to 0.73. Why specifically here?</>}
         options={[
-          {key:"a", text:"Full-graph forward on a 1TB-VRAM machine."},
-          {key:"b", text:"Mini-batch via subgraph sampling — NeighborSampler grabs random 2-hop neighborhoods per training subgraph; alternatively Cluster-GCN partitions the graph and trains per-cluster. Each step touches ~10K nodes; the encoder converges in a few epochs at typical sampling depth 2-3. Full-graph forward is infeasible at 1B and unnecessary at this depth.", correct:true},
-          {key:"c", text:"GraphSAINT only."},
-          {key:"d", text:"Train on a random 1% subset."},
+          {key:"a", text:"Mini-batching always loses a few points; expected."},
+          {key:"b", text:"K-hop uniform-random neighbor sampling drops ring members. SybilGNN's discriminating signal is the WHOLE ring subgraph — triangle closure and k-core depth are computed across all 8-12 ring nodes, and the community-attention pool needs to SEE most of them. Random fanout 10 over a node with 200 neighbors picks ~5% of true ring co-members per layer; by layer 3 the model only ever sees a fraction of any given ring. Generic node classifiers don't suffer this because their signal is per-node features + 1-hop avg, not a structural community pattern. Fix: ring-AWARE sampling — oversample neighbors that share scarce attribute edges (phone, address) with the seed, ensuring known/suspected ring co-members are kept in the batch. Cluster-GCN with ring-balanced partitioning achieves the same effect.", correct:true},
+          {key:"c", text:"Increase fanout to 50/50/50."},
+          {key:"d", text:"Drop subgraph sampling; use full-batch on a 1TB VRAM machine."},
         ]}
-        trap={<>(a) infeasible. (c) is one option but not the only. (d) loses rare-ring labels.</>}
-        lens={<>Subgraph sampling is the GNN-at-scale playbook. Cluster-GCN / NeighborSampler are the workhorses.</>}
-        stretch={<>How do you sample with ring-supervision balance?</>}
+        trap={<>(a) misses the structural reason. (c) helps marginally but doesn't fix the random-miss problem on tight rings. (d) doesn't scale to 1B nodes.</>}
+        lens={<>Sampling strategy must match WHERE the model's signal lives. For community-structural signals, sampling must preserve the community — uniform random doesn't.</>}
+        stretch={<>How would you bootstrap ring-aware sampling when you only have weak labels at training start?</>}
       />
 
       <VIS.TrapProblem
