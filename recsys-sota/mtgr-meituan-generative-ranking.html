@@ -1625,17 +1625,17 @@ flowchart TB
       <VIS.TrapProblem
         id="mtgr-b4"
         difficulty="hard"
-        title="B4 — Surface where MTGR is overkill"
-        scenario={<>Pick the surface where MTGR's autoregressive list decoder is dead weight.</>}
+        title="B4 — Which surface gives MTGR no marginal lift over HSTU?"
+        scenario={<>Four product surfaces. Pick the one where you'd expect MTGR to underperform HSTU on a per-FLOP basis.</>}
         options={[
-          {key:"a", text:"Mature ads platform with 50+ active cross-features and a 20-slot ad carousel — MTGR's crosses plus list decoding are both load-bearing on this surface."},
-          {key:"b", text:"Push-notification ranking that surfaces a single item per user per day — no list prefix to condition on, so autoregressive list decoding has nothing to model.", correct:true},
-          {key:"c", text:"Food-delivery home-feed with cuisine×region×time-of-day crosses and a 30-slot list — the canonical MTGR surface from the paper itself."},
-          {key:"d", text:"E-commerce category page with 30 product slots and rich product-attribute crosses — exactly MTGR's design target per the paper."},
+          {key:"a", text:"Mature ads platform with 50+ active cross-features and a 20-slot ad carousel; cross channel is rich and downstream reranker enforces ad-quota diversity after ranking."},
+          {key:"b", text:"Push-notification ranking that surfaces one item per user per day; rich crosses, but the displayed slate is a single slot drawn from a candidate pool of ~200 items.", correct:true},
+          {key:"c", text:"Food-delivery home-feed with cuisine×region×time-of-day crosses, a 30-slot list, and a strong intra-list redundancy penalty learned end-to-end."},
+          {key:"d", text:"E-commerce category page with 30 product slots, rich product-attribute crosses, and a position-bias correction layer trained jointly with the ranker."},
         ]}
-        trap={<>(a), (c), (d) are MTGR's sweet spots. The trap is to pick a generic 'simple' surface; the right answer points at the missing list-prefix.</>}
-        lens={<>MTGR's value is intra-list autoregression + cross recovery. Remove the list (single-slot) and the autoregressive half is dead weight even if you still have crosses.</>}
-        stretch={<>At what list length does autoregressive decoding start to earn back its serving cost?</>}
+        trap={<>(a) has rich crosses and a multi-slot list. (c) and (d) have multi-slot lists with intra-list dependencies MTGR's prefix-conditioning captures. (b) strips the list dimension to one slot — the prefix MTGR conditions on is empty.</>}
+        lens={<>MTGR's marginal lift over HSTU comes from conditioning each emitted item on the already-emitted prefix. When the displayed slate is one slot, the prefix is empty and MTGR reduces to pointwise scoring, paying decoder cost for HSTU-class quality.</>}
+        stretch={<>At what list length does conditioning on the emitted prefix start to earn back its serving cost?</>}
       />
 
       <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
