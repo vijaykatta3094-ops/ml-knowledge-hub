@@ -1521,16 +1521,16 @@ flowchart TB
       <VIS.TrapProblem
         id="onerec-a3"
         difficulty="hard"
-        title="A3 — The fallback cascade you'd build if OneRec didn't exist"
-        scenario={<>If OneRec didn't exist, you'd build a cascade. Pick the most accurate description of what it'd cost.</>}
+        title="A3 — The recurring production cost OneRec actually eliminates"
+        scenario={<>If you ran the standard pre-OneRec baseline (retrieval → coarse rank → fine rank, each a separate model), one recurring production cost dominates the headline savings. Pick it.</>}
         options={[
-          {key:"a", text:"One unified DLRM does retrieval, coarse, and fine ranking in a single forward pass; cost is comparable to OneRec by construction."},
-          {key:"b", text:"A two-tower retriever feeding a single DLRM ranker; only two deploys, two monitors, and one calibration pipeline are needed."},
-          {key:"c", text:"Three models (retrieval, coarse rank, fine rank), each with its own deploy, monitoring, on-call rotation; cross-stage debugging traces requests through all three.", correct:true},
-          {key:"d", text:"One transformer that ranks an offline-precomputed candidate pool; retrieval is dropped because the pool is fixed every hour."},
+          {key:"a", text:"Index-sync drift — retrieval's ANN index and ranking's item embeddings are trained on different snapshots; drift forces a nightly re-sync pipeline that OneRec eliminates by sharing the Semantic-ID space.", correct:true},
+          {key:"b", text:"Offline staleness — each stage's training data lags production by ~24h, but the lag is identical to OneRec's reward-model refresh cycle so net cost is unchanged."},
+          {key:"c", text:"GPU memory pressure — three transformer-based stages compete for HBM on the same serving host; OneRec uses one transformer but with the same combined memory footprint."},
+          {key:"d", text:"Monitoring fanout — three stages need three dashboards, three SLOs, three pagers; OneRec still needs all three plus a generation-quality dashboard, so this cost rises rather than falls."},
         ]}
-        trap={<>(a) and (b) under-count stages; (d) drops retrieval, which the production cascade still has.</>}
-        lens={<>The cascade is real architecture in every large-scale recsys. OneRec's headline 10.6% cost is measured against this specific 3-stage cascade.</>}
+        trap={<>(b) claims offline staleness is unchanged — it actually compounds across stages; (c) memory is roughly the same magnitude; (d) inverts the monitoring direction — OneRec reduces dashboards, not adds.</>}
+        lens={<>Index-sync drift is the specific recurring cost the unified Semantic-ID space eliminates. The 3-stage baseline has 3 separately-trained item representations; reconciling them is a continuous operational tax that OneRec removes by construction.</>}
         stretch={<>What does the cascade still do better than OneRec?</>}
       />
 
@@ -1608,16 +1608,16 @@ flowchart TB
       <VIS.TrapProblem
         id="onerec-b3"
         difficulty="medium"
-        title="B3 — One-line pitch to a VP that requires knowing OneRec's actual unlock"
-        scenario={<>VP asks: "Why OneRec over the cascade we already run?" Pick the pitch that lands only when the VP understands OneRec's specific mechanism — one that would also fit a generic end-to-end ranker is too weak.</>}
+        title="B3 — One-line VP pitch — what's the actual unlock?"
+        scenario={<>VP asks: "Why OneRec over the cascade we already run?" Each candidate pitch below claims a specific mechanism. Pick the one that names OneRec's actual unlock.</>}
         options={[
-          {key:"a", text:"OneRec uses one large LLM to score every item end-to-end and replaces the ANN retrieval step entirely with that LLM's logits."},
-          {key:"b", text:"OneRec fine-tunes one shared encoder for both retrieve and rank but keeps two separate heads, so we eliminate twin-tower train/serve drift."},
-          {key:"c", text:"OneRec distills the rank model's logits into the retrieval scorer so retrieval no longer drifts from ranking — that's the cascade-killer."},
-          {key:"d", text:"A single backbone serves retrieve and rank via task-template prompts, so DPO over watch-time aligns one model to the business metric and no inter-stage proxy losses survive.", correct:true},
+          {key:"a", text:"It runs one large LLM that scores every item end-to-end; we drop the ANN retrieval index entirely and let the LLM's logits handle candidate selection in a single forward pass."},
+          {key:"b", text:"It trains one shared encoder for both retrieve and rank with two task heads; the shared encoder eliminates the twin-tower train/serve embedding drift that hits our calibration."},
+          {key:"c", text:"It distills the fine-ranker's logits into the retrieval scorer each night; retrieval stops drifting from ranking because the teacher signal keeps them in lock-step — that's the cascade-killer."},
+          {key:"d", text:"It generates the list autoregressively from one backbone and DPO-aligns that backbone to watch-time directly; no inter-stage proxy losses survive, so the metric we ship to users is the metric the model optimizes.", correct:true},
         ]}
-        trap={<>(a) is the "LLM-recsys" misread (OneRec still retrieves); (c) is the twin-tower shape; (c) is ScalingNote-style distillation; only (d) names the task-template + DPO mechanism.</>}
-        lens={<>The pitch must turn on the fact that OneRec's training objective is preference-aligned to the business metric (watch-time), not on size or end-to-end-ness.</>}
+        trap={<>(a) is the "LLM-recsys" misread — OneRec still uses Semantic-ID retrieval, just inside the decoder; (b) is the shared-encoder twin-tower shape, not OneRec; (c) is the ScalingNote distillation pattern, a different paper.</>}
+        lens={<>The unlock is preference-alignment to the business metric (watch-time) via DPO on one backbone — not size, not shared encoders, not distillation. The other three are real techniques from adjacent papers; only (d) is OneRec's actual mechanism.</>}
         stretch={<>If the VP says "we don't have logged watch-time preferences at session granularity" — what 30-day data prerequisite unlocks the DPO loop?</>}
       />
 
@@ -1714,17 +1714,17 @@ flowchart TB
       <VIS.TrapProblem
         id="onerec-c5"
         difficulty="hard"
-        title="C5 — What is 'lazy' about V2's Lazy Decoder-Only?"
-        scenario={<>V2's Lazy Decoder-Only design cuts compute 94%. What's "lazy" about it?</>}
+        title="C5 — Where V2's 94% compute cut actually comes from"
+        scenario={<>OneRec V2 cuts compute 94% versus V1 at matched quality. Each option below proposes a specific source of that saving. Pick the one V2 actually uses.</>}
         options={[
-          {key:"a", text:"The decoder cross-attends to user context only at the layers/steps where it helps; many decode steps reuse cached context summaries instead of recomputing.", correct:true},
-          {key:"b", text:"It uses roughly half the parameters of V1 — a smaller transformer trained on the same data hits the compute cut without architectural changes."},
-          {key:"c", text:"It runs in FP4 instead of BF16; the quantization gives the 94% reduction while keeping the dense cross-attention everywhere intact."},
-          {key:"d", text:"It updates user vectors only once per day instead of per request; the cross-attention itself is unchanged but called far less often."},
+          {key:"a", text:"The decoder cross-attends to user-context tokens only at a subset of layers and decode steps; the skipped steps reuse cached context summaries, so most decode positions never pay the full cross-attention cost.", correct:true},
+          {key:"b", text:"The decoder transformer is roughly half the parameter count of V1; a smaller backbone trained on the same data and same loss reaches V1's quality with proportionally less FLOPs per token."},
+          {key:"c", text:"The serving stack runs FP4 weight+activation quantization instead of V1's BF16; dense cross-attention is retained everywhere but each MAC costs ~16x less, accounting for the 94% reduction."},
+          {key:"d", text:"The encoder runs once per user per day and emits a compressed user vector; the decoder reads that vector instead of re-encoding raw history each request, so the encoder cost amortizes across the day."},
         ]}
-        trap={<>(b) is parameter-count, (c) quantization, (d) caching cadence — none is the on-demand cross-attention idea.</>}
-        lens={<>Lazy = on-demand cross-attention. Architectural change, not a quantization or sparsity trick. The 94% saving comes from skipping redundant cross-attention compute.</>}
-        stretch={<>What does Lazy Decoder give up vs full cross-attention?</>}
+        trap={<>(b) parameter shrink and (c) FP4 quantization are real industry compute cuts — but they're not what V2 published. (d) describes a serving-side caching choice (real, but separate from V1→V2 — and on its own doesn't reach 94%).</>}
+        lens={<>The headline cut is an architectural change inside the decoder: cross-attention runs on-demand at chosen layers/steps rather than densely. Quantization, model shrink, and offline encoding are all valid compute levers — but V2 specifically chose the on-demand cross-attention path.</>}
+        stretch={<>What does on-demand cross-attention give up vs full cross-attention?</>}
       />
 
       {/* C1b */}
