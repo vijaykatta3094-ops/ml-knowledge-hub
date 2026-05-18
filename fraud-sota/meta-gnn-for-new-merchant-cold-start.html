@@ -1733,17 +1733,17 @@ flowchart TB
       <VIS.TrapProblem
         id="mgnn-d1"
         difficulty="hard"
-        title="D1 — 'MAML always beats ProtoNet because it has more capacity'"
-        scenario={<>A junior says "MAML adapts parameters so it has strictly more capacity than ProtoNet — it should always win." Where does this intuition break?</>}
+        title="D1 — 'I can interpolate between MAML and a static model by setting inner-loop k=0'"
+        scenario={<>A junior says "the inner-loop step count k is just a knob — at k=0 MAML becomes a static pretrained GNN, at k=10 it's full MAML, so I can interpolate between them by tuning k." Where does this intuition break? <em>Discriminating insight:</em> probes inner-loop-LR sensitivity and the theta-vs-k contract, NOT the simpler-alternatives-match-MAML cluster.</>}
         options={[
-          {key:"a", text:"More capacity is paid for with training instability. MAML's bi-level optimisation requires Hessian-like terms (or FOMAML approximation), is sensitive to inner-loop k, suffers from NaN loss at scale, and is dataset-fragile. ProtoNet has none of these — its 'capacity' is the embedding space, which is shared across tasks. In practice ProtoNet wins on fraud-typology growth where the typology shifts in embedding space; MAML wins only when merchant-specific PARAMETER adaptation is needed. Capacity is not utility.", correct:true},
-          {key:"b", text:"MAML always wins because capacity wins."},
-          {key:"c", text:"ProtoNet has more capacity than MAML."},
-          {key:"d", text:"Capacity is irrelevant."},
+          {key:"a", text:"The meta-init theta was learned BY the outer loop to be a good starting point for k=k_train steps of inner-loop SGD. At k=0, theta is being applied without the adaptation it was trained to expect — it is NOT a good static classifier. Often theta is empirically WORSE than a vanilla pretrained GNN at k=0 because it was optimised to lie in a region where k inner steps lands well. There is no smooth interpolation: the theta-k pair is jointly fitted. Changing k at inference is an out-of-training-distribution decision.", correct:true},
+          {key:"b", text:"At k=0 MAML degenerates exactly to a frozen pretrained GNN with no loss in quality."},
+          {key:"c", text:"k=0 is forbidden by MAML's math — the bi-level optimisation requires at least one inner step."},
+          {key:"d", text:"The inner-loop learning rate is unrelated to k — only k matters."},
         ]}
-        trap={<>(b) is the naive belief.</>}
-        lens={<>For meta-learning, training stability is a first-class concern. ProtoNet often wins in practice despite lower nominal capacity.</>}
-        stretch={<>What is a benchmark task where MAML provably beats ProtoNet?</>}
+        trap={<>(b) is the naive linear-interpolation intuition. (c) is a math-formalism strawman. (d) misses that inner-LR and k jointly define the inner-loop trajectory length.</>}
+        lens={<>Meta-init theta is conditioned on the inner-loop trajectory (k AND inner-LR). Both are part of the trained model — change them at inference and you are using an OOD configuration of a model whose loss landscape was shaped around a specific trajectory.</>}
+        stretch={<>How would you measure the sensitivity of a meta-learned theta to inner-LR perturbation?</>}
       />
 
       <VIS.TrapProblem
@@ -1883,17 +1883,17 @@ flowchart TB
       <VIS.TrapProblem
         id="mgnn-f1"
         difficulty="hard"
-        title="F1 — Smallest input that breaks the Meta-GNN advantage"
-        scenario={<>Construct the smallest scenario where Meta-GNN is no better than vanilla fine-tune.</>}
+        title="F1 — Support-graph-size mismatch between meta-train and meta-test"
+        scenario={<>You meta-trained on tasks where each merchant's support sub-graph has roughly 200 transactions and 50 connected counter-parties (a typical small-merchant snapshot). At meta-test, a newly onboarded enterprise merchant arrives with 5,000 transactions and 800 counter-parties in its first day. Why does Meta-GNN underperform here specifically? <em>Discriminating insight:</em> the failure surface is support-graph-size mismatch between meta-train and meta-test tasks — not task-homogeneity (A5) and not adversarial support (F2).</>}
         options={[
-          {key:"a", text:"A single-vertical marketplace with merchants that all have identical fraud distribution shape (the merchants only differ in label volume, not pattern). On that surface, the outer loop learns a theta that is essentially the pooled-train init — no inner-loop adaptation is needed because all merchants are the same task. Vanilla fine-tune at K=10 is equally good. Meta-GNN's advantage is tied to task variance.", correct:true},
-          {key:"b", text:"At 1 merchant."},
-          {key:"c", text:"On any synthetic data."},
-          {key:"d", text:"On any small dataset."},
+          {key:"a", text:"The GNN encoder's message-passing receptive field, the inner-loop's k SGD steps, and the meta-init theta were all jointly tuned for ~200-node support graphs. On an 800-counter-party graph the multi-hop neighbourhood overflows the receptive field; the inner-loop gradient is averaged over ~25x more nodes per step and its effective step size in parameter space is qualitatively different. Theta lands in a region of weight space the outer loop never trained against, and adaptation underfits. Fix: stratify outer-loop sampling by support-graph-size buckets and train a theta per bucket, OR downsample the enterprise support graph to the meta-train range.", correct:true},
+          {key:"b", text:"Meta-GNN cannot handle large graphs at all — the encoder OOMs."},
+          {key:"c", text:"At one merchant the meta-learner has no variance to exploit."},
+          {key:"d", text:"Any synthetic dataset breaks the Meta-GNN advantage."},
         ]}
-        trap={<>(b), (c), (d) miss the variance argument.</>}
-        lens={<>Meta-GNN's edge requires task variance. Homogeneous surfaces collapse the advantage.</>}
-        stretch={<>What variance metric would you measure?</>}
+        trap={<>(b) is a throughput-not-quality framing; the model runs, just badly. (c) and (d) are the task-variance/homogeneity story from A5 — a different failure mode.</>}
+        lens={<>Meta-train task statistics implicitly define the OPERATING DOMAIN of the meta-init. Meta-test tasks outside that domain (in support-graph size, label balance, or schema) get poor adaptation even when the model itself is fine.</>}
+        stretch={<>What stratification axis would you add to outer-loop sampling to expand the operating domain?</>}
       />
 
       <VIS.TrapProblem
@@ -1947,18 +1947,18 @@ flowchart TB
       <VIS.TrapProblem
         id="mgnn-f5"
         difficulty="hard"
-        title="F5 — Community-found failure: Reptile matches MAML at less cost"
-        scenario={<>Recent follow-up work (Reptile, 2018; Meta-Curvature 2019) found which class of result for Meta-GNN?</>}
+        title="F5 — Community-found Meta-GNN failures beyond simpler-alternatives"
+        scenario={<>Beyond the simpler-alternative-wins finding (A2/A5/D1), what other Meta-GNN failure modes has the community documented? <em>Discriminating insight:</em> probes failure modes that are NOT "ProtoNet/Reptile match MAML" but instead test second-order compute trade-offs, meta-overfitting, and graph-edge-noise interaction at meta-train time.</>}
         multiSelect
         options={[
-          {key:"a", text:"Reptile (a simpler first-order meta-learner with no inner-loop Hessian) often matches MAML at much lower training cost.", correct:true},
-          {key:"b", text:"ProtoNet often matches MAML on tasks where task variance is well-clustered.", correct:true},
-          {key:"c", text:"Meta-Curvature improves on FOMAML at the cost of more memory.", correct:true},
-          {key:"d", text:"MAML is strictly better than every other meta-learner."},
+          {key:"a", text:"iMAML (implicit MAML, Rajeswaran et al. 2019) avoids storing the inner-loop computation graph by computing meta-gradients via implicit-function-theorem — memory drops dramatically but each meta-step is slower in wall-clock time. The right method depends on whether you are memory-bound or compute-bound during outer-loop training.", correct:true},
+          {key:"b", text:"Meta-overfit on the merchant-distribution train pool: if your meta-train merchant set is itself biased (over-represents one vertical), theta becomes vertical-specific and TR-MAML (task-robust MAML, Collins et al. 2020) or worst-case task-weighting outperforms vanilla MAML on the long-tail merchants.", correct:true},
+          {key:"c", text:"Graph-edge-noise contamination at meta-train time (mislabeled counter-party edges leak fraud signal into support graphs) produces a theta that adapts on noisy edge-features and degrades on clean meta-test graphs — the failure is invisible to outer-loop validation if validation uses the same noisy edges.", correct:true},
+          {key:"d", text:"MAML is strictly better than every other meta-learner regardless of compute regime."},
         ]}
-        trap={<>(d) is the wrong belief.</>}
-        lens={<>Community has found multiple lower-cost meta-learners that match MAML on practical tasks. Senior MLEs benchmark against these before committing to MAML.</>}
-        stretch={<>Rank Reptile, ProtoNet, Meta-Curvature by production-readiness.</>}
+        trap={<>(d) is the wrong belief that this question is gauging. The three correct options cover compute-trade-off (iMAML), distributional robustness (TR-MAML), and data-quality (edge-noise) — each is a distinct, non-overlapping community finding.</>}
+        lens={<>The community findings beyond "ProtoNet matches MAML" cluster into compute, robustness, and data quality. Each has a published variant (iMAML, TR-MAML, robust graph meta-learning) and a different fix.</>}
+        stretch={<>Which of (a)/(b)/(c) is hardest to detect from outer-loop validation alone?</>}
       />
 
     </VIS.Section>

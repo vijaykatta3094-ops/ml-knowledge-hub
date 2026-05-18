@@ -1585,12 +1585,12 @@ flowchart LR
         scenario={<>Scenario: crypto exchange onboarding, 80K KYC sessions/day, 1.2% are suspected morph attacks (real attack-rate confirmed by post-fraud investigation), morph dataset (1M labeled pairs) available via vendor, p95 SLA 3 seconds, fairness audit required by regulator. Pick the next investment.</>}
         options={[
           {key:"a", text:"Train cross-modal contrastive on the vendor morph dataset PLUS your own positives, calibrate per ID-document-type, and stratify a fairness audit by skin-tone proxy. The 1.2% morph rate fully justifies the contrastive model; the 3s SLA absorbs the joint encoder; the fairness audit is the hard requirement that the contrastive model needs explicit attention to (it amplifies skin-tone bias relative to ArcFace).", correct:true},
-          {key:"b", text:"Just buy more rules."},
-          {key:"c", text:"Use a CAPTCHA."},
-          {key:"d", text:"Add SMS OTP — it's enough."},
+          {key:"b", text:"Buy a vendor MAD (Morph Attack Detector) and stack it with the existing ArcFace face-matcher; cheaper than training contrastive from scratch and ships in weeks instead of quarters. The vendor MAD handles morphs; ArcFace continues to handle identity match."},
+          {key:"c", text:"Keep ArcFace and bolt on a standalone passive-liveness model (single-image PAD). Fairness audit is easier when each model can be audited independently and the regulator's report has two well-known components rather than one fused joint embedding."},
+          {key:"d", text:"Crowdsource a morph dataset on Amazon Mechanical Turk and train a binary morph classifier as a doc-side filter; the doc-side filter is independent of the selfie-side and so does not entangle two modalities, simplifying compliance review."},
         ]}
-        trap={<>(b), (c), (d) miss the threat model.</>}
-        lens={<>The 1.2% morph rate combined with the regulatory fairness requirement points to contrastive + audit. Cheaper alternatives do not address morph attacks.</>}
+        trap={<>(b) is the CVPR-era "buy not build" position — defensible but loses the cross-modal signal (the MAD examines the doc face alone and cannot use selfie consistency as a tie-breaker on borderline morphs). (c) keeps ArcFace's known fairness profile but does not address that ArcFace itself answers the wrong question on morphs (see B3). (d) trains on a homogeneous-generator dataset and fails the negative-diversity test from B2.</>}
+        lens={<>The 1.2% morph rate combined with the regulatory fairness requirement points to contrastive + audit. The plausible alternatives each lose ONE necessary property (cross-modal signal, the right question, or generator diversity).</>}
         stretch={<>What part of the fairness audit must run weekly?</>}
       />
 
@@ -1764,16 +1764,16 @@ flowchart LR
         id="kyc-d3"
         difficulty="hard"
         title="D3 — Junior vs senior question on a 'win'"
-        scenario={<>Junior reports the contrastive model beats ArcFace by 12 percentage points TPR-at-fixed-FPR on the morph-attack test set. What is the senior question?</>}
+        scenario={<>Junior reports the contrastive model beats ArcFace by 12 percentage points TPR-at-fixed-FPR on the morph-attack test set, evaluated across passport, national-ID-card, and driver's-license documents pooled together. What is the senior question? <em>Discriminating insight:</em> probes the ID-template OCR-vs-face SPATIAL-channel imbalance — different ID types crop the face into different fractions of the image and thus into different ViT-patch counts, which the test pool hides.</>}
         options={[
-          {key:"a", text:"'On which morph-generator families was the test set sampled, and which generators in the wild are NOT represented in either training or test? Twelve points on the in-distribution morphs is consistent with the model overfitting the morph-generator signature, not learning generic morph-defense. We need a held-out-generator evaluation before claiming generalisation.'", correct:true},
-          {key:"b", text:"'Use bigger towers.'"},
-          {key:"c", text:"'Lower the temperature.'"},
-          {key:"d", text:"'Ship it.'"},
+          {key:"a", text:"'Was the test stratified by ID-document type? A passport's face crop is roughly 25% of the page; a driver's-license is closer to 8%; a national-ID is in between. The doc-tower's ViT sees the face at very different effective patch counts across these types — for licences, the face occupies fewer than 30 patches at 224x224 input. The 12-point win pooled across types is almost certainly carried by the passport subset; on driver's licences the model may LOSE to ArcFace. Need per-document-type breakdown before claiming a category win.'", correct:true},
+          {key:"b", text:"'Use bigger towers — 12 points is a small margin and a wider doc-tower would extend it.'"},
+          {key:"c", text:"'Lower the InfoNCE temperature — a colder softmax would make the 12-point margin more decision-stable.'"},
+          {key:"d", text:"'Ship it — 12 points TPR-at-fixed-FPR is well over the launch bar; per-segment analysis can be a post-launch follow-up.'"},
         ]}
-        trap={<>(b), (c), (d) miss the generator-generalisation question.</>}
-        lens={<>The senior question audits the generator family overlap between train and test. In-distribution morph wins overstate real-world robustness.</>}
-        stretch={<>What is the cheapest held-out-generator eval you could run?</>}
+        trap={<>(b) is plausible-sounding capacity advice but the win is already 12 points — capacity is not the bottleneck. (c) confuses calibration-of-confidence with the model's discrimination capacity (AUPRC/TPR-FPR is temperature-invariant). (d) is the canonical "skipping segment audits before launch" failure pattern.</>}
+        lens={<>The senior question audits which document type is carrying the pooled win. Different ID templates allocate radically different image area to the face — the doc tower's effective resolution per type matters more than its parameter count.</>}
+        stretch={<>What is the minimum per-document-type sample size to detect a 5-point win-or-loss with 95% confidence?</>}
       />
 
       <VIS.TrapProblem
@@ -1913,17 +1913,17 @@ flowchart LR
       <VIS.TrapProblem
         id="kyc-f3"
         difficulty="hard"
-        title="F3 — Reverse engineering: symptom to design choice"
-        scenario={<>Symptom: model passes per-tone fairness audit at launch but per-tone FNR gap grows over 12 weeks from 1.2x to 4.5x. Which cross-modal contrastive design choice causes this?</>}
+        title="F3 — Reverse engineering: bimodal similarity scores"
+        scenario={<>Symptom: production cosine-similarity scores have collapsed into a bimodal histogram with peaks at 0.4 and 0.9 and almost nothing in between, when training-time scores were smoothly distributed across [0.2, 0.95]. Decision threshold at 0.5 is now extremely sensitive — small input changes flip many borderline cases. Which cross-modal contrastive design choice causes this? <em>Discriminating insight:</em> probes InfoNCE temperature mis-set, NOT a fairness or drift symptom — the bimodal shape is the tell-tale signature of an over-cold softmax during training.</>}
         options={[
-          {key:"a", text:"The training NEGATIVES distribution drifts (new morph generators in the wild that the model is not trained on). The bias amplification interacts with the drift: dark-skin selfies are MORE affected by new morph-generator artifacts because tone-conditional lighting interactions are still under-represented in the negative pool. Fix: monthly re-train with newly collected morphs AND tone-balanced negative sampling.", correct:true},
-          {key:"b", text:"The model is fine — audit was wrong."},
-          {key:"c", text:"GPU memory is full."},
-          {key:"d", text:"Batch size shrank."},
+          {key:"a", text:"InfoNCE temperature was set too low (e.g. tau=0.04 vs the typical 0.07-0.1). Cold softmax pushes positives' similarity to ~1 and negatives' similarity to ~0 during training; the encoder learns sharp embeddings with little intermediate mass. At inference borderline cases (legitimate-but-degraded selfies, low-quality docs) get pushed to one of the two attractors. Fix: re-train with a warmer temperature OR apply a post-hoc isotonic recalibration on a held-out set to re-spread the score distribution.", correct:true},
+          {key:"b", text:"GPU memory is full and is dropping the middle slice of negatives."},
+          {key:"c", text:"Batch size shrank, collapsing InfoNCE's effective negative count to zero."},
+          {key:"d", text:"The model overfit to morph-generator signatures."},
         ]}
-        trap={<>(b), (c), (d) miss the drift-meets-bias signature.</>}
-        lens={<>Fairness drift over time is the contrastive-KYC-specific signature of negative-distribution drift combined with under-represented tones. Audit alone is not enough; the negative pipeline needs ongoing tone-balancing.</>}
-        stretch={<>What is the right cadence for tone-balanced negative re-sampling?</>}
+        trap={<>(b) and (c) misattribute a score-distribution-shape signature to throughput causes. (d) is the F2/F5c overfitting story — overfitting moves the operating point, not the histogram shape.</>}
+        lens={<>The histogram SHAPE is the diagnostic. Bimodality with empty middle ⇒ temperature was too cold. Drift moves the location of peaks; overfitting moves the gap between positive and negative peaks; only temperature controls the modal-vs-spread shape.</>}
+        stretch={<>How would you check temperature in a deployed black-box model from outputs alone?</>}
       />
 
       <VIS.TrapProblem
@@ -1945,18 +1945,18 @@ flowchart LR
       <VIS.TrapProblem
         id="kyc-f5"
         difficulty="hard"
-        title="F5 — Community-found failure: deepfake video selfies"
-        scenario={<>Recent follow-up work (2025-2026) exposed which class of failure for cross-modal contrastive KYC?</>}
+        title="F5 — Community-found failure modes (2025-2026)"
+        scenario={<>Recent follow-up work (2025-2026) exposed which class of failure for cross-modal contrastive KYC? <em>Discriminating insight:</em> three NEW community findings that are NOT bias amplification (D2/E1/F3) and NOT surrogate-transfer morphs (F2) — probes orthogonal attack surfaces and physical-world failure modes.</>}
         multiSelect
         options={[
-          {key:"a", text:"Deepfake video selfies (real-time face-swap on a victim's video) bypass single-frame contrastive models — the model never sees temporal artifacts.", correct:true},
-          {key:"b", text:"Bias amplification under augmentation-tone interaction — measured in independent audits.", correct:true},
-          {key:"c", text:"Surrogate-transfer morph attacks succeed at non-trivial rates against closed deployed models.", correct:true},
-          {key:"d", text:"Contrastive models cannot run inference."},
+          {key:"a", text:"Deepfake video selfies (real-time face-swap on a victim's video stream) bypass single-frame contrastive models because the model never sees temporal artifacts; the swapped frame is consistent with the doc face at frame-level, and only inter-frame jitter exposes the swap.", correct:true},
+          {key:"b", text:"Physical 3D-printed silicone masks worn at the doc-photo capture step ('I'll re-photograph my passport so it matches') defeat the doc tower — the mask reproduces the live selfie face well enough to pass joint similarity, with the attack happening at enrollment rather than at verify time.", correct:true},
+          {key:"c", text:"Embedding collisions on partially-redacted document faces: jurisdictions where DOB or signature is privacy-masked before storage occlude pixels that the doc tower relied on for discrimination; multiple distinct identities now produce near-identical doc embeddings, breaking the one-positive-per-anchor InfoNCE assumption at production verify time.", correct:true},
+          {key:"d", text:"Contrastive models cannot run inference on consumer hardware (false — they run at sub-100ms on mid-tier mobile NPUs)."},
         ]}
-        trap={<>(d) is absurd.</>}
-        lens={<>Three community-found failures: deepfake video, bias amplification, surrogate transfer. Defenses: temporal liveness, tone-balanced negatives, adversarial training.</>}
-        stretch={<>Rank by which is most pressing in 2026.</>}
+        trap={<>(d) is empirically wrong — production deployments routinely run on-device. The three correct options each represent a different attack stage: real-time (a), enrollment-time (b), and post-processing/storage (c).</>}
+        lens={<>Three community-found failures spanning attack timing: real-time deepfake at verify, physical-mask at enrollment, redaction-induced collisions at storage. Defenses: temporal liveness for (a), enrollment-channel attestation for (b), redaction-aware embedding aggregation for (c).</>}
+        stretch={<>Which of (a)/(b)/(c) is hardest to detect post-hoc from logs alone?</>}
       />
 
     </VIS.Section>

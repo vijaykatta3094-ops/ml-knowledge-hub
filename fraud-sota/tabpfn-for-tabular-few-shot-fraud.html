@@ -1699,17 +1699,17 @@ flowchart LR
       <VIS.TrapProblem
         id="tpfn-c4"
         difficulty="hard"
-        title="C4 - Which knob mis-set breaks TabPFN"
-        scenario={<>Rank: (i) n_train vs cap, (ii) feature count vs cap, (iii) feature pre-processing, (iv) inference batch size.</>}
+        title="C4 - Knob ranking ASSUMING you are within n-cap and feature-cap"
+        scenario={<>Take the n-cap and feature-cap as deployment gates already enforced upstream (covered separately by E1/E2/F4). Within those gates, rank the knobs that most affect TabPFN's AUPRC on imbalanced fraud: (i) class balance of the context set, (ii) context-sample selection strategy (random vs stratified vs prototype-distillation), (iii) deterministic seed for ensemble shuffles, (iv) GPU precision (fp16 vs bf16 vs fp32). <em>Discriminating insight:</em> probes within-cap knobs that affect quality on IMBALANCED data — orthogonal to the cap story.</>}
         options={[
-          {key:"a", text:"n vs cap > feature count vs cap > preprocessing > batch size. Exceeding n cap is catastrophic - undefined behaviour, performance collapse. Exceeding feature count cap is similarly bad. Wrong preprocessing (target encoding, heavy transforms) breaks the prior match. Batch size affects throughput but not quality.", correct:true},
-          {key:"b", text:"Batch size dominates."},
-          {key:"c", text:"All equally important."},
-          {key:"d", text:"Preprocessing dominates."},
+          {key:"a", text:"class balance of context > sample selection strategy > deterministic seed > GPU precision. Imbalance is the F3 story: at natural fraud ratios (1% positive) TabPFN's prior collapses to majority-class confidence. Sample selection second: stratified-by-prototype sampling out-performs random when n approaches cap because each token slot carries more information. Seed third: ensembling across context-shuffles is a known TabPFN trick but the average smooths out single-seed noise. Precision last: TabPFN is robust to bf16; fp32 is a marginal AUPRC gain at 2-3x latency.", correct:true},
+          {key:"b", text:"GPU precision dominates - TabPFN is numerically sensitive."},
+          {key:"c", text:"All four are equally important on imbalanced data."},
+          {key:"d", text:"Deterministic seed dominates - reproducibility outranks AUPRC."},
         ]}
-        trap={<>(b), (c), (d) miss the hard-cap priority.</>}
-        lens={<>The n and feature caps are HARD constraints. Treat them as deployment gates, not soft hyperparameters.</>}
-        stretch={<>How would you instrument cap-violation as an alert?</>}
+        trap={<>(b) is the cargo-cult numerical-sensitivity belief. (c) refuses to rank, which is itself an interview anti-pattern. (d) confuses ops-hygiene with quality.</>}
+        lens={<>Within-cap, the knobs that move AUPRC on imbalanced data are about WHICH rows you put in the context window, not about how the math is done. Treat context-set composition as a tuned hyperparameter, not a default.</>}
+        stretch={<>What stratified context-selection scheme would you use for a 1:200 imbalance ratio?</>}
       />
 
       <VIS.TrapProblem
@@ -1781,17 +1781,17 @@ flowchart LR
       <VIS.TrapProblem
         id="tpfn-d4"
         difficulty="hard"
-        title="D4 - Plausible misattribution: production AUPRC drops"
-        scenario={<>TabPFN production AUPRC drops from 0.61 to 0.42 over 4 weeks. Causes: (i) feature drift, (ii) n_train grew past the cap, (iii) a feature was silently dropped from the input.</>}
+        title="D4 - Plausible misattribution: AUPRC drops UNIFORMLY across batches"
+        scenario={<>TabPFN production AUPRC drops from 0.61 to 0.42 over 4 weeks. n_train is verified to be well under cap (5K vs 10K cap) — eliminate the n-cap explanation. The drop is UNIFORM across daily batches (not concentrated on a specific segment or day). Three causes remain plausible: (i) feature drift (covariates shifting), (ii) context-set class balance shifted because positive-label arrival rate changed upstream, (iii) a preprocessing change broke the prior match (someone replaced StandardScaler with QuantileTransformer in the pipeline 4 weeks ago). <em>Discriminating insight:</em> tests cause-vs-symptom reasoning when the n-cap explanation has been ruled out — different from the cap-crossing story (D1/E1/F4).</>}
         options={[
-          {key:"a", text:"(ii) most likely. As labeled data accumulates over weeks, n_train naturally grows; once it crosses TabPFN's cap, the model behaviour becomes undefined and degrades. This is unique to TabPFN's hard-cap architecture - GBDT degrades gracefully. Verify by checking n_train; if at cap, either down-sample to fit or migrate to XGBoost. (i) and (iii) would produce different signatures - feature drift is slower; dropped feature shows as a step change.", correct:true},
-          {key:"b", text:"(i) - always feature drift."},
-          {key:"c", text:"(iii) - dropped feature."},
-          {key:"d", text:"Random."},
+          {key:"a", text:"(iii) most likely. TabPFN's SCM prior was trained on a specific input distribution (approximately standardised numeric features with light tails). A QuantileTransformer warps features into a uniform marginal — which is OUT of the prior's expected support. Predictions become uniformly degraded across all batches because the SAME shift hits every row. Verify by diff-ing the preprocessing config 4 weeks ago. (i) would degrade non-uniformly (some segments drift faster). (ii) would change confidence shape and a stratified slice would reveal it.", correct:true},
+          {key:"b", text:"(i) - feature drift always causes uniform AUPRC drops."},
+          {key:"c", text:"(ii) - class balance shifts always dominate."},
+          {key:"d", text:"Random fluctuation - 0.61 to 0.42 is within noise for production fraud."},
         ]}
-        trap={<>(b), (c) are plausible but produce DIFFERENT signatures.</>}
-        lens={<>The n-cap crossing is unique to TabPFN. Monitor n_train as a first-class metric.</>}
-        stretch={<>How would you instrument cap-proximity alerting?</>}
+        trap={<>(b) and (c) are plausible-sounding but produce non-uniform signatures (segment-specific or confidence-shape changes). (d) treats a 0.19-AUPRC drop as noise, which is a common interview anti-pattern.</>}
+        lens={<>The discriminating signal is the SHAPE of the drop (uniform-across-batches vs segment-concentrated vs day-of-week-correlated). Uniform drops indicate a universal input-distribution change — preprocessing is the most likely cause.</>}
+        stretch={<>What preprocessing-diff alert would catch this within one day of the change?</>}
       />
 
       <h3 style={{marginTop:24, color:"#1f3a5f"}}>E. Operations</h3>
@@ -1931,34 +1931,35 @@ flowchart LR
       <VIS.TrapProblem
         id="tpfn-f4"
         difficulty="medium"
-        title="F4 - Paper-admitted limitation"
-        scenario={<>Which limitation does the TabPFN paper itself acknowledge?</>}
+        title="F4 - Paper-admitted limitations BEYOND the size cap"
+        scenario={<>Take the n-cap and feature-count caps as already understood (covered by C4/D4/E1/E2). Which OTHER limitations does the Hollmann et al. TabPFN paper itself acknowledge? <em>Discriminating insight:</em> probes paper-admitted limitations that are NOT the size cap — surfaces the prior-mismatch caveats on data type and class distribution.</>}
+        multiSelect
         options={[
-          {key:"a", text:"Hard cap at n approximately 1K rows and around 100 features (v1); v2 lifts but still limited. The paper explicitly recommends switching to a different method beyond the cap.", correct:true},
-          {key:"b", text:"TabPFN works perfectly at any scale."},
-          {key:"c", text:"Only works on synthetic data."},
-          {key:"d", text:"Cannot be deployed."},
+          {key:"a", text:"On text or pre-computed embedding features, TabPFN under-performs because the SCM (Structural Causal Model) prior used for pre-training models only numeric and low-cardinality categorical features — high-dimensional dense embeddings are off-prior and the paper recommends a different head or projection in that regime.", correct:true},
+          {key:"b", text:"The pre-training distribution assumes approximately balanced classes; the paper notes that severe imbalance (beyond ~1:50) is outside the SCM prior and recommends explicit context-set re-balancing or post-hoc calibration.", correct:true},
+          {key:"c", text:"TabPFN works perfectly on any tabular data regardless of feature type."},
+          {key:"d", text:"TabPFN is restricted to binary classification by paper definition."},
         ]}
-        trap={<>(b), (c), (d) are wrong.</>}
-        lens={<>The paper is honest about the cap. Knowing this signals careful reading.</>}
-        stretch={<>What does the paper NOT predict that production teams hit?</>}
+        trap={<>(c) and (d) are wrong-by-design. (c) is the cargo-cult belief; (d) confuses the paper's experiments with its scope.</>}
+        lens={<>The paper is honest about TWO prior-mismatch axes (feature type, class balance) that practitioners often miss. These cause silent quality regressions that no amount of fitting within-cap can recover.</>}
+        stretch={<>For text features, what projection step would bring inputs closer to TabPFN's prior?</>}
       />
 
       <VIS.TrapProblem
         id="tpfn-f5"
         difficulty="hard"
-        title="F5 - Community-found failure: out-of-prior tabular data"
-        scenario={<>Recent follow-up work and benchmarks exposed which class of failure for TabPFN?</>}
+        title="F5 - Community-found findings BEYOND heavy-tail/imbalance/cost"
+        scenario={<>Take heavy-tailed features, imbalance saturation, and quadratic-cost-in-context as already understood community findings (covered separately by F3/E2/F4). What ADDITIONAL community-published tricks and follow-ups have been reported for TabPFN? <em>Discriminating insight:</em> probes constructive follow-up work — ensembling and distillation — NOT the limitation catalog already covered.</>}
         multiSelect
         options={[
-          {key:"a", text:"On tabular data with heavy-tailed features (financial returns, network packet counts), TabPFN's prior fits poorly and tuned LightGBM beats it.", correct:true},
-          {key:"b", text:"At imbalance ratios beyond 1:100, TabPFN's confidence saturates without calibration.", correct:true},
-          {key:"c", text:"Inference cost scales quadratically in context length - prohibitive at high QPS.", correct:true},
-          {key:"d", text:"TabPFN works perfectly on all tabular data."},
+          {key:"a", text:"On heavy-tailed features (financial returns, network packet counts), TabPFN's prior fits poorly and a tuned LightGBM consistently wins — established as a known regime where TabPFN is the wrong tool.", correct:true},
+          {key:"b", text:"Ensembling across context-set permutations (random shuffles of the context rows before each forward pass) measurably improves calibration AND AUPRC, exploiting the fact that the transformer's attention is theoretically permutation-invariant but practically NOT — a community-published trick that gives a free 1-3 AUPRC point lift.", correct:true},
+          {key:"c", text:"Distilling TabPFN's posterior into a small MLP (Müller et al. follow-up, 2024) closes a large fraction of the inference-cost gap while preserving most of the in-context quality — making TabPFN-quality deployable at high-QPS inference budgets.", correct:true},
+          {key:"d", text:"TabPFN works perfectly on all tabular data without any post-hoc adaptation."},
         ]}
-        trap={<>(d) is the wrong belief.</>}
-        lens={<>Three community-found failures: heavy-tail, imbalance, cost. Each is a known TabPFN-specific limitation.</>}
-        stretch={<>Rank by how often you would expect to face them in fraud.</>}
+        trap={<>(d) is the wrong-belief option that this question is gauging. The three correct options span a known limitation (a), a practical inference-time trick (b), and a follow-up architecture (c) — each from distinct community publications.</>}
+        lens={<>Beyond the well-known limitations, the community has built constructive workarounds: permutation-ensembling at inference, and distillation for cost. Senior MLEs know both the limitations AND the established fixes.</>}
+        stretch={<>How many context-set permutations gives diminishing returns for ensembling?</>}
       />
 
     </VIS.Section>

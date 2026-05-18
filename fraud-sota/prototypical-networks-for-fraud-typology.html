@@ -1711,17 +1711,17 @@ flowchart LR
       <VIS.TrapProblem
         id="proto-c5"
         difficulty="medium"
-        title="C5 - Data-assumption violation: bi-modal MO"
-        scenario={<>A new MO is bi-modal in feature space (two sub-variants with different signatures). What specifically happens with ProtoNet?</>}
+        title="C5 - Data-assumption violation: support-set-size sensitivity"
+        scenario={<>You trained ProtoNet with episodic K=5 (five support examples per class per episode). At deployment, some MOs have exactly 5 labeled supports, others have 20, others have 3. The team is debating whether to pass all available supports per MO or down-sample to K=5 uniformly. What specifically happens? <em>Discriminating insight:</em> probes the K-train vs K-test distribution match, NOT the uni-modal assumption (covered by F4) and NOT contamination (covered by D4).</>}
         options={[
-          {key:"a", text:"The MEAN of the two sub-variant clusters lands BETWEEN them - in a region that may have no real examples. Both sub-variants are FAR from the prototype; recall on this MO collapses. Fix: split the bi-modal MO into two sub-prototypes manually OR use a Gaussian-mixture or attention-weighted prototype (research-level). ProtoNet's single-centroid assumption requires uni-modal class structure.", correct:true},
-          {key:"b", text:"Performance is unchanged."},
-          {key:"c", text:"ProtoNet auto-splits the MO."},
-          {key:"d", text:"Bi-modal MOs are impossible."},
+          {key:"a", text:"The encoder phi learned embeddings whose mean of K=5 examples is class-discriminative — the variance of that mean is implicitly baked into the training distance scale. Passing K=20 produces a tighter mean (lower variance); the softmax-over-distances then over-confidence-shifts toward that MO. Passing K=3 produces a noisier mean and under-confidence. Mixing K across MOs in the SAME inference pass biases scores toward the high-K MOs even when distances are otherwise equivalent. Fix: down-sample to a fixed K matching training, OR re-train ProtoNet with variable-K episodes (variable-K-aware ProtoNet variant).", correct:true},
+          {key:"b", text:"Performance is unchanged - K is a deployment knob with no statistical effect."},
+          {key:"c", text:"ProtoNet automatically normalises across different K values per MO."},
+          {key:"d", text:"Different K values per MO are forbidden by the ProtoNet specification."},
         ]}
-        trap={<>(b), (c), (d) miss the uni-modal assumption.</>}
-        lens={<>ProtoNet assumes uni-modal class structure. Bi-modal MOs break the prototype-as-representative property.</>}
-        stretch={<>How would you detect bi-modal MOs automatically?</>}
+        trap={<>(b), (c), (d) miss the variance-of-the-mean and the K-train-vs-test contract.</>}
+        lens={<>K is a property of the training regime, not just a knob. Mixing K across MOs at inference silently biases the softmax-over-distances toward MOs with tighter prototypes — a subtle scoring artifact that looks like a real signal.</>}
+        stretch={<>What scoring correction would compensate for mixed-K at inference without re-training?</>}
       />
 
       <h3 style={{marginTop:24, color:"#1f3a5f"}}>D. Intuition traps</h3>
@@ -1795,17 +1795,17 @@ flowchart LR
       <VIS.TrapProblem
         id="proto-e1"
         difficulty="hard"
-        title="E1 - ProtoNet-specific gotcha"
-        scenario={<>Pick the gotcha most specific to ProtoNet (would not bite softmax or MAML):</>}
+        title="E1 - ProtoNet-specific gotcha: distance-scale drift under encoder fine-tune"
+        scenario={<>Pick the gotcha most specific to ProtoNet (would not bite softmax or MAML). <em>Discriminating insight:</em> probes the interaction of softmax-over-distances with a FIXED temperature when the encoder's distance scale drifts — orthogonal to contamination (D4), poisoning (F2), and the uni-modal limit (F4).</>}
         options={[
-          {key:"a", text:"Prototype contamination - one mislabeled positive in the K=10 support shifts the centroid measurably; downstream precision on that MO drops without any model retraining. Mitigation: audit support labels before adding to bank; maintain a 'gold' fixed K=10 vs a 'live' EMA-updated prototype for safety.", correct:true},
-          {key:"b", text:"Slow training."},
-          {key:"c", text:"OOM."},
-          {key:"d", text:"GPU memory."},
+          {key:"a", text:"Distance-scale drift under fine-tune: when the encoder phi is fine-tuned (even with frozen prototypes), absolute Euclidean distances change uniformly across all classes but the softmax temperature stays at its training value. Confidences shift even though RANKINGS may be preserved — i.e. AUC is unchanged but calibration silently degrades, breaking any downstream threshold-based action. Mitigation: re-fit softmax temperature on a holdout after every encoder update; treat the temperature as part of the encoder version.", correct:true},
+          {key:"b", text:"Slow training (this is a transformer-wide concern, not ProtoNet-specific)."},
+          {key:"c", text:"OOM during encoder forward pass (generic GPU concern)."},
+          {key:"d", text:"GPU memory pressure (generic to all neural classifiers)."},
         ]}
-        trap={<>(b), (c), (d) are generic.</>}
-        lens={<>Centroid contamination is unique to centroid-based classifiers. Discriminative models average over thousands of examples and absorb single mislabels.</>}
-        stretch={<>How do you flag a suspicious recent label addition automatically?</>}
+        trap={<>(b), (c), (d) are generic neural-network concerns. The correct option is specifically about the fixed-temperature/variable-distance interaction that ProtoNet inherits from its softmax-over-distances design.</>}
+        lens={<>Softmax temperature in ProtoNet is implicitly fitted to the distance scale of phi at the moment of training. Any subsequent change to phi (fine-tune, distillation, quantisation) without re-fitting temperature silently breaks calibrated downstream thresholds even when discrimination is fine.</>}
+        stretch={<>How would you instrument a daily temperature-fit-drift signal?</>}
       />
 
       <VIS.TrapProblem
@@ -1895,17 +1895,17 @@ flowchart LR
       <VIS.TrapProblem
         id="proto-f2"
         difficulty="hard"
-        title="F2 - Adversarial attack on the prototype"
-        scenario={<>Design an attack on ProtoNet specifically.</>}
+        title="F2 - Adversarial attack: embedding-space equidistant evasion"
+        scenario={<>Design an attack on ProtoNet specifically — assuming you cannot influence the support set (the contamination/poisoning surface is locked down per E1). <em>Discriminating insight:</em> probes a white-box evasion that exploits softmax-over-distances AMBIGUITY at the decision boundary between two prototypes — structurally different from contamination/poisoning attacks (D4, E1).</>}
         options={[
-          {key:"a", text:"Prototype poisoning: an adversary identifies the K labeled examples used to seed a prototype (often by social engineering of investigators, or by submitting transactions that get manually labeled), then submits FRAUD transactions that are CLOSE to those K examples in the embedding space. The fraud transactions get classified as the same MO (correct prediction) but with very high confidence and high probability - the prototype gets pulled toward the adversary's preferred region if EMA-updated. Defense: control which labels enter the prototype bank; cryptographically log the curator; do not auto-EMA prototypes from unverified positives.", correct:true},
-          {key:"b", text:"No attack possible."},
-          {key:"c", text:"Higher resolution."},
-          {key:"d", text:"Bigger encoder."},
+          {key:"a", text:"Embedding-space evasion in white-box encoder setting: the adversary computes the encoder phi's gradients and crafts a transaction whose embedding lands EQUIDISTANT between two prototypes P_low_action (low investigator scrutiny) and P_high_action (high scrutiny). The softmax-over-distances is maximally ambiguous; under round-to-most-confident routing, half the time the transaction is routed to the low-action queue. The adversary needs ONLY the encoder (open source or stolen) and the public prototype set, NOT the support labels. Defense: ensemble distance over multiple encoders OR use a reject-option when top-2 softmax difference is below a threshold (rather than picking argmax).", correct:true},
+          {key:"b", text:"No attack possible against a centroid-based classifier."},
+          {key:"c", text:"Submit at higher input resolution to bypass embedding."},
+          {key:"d", text:"Use a bigger model in production — the larger encoder absorbs the attack."},
         ]}
-        trap={<>(b), (c), (d) miss the poisoning surface.</>}
-        lens={<>Prototype poisoning is the centroid-classifier-specific attack. Defense: tight curation + audit log.</>}
-        stretch={<>What logging cadence catches a slow poisoning attack?</>}
+        trap={<>(b), (c), (d) miss the boundary-ambiguity attack surface. (d) is the cargo-cult "bigger model fixes everything" belief — capacity does not address an attack that exploits the decision rule itself.</>}
+        lens={<>Even when you fully control the support set, softmax-over-distances has an exploitable ambiguity at inter-prototype boundaries. The defense is at the decision rule (reject-option, ensemble disagreement), not at the model.</>}
+        stretch={<>What reject-option threshold balances coverage and adversarial robustness?</>}
       />
 
       <VIS.TrapProblem
@@ -1927,17 +1927,18 @@ flowchart LR
       <VIS.TrapProblem
         id="proto-f4"
         difficulty="medium"
-        title="F4 - Paper-admitted limitation"
-        scenario={<>Which limitation does the original Snell et al. ProtoNet paper acknowledge?</>}
+        title="F4 - Paper-admitted limitation: N-way scaling and metric choice"
+        scenario={<>Which limitations does the original Snell et al. ProtoNet paper itself acknowledge? <em>Discriminating insight:</em> probes paper-admitted limitations OTHER than the uni-modal/single-centroid assumption (covered separately by C5/E1), surfacing the less-cited N-way and Euclidean caveats.</>}
+        multiSelect
         options={[
-          {key:"a", text:"Single-centroid representation assumes uni-modal class structure; multi-modal classes are not well represented and the paper suggests Gaussian-mixture extensions for future work.", correct:true},
-          {key:"b", text:"ProtoNet works perfectly at any scale."},
-          {key:"c", text:"Only works for binary classification."},
-          {key:"d", text:"Cannot be deployed."},
+          {key:"a", text:"Performance degrades as N (number of classes per episode) at inference grows beyond the N used during episodic training; the paper specifically reports that training with higher N (20-way episodes) produces better generalisation to test-time N than training with lower N — i.e. N is part of the training contract, not an inference knob.", correct:true},
+          {key:"b", text:"The choice of Euclidean distance over cosine is justified empirically by the paper but acknowledged as dataset-dependent — on tasks where embedding magnitude carries semantic information, the recommended distance metric may change.", correct:true},
+          {key:"c", text:"ProtoNet works perfectly at any number of classes and any choice of distance metric."},
+          {key:"d", text:"ProtoNet only works for binary classification."},
         ]}
-        trap={<>(b), (c), (d) are wrong.</>}
-        lens={<>The paper is honest about the uni-modal assumption. Knowing this signals careful reading.</>}
-        stretch={<>What does the paper NOT predict that production fraud teams hit?</>}
+        trap={<>(c) and (d) are wrong-by-design. The two correct options are paper-admitted but less cited than the uni-modal caveat — knowing them signals depth.</>}
+        lens={<>The paper is explicitly honest about two production-relevant axes (N-way scaling, distance choice) that practitioners often skip past. Reading depth distinguishes a senior from a paper-skim.</>}
+        stretch={<>What N-way training scheme would you pick for a typology that grows to 200 MOs?</>}
       />
 
       <VIS.TrapProblem

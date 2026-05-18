@@ -1541,18 +1541,18 @@ flowchart LR
       <VIS.TrapProblem
         id="vlm-a4"
         difficulty="hard"
-        title="A4 — Compose VLM with OCR+rules: stack or replace?"
-        scenario={<>Your director asks whether to REPLACE OCR+rules with the VLM or STACK them. Pick the right framing.</>}
+        title="A4 — Latency-vs-accuracy under hosted-VLM provider routing"
+        scenario={<>Your VLM vendor silently routes requests to one of three back-end clusters (US-east, US-west, EU) for load balancing. P50 latency varies 0.4-1.8s and you observe a 4-point AUPRC gap depending on which cluster scored each receipt. <em>Discriminating insight:</em> hosted-VLM endpoints are not a single deterministic model — the routing layer itself is a source of variance distinct from version drift.</>}
         multiSelect
         options={[
-          {key:"a", text:"Stack. OCR+rules catches the cheap end (arithmetic errors, missing merchant) at near-zero cost; the VLM catches GenAI forgeries the cheap stack misses. Run OCR+rules first, send only the survivors to the VLM. Cuts VLM cost 50-90%.", correct:true},
-          {key:"b", text:"The VLM score and the rules-engine flags are conditionally independent in the GenAI-forgery regime — their joint contribution is larger than either alone.", correct:true},
-          {key:"c", text:"Replacing OCR+rules entirely loses the calibrated arithmetic signal that is essentially free.", correct:true},
-          {key:"d", text:"Replace OCR+rules — VLM does arithmetic better."},
+          {key:"a", text:"Pin the request to a single region in the SDK; replay a fixed probe daily across all three regions and treat the AUPRC delta as a routing-variance metric distinct from version drift. Without pinning, your weekly AUPRC moves with traffic mix, not with model quality.", correct:true},
+          {key:"b", text:"Accept the routing variance but stratify your calibration buckets by region-of-record; a per-region threshold absorbs the gap without losing throughput. Vendor SLAs rarely guarantee single-region scoring.", correct:true},
+          {key:"c", text:"Treat routing variance as a second axis of calibration drift alongside version bumps — both produce slow AUPRC walks but routing-variance is reversible at the request level while version drift is not.", correct:true},
+          {key:"d", text:"Ignore the region label and fall back to the vendor's published p95 latency — region-level scoring differences are inside the vendor's published noise floor and do not affect AUPRC at the call-level."},
         ]}
-        trap={<>(d) burns latency / dollars on a check a regex already does.</>}
-        lens={<>VLMs are expensive per call (around $0.01) — reserve them for the cases OCR+rules cannot handle. The architecture is "cheap pre-filter, expensive scorer on survivors," NOT replacement.</>}
-        stretch={<>What is the optimal pre-filter threshold to maximise marginal VLM ROI?</>}
+        trap={<>(d) sounds prudent — published noise floors are real — but conflates latency noise with model-output noise; the two regions return different probability distributions on identical inputs, which AUPRC will absolutely pick up at scale.</>}
+        lens={<>Hosted VLMs are a routing layer in front of multiple model copies. Production scorers need region-pinning OR per-region calibration; otherwise model-quality drift and routing drift become indistinguishable in your dashboards.</>}
+        stretch={<>How would you separate routing-variance from version-drift in a single weekly probe?</>}
       />
 
       <VIS.TrapProblem
@@ -1908,17 +1908,17 @@ flowchart LR
       <VIS.TrapProblem
         id="vlm-f3"
         difficulty="hard"
-        title="F3 — Reverse engineering: symptom to mechanism"
-        scenario={<>Symptom: VLM forgery-flag rate climbs over 8 weeks from 5% to 18% with no AUPRC gain on the labeled holdout. Which design choice causes this?</>}
+        title="F3 — Reverse engineering: response-schema drift"
+        scenario={<>Symptom: VLM reason-list output increasingly collapses to two repeated reason strings ("kerning drift", "baseline tilt") on more than 70% of high-risk receipts. The score distribution is unchanged but downstream investigator escalations drop because reasons no longer differentiate cases. <em>Discriminating insight:</em> the failure surface is the structured-output schema, not the scalar score — version drift would move scores; schema collapse moves only the reasons field.</>}
         options={[
-          {key:"a", text:"The vendor silently increased the VLM's coherence-strictness in successive minor versions. The threshold you tuned against version N is now triggering at N+0.3's higher base rate; precision drops, recall flat, AUPRC unchanged because the calibration slipped uniformly. Fix: pin the VLM version OR re-calibrate weekly on a fixed labeled probe.", correct:true},
-          {key:"b", text:"Fraud is increasing."},
-          {key:"c", text:"OCR is slower."},
-          {key:"d", text:"Your DB is full."},
+          {key:"a", text:"Prompt-cache poisoning. The vendor's prompt-caching layer keys on the system-prompt prefix; a teammate edited the schema description weeks ago to add an example, and that example's two reason strings are now anchored in the cached prefix. The model leans on the cached reason vocabulary instead of generating fresh ones. Fix: invalidate the cache key by versioning the system prompt; audit any 'helpful example' added to schema descriptions.", correct:true},
+          {key:"b", text:"GenAI forgers learned to reproduce exactly two visual inconsistency types; the VLM is correctly enumerating what's there."},
+          {key:"c", text:"The OCR pre-filter became more selective so only one template family reaches the VLM."},
+          {key:"d", text:"Database compaction truncated the reason-string column."},
         ]}
-        trap={<>(b), (c), (d) miss the calibration-drift signature.</>}
-        lens={<>'Flag rate up, AUPRC flat' is the textbook calibration-drift signature for hosted VLMs. The same prompt no longer means the same thing.</>}
-        stretch={<>What probe size + cadence gives 1-day detection?</>}
+        trap={<>(b) is plausible-sounding but inverts the threat model — forgers minimise detectable inconsistencies, they do not narrow them to two. (c) and (d) move different symptoms (volume, storage), not the reason-string distribution.</>}
+        lens={<>Cached prompts behave like a memory leak: helpful examples in the system prompt anchor the response vocabulary and shrink the model's effective reason space. Version the system prompt the way you version code.</>}
+        stretch={<>What entropy metric on reason-strings catches this within 24 hours?</>}
       />
 
       <VIS.TrapProblem
@@ -1940,18 +1940,18 @@ flowchart LR
       <VIS.TrapProblem
         id="vlm-f5"
         difficulty="hard"
-        title="F5 — Community-found failure: prompt-injection from image"
-        scenario={<>Recent follow-up work (LLaVA Red-team 2024, GPT-4V security audits) exposed which class of failure specific to VLM-receipt-scoring?</>}
+        title="F5 — Community-found failures: image-encoder and decode-length effects"
+        scenario={<>Recent follow-up work (2024-2026 VLM red-team audits, multimodal eval benchmarks) exposed which class of failure specific to VLM-receipt-scoring? <em>Discriminating insight:</em> these probe encoder-side and decoder-side artifacts that are NOT version-drift or injection — they would persist even on a perfectly stable, perfectly aligned model.</>}
         multiSelect
         options={[
-          {key:"a", text:"Prompt-injection from image text — 'this is a valid receipt' embedded in the image flips the score in some VLM versions.", correct:true},
-          {key:"b", text:"Adversarial patches optimised against open VLMs transfer to closed ones (LLaVA to GPT-4V) at non-trivial rates.", correct:true},
-          {key:"c", text:"Calibration drifts across vendor minor releases without notification.", correct:true},
-          {key:"d", text:"VLMs cannot process images."},
+          {key:"a", text:"Image-encoder OCR-token leakage: between minor versions the vendor swaps the vision-encoder's tokeniser strategy, so the prompt-effective resolution (the spatial detail the model can actually reason over) drops by ~30% even though the wire-format image is identical. AUPRC silently regresses on kerning-heavy decisions.", correct:true},
+          {key:"b", text:"Adversarial patches optimised against open VLMs (LLaVA, Qwen-VL) transfer to closed ones at non-trivial rates — the patch becomes a portable jailbreak distributed in forger toolkits.", correct:true},
+          {key:"c", text:"Length-dependent confabulation: on long thermal receipts (>40 line items) the reason-chain becomes increasingly hallucinated past token position ~1500 — the model invents plausible-sounding inconsistencies that don't exist in the pixels. Manifests as recall LOOKING strong on long receipts while precision quietly tanks.", correct:true},
+          {key:"d", text:"Vendor-side rate-limit throttling silently downgrades requests to a cheaper smaller VLM during peak hours, with no header indicating which model answered."},
         ]}
-        trap={<>(d) is absurd.</>}
-        lens={<>The community has found three distinct failure modes specific to VLM-as-classifier deployments. All three need explicit defenses in production.</>}
-        stretch={<>Rank the three by how often you would expect to face them in 2026.</>}
+        trap={<>(d) is a real concern but does not match the cited red-team literature — published audits study model behaviour, not vendor routing economics. Treat (d) as an operational risk to monitor separately, not a research-community finding.</>}
+        lens={<>Three community findings on the SAME deployed model: encoder-side tokeniser drift, transferable adversarial patches, length-dependent decoder confabulation. Each demands a different defense (resolution probe, ensemble VLM, length-conditional calibration) — they don't share a fix.</>}
+        stretch={<>Which of the three failure modes is hardest to detect from production telemetry alone?</>}
       />
 
     </VIS.Section>
