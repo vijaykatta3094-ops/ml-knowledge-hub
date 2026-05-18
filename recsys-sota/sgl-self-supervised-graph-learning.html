@@ -1414,265 +1414,590 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// SGL — Self-supervised Graph Learning for Recommendation.
+// SGL — Self-supervised Graph Learning for Recommendation (Wu et al., SIGIR 2021)
+// v2 redo — 30+ trap problems anchored on SGL's edge/node-dropout-augmented InfoNCE on the user-item bipartite graph.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Contrastive learning"
+      pill="RecSys SOTA · Self-supervised / Contrastive"
       title="SGL — Self-supervised Graph Learning"
-      subtitle="Two augmented views of the user-item bipartite graph; InfoNCE pulls matching nodes together and pushes others apart."
+      subtitle="Two stochastically-augmented views of the user-item bipartite graph; InfoNCE pulls same-node pairs together and pushes other nodes apart — a regularizer that mostly helps the long tail."
       byline={[
         {label: "Paper", value: "Wu et al., SIGIR 2021"},
-        {label: "URL", value: "dl.acm.org/doi/10.1145/3404835.3462862"},
+        {label: "Year", value: "2021 (cited through 2024-2025)"},
+        {label: "Domain", value: "Graph contrastive recsys"},
       ]}/>
 
     <VIS.TLDR>
-      Take the user-item interaction graph and produce <strong>two augmented views</strong> via random edge or node dropout.
-      Run both through a shared GCN encoder; for each node, the two views form a positive pair. Pull positives together, push other nodes apart with <VIS.Term def="InfoNCE — a contrastive loss that maximizes mutual information between a positive pair vs a batch of negatives. log-softmax of dot products with one positive and many negatives.">InfoNCE</VIS.Term>.
-      Acts as a regularizer on top of LightGCN; biggest gains on sparse / long-tail data.
+      SGL adds an <VIS.Term def="InfoNCE — a contrastive objective that maximizes a lower bound on mutual information between a positive pair against a batch of negatives.">InfoNCE</VIS.Term> regularizer to a <VIS.Term def="LightGCN — a stripped-down GCN for recsys that drops self-loops, transforms, and non-linearities; the dominant graph baseline.">LightGCN</VIS.Term> backbone. Generate two views of the user-item bipartite graph via <strong>edge/node dropout</strong>; positive pair = same node across views; negatives = other nodes in the batch. The contrastive term forces each node to be robust to dropped neighbors, breaking the popularity shortcut. Gains scale with graph <em>sparsity</em>. Source: <a href="https://dl.acm.org/doi/10.1145/3404835.3462862" target="_blank" rel="noopener">SIGIR 2021</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        SGL augments the standard supervised recsys loss with a contrastive regularizer. From the original user-item graph, two new views are sampled by dropping a fraction of edges (or nodes). Both views go through the same GCN encoder, yielding two embeddings per node. The contrastive loss says: <em>same node across views</em> = positive pair; <em>other nodes in the batch</em> = negatives.
+        Take the user-item interaction graph G. Apply stochastic <strong>edge dropout</strong> (drop each edge i.i.d. with prob p) or <strong>node dropout</strong> twice independently to get two augmented graphs G₁ and G₂. Push both through a <em>shared</em> LightGCN encoder to get two embedding sets. For each node, its embedding in G₁ and its embedding in G₂ form a positive pair; embeddings of other nodes in the batch are negatives.
       </p>
       <p>
-        The total loss is <VIS.Term def="A standard recsys ranking loss that pushes positive user-item pair scores above sampled negative pair scores.">BPR</VIS.Term> + &lambda; &middot; InfoNCE. The contrastive term regularizes the embedding space: nodes must be robust to which neighbors get dropped, so popular nodes can no longer dominate via sheer interaction count.
+        Total loss: <code>L = L_BPR + λ · L_InfoNCE</code>. The <VIS.Term def="Bayesian Personalized Ranking — the standard pairwise recsys loss that pushes positive (user, item) scores above sampled negatives.">BPR</VIS.Term> term is the regular supervised ranking signal; the InfoNCE term regularizes the embedding geometry.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  G["User-item graph"]
-  G --> V1["View 1: edge drop p"]
-  G --> V2["View 2: edge drop p"]
-  V1 --> E1["GCN encode"]
-  V2 --> E2["GCN encode"]
-  E1 --> CL["InfoNCE: pull same-node pairs"]
+  G["User-item graph G"]
+  G --> A1["Edge drop p (view 1)"]
+  G --> A2["Edge drop p (view 2)"]
+  A1 --> E1["LightGCN encoder"]
+  A2 --> E2["LightGCN encoder"]
+  E1 --> CL["InfoNCE: same-node positive"]
   E2 --> CL
-  G --> BPR["BPR loss on full graph"]
-  CL --> TOTAL["Total: BPR + lambda * InfoNCE"]
-  BPR --> TOTAL
+  G --> BPR["BPR on full graph"]
+  CL --> L["L = L_BPR + lambda * L_InfoNCE"]
+  BPR --> L
   style CL fill:#fef3c7,stroke:#d97706,stroke-width:2px
-  style TOTAL fill:#dcfce7,stroke:#16a34a,stroke-width:2px
       `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-differs" title="How it differs from LightGCN and from supervised CL">
-      <table style={{width: "100%", borderCollapse: "collapse", fontSize: 14}}>
-        <thead><tr style={{background: "#1f3a5f", color: "white"}}>
-          <th style={{padding: 8, textAlign: "left"}}>Approach</th>
-          <th style={{padding: 8, textAlign: "left"}}>Loss</th>
-          <th style={{padding: 8, textAlign: "left"}}>Augmentation</th>
-          <th style={{padding: 8, textAlign: "left"}}>Long-tail behavior</th>
-        </tr></thead>
-        <tbody>
-          <tr><td style={{padding: 8}}>LightGCN</td><td style={{padding: 8}}>BPR only</td><td style={{padding: 8}}>None</td><td style={{padding: 8}}>Popularity-biased</td></tr>
-          <tr style={{background: "#e8f0fa"}}><td style={{padding: 8}}><strong>SGL</strong></td><td style={{padding: 8}}>BPR + InfoNCE</td><td style={{padding: 8}}>Random edge/node drop</td><td style={{padding: 8}}><strong>De-biased</strong></td></tr>
-          <tr><td style={{padding: 8}}>Supervised CL</td><td style={{padding: 8}}>BPR + sup-contrastive</td><td style={{padding: 8}}>None (labels)</td><td style={{padding: 8}}>Depends on labels</td></tr>
-        </tbody>
-      </table>
-      <p style={{color: "#475569", fontSize: 14}}>
-        SGL needs no labels for its contrastive term — augmentation generates the positive pairs.
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from LightGCN, NCL, SimGCL, and supervised contrastive">
+      <p>
+        <strong>LightGCN.</strong> No augmentation, no contrastive loss. Popularity dominates because BPR's negatives are usually obscure items the user never saw — the gradient says "popular &gt; obscure" rather than "preferred &gt; not-preferred."
+      </p>
+      <p>
+        <strong>SGL (this paper).</strong> Adds InfoNCE under stochastic augmentation. Long-tail items get more representation room because each node must reconstruct itself from a partially-deleted neighborhood — popular nodes can no longer hog all the signal.
+      </p>
+      <p>
+        <strong>NCL / SimGCL (follow-ups).</strong> Augment in <em>embedding space</em> (Gaussian noise on the embedding) instead of structure space (edge drop). Cheaper (no second graph pass), but loses the structural insight SGL targets.
+      </p>
+      <p>
+        <strong>Supervised contrastive recsys.</strong> Positives = label-validated co-interactions, not augmentations. Solves a different problem (sharpening the boundary at full label cost).
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick SGL">
-      <ul>
-        <li><strong>Anywhere you would use LightGCN.</strong> SGL is essentially free uplift on top of LightGCN for most sparse public datasets.</li>
-        <li><strong>Long-tail-heavy domains.</strong> Niche items, cold catalogs, music or podcasts with a long tail of obscure tracks.</li>
-        <li><strong>You have GPU memory for two forward passes.</strong> Each step computes embeddings on two augmented views — roughly 2x memory.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick SGL">
+      <p>
+        Pick SGL when (a) you're already on LightGCN/NGCF, (b) your interaction graph is <strong>sparse</strong> (high Gini on degree, long-tail-heavy), (c) you can afford 2× forward passes per step. The gain-vs-density curve is steep — measure your graph's degree distribution before estimating SGL's lift.
+      </p>
+      <VIS.Mermaid chart={`
+flowchart TB
+  D["LightGCN baseline"]
+  D --> Q1{"Graph sparse / long-tail?"}
+  Q1 -->|No| LGCN["Stay on LightGCN"]
+  Q1 -->|Yes| Q2{"2x compute budget?"}
+  Q2 -->|No| SimGCL["Try SimGCL (cheaper)"]
+  Q2 -->|Yes| SGL["SGL"]
+  style LGCN fill:#fee2e2,stroke:#dc2626
+  style SGL fill:#dcfce7,stroke:#16a34a
+      `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations">
-      <VIS.Callout kind="gotcha" title="Augmentation strength is a knob, not a free win">
-        Too little dropout (p &lt; 0.05) makes the two views nearly identical — the InfoNCE term degenerates. Too much (p &gt; 0.4) destroys signal so the views are unrelated. Sweet spot is empirically p &asymp; 0.1-0.3.
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
+      <VIS.Callout kind="gotcha" title="Dropout strength is a knob, not a free win">
+        Too little (p &lt; 0.05): the two views are nearly identical → InfoNCE degenerates (positives ≈ negatives at margin). Too much (p &gt; 0.4): signal destroyed → positives drift apart faster than negatives. Sweet spot p ≈ 0.1–0.3.
       </VIS.Callout>
       <VIS.Callout kind="warn" title="Gains shrink on dense domains">
-        On dense interaction graphs (every user touches many items), LightGCN already has enough signal. SGL's regularization buys little. The gain-vs-density curve is steep — measure first.
+        On dense graphs (every user ~200+ items), LightGCN already gets enough signal; SGL's regularization adds little.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="2x compute per step">
-        Two augmented forward passes. Throughput drops; tune batch size to compensate.
+      <VIS.Callout kind="warn" title="2× compute per step">
+        Two augmented forward passes per batch. Throughput drops; tune batch size or use SimGCL.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-problems" title="Drill — trap problems">
-      <p style={{color:"#475569", marginBottom: 16}}>Ten senior-MLE prompts on SGL's design choices and failure modes.</p>
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        30+ problems on SGL's structural-augmentation contrastive design. Redact "SGL" → "Model X" and the right answer should NOT survive.
+      </p>
 
-      <VIS.TrapProblem
-        id="sgl-p1"
-        difficulty="hard"
-        title="P1 — Why does SGL help more on sparse domains?"
-        scenario={<>SGL gains over LightGCN: +5% NDCG on Yelp2018 (sparse), +0.3% on a dense in-house movie dataset where every user has 200+ ratings. Why the gap?</>}
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity &amp; comparison</h3>
+
+      <VIS.TrapProblem id="sgl-a1" difficulty="hard"
+        title="A1 — SGL vs SimGCL: same family, opposite choice"
+        scenario={<>Both are graph contrastive. The discriminator?</>}
         options={[
-          {key:"a", text:"SGL is broken on dense data — a paper artifact."},
-          {key:"b", text:"On dense graphs LightGCN already gets enough signal; SGL's regularization removes overfitting that does not exist. On sparse graphs LightGCN over-relies on a few popular items; SGL forces robust embeddings via augmentation.", correct:true},
-          {key:"c", text:"Dense graphs need bigger batch sizes."},
-          {key:"d", text:"SGL only works with edge dropout, not node dropout."},
+          {key:"a", text:"SGL augments in STRUCTURE space (edge/node dropout on the bipartite graph, requires a second forward pass per view); SimGCL augments in EMBEDDING space (Gaussian noise on the embedding, free of a second pass). The trade-off is: structure augmentation respects graph semantics but costs 2× compute; embedding noise is cheaper but injects domain-agnostic perturbation.", correct:true},
+          {key:"b", text:"SGL uses InfoNCE; SimGCL doesn't."},
+          {key:"c", text:"SimGCL is supervised; SGL is not."},
+          {key:"d", text:"They are identical."},
         ]}
-        trap={<>(a) is dismissive. (c) and (d) are red herrings.</>}
-        lens={<>The gain-vs-density relationship is the headline finding of the paper. Sparse interaction graphs let the model latch onto popularity as a shortcut; SGL's augmentation breaks that shortcut by forcing each node to be robust to dropped edges. Dense graphs do not have this shortcut to break.</>}
-        stretch={<>Name one diagnostic that predicts how much SGL will help BEFORE training.</>}
+        trap={<>(b)/(c)/(d) all false — both use InfoNCE; both self-supervised.</>}
+        lens={<>The augmentation operator is the discriminator. SGL bets that structural perturbation injects graph-semantic prior; SimGCL bets you can skip that and get most of the lift from noise.</>}
+        stretch={<>If your graph has high homophily, which would you expect to win and why?</>}
       />
 
-      <VIS.TrapProblem
-        id="sgl-p2"
-        difficulty="hard"
+      <VIS.TrapProblem id="sgl-a2" difficulty="hard"
+        title="A2 — SGL vs supervised contrastive recsys"
+        scenario={<>What's the actual difference in positive-pair definition?</>}
+        options={[
+          {key:"a", text:"SGL: positives = same node across two AUGMENTED views (label-free, structure-based). Supervised contrastive: positives = nodes whose labels actually agree (e.g., users who bought the same item), label-based. The first regularizes geometry under structural perturbation; the second sharpens decision boundary with label signal.", correct:true},
+          {key:"b", text:"Both use the same positives."},
+          {key:"c", text:"SGL needs labels."},
+          {key:"d", text:"Supervised contrastive doesn't use InfoNCE."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>SGL is label-free — that's the whole 'self-supervised' part. Confusing it with supervised contrastive is the most common SGL misreading.</>}
+        stretch={<>Can you stack the two losses? Where do the gradients conflict?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-a3" difficulty="medium"
+        title="A3 — Counterfactual: no SGL, what's the cost?"
+        scenario={<>SGL didn't exist. To match its long-tail lift on sparse domains, you'd...</>}
+        options={[
+          {key:"a", text:"Heavy long-tail oversampling + popularity-aware negative sampling + careful loss reweighting; pays in tuning effort + risk of overcorrection toward rare items, and STILL doesn't approach SGL's smooth embedding geometry on long-tail nodes.", correct:true},
+          {key:"b", text:"Just train LightGCN longer."},
+          {key:"c", text:"Use a bigger model."},
+          {key:"d", text:"Increase batch size."},
+        ]}
+        trap={<>(b)/(c)/(d) don't address the popularity-bias root cause.</>}
+        lens={<>Without SGL, the gap is filled by sampling tricks + loss engineering, both of which are noisier than augmentation-based regularization.</>}
+        stretch={<>What's the failure mode of pure long-tail oversampling?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-a4" difficulty="hard"
+        title="A4 — Composition: SGL + LightGCN"
+        scenario={<>SGL paper actually uses LightGCN as its encoder. What changes when you swap LightGCN for a heavier encoder like NGCF?</>}
         multiSelect
-        title="P2 — Edge drop vs node drop vs random walk augmentation"
-        scenario={<>The paper introduces three augmentations: edge drop, node drop, and random-walk-based subgraph sampling. Which trade-offs are real? Select all that apply.</>}
         options={[
-          {key:"a", text:"Edge drop is cheapest and works as a strong baseline.", correct:true},
-          {key:"b", text:"Node drop is harsher; it removes a node and all its edges in one shot.", correct:true},
-          {key:"c", text:"Random walk subgraph sampling preserves local structure better but is implementation-heavy.", correct:true},
-          {key:"d", text:"All three produce statistically identical embeddings."},
-          {key:"e", text:"Node drop should be at higher rates than edge drop for equivalent regularization."},
+          {key:"a", text:"NGCF's added transforms and non-linearities introduce optimization noise that the InfoNCE term must now compete with — gains shrink vs the LightGCN+SGL baseline.", correct:true},
+          {key:"b", text:"Edge dropout still helps but less, because NGCF's transforms already act as implicit regularizers.", correct:true},
+          {key:"c", text:"InfoNCE no longer works with non-linearities."},
+          {key:"d", text:"Augmentations become unnecessary."},
         ]}
-        trap={<>(d) ignores the empirical differences. (e) is the reverse — node drop is more destructive per unit rate, so use LOWER rates.</>}
-        lens={<>Each augmentation has a different "destructiveness per unit rate." Edge drop is gentle; node drop is harsh; random-walk sampling is structure-preserving. The paper's headline number uses edge drop because it has the most predictable behavior under the InfoNCE temperature sweep.</>}
-        stretch={<>If your graph has a few super-hubs, which augmentation is riskiest and why?</>}
+        trap={<>(c) is false; (d) overcorrects.</>}
+        lens={<>SGL is specifically synergistic with LightGCN's minimal encoder — every regularizer (incl. InfoNCE) sees a clean signal.</>}
+        stretch={<>Why does the paper pick LightGCN specifically?</>}
       />
 
-      <VIS.TrapProblem
-        id="sgl-p3"
-        difficulty="hard"
-        title="P3 — Augmentation rate sweep"
-        scenario={<>You sweep edge-drop rate p over {"{0.02, 0.1, 0.3, 0.5, 0.7}"}. Val NDCG: 0.39, 0.42, 0.42, 0.40, 0.36. Pure LightGCN baseline = 0.39. Diagnose.</>}
+      <VIS.TrapProblem id="sgl-a5" difficulty="hard"
+        title="A5 — Boundary: when does SGL stop helping?"
+        scenario={<>You sweep graph density (avg interactions per user). Above what density does SGL stop beating LightGCN by a meaningful margin (paper Fig 4)?</>}
         options={[
-          {key:"a", text:"Ship p=0.7 — most regularization is best."},
-          {key:"b", text:"At p=0.02 the two views are nearly identical so InfoNCE is uninformative; at p=0.7 the views are too disconnected from the original graph. Sweet spot 0.1-0.3.", correct:true},
-          {key:"c", text:"Ship p=0.02 — closest to original graph."},
-          {key:"d", text:"The sweep is noisy — pick any rate."},
+          {key:"a", text:"~100-200 items/user"},
+          {key:"b", text:"~50-100 items/user", correct:true},
+          {key:"c", text:"~5 items/user"},
+          {key:"d", text:"Never — SGL always wins."},
         ]}
-        trap={<>(a) and (c) sit at the extremes the data already rejected. (d) ignores a clear pattern.</>}
-        lens={<>The U-shaped sweep is canonical. At low p, augmented views are nearly the original graph, so the contrastive loss collapses to "predict yourself" — trivial. At high p, the views are random subgraphs unrelated to user behavior, so the contrastive signal becomes noise. The 0.1-0.3 range hits the right "robust but related" regime.</>}
-        stretch={<>If your domain is very long-tail, would you push p higher or lower than 0.1-0.3, and why?</>}
+        trap={<>(a) is too high; (c) is too low; (d) is marketing.</>}
+        lens={<>Around ~50-100 items/user, LightGCN already has enough signal that the popularity shortcut is benign. SGL's contrastive regularizer adds little.</>}
+        stretch={<>Is the threshold absolute or domain-dependent?</>}
       />
 
-      <VIS.TrapProblem
-        id="sgl-p4"
-        difficulty="hard"
-        title="P4 — InfoNCE temperature"
-        scenario={<>SGL's InfoNCE loss has a temperature &tau; in the softmax. You sweep &tau; over {"{0.1, 0.2, 0.5, 1.0}"}. NDCG: 0.41, 0.42, 0.40, 0.37. Why does very small &tau; matter and what's the trade-off?</>}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      <VIS.TrapProblem id="sgl-b1" difficulty="hard"
+        title="B1 — Long-tail music catalog with 50M users, 10M tracks"
+        scenario={<>Music streaming. 50M users, 10M tracks; ~90% of tracks have &lt;100 plays. Median user listens to ~30 tracks/month (sparse). Currently on LightGCN. Pick SGL, SimGCL, or BPR-only.</>}
         options={[
-          {key:"a", text:"Lower &tau; sharpens the softmax — only the hardest negatives contribute. Below a threshold this is too aggressive and gradients become spiky.", correct:true},
-          {key:"b", text:"&tau; is irrelevant; only the augmentation rate matters."},
-          {key:"c", text:"Always pick &tau;=1.0 — that is the default in PyTorch."},
-          {key:"d", text:"&tau; is a learning rate; treat it like one."},
+          {key:"a", text:"BPR-only — keep it simple."},
+          {key:"b", text:"SGL — sparse, long-tail-heavy, LightGCN baseline — exactly the regime where edge-dropout-augmented InfoNCE breaks the popularity shortcut.", correct:true},
+          {key:"c", text:"SimGCL — but only after measuring SGL's lift first."},
+          {key:"d", text:"Doesn't matter; pick by cost."},
         ]}
-        trap={<>(b), (c), (d) all dodge the actual mechanism.</>}
-        lens={<>Temperature controls how much weight goes to the hardest negatives. Small &tau; = sharp softmax = effectively hard-negative mining inside the InfoNCE term; too small and the gradient becomes dominated by a few negatives, causing instability. Around &tau;=0.2 is the canonical sweet spot for graph contrastive learning.</>}
-        stretch={<>How does &tau; interact with batch size? More negatives let you afford higher or lower &tau;?</>}
+        trap={<>(a) under-fits long-tail. (c) is the cost-optimization variant but skips the validation. (d) ignores the obvious-fit case.</>}
+        lens={<>Long-tail + sparse + LightGCN = the canonical SGL win condition.</>}
+        stretch={<>If you can only do one A/B (SGL vs SimGCL), which goes first?</>}
       />
 
-      <VIS.TrapProblem
-        id="sgl-p5"
-        difficulty="medium"
-        title="P5 — Loss weight lambda"
-        scenario={<>Total loss = BPR + &lambda; &middot; InfoNCE. You sweep &lambda; over {"{0.01, 0.1, 1.0, 10}"}. NDCG: 0.39, 0.42, 0.40, 0.32. Read off the diagnosis.</>}
+      <VIS.TrapProblem id="sgl-b2" difficulty="hard"
+        title="B2 — 'Higher λ on InfoNCE always helps'"
+        scenario={<>A staff engineer suggests increasing λ from 0.1 to 1.0 "to make the contrastive signal stronger." Why is this wrong?</>}
         options={[
-          {key:"a", text:"&lambda;=10 is best — most contrastive signal."},
-          {key:"b", text:"&lambda; &asymp; 0.1 — InfoNCE acts as regularization; too small and it has no effect, too large and it dominates BPR so the model stops fitting actual user preferences.", correct:true},
-          {key:"c", text:"Use BPR only — &lambda;=0."},
-          {key:"d", text:"&lambda; should always be 1.0."},
+          {key:"a", text:"At λ ≫ optimal, the InfoNCE term dominates BPR — the model optimizes for self-augmentation invariance rather than ranking quality. Embedding alignment improves; NDCG drops because BPR's ordering signal is now noise relative to the contrastive geometry.", correct:true},
+          {key:"b", text:"λ doesn't affect training."},
+          {key:"c", text:"Higher λ is always better."},
+          {key:"d", text:"You need more data."},
         ]}
-        trap={<>(a) misreads the curve. (c) and (d) ignore the sweep entirely.</>}
-        lens={<>InfoNCE is a REGULARIZER — not the primary objective. BPR is what matches user preferences; InfoNCE just makes embeddings robust. Tune &lambda; so InfoNCE's gradient norm is roughly 10-30% of BPR's gradient norm at the end of training.</>}
-        stretch={<>How would you set &lambda; without a held-out validation sweep?</>}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>InfoNCE is a regularizer, not the objective. The right λ keeps it dominated by BPR.</>}
+        stretch={<>How would you sweep λ without overfitting to a small val set?</>}
       />
 
-      <VIS.TrapProblem
-        id="sgl-p6"
-        difficulty="hard"
+      <VIS.TrapProblem id="sgl-b3" difficulty="hard"
+        title="B3 — Pitch SGL to a CTO (must require SGL mechanism)"
+        scenario={<>Your CTO asks why SGL over a free LightGCN. Single sentence that <em>requires</em> understanding SGL's edge-dropout contrastive — fails if SGL were just "a bigger LightGCN."</>}
+        options={[
+          {key:"a", text:"'It's a more modern method.' (Generic — survives redaction.)"},
+          {key:"b", text:"'SGL specifically breaks the popularity shortcut LightGCN inherits from BPR — by forcing each node to reconstruct itself from two stochastically-dropped neighborhoods, popular nodes can no longer dominate, which is why our long-tail recall improves measurably on the sparse slice while NDCG@10 holds.'", correct:true},
+          {key:"c", text:"'Used at top tech companies.'"},
+          {key:"d", text:"'+2% NDCG.'"},
+        ]}
+        trap={<>(a) survives redaction. (c) is hype. (d) is offline-only.</>}
+        lens={<>The pitch must turn on SGL's specific augmentation→popularity-shortcut-broken mechanism. Drop that and any "more regularization" claim works.</>}
+        stretch={<>If you can't show long-tail-recall gain, what do you ask for in 30 days?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-b4" difficulty="hard"
+        title="B4 — When NOT to use SGL"
+        scenario={<>Dense in-house movie dataset: 100K users, 5K movies, every user rates 200+ movies. Pick SGL or LightGCN.</>}
+        options={[
+          {key:"a", text:"SGL — modern."},
+          {key:"b", text:"LightGCN — at 200+ ratings/user, the popularity shortcut isn't there to break; SGL pays 2× compute for ~0.3% lift (paper Fig 4); not worth it.", correct:true},
+          {key:"c", text:"Either."},
+          {key:"d", text:"NGCF."},
+        ]}
+        trap={<>(a) is the modernization reflex.</>}
+        lens={<>Dense data + LightGCN is fine. SGL targets sparsity. Read the gain-vs-density curve before adopting.</>}
+        stretch={<>At what density would you re-open the SGL question?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      <VIS.TrapProblem id="sgl-c1" difficulty="hard"
+        title="C1 — Why edge dropout, not feature dropout?"
+        scenario={<>Why does SGL use edge/node dropout on the GRAPH rather than feature dropout on the EMBEDDINGS?</>}
+        options={[
+          {key:"a", text:"Edge dropout perturbs the message-passing pathways — the same node ends up with a different aggregated neighborhood. Feature dropout on embeddings perturbs the representation but leaves the aggregation graph intact, so the model only learns to be robust to noisy features, not robust to missing neighbors (which is the popularity-shortcut failure SGL targets).", correct:true},
+          {key:"b", text:"Edge dropout is faster."},
+          {key:"c", text:"Feature dropout is incompatible with GCNs."},
+          {key:"d", text:"They're equivalent."},
+        ]}
+        trap={<>(b)/(c)/(d) miss the mechanism.</>}
+        lens={<>The augmentation must perturb the PATH along which signal flows. That's exactly what breaks popularity dependence: a popular node loses some edges, and must rely on what's left.</>}
+        stretch={<>Why doesn't dropout INSIDE the GCN (e.g., on the message weights) work as well?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-c2" difficulty="hard"
+        title="C2 — Why InfoNCE specifically, not a different contrastive loss?"
+        scenario={<>SGL picks InfoNCE. What does this loss give that triplet/margin loss does not?</>}
+        options={[
+          {key:"a", text:"InfoNCE simultaneously compares one positive against ALL in-batch negatives via the softmax — it's a multi-class classification loss. Triplet loss only compares against one negative at a time, requiring expensive triplet mining. With recsys's large batch (1024+) InfoNCE gets cheap implicit hard negatives 'for free'.", correct:true},
+          {key:"b", text:"InfoNCE is faster on GPU."},
+          {key:"c", text:"Triplet loss doesn't work on graphs."},
+          {key:"d", text:"They are equivalent up to constants."},
+        ]}
+        trap={<>(b) is a side effect. (c) is false. (d) is false.</>}
+        lens={<>InfoNCE's batch-as-negatives makes it the natural fit when you have large batches and no triplet sampler.</>}
+        stretch={<>What batch size is too small for InfoNCE to work well? Why?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-c3" difficulty="hard"
+        title="C3 — What SGL drops vs supervised contrastive"
+        scenario={<>SGL is self-supervised. What does it deliberately give up that supervised contrastive has?</>}
         multiSelect
-        title="P6 — Long-tail item gains specifically"
-        scenario={<>You bucket items by popularity (top 10%, mid 30%, tail 60%) and report Recall@20 per bucket. SGL vs LightGCN: top +0.5%, mid +3%, tail +12%. Which interpretations are valid? Select all that apply.</>}
         options={[
-          {key:"a", text:"SGL is acting as a popularity de-bias mechanism.", correct:true},
-          {key:"b", text:"Augmentation forces the model to be robust to dropped popular edges, so embeddings cannot rely on popularity-as-feature.", correct:true},
-          {key:"c", text:"Long-tail items benefit most because their original signal is weakest, and contrastive learning provides extra training signal where there was almost none.", correct:true},
-          {key:"d", text:"This pattern is a bug — gains should be uniform."},
-          {key:"e", text:"Reporting per-bucket recall is misleading; only aggregate matters."},
+          {key:"a", text:"Label-validated positive pairs — SGL's positives are augmentation-derived, which may not match user preference structure.", correct:true},
+          {key:"b", text:"BPR loss — preserved.", correct:false},
+          {key:"c", text:"Graph encoder — preserved.", correct:false},
+          {key:"d", text:"Sharpened class boundary at full label cost — supervised contrastive has it; SGL doesn't.", correct:true},
         ]}
-        trap={<>(d) misses the entire mechanism. (e) is wrong on the evaluation methodology — per-bucket is exactly how you diagnose long-tail effects.</>}
-        lens={<>The bucketed gains ARE the headline finding. Aggregate NDCG often hides where gains come from; here the gain is concentrated where it matters most. Always bucket by popularity when you claim a method helps with the long tail.</>}
-        stretch={<>If your business cares about top-bucket items specifically, would you still ship SGL?</>}
+        trap={<>(b)/(c) NOT dropped.</>}
+        lens={<>SGL trades label signal for cheap regularization. Supervised contrastive trades regularization for label-bound sharpness. Different bets.</>}
+        stretch={<>When does the label-cost saving become a liability?</>}
       />
 
-      <VIS.TrapProblem
-        id="sgl-p7"
-        difficulty="hard"
-        title="P7 — Why does SGL not collapse?"
-        scenario={<>"Why does InfoNCE in SGL not just collapse all embeddings to a single point — the trivial solution that makes every positive pair maximally similar?"</>}
+      <VIS.TrapProblem id="sgl-c4" difficulty="hard"
+        mode="ordered"
+        title="C4 — Rank SGL hyperparams by production impact"
+        scenario={<>Rank: (a) λ (InfoNCE weight), (b) p (dropout rate), (c) τ (InfoNCE temperature), (d) batch size. Top = most catastrophic if mis-set.</>}
         options={[
-          {key:"a", text:"InfoNCE does not actually have a collapse failure mode."},
-          {key:"b", text:"The negatives in the denominator prevent collapse — if all embeddings collapse, the softmax denominator goes to infinity (sort of) and the loss is high.", correct:true},
-          {key:"c", text:"BPR prevents collapse via its supervised signal."},
-          {key:"d", text:"L2 normalization prevents collapse."},
+          {key:"a", text:"p (dropout rate — too low collapses positives≈negatives; too high destroys signal).", order:1},
+          {key:"b", text:"τ (temperature — wrong τ flattens or sharpens too much; recall collapses).", order:2},
+          {key:"c", text:"λ (mis-balances BPR vs InfoNCE).", order:3},
+          {key:"d", text:"Batch size — large is generally better for InfoNCE."},
         ]}
-        trap={<>(a) is wrong: trivial-solution collapse is exactly the failure mode contrastive losses must avoid. (c) is partially true but secondary — pure-SSL InfoNCE without BPR also does not collapse if negatives are present. (d) is a contributing factor, not the cause.</>}
-        lens={<>The contrastive denominator is the structural reason. InfoNCE = log(exp(sim(pos)) / sum exp(sim(neg))). If everything collapses, the denominator grows with batch size and the loss does NOT go to zero — it goes to log(batch_size). The negatives keep the embeddings spread out.</>}
-        stretch={<>If you set batch size to 1 (one positive pair, no negatives), what does SGL's InfoNCE term do?</>}
+        trap={<>Many candidates rank λ first because it's the loss weight; in practice p dominates because it controls the augmentation operator entirely.</>}
+        lens={<>Augmentation strength is the load-bearing knob. λ matters only after p and τ are correct.</>}
+        stretch={<>Which of these can you A/B-test cheaply?</>}
       />
 
-      <VIS.TrapProblem
-        id="sgl-p8"
-        difficulty="hard"
-        title="P8 — Production cost: 2x forward, is it worth it?"
-        scenario={<>You ship SGL: training time goes from 4 hours to 9 hours; NDCG goes from 0.39 to 0.42. Tech lead says "9 hours is a deal-breaker on a daily-retrain pipeline." What's your strongest counter-argument or concession?</>}
+      <VIS.TrapProblem id="sgl-c5" difficulty="hard"
+        title="C5 — Data assumption: dense bipartite"
+        scenario={<>You apply SGL to a graph where every user has &gt;500 items. What breaks first?</>}
         options={[
-          {key:"a", text:"NDCG gain &gt; training cost — accept the 2x compute."},
-          {key:"b", text:"The 2x training cost gets a 3-point NDCG gain that compounds in production via better long-tail recall. If 9 hours actually blocks the pipeline, fall back to ONE-sided augmentation (one augmented view + the original graph) — costs 1.5x but keeps most of the gain.", correct:true},
-          {key:"c", text:"Skip SGL — production constraints win."},
-          {key:"d", text:"Move training to a 10x bigger cluster."},
+          {key:"a", text:"Edge dropout at p≈0.1 removes a small fraction of edges from a thick neighborhood — both augmented views look essentially identical to LightGCN, the contrastive term degenerates (positives barely differ from baseline), and the 2× compute buys ~0% lift.", correct:true},
+          {key:"b", text:"GPU OOM."},
+          {key:"c", text:"BPR breaks."},
+          {key:"d", text:"Cold-start improves."},
         ]}
-        trap={<>(a) ignores the production constraint. (c) sacrifices a real quality win. (d) is fiscally irresponsible without justification.</>}
-        lens={<>Senior engineering trade-off. You acknowledge the constraint, propose a graceful fallback (one-sided augmentation cuts cost while keeping most of the gain), and quantify what's at stake. "Production cost vs quality" is rarely binary — find the compromise.</>}
-        stretch={<>What's the experiment that tells you whether one-sided augmentation keeps the gain?</>}
+        trap={<>(b)/(c)/(d) are non-explanations.</>}
+        lens={<>Dense graphs are robust to edge dropout. The augmentation has nothing to give.</>}
+        stretch={<>At what dropout rate does dense-graph SGL start helping?</>}
       />
 
-      <VIS.TrapProblem
-        id="sgl-p9"
-        difficulty="medium"
+      <VIS.TrapProblem id="sgl-c6" difficulty="hard"
+        title="C6 — Why share the encoder across the two views?"
+        scenario={<>Why does SGL use a SHARED LightGCN for both augmented views, not two separate encoders?</>}
+        options={[
+          {key:"a", text:"InfoNCE's positive pair is 'same node across views' — for the pair to be meaningful, both embeddings must come from the SAME parameterization, otherwise the contrastive objective collapses to 'these two encoders should agree' rather than 'the encoder should be augmentation-invariant.' Two separate encoders would be a different loss entirely.", correct:true},
+          {key:"b", text:"Saves GPU memory."},
+          {key:"c", text:"Two encoders is more compute."},
+          {key:"d", text:"They are equivalent."},
+        ]}
+        trap={<>(b)/(c) are side effects.</>}
+        lens={<>Shared encoder is the conceptual core: SGL teaches ONE function to be robust to augmentation. Two encoders teach two functions to agree — a fundamentally different goal.</>}
+        stretch={<>What if you slightly perturbed one encoder? When does that become useful?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-c7" difficulty="hard"
+        title="C7 — Node dropout vs edge dropout in SGL"
+        scenario={<>The paper studies three augmentation operators: edge drop, node drop, random walk. Which empirically wins on long-tail surfaces, and why?</>}
+        options={[
+          {key:"a", text:"Edge dropout wins on most domains (Yelp2018, Amazon) because node dropout occasionally removes high-degree nodes wholesale — over-perturbing the graph topology. Edge drop perturbs more uniformly. Random walk underperforms because it adds structured bias that fights the augmentation-invariance goal.", correct:true},
+          {key:"b", text:"Node dropout is always best."},
+          {key:"c", text:"All three are equivalent."},
+          {key:"d", text:"Random walk wins on sparse graphs."},
+        ]}
+        trap={<>(b)/(c)/(d) misread the paper.</>}
+        lens={<>Augmentation must be (i) graph-aware and (ii) low-variance. Edge dropout satisfies both. Node dropout is too coarse; random walk introduces bias.</>}
+        stretch={<>Could you mix edge + node dropout? When?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      <VIS.TrapProblem id="sgl-d1" difficulty="hard"
+        title="D1 — 'Contrastive learning is always better than supervised'"
+        scenario={<>The intuition "self-supervised contrastive scales better than supervised" is correct for vision. Why does it fail when applied naively to SGL on dense recsys data?</>}
+        options={[
+          {key:"a", text:"SGL's contrastive signal is REGULARIZATION on top of BPR, not a replacement. On dense data, BPR already has enough label signal; adding InfoNCE adds noise that the supervised loss must overcome. The 'contrastive scales' story applies when supervised data is the bottleneck — exactly the OPPOSITE of dense recsys.", correct:true},
+          {key:"b", text:"InfoNCE doesn't work on graphs."},
+          {key:"c", text:"Supervised is always better."},
+          {key:"d", text:"More data always helps."},
+        ]}
+        trap={<>(b)/(c)/(d) are over-generalizations.</>}
+        lens={<>SGL is a sparsity-regime intervention. The contrastive-scales story is a different regime.</>}
+        stretch={<>Could you make SGL the primary loss and BPR the regularizer? What changes?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-d2" difficulty="hard"
+        title="D2 — Cascade: 'SGL is just dropout + LightGCN'"
+        scenario={<>Tech lead assumes "SGL is LightGCN + dropout, more or less." List the wrong consequences.</>}
         multiSelect
-        title="P9 — What can SGL NOT fix?"
-        scenario={<>Your manager asks: "If we ship SGL, what problems are still on the table?" Select all that SGL does NOT solve.</>}
         options={[
-          {key:"a", text:"Cold-start users with zero interactions.", correct:true},
-          {key:"b", text:"Distribution shift between train and serving.", correct:true},
-          {key:"c", text:"Catalog churn (new items every hour).", correct:true},
-          {key:"d", text:"Popularity bias in mature items."},
-          {key:"e", text:"Position bias in click logs.", correct:true},
+          {key:"a", text:"Assumes dropout alone gives the lift → wrong: dropout without InfoNCE doesn't beat baseline on long tail. The two pieces are joint.", correct:true},
+          {key:"b", text:"Assumes you can apply dropout to weights instead of edges → wrong: the contrastive positive pair is defined over GRAPH structure, not weight perturbation.", correct:true},
+          {key:"c", text:"Assumes BPR is dropped → wrong: BPR is preserved as the main supervised signal.", correct:true},
+          {key:"d", text:"Assumes hyperparameters carry over from LightGCN → fine, mostly true."},
         ]}
-        trap={<>(d) IS partially addressed by SGL via long-tail uplift. The other four are orthogonal problems that augmentation cannot address.</>}
-        lens={<>SGL is a graph augmentation regularizer. It addresses overfit-to-popularity and long-tail sparsity but does not address cold-start (no signal in the graph), shift (graph is from a different distribution at serving), churn (graph is stale), or position bias (label noise from UI). Different problems need different tools.</>}
-        stretch={<>Which of (a)-(c)-(e) would you tackle next after shipping SGL?</>}
+        trap={<>(d) is the unchanged piece — useful for showing you read the paper.</>}
+        lens={<>'Dropout + LightGCN' miscounts what makes SGL work. The contrastive pair definition and the augmentation operator are both load-bearing.</>}
+        stretch={<>What's the smallest change that converts LightGCN+dropout into SGL?</>}
       />
 
-      <VIS.TrapProblem
-        id="sgl-p10"
-        difficulty="hard"
-        title="P10 — Why is SGL still a baseline in 2025?"
-        scenario={<>SGL was published in 2021. Four years later, papers still benchmark against it as a strong baseline. Why hasn't a successor obviously displaced it?</>}
+      <VIS.TrapProblem id="sgl-d3" difficulty="hard"
+        title="D3 — Junior: 'add more data.' Senior: ?"
+        scenario={<>SGL regresses on dense surface during shadow scoring. Junior: 'train on 2× more data.' Senior: 'tune p or switch to SimGCL.' Why is the senior right?</>}
         options={[
-          {key:"a", text:"Research has moved on; SGL is outdated."},
-          {key:"b", text:"SGL is simple, well-understood, and the gains it leaves on the table (better hard negatives, better augmentation policies) require markedly more complex methods (e.g., SCONE) for relatively modest additional gain.", correct:true},
-          {key:"c", text:"SGL's authors are influential — citation bias."},
-          {key:"d", text:"There is no successor."},
+          {key:"a", text:"On dense data, the bottleneck is NOT data volume; LightGCN already converges with full label signal. SGL's contrastive term is adding regularization the model doesn't need — fix it by tuning down (low p, low λ) or switch to the cheaper SimGCL that doesn't pay the 2× cost.", correct:true},
+          {key:"b", text:"More data always helps."},
+          {key:"c", text:"Senior is wrong."},
+          {key:"d", text:"SimGCL is unrelated."},
         ]}
-        trap={<>(a) and (d) are factually wrong. (c) is a cheap shot that ignores the technical reason.</>}
-        lens={<>SGL hits a sweet spot of simplicity and effectiveness. Successors like SCONE unify augmentation and hard-negative selection, gaining additional 1-3 NDCG points at the cost of more complex sampling code. For a senior team weighing complexity vs gain, SGL remains a defensible default unless those last points matter.</>}
-        stretch={<>Name one specific signal that, if you saw it in your domain, would push you off SGL onto SCONE.</>}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>Data scaling helps when label signal is the bottleneck. On dense recsys, geometry is the bottleneck, and SGL's specific intervention may be too strong.</>}
+        stretch={<>When would the junior actually be right?</>}
       />
+
+      <VIS.TrapProblem id="sgl-d4" difficulty="hard"
+        title="D4 — Long-tail recall up, NDCG@10 flat — diagnose"
+        scenario={<>SGL ships. Long-tail recall +3%, NDCG@10 flat, latency +20%. Why?</>}
+        options={[
+          {key:"a", text:"SGL's contrastive term smooths embeddings of long-tail nodes (recall ↑) but NDCG@10 is dominated by head-of-distribution rankings where LightGCN already does well — the regularizer doesn't move head ranking. Latency rises 20% from the 2× forward pass. Net: trade a real tail lift for compute, no head loss.", correct:true},
+          {key:"b", text:"Random noise."},
+          {key:"c", text:"GPU throttling."},
+          {key:"d", text:"Calibration drift."},
+        ]}
+        trap={<>(b)/(c)/(d) are not the mechanism.</>}
+        lens={<>SGL's signature: tail up, head flat, compute up. If you don't care about tail, SGL isn't worth the compute.</>}
+        stretch={<>Which surfaces care about tail recall enough to pay 20% latency?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      <VIS.TrapProblem id="sgl-e1" difficulty="hard"
+        title="E1 — Augmentation done at training, not serving"
+        scenario={<>At serving, do you augment the graph?</>}
+        options={[
+          {key:"a", text:"No. Augmentation is a TRAINING-time regularizer. At serving, you use the FULL graph + the trained encoder. Augmenting at serving would inject noise into a deterministic prediction — defeating the regularization's purpose.", correct:true},
+          {key:"b", text:"Yes, with smaller p."},
+          {key:"c", text:"Yes, average over multiple augmented views."},
+          {key:"d", text:"It's a hyperparameter."},
+        ]}
+        trap={<>(b)/(c)/(d) confuse train-time augmentation with test-time augmentation; SGL is about regularization, not TTA.</>}
+        lens={<>SGL is NOT a test-time-augmentation method. The whole point is that the encoder has internalized robustness during training.</>}
+        stretch={<>Could TTA help SGL? When?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-e2" difficulty="hard"
+        title="E2 — Friday: long-tail recall up but auction revenue down"
+        scenario={<>SGL ships. Long-tail recall +3%. Auction revenue down 0.8%. Why specifically SGL?</>}
+        options={[
+          {key:"a", text:"SGL re-allocates ranking room to long-tail items; in an auction the bid×CTR optimizer is calibrated for head-heavy ranking — shifting toward long-tail surfaces lower-bid creatives at the top, dropping revenue per impression. The fix is auction-aware re-calibration after SGL, not rolling back.", correct:true},
+          {key:"b", text:"SGL randomly hurts revenue."},
+          {key:"c", text:"GPU thermal."},
+          {key:"d", text:"Friday-specific drift."},
+        ]}
+        trap={<>(b)/(c)/(d) red herrings.</>}
+        lens={<>SGL changes the head/tail balance; downstream systems calibrated for old balance need updates.</>}
+        stretch={<>What's the shadow test that catches this Tuesday?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-e3" difficulty="hard"
+        title="E3 — Reference-impl default that bites"
+        scenario={<>OSS SGL implementations have a default that's wrong for many production surfaces. Which?</>}
+        options={[
+          {key:"a", text:"`drop_rate=0.1` — fine for the paper's sparse benchmarks but for sparser real-world graphs (very long-tail e-commerce) the optimal p is higher (0.2-0.3). Shipping at 0.1 silently leaves lift on the table.", correct:true},
+          {key:"b", text:"`lambda=0.1` — paper recommends."},
+          {key:"c", text:"`use_bf16=False`."},
+          {key:"d", text:"`num_layers=3`."},
+        ]}
+        trap={<>(b)/(c)/(d) are real defaults but not the silent trap.</>}
+        lens={<>p is the load-bearing knob; the default is calibrated for paper benchmarks, not production-sparsity.</>}
+        stretch={<>How would you set p without grid-search?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-e4" difficulty="hard"
+        mode="ordered"
+        title="E4 — Order the LightGCN → SGL migration phases"
+        scenario={<>Phases: (a) shadow with SGL, (b) tune p+τ on shadow, (c) A/B at 5% on long-tail-recall watchdog, (d) full traffic. Top = first.</>}
+        options={[
+          {key:"a", text:"Shadow with SGL (default p, default τ).", order:1},
+          {key:"b", text:"Tune p, τ on shadow long-tail-recall.", order:2},
+          {key:"c", text:"A/B at 5% with long-tail-recall watchdog.", order:3},
+          {key:"d", text:"Full traffic.", order:4},
+          {key:"e", text:"Skip tuning, ramp directly."},
+          {key:"f", text:"Retire LightGCN first."},
+        ]}
+        trap={<>Skipping the p/τ tuning is the common mistake — defaults won't match your sparsity.</>}
+        lens={<>p tuning is the SGL-specific bit. Skipping it leaves lift on the table.</>}
+        stretch={<>SLA at each ramp stage?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-e5" difficulty="hard"
+        title="E5 — Reproducing the paper's lift"
+        scenario={<>Paper claims +5% NDCG on Yelp2018. Which experimental details matter most?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Sparsity of Yelp2018 (it's a deliberately sparse benchmark; on denser ones the lift evaporates).", correct:true},
+          {key:"b", text:"p in 0.1-0.3 range (outside this, gain disappears).", correct:true},
+          {key:"c", text:"InfoNCE temperature τ ≈ 0.2 (paper-tuned).", correct:true},
+          {key:"d", text:"Use a different LightGCN variant."},
+          {key:"e", text:"Run on CPU."},
+        ]}
+        trap={<>(d)/(e) are not in the paper.</>}
+        lens={<>SGL's gains are sensitive to (i) data sparsity, (ii) augmentation strength, (iii) temperature.</>}
+        stretch={<>What's the minimum-viable check on your data?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-e6" difficulty="hard"
+        title="E6 — Public benchmarks hide a weakness"
+        scenario={<>SGL beats LightGCN by +5% NDCG on Yelp2018. What about Yelp2018 hides a real-world weakness?</>}
+        options={[
+          {key:"a", text:"Yelp2018 was pre-filtered to drop users/items with fewer than 10 interactions — the EXTREME long tail isn't there. In production, the bottom 50% of items get <3 interactions and SGL's gains aren't as dramatic because there's no neighborhood TO drop edges from.", correct:true},
+          {key:"b", text:"Yelp2018 includes synthetic data."},
+          {key:"c", text:"Yelp2018 uses BPR."},
+          {key:"d", text:"Yelp2018 is too small."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>Public benchmarks pre-filter the extreme tail; SGL's reported lift may overestimate prod gains on the bottom decile.</>}
+        stretch={<>How would you augment your eval with a 'real long-tail' slice?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      <VIS.TrapProblem id="sgl-f1" difficulty="hard"
+        title="F1 — Smallest input that breaks SGL's advantage"
+        scenario={<>Construct the simplest input that makes SGL revert to LightGCN performance.</>}
+        options={[
+          {key:"a", text:"A bipartite graph where every user has the same fixed neighborhood (e.g., everyone rates every item) — edge dropout removes a random small subset, both views remain near-isomorphic, InfoNCE positives ≈ negatives, the contrastive term has no signal.", correct:true},
+          {key:"b", text:"Empty graph."},
+          {key:"c", text:"Random noise."},
+          {key:"d", text:"Length-1B sequence."},
+        ]}
+        trap={<>(b)/(c)/(d) hurt every model.</>}
+        lens={<>SGL depends on neighborhood DIVERSITY across users. Symmetric or saturated graphs leave nothing for the augmentation to do.</>}
+        stretch={<>How would you detect symmetric graphs before training?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-f2" difficulty="hard"
+        title="F2 — Adversarial: super-popular spam item"
+        scenario={<>Design adversarial input that degrades SGL but leaves LightGCN unaffected.</>}
+        options={[
+          {key:"a", text:"Inject a spam item connected to ALL users. Edge dropout at p=0.1 still leaves ~90% of those edges; the spam node always survives augmentation; InfoNCE positives concentrate on it; the encoder maps every user near the spam node. LightGCN-only is also hurt but doesn't compound the error through contrastive geometry.", correct:true},
+          {key:"b", text:"Random noise."},
+          {key:"c", text:"Empty."},
+          {key:"d", text:"Length-1B."},
+        ]}
+        trap={<>(b)/(c)/(d) hurt every model.</>}
+        lens={<>SGL's contrastive geometry can be poisoned by a single super-connected node. Mitigation: degree-aware dropout (drop popular edges more aggressively).</>}
+        stretch={<>Sketch degree-aware edge dropout.</>}
+      />
+
+      <VIS.TrapProblem id="sgl-f3" difficulty="hard"
+        title="F3 — Reverse engineering: long-tail recall up but pop-recall drops"
+        scenario={<>You scale SGL training. Long-tail recall keeps climbing; popular-item recall starts to dip. Which SGL design choice is responsible?</>}
+        options={[
+          {key:"a", text:"The augmentation operator (edge dropout) is uniform over edges — proportionally MORE edges of popular nodes are dropped (because they have more). The contrastive loss compensates by spreading popular-node embedding mass — eventually 'over-de-popularizing' them. Fix: degree-aware dropout that drops edges INVERSELY to node degree.", correct:true},
+          {key:"b", text:"LightGCN backbone."},
+          {key:"c", text:"BPR loss."},
+          {key:"d", text:"Layer count."},
+        ]}
+        trap={<>(b)/(c)/(d) are unchanged.</>}
+        lens={<>SGL's augmentation has degree bias. Recognizing this is the on-ramp to SimGCL/degree-aware variants.</>}
+        stretch={<>What loss-side fix would equalize popular vs tail without changing the augmentation?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-f4" difficulty="hard"
+        title="F4 — Paper-named failure"
+        scenario={<>The SGL paper itself flags a regime where pure SGL underperforms. Which?</>}
+        options={[
+          {key:"a", text:"Dense interaction graphs — where LightGCN already has enough signal and SGL's 2× compute earns little.", correct:true},
+          {key:"b", text:"Sparse engagement-loop."},
+          {key:"c", text:"Large catalogs."},
+          {key:"d", text:"GPU-rich infra."},
+        ]}
+        trap={<>(b)/(c)/(d) are where SGL wins, not where it loses.</>}
+        lens={<>The paper is honest about the regime boundary.</>}
+        stretch={<>How would you decide before training?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-f5" difficulty="hard"
+        title="F5 — Derive the follow-up (SimGCL) from SGL's open knobs"
+        scenario={<>From SGL's mechanism alone, derive the obvious follow-up direction (which became SimGCL).</>}
+        options={[
+          {key:"a", text:"Replace structure-space augmentation (edge dropout) with EMBEDDING-space augmentation (Gaussian noise on the embedding). Eliminates the 2× forward pass cost; preserves the InfoNCE regularization. Trade-off: loses graph-aware perturbation prior.", correct:true},
+          {key:"b", text:"Bigger LightGCN."},
+          {key:"c", text:"Different loss."},
+          {key:"d", text:"More data."},
+        ]}
+        trap={<>(b)/(c)/(d) aren't the natural follow-up.</>}
+        lens={<>SGL's two costs (2× compute + graph-aware augmentation operator) suggest the follow-up: skip the second pass, add noise in embedding space. That's SimGCL.</>}
+        stretch={<>When does SimGCL beat SGL?</>}
+      />
+
+      <VIS.TrapProblem id="sgl-f6" difficulty="hard"
+        title="F6 — Privacy: contrastive gradient leakage"
+        scenario={<>SGL's InfoNCE compares each node against batch negatives. Why is gradient-based privacy attack possibly easier on SGL than LightGCN?</>}
+        options={[
+          {key:"a", text:"InfoNCE's gradient w.r.t. a node embedding pushes it toward its positive and AWAY from the in-batch negatives — the gradient signal is more revealing about the node's identity (it directly encodes 'this node is NOT like nodes A, B, C'). LightGCN's BPR gradient is much more diffuse.", correct:true},
+          {key:"b", text:"SGL uses more GPUs."},
+          {key:"c", text:"LightGCN has built-in DP."},
+          {key:"d", text:"No difference."},
+        ]}
+        trap={<>(b)/(c)/(d) are non-answers.</>}
+        lens={<>Contrastive gradients are more informative per step → larger privacy budget consumed per epoch. DP-SGD on SGL needs tighter accounting.</>}
+        stretch={<>Sketch DP-SGD on SGL specifically.</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://dl.acm.org/doi/10.1145/3404835.3462862" target="_blank" rel="noopener"><strong>Wu et al. — Self-supervised Graph Learning for Recommendation (SGL)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, SIGIR 2021)</span><br/>The source. Sections 3 (augmentation taxonomy) and 5 (bucketed long-tail analysis) are the must-reads.</li>
-        <li><a href="https://arxiv.org/abs/2002.02126" target="_blank" rel="noopener"><strong>He et al. — LightGCN</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, SIGIR 2020)</span><br/>The supervised baseline SGL augments. Reading this first makes the augmentation idea click.</li>
-        <li><a href="https://arxiv.org/abs/2002.05709" target="_blank" rel="noopener"><strong>Chen et al. — SimCLR: A Simple Framework for Contrastive Learning of Visual Representations</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, ICML 2020)</span><br/>The vision counterpart that SGL adapts to graphs. SimCLR's augmentation + InfoNCE framing is identical in structure.</li>
-        <li><a href="https://lilianweng.github.io/posts/2021-05-31-contrastive/" target="_blank" rel="noopener"><strong>Lilian Weng — Contrastive Representation Learning</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>The cleanest survey of contrastive losses (InfoNCE, NT-Xent, triplet) with derivations and intuition. Best single source for the temperature-and-batch-size questions in P4.</li>
-        <li><a href="https://eugeneyan.com/writing/recsys2022/" target="_blank" rel="noopener"><strong>Eugene Yan — System Design for Recommendations and Search</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Practitioner survey of when contrastive recsys helps in production vs research benchmarks. Useful sanity check.</li>
+        <li>
+          <a href="https://dl.acm.org/doi/10.1145/3404835.3462862" target="_blank" rel="noopener"><strong>Wu et al. — Self-supervised Graph Learning for Recommendation (SGL)</strong></a> (paper, SIGIR 2021)
+          <br/>The original SGL paper. Read sections 3 (augmentation operators) and 4.3 (ablation on sparsity).
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2002.02126" target="_blank" rel="noopener"><strong>He et al. — LightGCN</strong></a> (paper, SIGIR 2020)
+          <br/>The encoder SGL builds on. Understanding LightGCN's minimalism is key to seeing why SGL's contrastive layer slots in cleanly.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2112.08679" target="_blank" rel="noopener"><strong>Yu et al. — Are Graph Augmentations Necessary? (SimGCL)</strong></a> (paper, SIGIR 2022)
+          <br/>The follow-up. Replaces structural augmentation with embedding-space noise — strong baseline; understanding the contrast clarifies SGL's design choice.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2002.05709" target="_blank" rel="noopener"><strong>Chen et al. — SimCLR</strong></a> (paper, ICML 2020)
+          <br/>Original InfoNCE-on-augmented-views formulation in vision. SGL is the recsys analogue.
+        </li>
+        <li>
+          <a href="https://dl.acm.org/doi/10.1145/3746280" target="_blank" rel="noopener"><strong>Survey on SSL for Recommendation</strong></a> (ACM CSUR 2025, HKU DS Lab)
+          <br/>Where SGL sits in the broader self-supervised recsys taxonomy. Compares against SimGCL, NCL, supervised contrastive variants.
+        </li>
       </ul>
     </VIS.Section>
   </main>

@@ -1414,265 +1414,580 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// Supervised Contrastive Recsys — unifies SSL with supervised positives.
+// Supervised Contrastive Recsys — unifies SSL with supervised positive pairs
+// (ACM CSUR 2025 survey, HKU DS Lab line of work)
+// v2 redo — 30+ trap problems anchored on supervised-positive contrastive's specific pair definition.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Contrastive learning"
+      pill="RecSys SOTA · Self-supervised / Contrastive"
       title="Supervised Contrastive Recsys"
-      subtitle="Positives are not random augmentations but actual user-validated co-interactions; supervised + SSL signal share one contrastive boundary."
+      subtitle="Replace SGL-style augmentation-derived positive pairs with LABEL-validated co-interaction positives — sharpening the contrastive boundary at the cost of needing label signal."
       byline={[
-        {label: "Survey", value: "ACM CSUR 2025, HKU DS Lab"},
-        {label: "URL", value: "dl.acm.org/doi/10.1145/3746280"},
+        {label: "Source", value: "ACM CSUR 2025 (HKU DS Lab survey)"},
+        {label: "Year", value: "2025"},
+        {label: "Domain", value: "Contrastive learning for recsys"},
       ]}/>
 
     <VIS.TLDR>
-      Pure SSL contrastive (SGL, SCONE) defines a positive pair as <em>two augmented views of the same item</em> — no labels needed.
-      Supervised contrastive defines positives as <em>actual co-interactions from logged data</em> (e.g., items two different users both bought).
-      Mixing the two losses gives you SSL's regularization PLUS supervised label signal in one objective. Often closes the gap to a fully-supervised baseline.
+      Pure self-supervised contrastive (SGL, SimGCL) defines positives via augmentation (same node under two views). Supervised contrastive recsys (SCR) defines positives via LABELS: two users who bought the same item; two items co-purchased by the same user. Sharper boundary; needs labels. Often the right pick in <VIS.Term def="A regime with enough label signal that pure SSL underuses it, but not enough that fully-supervised models overfit.">mid-data regimes</VIS.Term> where SSL alone is too noisy and supervised alone overfits. Source: <a href="https://dl.acm.org/doi/10.1145/3746280" target="_blank" rel="noopener">ACM CSUR 2025</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        Standard SSL contrastive answers "are these two views of the same item?" The supervised variant answers a different question: "do these two items belong to the same logged user-validated cluster?" Cluster definitions can be (a) items co-purchased by the same user, (b) items in the same session, (c) items tagged with the same label, (d) items with the same gold category.
+        Take a standard contrastive recsys loss (InfoNCE). Replace the positive-pair definition:
       </p>
+      <ul>
+        <li><strong>Pure SSL (SGL / SimGCL):</strong> positive pair = same node under two augmentations.</li>
+        <li><strong>Supervised contrastive (SCR):</strong> positive pair = two nodes that share a label-validated relationship (co-purchase, co-click within a session, same shopping basket, etc.).</li>
+      </ul>
       <p>
-        The total loss is a weighted sum: SSL contrastive (augmentation-based positives) + supervised contrastive (label-based positives) + the usual ranking loss (BPR or CE). Each term contributes different signal: SSL regularizes, supervised supplies semantic structure, ranking fits user preferences.
+        Negatives remain the rest of the batch (InfoNCE structure preserved). The loss now optimizes for label-grounded geometry instead of augmentation invariance.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  DATA["User logs<br/>+ side info"]
-  DATA --> SSL["SSL contrastive<br/>augmented views"]
-  DATA --> SUP["Supervised contrastive<br/>logged co-interactions"]
-  DATA --> RANK["Ranking loss<br/>BPR / CE"]
-  SSL --> TOTAL["Total loss"]
-  SUP --> TOTAL
-  RANK --> TOTAL
-  TOTAL --> ENC["Shared encoder"]
-  style SUP fill:#fef3c7,stroke:#d97706,stroke-width:2px
-  style TOTAL fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+  L["Logged (user, item) interactions"]
+  L --> POS["Define positives: label-validated co-interactions"]
+  L --> NEG["Negatives: other batch items"]
+  POS --> CL["InfoNCE on supervised positives"]
+  NEG --> CL
+  L --> BPR["BPR loss"]
+  CL --> T["L = L_BPR + lambda * L_supcon"]
+  BPR --> T
+  style POS fill:#fef3c7,stroke:#d97706,stroke-width:2px
+  style CL fill:#dcfce7,stroke:#16a34a,stroke-width:2px
       `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-differs" title="How it differs from pure SSL and pure supervised">
-      <table style={{width: "100%", borderCollapse: "collapse", fontSize: 14}}>
-        <thead><tr style={{background: "#1f3a5f", color: "white"}}>
-          <th style={{padding: 8, textAlign: "left"}}>Approach</th>
-          <th style={{padding: 8, textAlign: "left"}}>Positive pair</th>
-          <th style={{padding: 8, textAlign: "left"}}>Labels needed</th>
-          <th style={{padding: 8, textAlign: "left"}}>Failure mode</th>
-        </tr></thead>
-        <tbody>
-          <tr><td style={{padding: 8}}>Pure SSL (SGL)</td><td style={{padding: 8}}>Two augmentations</td><td style={{padding: 8}}>No</td><td style={{padding: 8}}>Ignores label signal</td></tr>
-          <tr><td style={{padding: 8}}>Pure supervised</td><td style={{padding: 8}}>Logged co-interaction</td><td style={{padding: 8}}>Yes</td><td style={{padding: 8}}>Overfits to labels</td></tr>
-          <tr style={{background: "#e8f0fa"}}><td style={{padding: 8}}><strong>Supervised CL</strong></td><td style={{padding: 8}}>Both</td><td style={{padding: 8}}>Yes</td><td style={{padding: 8}}><strong>Positive-pair definition is the knob</strong></td></tr>
-        </tbody>
-      </table>
-      <p style={{color: "#475569", fontSize: 14}}>
-        The "positive pair" definition becomes the most important design choice — what does "the same" mean for your business?
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from SGL, SimGCL, BPR-only">
+      <p>
+        <strong>SGL.</strong> Positive pair: same node across edge-dropped views. Label-free, regularizer-only.
+      </p>
+      <p>
+        <strong>SimGCL.</strong> Positive pair: same node with embedding-space noise. Cheaper, still label-free.
+      </p>
+      <p>
+        <strong>BPR-only.</strong> Pairwise ranking; uses labels but no contrastive geometry shaping.
+      </p>
+      <p>
+        <strong>Supervised contrastive (SCR).</strong> Positive pair: label-validated co-interaction. Uses BOTH the contrastive geometry framework AND the label signal — distinct from each pure version.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick supervised CL">
-      <ul>
-        <li><strong>Mid-data regime.</strong> Enough logged co-interactions to be useful, not enough to drown out the SSL regularizer.</li>
-        <li><strong>You have rich semantic labels.</strong> Categories, tags, brands, or gold-curated similarity sets.</li>
-        <li><strong>Pure SSL leaves NDCG on the table.</strong> If SGL is good but you suspect labels would help, supervised CL is the natural next step.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick SCR">
+      <p>
+        Pick SCR when (a) you have label signal but SSL alone is too noisy (e.g., sparse but not extreme-long-tail), (b) you can define a meaningful 'positive co-interaction' on your surface (co-purchase, co-watch within session, co-click), (c) you want sharper class boundaries than augmentation-based methods provide. Don't pick SCR when you have no good 'co-occurrence' signal (single-item sessions, news with no co-read pattern).
+      </p>
+      <VIS.Mermaid chart={`
+flowchart TB
+  D["Surface assessment"]
+  D --> Q1{"Meaningful co-occurrence labels?"}
+  Q1 -->|No| SGL["SGL / SimGCL"]
+  Q1 -->|Yes| Q2{"Mid-data regime?"}
+  Q2 -->|No| BPR["BPR-only"]
+  Q2 -->|Yes| SCR["Supervised Contrastive"]
+  style SCR fill:#dcfce7,stroke:#16a34a
+  style SGL fill:#fef3c7,stroke:#d97706
+      `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations">
-      <VIS.Callout kind="gotcha" title="Defining a positive pair is harder than it sounds">
-        Co-purchased? Same session? Same category? Each definition encodes a different similarity assumption — and the wrong one hurts more than no supervised loss.
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
+      <p>
+        Defining 'positive pair' on logged data is NON-TRIVIAL and surface-specific. Clicks vs purchases vs add-to-cart: each gives a different positive distribution; each picks a different geometry; each generalizes differently.
+      </p>
+      <VIS.Callout kind="gotcha" title="Wrong positive definition kills the lift">
+        Using clicks-only positives on an e-commerce surface bakes click-bias into the embedding geometry — the model learns 'co-clicked' patterns that don't match purchase intent. The right positive depends on your downstream metric.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="Imbalance between SSL and supervised positives">
-        SSL positives are abundant (every item gets two views); supervised positives are scarce (most items have few co-interactions). The loss weights must compensate or supervised signal gets drowned.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Label noise propagates">
-        If clicks are noisy (impression bias, accidental clicks), "user-validated" positives are not truly validated. Garbage labels become garbage positive pairs.
+      <VIS.Callout kind="warn" title="Label sparsity reverts to SSL">
+        If labels are too sparse (cold-start, low-engagement surface), supervised positives are too few for the InfoNCE batch to learn from. Fall back to SGL/SimGCL.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-problems" title="Drill — trap problems">
-      <p style={{color:"#475569", marginBottom: 16}}>Ten senior-MLE prompts on supervised contrastive recsys.</p>
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        30+ problems on supervised contrastive recsys's label-validated-positive mechanism. Redact "SCR" → "Model X" and the right answer should NOT survive.
+      </p>
 
-      <VIS.TrapProblem
-        id="supcl-p1"
-        difficulty="hard"
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity &amp; comparison</h3>
+
+      <VIS.TrapProblem id="scr-a1" difficulty="hard"
+        title="A1 — SCR vs SGL: same family, opposite positive definition"
+        scenario={<>Both use InfoNCE. Discriminator?</>}
+        options={[
+          {key:"a", text:"SGL defines positive pair as 'same node across two augmented views' (no labels needed). SCR defines positive pair as 'two nodes with a label-validated co-interaction' (e.g., co-purchase). The geometry SGL learns is augmentation-invariance; the geometry SCR learns is label-grounded co-similarity. Same loss form, opposite information source.", correct:true},
+          {key:"b", text:"SGL is supervised; SCR isn't."},
+          {key:"c", text:"SCR doesn't use InfoNCE."},
+          {key:"d", text:"They are equivalent."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>The positive-pair definition is the entire distinction. Same loss, different signal.</>}
+        stretch={<>Can you mix both positive definitions in one loss? When does that help?</>}
+      />
+
+      <VIS.TrapProblem id="scr-a2" difficulty="hard"
+        title="A2 — SCR vs BPR-only"
+        scenario={<>BPR-only also uses label signal. Discriminator from SCR?</>}
+        options={[
+          {key:"a", text:"BPR is PAIRWISE: it pushes one positive score above one negative score per training example. SCR is CONTRASTIVE: each positive is compared against ALL in-batch negatives via softmax, giving implicit hard-negative mining at batch scale. SCR's geometry is sharper because the loss has more discriminative pressure per step.", correct:true},
+          {key:"b", text:"BPR doesn't use embeddings."},
+          {key:"c", text:"SCR is unsupervised."},
+          {key:"d", text:"BPR is contrastive too."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>Pairwise vs contrastive: same supervised signal, very different geometry.</>}
+        stretch={<>When would BPR's looser pairwise pressure be PREFERABLE?</>}
+      />
+
+      <VIS.TrapProblem id="scr-a3" difficulty="medium"
+        title="A3 — Counterfactual: no SCR, fallback?"
+        scenario={<>SCR doesn't exist. To get its sharpened geometry, you'd...</>}
+        options={[
+          {key:"a", text:"Increase BPR's batch size + use hard-negative mining + tune more aggressively — but you still lack the contrastive-softmax pressure per step, so geometry shaping is weaker. Alternatively, use SGL/SimGCL — but you lose the label signal entirely. Neither pure path matches SCR's sharpness in the mid-data regime.", correct:true},
+          {key:"b", text:"Train BPR longer."},
+          {key:"c", text:"Bigger model."},
+          {key:"d", text:"More data."},
+        ]}
+        trap={<>(b)/(c)/(d) don't address the contrastive-softmax vs pairwise gap.</>}
+        lens={<>BPR + tricks gets close but not all the way; SSL gives up the label.</>}
+        stretch={<>What would a 'BPR + InfoNCE-shaped softmax' look like?</>}
+      />
+
+      <VIS.TrapProblem id="scr-a4" difficulty="hard"
+        title="A4 — Composition: SCR + augmentation (SGL-style)"
+        scenario={<>Can you stack SCR's label-positives WITH SGL-style augmentation positives?</>}
         multiSelect
-        title="P1 — Define a positive pair when logs have both clicks and purchases"
-        scenario={<>You have log data with two interaction types: clicks (high volume, noisy) and purchases (low volume, high intent). Supervised contrastive needs you to define what counts as a positive pair of items. Which definitions are defensible? Select all that apply.</>}
         options={[
-          {key:"a", text:"Two items the same user PURCHASED in the same session — strongest signal, lowest noise.", correct:true},
-          {key:"b", text:"Two items the same user CLICKED in the same session — more data, higher noise.", correct:true},
-          {key:"c", text:"Two items in the same gold category — semantic signal, no behavioral noise.", correct:true},
-          {key:"d", text:"All pairs of items in the catalog — maximum supervision."},
-          {key:"e", text:"Random pairs sampled uniformly — no supervision at all."},
+          {key:"a", text:"Yes — you get two positive sources: (i) label-validated co-interactions, (ii) augmentation-derived same-node pairs. The loss becomes a sum or weighted combination of the two InfoNCEs.", correct:true},
+          {key:"b", text:"The augmentation term acts as a regularizer; the label term sharpens; together they often outperform either alone (the survey reports this is the dominant pattern).", correct:true},
+          {key:"c", text:"They are incompatible.", correct:false},
+          {key:"d", text:"Augmentation removes the need for labels.", correct:false},
         ]}
-        trap={<>(d) is not supervision; it's noise. (e) is anti-supervision. (a), (b), (c) each give a different signal-to-noise trade-off.</>}
-        lens={<>Each definition is a hypothesis about similarity. "Co-purchased" assumes purchase signals genuine interest; "co-clicked" assumes clicks do too; "same gold category" assumes the taxonomy is meaningful. The right call depends on what your downstream task is trying to learn. Most senior systems combine 2-3 definitions with different weights.</>}
-        stretch={<>If you had to pick ONE definition, which gives the most generalizable signal for a marketplace with diverse user goals?</>}
+        trap={<>(c)/(d) misread.</>}
+        lens={<>The two positive definitions are complementary — augmentation regularizes; labels sharpen.</>}
+        stretch={<>What's the right λ-balance between the two positive InfoNCE terms?</>}
       />
 
-      <VIS.TrapProblem
-        id="supcl-p2"
-        difficulty="hard"
-        title="P2 — Loss weighting"
-        scenario={<>You set the loss as L = L_BPR + alpha * L_SSL + beta * L_supervised. Initial sweep with alpha=beta=1.0 makes the supervised term dominate gradients. Why, and what's the fix?</>}
+      <VIS.TrapProblem id="scr-a5" difficulty="hard"
+        title="A5 — Boundary: when does SCR stop beating BPR-only?"
+        scenario={<>At what label-density does SCR's lift over BPR-only collapse?</>}
         options={[
-          {key:"a", text:"Supervised positives are scarcer than SSL positives but each carries higher gradient magnitude — alpha/beta should be set so the EFFECTIVE gradient contribution of each term is balanced, not the raw loss values.", correct:true},
-          {key:"b", text:"alpha=beta=1.0 is correct."},
-          {key:"c", text:"Always set beta &lt; alpha."},
-          {key:"d", text:"Train longer."},
+          {key:"a", text:"When the label signal is so abundant that BPR's pairwise pressure already saturates the embedding geometry — large batches of clean labels favor BPR's simpler form.", correct:true},
+          {key:"b", text:"When labels are very sparse."},
+          {key:"c", text:"Never — SCR always wins."},
+          {key:"d", text:"At low GPU memory."},
         ]}
-        trap={<>(b) ignores the empirical observation. (c) is too prescriptive. (d) is non-diagnostic.</>}
-        lens={<>Loss-weight tuning is gradient-magnitude tuning, not raw-value tuning. Measure each term's gradient norm at the start of training; set weights so they contribute comparable norms. This is the same principle as multi-task pretraining in S3-Rec.</>}
-        stretch={<>What's a learned alternative — let the model decide weights?</>}
+        trap={<>(a) is correct — at high label density, BPR's looser pressure is enough; (b) reverses the boundary (sparse labels are where SCR's softmax pressure helps); (c) is marketing; (d) irrelevant.</>}
+        lens={<>SCR's lift is regime-dependent. Mid-density labels are the sweet spot.</>}
+        stretch={<>How to check label density on your surface before training?</>}
       />
 
-      <VIS.TrapProblem
-        id="supcl-p3"
-        difficulty="hard"
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      <VIS.TrapProblem id="scr-b1" difficulty="hard"
+        title="B1 — Mid-data e-commerce with co-purchase labels"
+        scenario={<>20M users, 1M items, ~50 purchases/user/year. You log co-purchases (items bought in the same order). Pick SCR, SGL, BPR-only.</>}
+        options={[
+          {key:"a", text:"BPR-only — simple."},
+          {key:"b", text:"SGL — popular contrastive baseline."},
+          {key:"c", text:"SCR — meaningful co-purchase labels + mid-data regime + sharpened geometry pays off; positives = co-purchased item pairs.", correct:true},
+          {key:"d", text:"Doesn't matter."},
+        ]}
+        trap={<>(a) leaves contrastive lift; (b) ignores the label signal; (d) ignores the strong fit.</>}
+        lens={<>E-commerce with co-purchase is the canonical SCR win condition.</>}
+        stretch={<>What's the alternative positive definition if you only have clicks?</>}
+      />
+
+      <VIS.TrapProblem id="scr-b2" difficulty="hard"
+        title="B2 — 'Use clicks as positives since you have lots of them'"
+        scenario={<>You have abundant clicks. Define positives = co-clicked items. Why might this hurt downstream NDCG@purchase?</>}
+        options={[
+          {key:"a", text:"Click positives encode click-similarity (often driven by display position, novelty, popularity bias) — the embedding geometry sharpens toward 'co-clicked,' which is a noisy proxy for 'co-preferred.' On a downstream PURCHASE metric, the geometry pulls the wrong items together.", correct:true},
+          {key:"b", text:"Clicks aren't positives."},
+          {key:"c", text:"Clicks are too sparse."},
+          {key:"d", text:"Need bigger batch."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>The choice of positive defines the geometry; the geometry must match your downstream metric.</>}
+        stretch={<>If only clicks are logged, what positive can you build?</>}
+      />
+
+      <VIS.TrapProblem id="scr-b3" difficulty="hard"
+        title="B3 — Pitch SCR to a CTO (must require SCR mechanism)"
+        scenario={<>Your CTO asks why SCR over BPR-only or SGL. Single sentence requiring SCR's specific mechanism.</>}
+        options={[
+          {key:"a", text:"'It's contrastive learning.' (Generic — survives redaction.)"},
+          {key:"b", text:"'SCR's positive pair is YOUR co-purchase label — not augmentation noise — so the contrastive geometry it learns directly encodes co-purchase similarity. That's a model whose embedding distance answers 'would these two items appear in the same basket?' — a question BPR's looser pairwise pressure can't shape into the geometry, and a question SGL can't answer at all because it never sees the labels.'", correct:true},
+          {key:"c", text:"'+2% NDCG.'"},
+          {key:"d", text:"'Used at Alibaba.'"},
+        ]}
+        trap={<>(a) survives redaction; (c)/(d) generic.</>}
+        lens={<>The pitch must turn on the label-validated positive driving the geometry. Drop that and 'contrastive geometry' becomes empty.</>}
+        stretch={<>How does the pitch change if you only have clicks, not purchases?</>}
+      />
+
+      <VIS.TrapProblem id="scr-b4" difficulty="hard"
+        title="B4 — When NOT to use SCR"
+        scenario={<>News personalization: single-article reads per session, no co-read signal, abundant clicks. Pick SCR, SGL, BPR.</>}
+        options={[
+          {key:"a", text:"SCR — modernize."},
+          {key:"b", text:"SGL — no meaningful co-read positives → SCR can't shape co-similarity geometry; SGL's augmentation-invariance is the right SSL target.", correct:true},
+          {key:"c", text:"BPR — same as today."},
+          {key:"d", text:"Doesn't matter."},
+        ]}
+        trap={<>(a) ignores the missing positive signal.</>}
+        lens={<>Co-occurrence-poor surfaces don't have what SCR needs.</>}
+        stretch={<>Could you synthesize co-read positives from author/topic similarity?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      <VIS.TrapProblem id="scr-c1" difficulty="hard"
+        title="C1 — Why softmax over batch instead of pairwise?"
+        scenario={<>SCR uses InfoNCE softmax over the batch. Why not just use pairwise BPR with the label-validated positives?</>}
+        options={[
+          {key:"a", text:"The softmax compares the positive against ALL in-batch negatives in ONE gradient step — every batch implicitly hard-mines the negatives. BPR pairwise compares against ONE sampled negative per example; you'd need many random samples to approximate the same discriminative pressure, AND the gradient signal per step is weaker (one negative vs many).", correct:true},
+          {key:"b", text:"Softmax is faster."},
+          {key:"c", text:"Pairwise doesn't converge."},
+          {key:"d", text:"They are equivalent."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>The batch-as-negatives trick is what makes contrastive softmax stronger per step than pairwise BPR.</>}
+        stretch={<>At what batch size does the softmax advantage start to plateau?</>}
+      />
+
+      <VIS.TrapProblem id="scr-c2" difficulty="hard"
+        title="C2 — Why label-validated positives, not just same-user positives?"
+        scenario={<>Why not just use 'two items bought by the same user' as positives?</>}
+        options={[
+          {key:"a", text:"Same-user positives include items the user bought across many years and many contexts — geometry collapses items that aren't actually substitutable (a winter coat + a summer dress). Label-validated CO-OCCURRENCE (same basket, same session, same week) tightens the positive definition to items that genuinely co-occur in user intent.", correct:true},
+          {key:"b", text:"Same-user is unsupervised."},
+          {key:"c", text:"Same-user is faster."},
+          {key:"d", text:"They are equivalent."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>Tight positive definition = tighter geometry. Loose definition = blurry embedding space.</>}
+        stretch={<>How tight is too tight? Could 'same minute' positives hurt?</>}
+      />
+
+      <VIS.TrapProblem id="scr-c3" difficulty="hard"
+        title="C3 — What SCR drops vs supervised + augmentation"
+        scenario={<>SCR is supervised-positive contrastive. What does the PURE supervised contrastive form (no augmentation) drop vs SCR-with-augmentation?</>}
         multiSelect
-        title="P3 — Why does pure SSL underperform here?"
-        scenario={<>You have 5M users with rich gold-category labels, but pure SGL gives only +0.5% NDCG over LightGCN. Why might supervised CL do better? Select all that apply.</>}
         options={[
-          {key:"a", text:"SSL augmentation regularizes but cannot inject SEMANTIC structure; gold categories carry meaning the model can't infer from augmentation alone.", correct:true},
-          {key:"b", text:"SSL positives are 'two views of the same item' — already easy; supervised positives ('two items in same category') are harder and more informative.", correct:true},
-          {key:"c", text:"Pure SSL ignores the user-validated signal sitting in your logs.", correct:true},
-          {key:"d", text:"SSL fundamentally cannot handle 5M users."},
-          {key:"e", text:"Gold categories are noise."},
+          {key:"a", text:"Augmentation regularization — the embedding space doesn't have to be robust to perturbation; can overfit to label noise.", correct:true},
+          {key:"b", text:"Long-tail robustness — augmentation helps tail nodes; pure SCR doesn't.", correct:true},
+          {key:"c", text:"BPR loss — preserved.", correct:false},
+          {key:"d", text:"Contrastive softmax structure — preserved.", correct:false},
         ]}
-        trap={<>(d) is a scale claim unsupported by anything. (e) contradicts the premise.</>}
-        lens={<>Three distinct mechanisms. SSL is unsupervised — it cannot use labels even when they're available. Supervised CL plugs the label signal into the same contrastive framework, getting regularization AND semantic supervision at the cost of label dependence.</>}
-        stretch={<>How would you test which of (a), (b), (c) contributes most to the lift?</>}
+        trap={<>(c)/(d) preserved.</>}
+        lens={<>Pure SCR + augmentation gives BOTH label-sharpness AND augmentation-robustness; pure SCR alone gives up the second.</>}
+        stretch={<>When is the augmentation-side robustness worth its λ?</>}
       />
 
-      <VIS.TrapProblem
-        id="supcl-p4"
-        difficulty="hard"
-        title="P4 — Pure supervised overfit"
-        scenario={<>"Why does pure supervised contrastive (no SSL) overfit, especially in low-data regimes?"</>}
+      <VIS.TrapProblem id="scr-c4" difficulty="hard"
+        mode="ordered"
+        title="C4 — Rank SCR hyperparams by production impact"
+        scenario={<>Rank: (a) positive-pair definition, (b) InfoNCE temperature τ, (c) λ (loss weight), (d) batch size. Top = most catastrophic.</>}
         options={[
-          {key:"a", text:"With limited supervised positives, the model memorizes the specific positive set instead of learning a generalizable similarity. SSL augmentation acts as a regularizer that forces robustness beyond the labeled pairs.", correct:true},
-          {key:"b", text:"Supervised CL never overfits."},
-          {key:"c", text:"Pure supervised is too slow."},
-          {key:"d", text:"Labels are too noisy to overfit to."},
+          {key:"a", text:"Positive-pair definition (the choice of co-click vs co-purchase vs co-session determines the geometry and downstream metric alignment).", order:1},
+          {key:"b", text:"InfoNCE temperature τ.", order:2},
+          {key:"c", text:"λ (loss weight).", order:3},
+          {key:"d", text:"Batch size — well-explored."},
         ]}
-        trap={<>(b) ignores the empirical regularity. (c) and (d) avoid the mechanism.</>}
-        lens={<>This is the classic SSL+supervised motivation. Supervised signal is precise but scarce; SSL is plentiful but vague. Combining them gives the best of both — precise positives where they exist, regularization elsewhere.</>}
-        stretch={<>At what dataset size does pure supervised stop overfitting?</>}
+        trap={<>Many candidates rank λ first because that's the most 'contrastive-flavored' knob — but in SCR the positive definition is the load-bearing choice.</>}
+        lens={<>The positive-pair choice is SCR-specific. Get it wrong and you've optimized for the wrong geometry.</>}
+        stretch={<>How would you A/B test positive-pair definitions?</>}
       />
 
-      <VIS.TrapProblem
-        id="supcl-p5"
-        difficulty="medium"
+      <VIS.TrapProblem id="scr-c5" difficulty="hard"
+        title="C5 — Data assumption: label sparsity"
+        scenario={<>Apply SCR with label density 1 co-purchase per user per year. What breaks first?</>}
+        options={[
+          {key:"a", text:"The InfoNCE batch has too few supervised positives to dominate the gradient — most batch entries don't have a paired positive, so the supervised contrastive term is mostly inactive. SCR effectively reverts to BPR + occasional contrastive nudges; lift over BPR is small.", correct:true},
+          {key:"b", text:"GPU OOM."},
+          {key:"c", text:"BPR fails."},
+          {key:"d", text:"Cold-start improves."},
+        ]}
+        trap={<>(b)/(c)/(d) non-explanations.</>}
+        lens={<>SCR needs enough label density to feed the contrastive batch. Below threshold, fall back to SSL.</>}
+        stretch={<>What's the minimum positives-per-batch ratio?</>}
+      />
+
+      <VIS.TrapProblem id="scr-c6" difficulty="hard"
+        title="C6 — Why combine with BPR rather than replace it?"
+        scenario={<>SCR is typically added ON TOP of BPR (L = L_BPR + λ * L_supcon). Why not replace BPR?</>}
+        options={[
+          {key:"a", text:"BPR provides per-pair RANKING pressure — pushes the positive ABOVE specific negatives, which is what NDCG@K rewards directly. SCR shapes the embedding GEOMETRY but doesn't enforce a strict per-pair ordering. Both are needed: BPR for ranking, SCR for geometry.", correct:true},
+          {key:"b", text:"BPR is required by PyTorch."},
+          {key:"c", text:"SCR alone fails to converge."},
+          {key:"d", text:"They are equivalent."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>The combination gives ranking pressure (BPR) plus geometry shaping (SCR). Each does a different job.</>}
+        stretch={<>When is BPR redundant given a strong SCR?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      <VIS.TrapProblem id="scr-d1" difficulty="hard"
+        title="D1 — 'Contrastive is always self-supervised'"
+        scenario={<>The intuition 'contrastive = SSL = no labels' is correct for vision (SimCLR) but wrong for recsys. Why?</>}
+        options={[
+          {key:"a", text:"In vision, augmentations like rotation are abundant and well-defined; SSL is the natural path. In recsys, augmentations are weaker (edge dropout is the main one) but LABELS are abundant — switching the positive definition to label-validated pairs gives strictly more information at no infrastructure cost. The contrastive form is just a loss family, agnostic to positive source.", correct:true},
+          {key:"b", text:"Recsys doesn't have contrastive learning."},
+          {key:"c", text:"SimCLR doesn't use InfoNCE."},
+          {key:"d", text:"They are equivalent."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>Contrastive is a loss family. Self-supervised is a strategy that picks one positive-pair source. They are orthogonal.</>}
+        stretch={<>What other positive sources are possible in recsys?</>}
+      />
+
+      <VIS.TrapProblem id="scr-d2" difficulty="hard"
+        title="D2 — Cascade: 'SCR is BPR with InfoNCE bolted on'"
+        scenario={<>Tech lead assumes 'SCR is BPR + an InfoNCE term.' Wrong consequences?</>}
         multiSelect
-        title="P5 — Label noise scenarios"
-        scenario={<>Your "supervised positives" come from logged click co-occurrences. Which sources of label noise should you worry about? Select all that apply.</>}
         options={[
-          {key:"a", text:"Impression bias — items appeared together because they were shown together, not because users liked both.", correct:true},
-          {key:"b", text:"Position bias — top-of-page items get more clicks regardless of true preference.", correct:true},
-          {key:"c", text:"Accidental clicks (autoplay, mis-touch on mobile).", correct:true},
-          {key:"d", text:"Robotic / bot traffic.", correct:true},
-          {key:"e", text:"The data was logged correctly."},
+          {key:"a", text:"Assumes any positive source works: wrong, the choice of co-purchase vs co-click vs co-session determines the geometry.", correct:true},
+          {key:"b", text:"Assumes the embedding space is unchanged: wrong, contrastive softmax actively reshapes geometry.", correct:true},
+          {key:"c", text:"Assumes hyperparameter inheritance: wrong, τ and λ need separate tuning.", correct:true},
+          {key:"d", text:"Assumes loss is preserved: largely correct (loss is BPR + InfoNCE).", correct:false},
         ]}
-        trap={<>(e) is the optimistic non-answer.</>}
-        lens={<>Every "supervised positive" derived from logs is mediated by the UI and serving system. Without explicit correction (IPS, click models), supervised CL trains on the artifacts of your delivery pipeline rather than user intent.</>}
-        stretch={<>Which of (a)-(d) is the EASIEST to correct without changing the model?</>}
+        trap={<>(d) is the unchanged piece.</>}
+        lens={<>'BPR + InfoNCE' miscounts the implications of choosing the positive source.</>}
+        stretch={<>What's the smallest change that converts BPR+InfoNCE-on-augmentation into SCR?</>}
       />
 
-      <VIS.TrapProblem
-        id="supcl-p6"
-        difficulty="hard"
-        title="P6 — Sup-contrastive with multiple positives per anchor"
-        scenario={<>Standard InfoNCE has one positive per anchor. Supervised contrastive often has MULTIPLE positives (e.g., 5 items in the same session). How do you adapt the loss?</>}
+      <VIS.TrapProblem id="scr-d3" difficulty="hard"
+        title="D3 — Junior: 'add more data.' Senior: ?"
+        scenario={<>SCR regresses on shadow. Junior: '2x more data.' Senior: 'check positive-pair definition.' Why is the senior right?</>}
         options={[
-          {key:"a", text:"Pick one positive at random; ignore the rest."},
-          {key:"b", text:"SupCon (Khosla et al. 2020) generalizes InfoNCE to multiple positives: the numerator becomes a sum over all positives of the anchor; the denominator stays as positives + negatives.", correct:true},
-          {key:"c", text:"Treat positives as a single mean vector."},
-          {key:"d", text:"Use a separate loss per positive."},
+          {key:"a", text:"On a new surface, the geometry SCR learns depends entirely on the positive definition. More data with the wrong positive (e.g., co-click on a purchase-optimization surface) amplifies the wrong geometry. The senior checks alignment between positive source and downstream metric BEFORE scaling.", correct:true},
+          {key:"b", text:"More data always helps."},
+          {key:"c", text:"Senior is wrong."},
+          {key:"d", text:"Positives don't matter."},
         ]}
-        trap={<>(a) loses information. (c) is a hack that destroys structure. (d) is computationally wasteful.</>}
-        lens={<>The SupCon formulation is the canonical extension. It's been adopted in vision (Khosla 2020) and adapted for recsys. The math is a clean generalization that handles the multi-positive case without sampling.</>}
-        stretch={<>How does SupCon's gradient differ from InfoNCE's when there are many positives?</>}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>SCR's geometry is positive-definition-determined; data scale doesn't fix a bad geometry.</>}
+        stretch={<>When IS more data the right answer?</>}
       />
 
-      <VIS.TrapProblem
-        id="supcl-p7"
-        difficulty="hard"
-        title="P7 — How to evaluate when training task is contrastive but business task is ranking"
-        scenario={<>You train with contrastive losses but your business cares about top-K ranking. How do you tell during training whether supervised CL is actually helping the downstream task?</>}
+      <VIS.TrapProblem id="scr-d4" difficulty="hard"
+        title="D4 — NDCG up, purchases flat — diagnose"
+        scenario={<>SCR ships with co-click positives. Offline NDCG@10 (click prediction) up 4%. Online purchase rate flat. Why specifically SCR?</>}
         options={[
-          {key:"a", text:"Monitor contrastive loss only — it's the training objective."},
-          {key:"b", text:"Hold out a portion of users; periodically compute Recall@K / NDCG@K on the held-out set; track those alongside training loss. The contrastive loss can still drop while ranking metrics stall.", correct:true},
-          {key:"c", text:"Trust the paper's reported numbers."},
-          {key:"d", text:"Use only training loss; downstream metrics are too noisy."},
+          {key:"a", text:"Co-click positives shaped the geometry to predict co-clicks — exactly what NDCG@click rewards. But the embedding doesn't encode co-PURCHASE similarity; purchase prediction is downstream of click, and the click bias is now baked into the embedding. Fix: switch positives to co-purchase.", correct:true},
+          {key:"b", text:"Random noise."},
+          {key:"c", text:"GPU thermal."},
+          {key:"d", text:"Latency."},
         ]}
-        trap={<>(a), (c), (d) all skip the actual deployment-aligned signal.</>}
-        lens={<>Train-task vs business-task mismatch is a constant trap with self-supervised methods. Always evaluate on the downstream metric you care about, even during training. Contrastive loss going down does NOT guarantee NDCG goes up.</>}
-        stretch={<>What's a cheap proxy for NDCG you can compute every K steps without a full eval pass?</>}
+        trap={<>(b)/(c)/(d) miss the geometry-metric mismatch.</>}
+        lens={<>SCR's geometry is positive-definition-bound. The downstream metric must match.</>}
+        stretch={<>Sketch an offline metric that catches this BEFORE launch.</>}
       />
 
-      <VIS.TrapProblem
-        id="supcl-p8"
-        difficulty="hard"
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      <VIS.TrapProblem id="scr-e1" difficulty="hard"
+        title="E1 — Positive-mining pipeline"
+        scenario={<>SCR needs positive pairs at batch time. What's the production cost?</>}
+        options={[
+          {key:"a", text:"A separate offline pipeline to mine co-purchase / co-session positive pairs from logs, plus an online sampler that joins the positive index against the current batch users. Mis-aligned pipelines (positive set goes stale; user IDs drift) silently degrades the contrastive term.", correct:true},
+          {key:"b", text:"No infra cost."},
+          {key:"c", text:"Same as BPR."},
+          {key:"d", text:"Only inference cost."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>SCR adds a positive-mining ETL surface that doesn't exist in BPR.</>}
+        stretch={<>What's the right refresh cadence for the positive index?</>}
+      />
+
+      <VIS.TrapProblem id="scr-e2" difficulty="hard"
+        title="E2 — Friday: shadow lift didn't reproduce in A/B"
+        scenario={<>SCR shadow showed +3% NDCG@purchase. A/B at 5% shows flat. Why specifically SCR?</>}
+        options={[
+          {key:"a", text:"The positive-mining pipeline ran on STALE logs during shadow (positives from 3-month-old purchases); production A/B uses live positives. The geometry SCR trained doesn't match the recent positive distribution. Refresh cadence is the load-bearing knob.", correct:true},
+          {key:"b", text:"Random."},
+          {key:"c", text:"GPU thermal."},
+          {key:"d", text:"Friday drift."},
+        ]}
+        trap={<>(b)/(c)/(d) red herrings.</>}
+        lens={<>Positive freshness is the SCR-specific production failure.</>}
+        stretch={<>What's a 30-min diagnostic?</>}
+      />
+
+      <VIS.TrapProblem id="scr-e3" difficulty="hard"
+        title="E3 — Reference-impl default that bites"
+        scenario={<>OSS SCR has a default that's wrong for many production surfaces. Which?</>}
+        options={[
+          {key:"a", text:"`positive_source='co_click'` — fine for click-prediction surfaces but wrong for purchase-prediction (the geometry the model learns won't match the downstream metric). Should default to whatever your downstream metric is — or expose the choice prominently.", correct:true},
+          {key:"b", text:"`lambda=0.1`."},
+          {key:"c", text:"`use_bf16=False`."},
+          {key:"d", text:"`num_layers=3`."},
+        ]}
+        trap={<>(b)/(c)/(d) real but not the silent trap.</>}
+        lens={<>Positive source default is the SCR-specific gotcha.</>}
+        stretch={<>How would you instrument the default to catch the mismatch?</>}
+      />
+
+      <VIS.TrapProblem id="scr-e4" difficulty="hard"
+        mode="ordered"
+        title="E4 — Order the BPR → SCR migration phases"
+        scenario={<>Phases: (a) decide positive source aligned with downstream metric, (b) positive-mining pipeline, (c) shadow with SCR, (d) A/B at 5%, (e) full. Top = first.</>}
+        options={[
+          {key:"a", text:"Decide positive source (align with downstream metric).", order:1},
+          {key:"b", text:"Positive-mining pipeline.", order:2},
+          {key:"c", text:"Shadow with SCR.", order:3},
+          {key:"d", text:"A/B at 5%.", order:4},
+          {key:"e", text:"Full rollout.", order:5},
+          {key:"f", text:"Skip positive-source decision; pick anything."},
+        ]}
+        trap={<>Skipping the positive-source decision is the canonical SCR mistake.</>}
+        lens={<>Positive-source-first ordering. Everything downstream depends on it.</>}
+        stretch={<>Set SLAs per phase.</>}
+      />
+
+      <VIS.TrapProblem id="scr-e5" difficulty="hard"
+        title="E5 — Reproducing the survey-claimed lifts"
+        scenario={<>Surveys report +2-5% NDCG from supervised contrastive on Amazon / Gowalla / Yelp. Which details matter?</>}
         multiSelect
-        title="P8 — Combining with SCONE and SGL"
-        scenario={<>Can you combine supervised CL with SCONE-style hard negatives and SGL-style augmentation? Which combinations make sense? Select all that apply.</>}
         options={[
-          {key:"a", text:"SSL augmentation (SGL) + supervised positives + uniform negatives — basic supervised CL.", correct:true},
-          {key:"b", text:"SSL augmentation + supervised positives + SCONE-style hard negatives — more aggressive but more complex.", correct:true},
-          {key:"c", text:"No augmentation + supervised positives only — pure supervised CL, no SSL component.", correct:true},
-          {key:"d", text:"Augmentation that swaps in label-derived items, completely replacing logged data."},
-          {key:"e", text:"All four losses (BPR + SSL + supervised + SCONE hard-neg) summed — manageable engineering."},
+          {key:"a", text:"Positive source aligned with the benchmark's evaluation metric (NDCG@purchase vs @click).", correct:true},
+          {key:"b", text:"Mid-density labels (sparse extreme tail makes positives too thin).", correct:true},
+          {key:"c", text:"InfoNCE temperature in 0.1-0.2.", correct:true},
+          {key:"d", text:"MovieLens-1M."},
+          {key:"e", text:"CPU inference."},
         ]}
-        trap={<>(d) is a strange hybrid that breaks the augmentation-as-regularizer logic. (e) is technically possible but each loss adds a hyperparameter to tune.</>}
-        lens={<>The framework is composable. Start with (a); escalate to (b) or (e) when you have specific evidence the simpler version is leaving NDCG on the table. Each escalation costs engineering complexity.</>}
-        stretch={<>If you could only ADD one thing to pure SGL — supervised positives or SCONE-style negatives — which would you pick?</>}
+        trap={<>(d)/(e) irrelevant.</>}
+        lens={<>SCR reproducibility hinges on positive source + label density + temperature.</>}
+        stretch={<>Minimum-viable check on your surface?</>}
       />
 
-      <VIS.TrapProblem
-        id="supcl-p9"
-        difficulty="medium"
-        title="P9 — Cold-start with supervised CL"
-        scenario={<>"Does supervised CL help cold-start items?"</>}
+      <VIS.TrapProblem id="scr-e6" difficulty="hard"
+        title="E6 — Public benchmarks hide a weakness"
+        scenario={<>SCR wins on Amazon. What does that hide?</>}
         options={[
-          {key:"a", text:"Yes — supervised CL gives more training signal."},
-          {key:"b", text:"Only if your supervised positives come from a source available for COLD items (e.g., gold categories, text descriptions). If positives come from co-interactions, cold items have none, so the supervised loss provides zero gradient for them.", correct:true},
-          {key:"c", text:"No — cold items are always weakly modeled."},
-          {key:"d", text:"Cold-start is irrelevant to contrastive methods."},
+          {key:"a", text:"Amazon co-purchase metadata is curated and high-coverage — production catalogs have noisy co-occurrence signals (sessions break, IDs drift). The lift on noisy logs is smaller than the paper number suggests.", correct:true},
+          {key:"b", text:"Synthetic data."},
+          {key:"c", text:"Too small."},
+          {key:"d", text:"Wrong loss."},
         ]}
-        trap={<>(a) is too cheery. (c) is too pessimistic. (d) is wrong.</>}
-        lens={<>The cold-start answer depends on what defines a "supervised positive." Co-interaction positives require interactions that cold items lack; category/text positives work for cold items because the signal is metadata-based. Design choice maps directly to cold-start behavior.</>}
-        stretch={<>What's the smartest supervised-positive definition for a fast-churning catalog like TikTok?</>}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>Public benchmarks have cleaner positives than your logs.</>}
+        stretch={<>How to add a positive-noise slice to your eval?</>}
       />
 
-      <VIS.TrapProblem
-        id="supcl-p10"
-        difficulty="hard"
-        title="P10 — Why is supervised CL not just 'use the labels directly'?"
-        scenario={<>"If I have labels, why a contrastive framing? Why not just train a classifier with the labels?"</>}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      <VIS.TrapProblem id="scr-f1" difficulty="hard"
+        title="F1 — Smallest input that breaks SCR's advantage"
+        scenario={<>What's the simplest input that reduces SCR to BPR?</>}
         options={[
-          {key:"a", text:"Contrastive learns a metric space (similar things close, different far) usable for retrieval and ranking. A classifier learns a partition. For recsys you need the metric — you score ALL candidate items, not classify into a fixed set.", correct:true},
-          {key:"b", text:"Classifiers are slow."},
-          {key:"c", text:"Contrastive is always better."},
-          {key:"d", text:"Labels are not detailed enough for classification."},
+          {key:"a", text:"Catalog where co-occurrence is essentially absent — single-item sessions, no co-purchase, no co-watch. The supervised positive batch is mostly empty, the contrastive softmax degenerates, and SCR reverts to BPR + a noisy regularizer.", correct:true},
+          {key:"b", text:"Empty graph."},
+          {key:"c", text:"Random noise."},
+          {key:"d", text:"Long sequences."},
         ]}
-        trap={<>(b), (c), (d) all skip the actual mechanism.</>}
-        lens={<>The classifier-vs-metric distinction is fundamental. Recsys needs to score arbitrary user-item pairs, including for items not in any training class. Contrastive gives you a similarity function; classification gives you discrete labels. Different shapes for different problems.</>}
-        stretch={<>When IS a classification head the right choice for a recommender?</>}
+        trap={<>(b)/(c)/(d) hurt every model.</>}
+        lens={<>SCR depends on co-occurrence signal density.</>}
+        stretch={<>How would you check before training?</>}
       />
+
+      <VIS.TrapProblem id="scr-f2" difficulty="hard"
+        title="F2 — Adversarial: positive poisoning"
+        scenario={<>Design adversarial input that hurts SCR but not BPR.</>}
+        options={[
+          {key:"a", text:"Inject systematically WRONG co-purchase pairs (e.g., spam clusters that co-occur unnaturally). SCR's contrastive softmax learns to pull these poisoned pairs together; the geometry is distorted. BPR's pairwise ranking is also hurt but less — each example only nudges one pair, not the whole geometry.", correct:true},
+          {key:"b", text:"Random noise."},
+          {key:"c", text:"Empty."},
+          {key:"d", text:"Long sessions."},
+        ]}
+        trap={<>(b)/(c)/(d) hurt every model.</>}
+        lens={<>SCR's positive set is a new attack surface.</>}
+        stretch={<>Sketch positive-confidence-aware InfoNCE.</>}
+      />
+
+      <VIS.TrapProblem id="scr-f3" difficulty="hard"
+        title="F3 — Reverse engineering: geometry collapse"
+        scenario={<>You scale SCR training. NDCG@click rises. Embedding-norm distribution narrows toward 0. Which SCR design choice drives this?</>}
+        options={[
+          {key:"a", text:"Co-click positives + high τ in InfoNCE pull frequent co-clicked items strongly together; over training, the embedding space collapses around a few popular co-click clusters. NDCG@click rewards this; broader metrics don't.", correct:true},
+          {key:"b", text:"BPR loss."},
+          {key:"c", text:"Encoder depth."},
+          {key:"d", text:"Item-ID embedding dim."},
+        ]}
+        trap={<>(b)/(c)/(d) are unchanged.</>}
+        lens={<>Geometry collapse is the SCR-specific scale failure on biased positives.</>}
+        stretch={<>What loss-side term keeps the embedding norms spread?</>}
+      />
+
+      <VIS.TrapProblem id="scr-f4" difficulty="hard"
+        title="F4 — Survey-flagged failure mode"
+        scenario={<>The ACM CSUR 2025 survey flags one regime where supervised contrastive underperforms. Which?</>}
+        options={[
+          {key:"a", text:"Surfaces where the supervised similarity definition is ambiguous (multiple plausible positive sources, e.g. click+dwell+purchase all available, no clear winner). Picking the wrong source bakes wrong geometry into the model.", correct:true},
+          {key:"b", text:"Surfaces with no labels."},
+          {key:"c", text:"GPU-rich infra."},
+          {key:"d", text:"Long sequences."},
+        ]}
+        trap={<>(b) is trivially true but not survey-flagged; the SURVEY's specific call-out is positive-source ambiguity.</>}
+        lens={<>The survey is honest about positive-source ambiguity being the key risk.</>}
+        stretch={<>How to disambiguate positive sources empirically?</>}
+      />
+
+      <VIS.TrapProblem id="scr-f5" difficulty="hard"
+        title="F5 — Derive the follow-up direction"
+        scenario={<>From SCR's mechanism alone, derive a natural follow-up.</>}
+        options={[
+          {key:"a", text:"Multi-positive contrastive: instead of one positive source, learn a weighted combination of click, dwell, and purchase positives, with weights tied to downstream metric. Replaces the brittle 'pick one source' choice with a calibrated mix.", correct:true},
+          {key:"b", text:"Bigger encoder."},
+          {key:"c", text:"More layers."},
+          {key:"d", text:"More data."},
+        ]}
+        trap={<>(b)/(c)/(d) aren't the natural follow-up.</>}
+        lens={<>Single-positive ambiguity → multi-positive weighted contrastive is the natural next step.</>}
+        stretch={<>How would the weights be learned?</>}
+      />
+
+      <VIS.TrapProblem id="scr-f6" difficulty="hard"
+        title="F6 — Privacy: positive-pair leakage"
+        scenario={<>Why might SCR's positive-pair index leak more user info than SGL?</>}
+        options={[
+          {key:"a", text:"The positive-pair index explicitly records 'user U bought items X and Y together' — an adversary with access to the index can directly read user purchase pairs. SGL's augmented-view positives don't carry this signal because they're derived from edge perturbation, not raw user records.", correct:true},
+          {key:"b", text:"SCR uses more GPUs."},
+          {key:"c", text:"SGL has built-in DP."},
+          {key:"d", text:"No difference."},
+        ]}
+        trap={<>(b)/(c)/(d) are non-answers.</>}
+        lens={<>The positive-pair index is a new privacy surface.</>}
+        stretch={<>Sketch DP-SGD on the positive-mining pipeline.</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://dl.acm.org/doi/10.1145/3746280" target="_blank" rel="noopener"><strong>HKU DS Lab — Comprehensive Survey on Self-Supervised Learning for Recommendation</strong></a> <span style={{color:"#64748b", fontSize:14}}>(survey, ACM CSUR 2025)</span><br/>The source. Section on supervised contrastive recsys is the most current synthesis of the area.</li>
-        <li><a href="https://arxiv.org/abs/2004.11362" target="_blank" rel="noopener"><strong>Khosla et al. — Supervised Contrastive Learning</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2020)</span><br/>The foundational SupCon paper from vision. Read this first to understand the multi-positive InfoNCE generalization in P6.</li>
-        <li><a href="https://dl.acm.org/doi/10.1145/3404835.3462862" target="_blank" rel="noopener"><strong>Wu et al. — Self-supervised Graph Learning for Recommendation (SGL)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, SIGIR 2021)</span><br/>The pure-SSL baseline. Reading this lets you appreciate what supervised positives add.</li>
-        <li><a href="https://lilianweng.github.io/posts/2021-05-31-contrastive/" target="_blank" rel="noopener"><strong>Lilian Weng — Contrastive Representation Learning</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>The cleanest survey of contrastive losses including SupCon. Best single source for the framing and intuition.</li>
-        <li><a href="https://eugeneyan.com/writing/recsys-llm/" target="_blank" rel="noopener"><strong>Eugene Yan — Improving RecSys with LLMs</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Practitioner survey covering when label-supervised methods beat pure SSL in production; complementary to the survey above.</li>
+        <li>
+          <a href="https://dl.acm.org/doi/10.1145/3746280" target="_blank" rel="noopener"><strong>Survey on SSL for Recommendation</strong></a> (ACM CSUR 2025, HKU DS Lab)
+          <br/>Where supervised contrastive sits in the SSL recsys taxonomy. The canonical reference.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2004.11362" target="_blank" rel="noopener"><strong>Khosla et al. — Supervised Contrastive Learning</strong></a> (paper, NeurIPS 2020)
+          <br/>The original supervised contrastive formulation in vision; the loss form SCR adopts.
+        </li>
+        <li>
+          <a href="https://dl.acm.org/doi/10.1145/3404835.3462862" target="_blank" rel="noopener"><strong>Wu et al. — SGL</strong></a> (paper, SIGIR 2021)
+          <br/>The augmentation-based SSL alternative.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2112.08679" target="_blank" rel="noopener"><strong>Yu et al. — SimGCL</strong></a> (paper, SIGIR 2022)
+          <br/>Embedding-noise SSL alternative.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2002.05709" target="_blank" rel="noopener"><strong>Chen et al. — SimCLR</strong></a> (paper, ICML 2020)
+          <br/>Original InfoNCE-on-augmentation in vision. The pure-SSL ancestor.
+        </li>
       </ul>
     </VIS.Section>
   </main>

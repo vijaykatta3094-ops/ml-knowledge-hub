@@ -1414,264 +1414,572 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// HMT — Heterogeneous Graph Memory Transformer.
+// HMT — Heterogeneous Graph Memory Transformer (Nature SR 2025)
+// v2 redo — 30+ trap problems anchored on HMT's externalized-memory mechanism.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · GNN-based recs"
       title="HMT — Heterogeneous Graph Memory Transformer"
-      subtitle="A heterogeneous graph transformer that externalizes long-range user history into a memory bank instead of stacking more GNN layers."
+      subtitle="A shallow heterogeneous GNN that externalizes long-range context to a written memory bank — so depth doesn't have to grow to reach distant nodes."
       byline={[
-        {label: "Paper", value: "Nature Scientific Reports 2025"},
-        {label: "URL", value: "nature.com/articles/s41598-025-28266-1"},
+        {label: "Paper", value: "Nature Scientific Reports, 2025"},
+        {label: "Year", value: "2025"},
+        {label: "Domain", value: "GNN recsys, heterogeneous graphs"},
       ]}/>
 
     <VIS.TLDR>
-      Vanilla heterogeneous GNNs lose signal past 2-3 hops because of <strong>over-smoothing</strong> and <strong>over-squashing</strong>.
-      HMT keeps the GNN shallow but adds an explicit <strong>memory module</strong> that holds long-range context (a compressed view of the user's older history) and is read via cross-attention by the graph transformer at each layer.
+      Vanilla heterogeneous GNNs (<VIS.Term def="Heterogeneous Graph Transformer — Hu et al., WWW 2020; the standard heterogeneous-GNN baseline.">HGT</VIS.Term>, <VIS.Term def="Heterogeneous Attention Network — Wang et al., WWW 2019; meta-path attention over typed graphs.">HAN</VIS.Term>) stall past depth 2–3 because of <VIS.Term def="As GNN depth grows, each node's representation converges to the graph-mean — distinctive local structure is washed out.">over-smoothing</VIS.Term> and <VIS.Term def="Information from distant nodes is funneled through a fixed-dim bottleneck — exponentially many messages compressed into one vector.">over-squashing</VIS.Term>. HMT keeps the GNN shallow and adds a separately-written <strong>memory module</strong> read via cross-attention each layer — so distance becomes a memory lookup, not a deeper convolution. Source: <a href="https://www.nature.com/articles/s41598-025-28266-1" target="_blank" rel="noopener">Nature SR 2025</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        HMT recommendations live in a <VIS.Term def="A graph where nodes and edges come in multiple typed flavors — e.g., user, item, store, brand nodes connected by 'bought', 'viewed', 'belongs-to' edges. Models must handle each type with its own parameters.">heterogeneous graph</VIS.Term> with user, item, store, and brand nodes connected by typed edges. The encoder is a 2-3 layer heterogeneous graph transformer; depth is deliberately small to avoid <VIS.Term def="As GNN depth grows, neighbor aggregation makes every node's representation converge to the same mean — useful structure collapses.">over-smoothing</VIS.Term>. Long-range signal is handled by a separate <strong>memory bank</strong> of slot vectors; at each layer, every node attends to the memory via cross-attention to inject context the local neighborhood would otherwise miss.
+        HMT operates on a heterogeneous graph (users, items, stores, brands; typed edges like <code>bought</code>, <code>belongs-to</code>, <code>same-brand</code>). The encoder is a 2–3 layer heterogeneous graph transformer. Long-range context (the user's older purchases that live beyond the k-hop neighborhood) is compressed and written into a separate <strong>memory bank</strong> of M slot vectors. At every transformer layer, each node cross-attends to the memory — so a node can "see" a 50-hop-away brand without the encoder having 50 layers.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  G["Heterogeneous graph<br/>users, items, stores, brands"]
-  GNN["2-3 layer<br/>graph transformer"]
-  MEM["Memory bank<br/>M slot vectors"]
+  H["User action history"]
+  G["Heterogeneous graph (k-hop)"]
+  MEM["Memory bank M slots"]
+  GNN["2-3 layer graph transformer"]
+  S["User-item score"]
+  H -->|"compress + write"| MEM
   G --> GNN
   GNN -->|"cross-attend"| MEM
-  MEM -->|"context"| GNN
-  GNN --> SCORE["User-item score"]
-  HIST["Older user history<br/>(beyond k-hop)"] -->|"compress + write"| MEM
+  MEM -->|"context vector"| GNN
+  GNN --> S
   style GNN fill:#dcfce7,stroke:#16a34a,stroke-width:2px
   style MEM fill:#fef3c7,stroke:#d97706,stroke-width:2px
       `} />
-      <p style={{color: "#475569", fontSize: 14}}>
-        The memory is updated as new interactions arrive — old entries are compressed or evicted by a write policy. This is the "open knob" the paper flags: memory dynamics are not yet a solved design.
+      <p>
+        Two distinct learning loops: (1) message-passing on the k-hop graph (short-range), (2) memory read/write (long-range). The novelty is making them <em>cooperate</em> at every layer instead of concatenating their outputs at the head.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-differs" title="How it differs from vanilla heterogeneous GNNs">
-      <table style={{width: "100%", borderCollapse: "collapse", fontSize: 14}}>
-        <thead><tr style={{background: "#1f3a5f", color: "white"}}>
-          <th style={{padding: 8, textAlign: "left"}}>Approach</th>
-          <th style={{padding: 8, textAlign: "left"}}>Long-range signal</th>
-          <th style={{padding: 8, textAlign: "left"}}>Depth</th>
-          <th style={{padding: 8, textAlign: "left"}}>Failure mode</th>
-        </tr></thead>
-        <tbody>
-          <tr><td style={{padding: 8}}>HGT / HAN</td><td style={{padding: 8}}>Stack more layers</td><td style={{padding: 8}}>4-8</td><td style={{padding: 8}}>Over-smoothing</td></tr>
-          <tr style={{background: "#e8f0fa"}}><td style={{padding: 8}}><strong>HMT</strong></td><td style={{padding: 8}}>External memory + cross-attention</td><td style={{padding: 8}}>2-3</td><td style={{padding: 8}}>Memory write policy</td></tr>
-          <tr><td style={{padding: 8}}>GraphTransformer</td><td style={{padding: 8}}>Full attention on all nodes</td><td style={{padding: 8}}>2-3</td><td style={{padding: 8}}>O(N&sup2;) attention cost</td></tr>
-        </tbody>
-      </table>
-      <p style={{color: "#475569", fontSize: 14}}>
-        HMT's trick: keep depth small (no over-smoothing), avoid O(N&sup2;) attention (memory is M slots, M &lt;&lt; N), and still capture far-away context via the memory hop.
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from HGT, HAN, and 'just stack more layers'">
+      <p>
+        <strong>HGT / HAN.</strong> Multi-type attention but no memory. To reach a 5-hop node, you need 5 layers — and at 5 layers the embeddings have already collapsed toward the graph-mean.
+      </p>
+      <p>
+        <strong>SGL / LightGCN-style contrastive.</strong> Augmentation regularizes the same shallow GNN; still doesn't reach distant nodes. Different problem.
+      </p>
+      <p>
+        <strong>Memory-augmented baselines (NeuralRecMemory, MANN).</strong> Bolt a memory onto an MLP scorer. HMT's contribution is the <em>layer-wise</em> cross-attention into memory inside a heterogeneous transformer — every layer gets to ask the memory a different question, not just the final head.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick HMT">
-      <ul>
-        <li><strong>Multi-entity domains.</strong> Recommendations where user, item, store, brand, and category all matter — brand-loyalty signal lives 4+ hops away in the graph.</li>
-        <li><strong>Long user histories.</strong> Power users with hundreds of interactions whose old behavior still matters for current intent.</li>
-        <li><strong>Latency budget for cross-attention.</strong> Memory cross-attention adds modest cost vs. doubling GNN depth.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick HMT (over HGT or a deeper stack)">
+      <p>
+        Pick HMT when (a) the graph is genuinely heterogeneous with relations that matter at &gt;3 hops (brand loyalty, store-of-store, parent-category), (b) you've already measured that HGT plateaus around layer 3, (c) you can afford the memory bank's extra parameters + the write policy as an ops surface. Don't pick HMT on dense 2-hop-sufficient graphs (movies, basic CF) — vanilla HGT is enough.
+      </p>
+      <VIS.Mermaid chart={`
+flowchart TB
+  D["Surface assessment"]
+  D --> Q1{"Relations matter past 3 hops?"}
+  Q1 -->|No| HGT["Stay on HGT"]
+  Q1 -->|Yes| Q2{"Depth >4 over-smooths?"}
+  Q2 -->|No| Q3["Try deeper HGT first"]
+  Q2 -->|Yes| HMT["Move to HMT"]
+  style HGT fill:#fee2e2,stroke:#dc2626
+  style HMT fill:#dcfce7,stroke:#16a34a
+      `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations">
-      <VIS.Callout kind="gotcha" title="Memory write/evict policy is an open knob">
-        FIFO, LRU, learned-attention-based eviction, or compression — the paper does not converge on one. Bad policies either forget useful long-range signal or accumulate stale context that confuses recent intent.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Cold users have empty memory">
-        For users with sparse history, the memory bank is mostly zeros and the cross-attention contributes noise. Need a fallback to pure graph signal.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Memory size is a hyperparameter, not learned">
-        M slots is fixed at training time. Catalog or user-base shifts may require retraining with a bigger memory.
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
+      <p>
+        The memory bank's <strong>write/eviction policy</strong> is the load-bearing knob the paper flags as open. Bad policies (FIFO, random eviction) silently degrade long-tail recall because rare-but-important context gets overwritten. The memory size M trades capacity vs. retrieval noise: too few slots → loss of long-range signal; too many → cross-attention dilutes useful slots in a sea of stale ones.
+      </p>
+      <VIS.Callout kind="gotcha" title="The memory-write policy is the production risk">
+        Most teams ship HMT with FIFO writes. After two weeks of new interactions, the memory has rolled over and the user's foundational preferences (the first 100 purchases that defined their taste) are gone. NDCG holds, but exploration drops and the long-tail tanks — only visible on a held-out cold-tail slice.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-problems" title="Drill — trap problems">
-      <p style={{color:"#475569", marginBottom: 16}}>Ten senior-MLE prompts focused on HMT's design choices and failure modes.</p>
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        30+ problems spanning the A-F taxonomy. Every problem turns on HMT's specific design choices (memory cross-attention inside a shallow heterogeneous transformer, write policy as a knob). Redact "HMT" → "Model X" and the right answer should NOT survive.
+      </p>
 
-      <VIS.TrapProblem
-        id="hmt-p1"
-        difficulty="hard"
-        title="P1 — Why does stacking more GNN layers fail past depth 4?"
-        scenario={<>Your team proposes "just make the HGT 8 layers deep — that gives an 8-hop receptive field and captures brand loyalty automatically." Validation NDCG drops from 0.31 at depth 3 to 0.22 at depth 8. Diagnose.</>}
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity &amp; comparison</h3>
+
+      <VIS.TrapProblem id="hmt-a1" difficulty="hard"
+        title="A1 — HMT vs deeper HGT: why isn't this just more layers?"
+        scenario={<>A teammate says "if HGT is too shallow, just stack 8 layers — same effect as HMT's memory." Why does this fail in practice?</>}
         options={[
-          {key:"a", text:"Optimizer instability at depth 8 — switch from Adam to SGD with warmup."},
-          {key:"b", text:"Over-smoothing: repeated neighbor averaging pulls every node embedding toward the global mean, destroying the per-user signal the ranker needs.", correct:true},
-          {key:"c", text:"Under-fitting — train more epochs."},
-          {key:"d", text:"Depth 8 always overfits — add dropout 0.5."},
+          {key:"a", text:"Stacking 8 HGT layers triggers over-smoothing (representations converge to a graph-mean) and over-squashing (each node's history compressed into one fixed vector); HMT bypasses both by keeping the GNN shallow and routing distant context through a per-layer cross-attention to a separately-written memory bank with its own capacity.", correct:true},
+          {key:"b", text:"8 layers is fine; it just trains slower."},
+          {key:"c", text:"HGT doesn't support more than 3 layers architecturally."},
+          {key:"d", text:"Memory is just a regularizer; depth would also work."},
         ]}
-        trap={<>(a) confuses optimization with representation. (c) and (d) are reflex fixes that ignore the structural pathology.</>}
-        lens={<>Over-smoothing is GNN-specific: each layer aggregates neighbors, and after many rounds every node's embedding looks like the mean of its k-hop neighborhood. Distinct users converge to identical vectors and the ranking head cannot separate them. HMT's answer is to keep depth low and offload long-range context to a memory module instead.</>}
-        stretch={<>Name one diagnostic that distinguishes over-smoothing from plain overfitting.</>}
+        trap={<>(b) ignores that the failure isn't latency, it's representational collapse. (c) is false — HGT supports arbitrary depth, it just stops <em>working</em>. (d) confuses HMT's memory with dropout/regularization; the memory holds <strong>specific compressed slots</strong>, not a noise term.</>}
+        lens={<>The HMT-specific move is replacing "extra layers to traverse distance" with "extra capacity in a separate, addressable bank." That separates depth (locality reasoning) from reach (long-range retrieval) — two failure modes that classical GNN scaling conflates.</>}
+        stretch={<>What's the analog of memory capacity (M slots × d_model) in pure-GNN scaling? Why is it more efficient as memory?</>}
       />
 
-      <VIS.TrapProblem
-        id="hmt-p2"
-        difficulty="hard"
+      <VIS.TrapProblem id="hmt-a2" difficulty="hard"
+        title="A2 — HMT vs SGL: same family?"
+        scenario={<>Both HMT and SGL extend graph encoders. A junior groups them as "graph SOTA." What's the actual orthogonality?</>}
+        options={[
+          {key:"a", text:"SGL is contrastive (two augmented views + InfoNCE) regularizing the SAME shallow GCN; HMT keeps a single supervised path but adds a written memory bank to extend the receptive field beyond the encoder's depth. They solve different failure modes — SGL fights popularity bias on sparse data; HMT fights over-smoothing on long-range relations.", correct:true},
+          {key:"b", text:"Both use contrastive learning."},
+          {key:"c", text:"Both extend the graph by adding edges."},
+          {key:"d", text:"They are equivalent up to hyperparameters."},
+        ]}
+        trap={<>(b)/(c)/(d) all miss the orthogonality.</>}
+        lens={<>SGL = better gradients on the same graph. HMT = bigger effective reach on the same depth. You can stack them: SGL-style contrastive loss on top of an HMT encoder.</>}
+        stretch={<>Sketch the loss for SGL+HMT. Where does the InfoNCE term plug into the memory?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-a3" difficulty="medium"
+        title="A3 — Counterfactual: no HMT, what's the fallback cost?"
+        scenario={<>HMT doesn't exist. You must match its long-range gains. Pick the option whose <em>specific</em> cost dimensions are right.</>}
+        options={[
+          {key:"a", text:"Use ID-aware GCN with 6+ layers + heavy residual connections; pays in over-smoothing-driven NDCG ceiling + 3-4× compute per epoch; on heterogeneous graphs you ALSO lose type-specific attention so a separate per-edge-type encoder is needed.", correct:true},
+          {key:"b", text:"Switch to a 2-tower model; same quality."},
+          {key:"c", text:"Add 10× more edges to compensate."},
+          {key:"d", text:"Memory is unnecessary — just train longer."},
+        ]}
+        trap={<>(b) drops the graph entirely. (c) makes message-passing worse. (d) is hand-wave.</>}
+        lens={<>HMT replaces "depth + residuals" with "shallow + memory." The depth-based fallback exists but caps out; the gap is not closable without memory or heavy meta-paths.</>}
+        stretch={<>What about meta-path-based methods (MAGNN)? Do they match HMT?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-a4" difficulty="hard"
+        title="A4 — Compose HMT with RQ-VAE Semantic IDs"
+        scenario={<>You want HMT to handle a cold-start brand. You bring in RQ-VAE Semantic IDs as the brand-node features. Which interactions matter?</>}
         multiSelect
-        title="P2 — Memory write policy: what should the eviction rule optimize for?"
-        scenario={<>HMT's memory bank has M=512 slots per user. Older interactions need to be compressed into slots; new interactions need to write somewhere. Which policies are reasonable starting points? Select all that apply.</>}
         options={[
-          {key:"a", text:"FIFO — oldest interaction is overwritten when memory is full.", correct:true},
-          {key:"b", text:"Learned attention-based eviction — a small network scores each slot's usefulness and evicts the lowest.", correct:true},
-          {key:"c", text:"Random eviction every step.", correct:true},
-          {key:"d", text:"Always overwrite slot 0 regardless of content."},
-          {key:"e", text:"Compress k consecutive old slots into one via mean pooling.", correct:true},
+          {key:"a", text:"Cold brand nodes get a useful initial feature vector via shared Semantic-ID prefixes, so even at hop 1 they're informative — HMT's memory then carries that signal to distant users.", correct:true},
+          {key:"b", text:"The memory bank's write policy must now consider semantic-prefix duplicates — naive FIFO over IDs no longer matches semantic novelty.", correct:true},
+          {key:"c", text:"Semantic IDs replace the need for the memory bank entirely."},
+          {key:"d", text:"Heterogeneous edge types disappear once Semantic IDs are present."},
         ]}
-        trap={<>(d) is a non-policy that destroys signal. (c) sounds bad but is a baseline researchers report. The real surprise is that (b) and (e) are not always better than FIFO empirically — the open-knob warning is honest.</>}
-        lens={<>Memory write policy is HMT's biggest open question. FIFO is the simplest baseline; learned eviction is the upper-bound aspiration; mean-pooling compression preserves average signal at the cost of recency. The right pick depends on whether recency or breadth matters more for your domain.</>}
-        stretch={<>For a fashion-shopping use case where seasonal trends matter, which policy is most defensible and why?</>}
+        trap={<>(c) confuses content with reach. (d) misreads — Semantic IDs replace ID-embeddings, not edge typing.</>}
+        lens={<>Semantic IDs improve <em>feature quality</em> at each node; HMT's memory improves <em>reach</em>. The interaction is at the write policy: semantic-similarity-aware eviction beats FIFO.</>}
+        stretch={<>Sketch an eviction policy that prefers semantic novelty over recency.</>}
       />
 
-      <VIS.TrapProblem
-        id="hmt-p3"
-        difficulty="hard"
-        title="P3 — Memory cross-attention cost"
-        scenario={<>Your graph has N=10M nodes; memory size M=512 per user; hidden dim d=128; you have L=3 GNN layers. Per forward pass on one user, what is the cross-attention cost in flops, and how does it compare to a full graph-attention layer over N nodes?</>}
+      <VIS.TrapProblem id="hmt-a5" difficulty="hard"
+        title="A5 — Boundary: when does HMT stop beating HGT?"
+        scenario={<>You sweep graph diameter (max shortest path between user and any item they engaged with). Below what diameter does HMT's lift collapse?</>}
         options={[
-          {key:"a", text:"O(N&sup2;d) for cross-attention; same as full graph attention."},
-          {key:"b", text:"O(L &middot; M &middot; d) per user &asymp; 3 &middot; 512 &middot; 128 &asymp; 200K flops; full graph attention would be O(N&sup2;d) &asymp; 10^16 flops — many orders of magnitude bigger.", correct:true},
-          {key:"c", text:"O(M&sup2;d) — quadratic in memory size."},
-          {key:"d", text:"O(Nd) — linear in graph size."},
+          {key:"a", text:"Effective diameter ≲ 3 hops"},
+          {key:"b", text:"Effective diameter ≲ 2 hops", correct:true},
+          {key:"c", text:"Effective diameter ≲ 10 hops"},
+          {key:"d", text:"There is no crossover — HMT always wins."},
         ]}
-        trap={<>(a) and (c) get the dimensions wrong. (d) ignores that cross-attention is per-user, not per-node.</>}
-        lens={<>The whole point of memory cross-attention is the M &lt;&lt; N inequality. You pay O(M &middot; d) per node per layer, not O(N &middot; d). That is why HMT scales where full graph-attention does not.</>}
-        stretch={<>If M grew to be the same order as N, when would HMT lose its advantage entirely?</>}
+        trap={<>(a) is too lenient; HGT already handles 3 hops well. (c) is too high. (d) is marketing.</>}
+        lens={<>HMT's gain comes from bypassing over-smoothing past 3 hops. If everything useful lives at 2 hops, the memory bank is dead weight and HGT wins on parameter efficiency.</>}
+        stretch={<>How would you measure effective diameter <em>before</em> training to decide whether HMT is worth it?</>}
       />
 
-      <VIS.TrapProblem
-        id="hmt-p4"
-        difficulty="hard"
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      <VIS.TrapProblem id="hmt-b1" difficulty="hard"
+        title="B1 — E-commerce: brand-loyalty surface with 30M users"
+        scenario={<>30M users, 5M items, ~500 brands, ~10K stores. Engagement signal includes brand-level loyalty (users return to the same brand across years). Median user touches items spanning ~8 brands over 24 months. Pick HMT, HGT, or SGL.</>}
+        options={[
+          {key:"a", text:"HGT — heterogeneous edges suffice."},
+          {key:"b", text:"SGL — contrastive regularization."},
+          {key:"c", text:"HMT — brand loyalty across 24 months is a long-range signal across the user-item-brand path; vanilla HGT loses it past 3 hops; SGL doesn't address reach.", correct:true},
+          {key:"d", text:"LightGCN — simplest baseline."},
+        ]}
+        trap={<>(a) is the textbook reflex for heterogeneous graphs but ignores depth. (b) attacks a different bias.</>}
+        lens={<>The signature of an HMT win is a relation that <em>exists</em> in the graph but lives at distance: brand → store → brand chains; cross-category preferences mediated by lifestyle clusters.</>}
+        stretch={<>How would you A/B-test HMT vs HGT to isolate the long-range contribution?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-b2" difficulty="hard"
+        title="B2 — 'Bigger memory M always helps'"
+        scenario={<>A staff engineer wants to set memory bank size M = 100K slots, reasoning "more capacity = better." Why is this wrong?</>}
+        options={[
+          {key:"a", text:"Cross-attention over 100K slots dilutes the signal: relevant slots get a vanishingly small softmax weight; the attention head becomes noise. Sweet spot is M scaled to ~ √(user-history length) and chosen with attention-entropy as the diagnostic, not 'biggest possible.'", correct:true},
+          {key:"b", text:"GPU memory isn't enough."},
+          {key:"c", text:"100K slots are fine; just lower the LR."},
+          {key:"d", text:"M doesn't matter."},
+        ]}
+        trap={<>(b) is a side effect, not the cause. (c)/(d) ignore the attention-dilution failure.</>}
+        lens={<>Memory cross-attention is a <em>retrieval</em> over slots. Like any retrieval, recall and precision trade off. The metric to watch is attention entropy on held-out queries — if it's flat, your memory is noise.</>}
+        stretch={<>If attention entropy is high but offline NDCG is fine, what does that tell you?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-b3" difficulty="hard"
+        title="B3 — Pitch HMT to a CTO (must require HMT mechanism)"
+        scenario={<>Your CTO asks "why HMT over more HGT layers?" Give the single sentence that <em>requires</em> understanding HMT's externalized-memory mechanism — the pitch that collapses if HMT were just "a bigger GNN."</>}
+        options={[
+          {key:"a", text:"'It's a more modern architecture.' (Generic — applies to any model swap.)"},
+          {key:"b", text:"'HMT decouples depth from reach: distant context is held in a separately-addressable memory bank, so we can serve 50-hop relations (brand loyalty, store networks) at 2-layer GNN latency. That gives a measurable lift on the long-range slice that HGT provably cannot reach without over-smoothing — the budget is for the slice, not generic quality.'", correct:true},
+          {key:"c", text:"'It's used at Meta and Google.'"},
+          {key:"d", text:"'+2% NDCG on the offline eval.'"},
+        ]}
+        trap={<>(a) survives redaction. (c) is hype. (d) is offline-only. Only (b) requires HMT's depth-vs-reach decoupling.</>}
+        lens={<>The pitch must turn on the <em>specific</em> finding that HMT externalizes long-range to memory while keeping the GNN shallow. Drop that and the sentence reduces to "more capacity = better," which is true of literally everything.</>}
+        stretch={<>If you can't show a long-range slice ablation yet, what do you ask for in the next 30 days?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-b4" difficulty="hard"
+        title="B4 — When NOT to use HMT"
+        scenario={<>Movie-recs surface: 200K movies, 80M users; median user touches ~12 movies; the signal that matters is "what users with similar last-3 movies also liked." Pick HMT, HGT, or LightGCN.</>}
+        options={[
+          {key:"a", text:"HMT — modernize."},
+          {key:"b", text:"LightGCN — the 'similar last-3' pattern is purely 2-hop CF; HMT's memory bank pays parameter and ops cost for reach that the surface doesn't need.", correct:true},
+          {key:"c", text:"HGT — heterogeneous types."},
+          {key:"d", text:"Doesn't matter."},
+        ]}
+        trap={<>(a) is the modernization reflex.</>}
+        lens={<>HMT is overkill on 2-hop-sufficient surfaces. The diagnostic: if effective diameter of the user-item subgraph ≲ 3, the memory bank is dead weight.</>}
+        stretch={<>What metric would you compute on the user-item graph to make this call before training?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      <VIS.TrapProblem id="hmt-c1" difficulty="hard"
+        title="C1 — Why cross-attention into memory at EVERY layer, not just the last?"
+        scenario={<>Why does HMT inject memory via cross-attention at <em>every</em> graph-transformer layer, not just once at the head?</>}
+        options={[
+          {key:"a", text:"Each layer processes a different abstraction (raw type embeddings → semantic groupings → user-intent vectors); each layer asks the memory a different question. Single-shot read at the head collapses to 'concat memory with final hidden' — loses the layer-wise interplay that lets the encoder route which slots matter for which abstraction level.", correct:true},
+          {key:"b", text:"Single-shot is fine; it just trains slower."},
+          {key:"c", text:"Cross-attention is required by PyTorch."},
+          {key:"d", text:"More attention is always better."},
+        ]}
+        trap={<>(b)/(c)/(d) miss the per-layer-abstraction argument.</>}
+        lens={<>Memory cross-attention is HMT's analogue of skip connections in deep CNNs — it lets each layer pull <em>different</em> information from outside the local computation graph. Replacing per-layer with end-only reverts HMT to "GNN + concat memory" — a much weaker model.</>}
+        stretch={<>What's the equivalent argument for ResNet skip connections? Why does the analogy hold?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-c2" difficulty="hard"
+        title="C2 — Memory write policy: why is this the load-bearing knob?"
+        scenario={<>The paper flags the memory write/eviction policy as "an open knob." Why is this disproportionately consequential?</>}
+        options={[
+          {key:"a", text:"The memory replaces depth-based reach. Whichever slot gets evicted, that long-range signal becomes invisible to ALL future layers — there's no fallback path. Bad eviction (FIFO drops the user's earliest, taste-defining interactions) silently destroys cold-tail recall while NDCG holds.", correct:true},
+          {key:"b", text:"Eviction affects GPU memory."},
+          {key:"c", text:"It's a hyperparameter like LR."},
+          {key:"d", text:"It controls latency."},
+        ]}
+        trap={<>(b)/(c)/(d) miss the irreversibility of eviction in HMT.</>}
+        lens={<>In HGT, dropping a node from the receptive field still lets you reach it via more layers. In HMT, an evicted memory slot is gone — there's no second path. That asymmetric criticality is why write/eviction is the open knob.</>}
+        stretch={<>Sketch a "priority-weighted" eviction. What's the priority function?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-c3" difficulty="hard"
+        title="C3 — What HMT drops vs deeper-GNN baselines"
+        scenario={<>HMT keeps the GNN at 2-3 layers. What does this <em>deliberately give up</em> that deeper baselines have?</>}
         multiSelect
-        title="P4 — Cold-start user with 3 interactions"
-        scenario={<>A brand-new user has 3 interactions. Memory bank has 512 slots, mostly empty. What should HMT do at inference for this user? Select all that apply.</>}
         options={[
-          {key:"a", text:"Mask the memory cross-attention entirely — fall back to pure graph signal.", correct:true},
-          {key:"b", text:"Initialize empty slots with a learned cold-start prior vector.", correct:true},
-          {key:"c", text:"Borrow memory contents from the nearest neighbor user.", correct:true},
-          {key:"d", text:"Refuse to recommend until 50+ interactions accumulate."},
-          {key:"e", text:"Fill empty slots with random Gaussian noise."},
+          {key:"a", text:"Multi-hop message diffusion (5+ hop convolutional smoothing) — replaced by direct memory access.", correct:true},
+          {key:"b", text:"Implicit residual paths through depth — replaced by explicit memory reads with their own gradients.", correct:true},
+          {key:"c", text:"Heterogeneous edge typing — preserved."},
+          {key:"d", text:"Item-ID embeddings — preserved."},
         ]}
-        trap={<>(d) loses the new user entirely. (e) introduces uncalibrated noise that hurts more than helps. The other three are each defensible engineering choices.</>}
-        lens={<>Cold-start in HMT is "near-empty memory." Three reasonable mitigations: (a) gate the memory cross-attention via a learned scalar that goes to zero when memory is sparse, (b) maintain a learned cold-start prior the memory is initialized to, (c) seed from a similar user's memory via collaborative filtering. Many production systems combine (a) and (b).</>}
-        stretch={<>When does (c) backfire — copying a neighbor's memory hurts more than ignoring memory?</>}
+        trap={<>(c)/(d) are NOT dropped — pick them and you misread the architecture.</>}
+        lens={<>The deliberate sacrifice: depth-based smoothing. Recovered via: memory read. Anything related to typing/identity is unchanged.</>}
+        stretch={<>If you wanted to keep depth-based smoothing AND memory, what's the obvious architecture? What goes wrong?</>}
       />
 
-      <VIS.TrapProblem
-        id="hmt-p5"
-        difficulty="medium"
-        title="P5 — Heterogeneous vs homogeneous: when does heterogeneity matter?"
-        scenario={<>A teammate suggests dropping the "heterogeneous" part — model everything as a single node type with typed edge features. "Simpler code, same expressivity." Is this right?</>}
+      <VIS.TrapProblem id="hmt-c4" difficulty="hard"
+        mode="ordered"
+        title="C4 — Rank HMT hyperparams by 'breaks production if mis-set'"
+        scenario={<>Rank in production-impact: (a) memory write/eviction policy, (b) GNN depth (2 vs 3 vs 4), (c) M (memory size), (d) cross-attention heads. Top = most catastrophic.</>}
         options={[
-          {key:"a", text:"Yes — typed edges encode the same information as typed nodes."},
-          {key:"b", text:"No — heterogeneous nodes get per-type parameters (separate Q/K/V projections per node type), which is strictly more expressive than shared parameters with typed edges. Heterogeneity matters when node types have genuinely different feature semantics.", correct:true},
-          {key:"c", text:"No — homogeneous graphs are slower."},
-          {key:"d", text:"Yes — modern transformers handle types implicitly."},
+          {key:"a", text:"Write/eviction policy (silently drops foundational interactions → cold-tail collapse, NDCG stays OK).", order:1},
+          {key:"b", text:"M (memory size — too few → loss of reach; too many → attention dilution).", order:2},
+          {key:"c", text:"GNN depth — depth=4 begins over-smoothing again.", order:3},
+          {key:"d", text:"Cross-attention heads — matters but well-explored."},
         ]}
-        trap={<>(a) and (d) sound reasonable but ignore that per-type parameters are a strictly larger model class. (c) is wrong on the facts.</>}
-        lens={<>Heterogeneous attention parameterizes Q, K, V per node-type pair, so a user-to-item attention is a different function than a user-to-brand attention. This matters when the semantics of "what to look for" differs across types — and in recsys it almost always does.</>}
-        stretch={<>If you only have 2 node types, is the heterogeneous parameterization still worth the parameter cost?</>}
+        trap={<>Many candidates rank depth or heads highest because they're the familiar transformer knobs. In HMT the write policy dominates the production risk because eviction is irreversible.</>}
+        lens={<>Write/eviction is HMT-specific in a way the others aren't — every GNN tunes depth; only HMT has irreversibly-lost slots.</>}
+        stretch={<>Which of these can you A/B-test cheaply?</>}
       />
 
-      <VIS.TrapProblem
-        id="hmt-p6"
-        difficulty="hard"
-        title="P6 — Over-squashing vs over-smoothing"
-        scenario={<>A senior reviewer says: "Your over-smoothing diagnosis for P1 is incomplete. Past depth 4 there are TWO things going wrong, not one." What's the second?</>}
+      <VIS.TrapProblem id="hmt-c5" difficulty="hard"
+        title="C5 — Data assumption: dense 2-hop-only graph"
+        scenario={<>You apply HMT to a graph where 95% of useful relations live within 2 hops (movie CF). What breaks first?</>}
         options={[
-          {key:"a", text:"Over-squashing — exponentially growing receptive fields get compressed through fixed-dim node states, so distant signal becomes a vanishing fraction of the aggregated embedding.", correct:true},
-          {key:"b", text:"Over-fitting — more layers means more parameters."},
-          {key:"c", text:"Numerical underflow in deep layer activations."},
-          {key:"d", text:"GPU memory pressure forces smaller batch sizes."},
+          {key:"a", text:"The memory bank receives writes but is rarely consulted productively — attention entropy collapses to near-uniform because no slot is more relevant than random; the memory params become regularizer-only and you've paid a 30% compute overhead for nothing.", correct:true},
+          {key:"b", text:"The GNN forward pass fails."},
+          {key:"c", text:"Latency drops to zero."},
+          {key:"d", text:"Cold-start improves."},
         ]}
-        trap={<>(b), (c), and (d) are surface symptoms or unrelated; over-squashing is the GNN-specific structural pathology.</>}
-        lens={<>Over-squashing is the dual of over-smoothing. At depth k, every node aggregates a k-hop neighborhood whose size grows exponentially; that information is squeezed through a fixed-dim vector. Far-away signal becomes a vanishingly small contribution. HMT bypasses this because the memory module is a direct edge, not a chain of aggregations.</>}
-        stretch={<>Which is the bigger problem in a SPARSE graph: over-smoothing or over-squashing?</>}
+        trap={<>(b)/(c)/(d) are non-explanations.</>}
+        lens={<>HMT's value is purely on long-range graphs. On 2-hop-sufficient graphs, memory is dead capacity. The diagnostic is attention entropy: if it stays high (near-uniform) throughout training, your memory is doing nothing.</>}
+        stretch={<>What's a cheap pre-training check on attention entropy?</>}
       />
 
-      <VIS.TrapProblem
-        id="hmt-p7"
-        difficulty="hard"
+      <VIS.TrapProblem id="hmt-c6" difficulty="hard"
+        title="C6 — Memory read: keys, queries, values?"
+        scenario={<>In HMT's per-layer cross-attention into memory, what plays the role of Q, K, V?</>}
+        options={[
+          {key:"a", text:"Q = the current node's layer-l hidden state; K, V = projections of the M memory slots. So each node queries 'which of my long-range slots is most relevant given my current abstraction'.", correct:true},
+          {key:"b", text:"Q = memory slots; K, V = nodes."},
+          {key:"c", text:"Q, K, V all come from the memory."},
+          {key:"d", text:"There is no cross-attention — only self-attention."},
+        ]}
+        trap={<>(b) reverses Q vs K/V. (c)/(d) misread.</>}
+        lens={<>The asymmetry matters: nodes <em>ask</em>, memory <em>answers</em>. Reversing it would make the memory's interpretation node-dependent at write time, which is not the design.</>}
+        stretch={<>What changes if you let the memory also self-attend (slot-to-slot)?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      <VIS.TrapProblem id="hmt-d1" difficulty="hard"
+        title="D1 — 'Memory is just like attention, so deeper transformer = same thing'"
+        scenario={<>The intuition: "transformers already have attention; HMT's memory is just bolted-on attention; if I stack more transformer layers I get the same effect." Why does this fail on heterogeneous graphs?</>}
+        options={[
+          {key:"a", text:"The transformer's self-attention is over CURRENT-LAYER neighborhood representations, which on a graph means the k-hop subgraph — exactly where over-smoothing kills the signal at depth >3. HMT's memory holds COMPRESSED PAST states that are explicitly NOT subject to over-smoothing because they were written before the current message-passing began.", correct:true},
+          {key:"b", text:"Transformers don't work on graphs."},
+          {key:"c", text:"Memory is faster than attention."},
+          {key:"d", text:"They are equivalent."},
+        ]}
+        trap={<>(b) is false. (c) confuses speed with capability. (d) is the naive reading.</>}
+        lens={<>Self-attention can't escape its own input neighborhood. Memory <em>can</em> — it's external state with its own write path. That's the entire architectural argument.</>}
+        stretch={<>If you froze the memory after training, would HMT still beat HGT online?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-d2" difficulty="hard"
+        title="D2 — Wrong-assumption cascade: 'HMT is HGT + a memory layer'"
+        scenario={<>Tech lead assumes "HMT = HGT plus a memory layer at the end." List the downstream wrong consequences.</>}
         multiSelect
-        title="P7 — Brand-loyalty signal: why is it the canonical HMT use case?"
-        scenario={<>The paper cites brand loyalty as the motivating example. Which of these properties of brand-loyalty signal make it well-matched to HMT specifically? Select all that apply.</>}
         options={[
-          {key:"a", text:"The signal lives 3-5 hops away (user &rarr; past purchases &rarr; brand &rarr; other brand items).", correct:true},
-          {key:"b", text:"It is persistent across long time windows; users buy from the same brand over years.", correct:true},
-          {key:"c", text:"It requires connecting old user history to current candidate items via a brand bridge.", correct:true},
-          {key:"d", text:"It is captured perfectly by 1-hop neighbor aggregation."},
-          {key:"e", text:"Brand-loyal users are dense in the graph and easy to model."},
+          {key:"a", text:"Assumes single read at head → wrong: HMT reads at every layer; per-layer interactions are load-bearing.", correct:true},
+          {key:"b", text:"Assumes memory is updated by gradient only → wrong: memory has a write policy (compression + eviction) that's a separate ops surface.", correct:true},
+          {key:"c", text:"Assumes node-typing handled identically → fine, this is unchanged.", correct:false},
+          {key:"d", text:"Assumes loss function identical → fine, the loss is the same supervised CE/BPR.", correct:false},
+          {key:"e", text:"Assumes hyperparameter inheritance from HGT works → wrong: HMT's effective receptive field is way larger so the LR schedule + dropout that worked for HGT often over-fits HMT in early epochs.", correct:true},
         ]}
-        trap={<>(d) directly contradicts the motivation. (e) is irrelevant — brand loyalty matters regardless of user density.</>}
-        lens={<>HMT shines when (i) the predictive signal is long-range in the graph, (ii) it persists over time and lives in older history, and (iii) it bridges entities through typed paths. Brand loyalty ticks all three; one-hop signals like "what did you click last hour" do not need HMT.</>}
-        stretch={<>Name one recsys signal that is the OPPOSITE of brand loyalty — and where HMT would be overkill.</>}
+        trap={<>(c)/(d) are the unchanged ones — useful for showing you read the architecture instead of stamping "HGT+X" on the system.</>}
+        lens={<>The "HGT + memory" framing is the most expensive cognitive error in HMT migrations. Memory's write policy and the per-layer read are the things that need explicit re-engineering.</>}
+        stretch={<>Which of the cascading errors is cheapest to fix post-hoc?</>}
       />
 
-      <VIS.TrapProblem
-        id="hmt-p8"
-        difficulty="hard"
-        title="P8 — Memory size sweep"
-        scenario={<>You sweep memory size M over {"{64, 256, 1024, 4096}"} slots per user. Val NDCG: 0.27, 0.30, 0.31, 0.30. Latency p99: 11ms, 13ms, 22ms, 67ms. Which M ships?</>}
+      <VIS.TrapProblem id="hmt-d3" difficulty="hard"
+        title="D3 — Junior: 'add more data.' Senior: ?"
+        scenario={<>HMT regresses 0.4% NDCG vs HGT on a brand-loyalty surface during shadow scoring. Junior says "train on 2× data." Senior reaches for the memory write/eviction policy. Why is the senior right?</>}
         options={[
-          {key:"a", text:"M=4096 — best NDCG headroom for future."},
-          {key:"b", text:"M=1024 — NDCG peaks here; jump to 4096 costs 3&times; latency for zero quality gain.", correct:true},
-          {key:"c", text:"M=64 — lowest latency wins."},
-          {key:"d", text:"M=256 — best NDCG per latency unit."},
+          {key:"a", text:"On a long-range-signal surface the gap is most often in WHAT'S WRITTEN to memory, not how much message-passing data we have — bad eviction is the dominant failure mode. More data just causes more writes and faster eviction with the same broken policy.", correct:true},
+          {key:"b", text:"More data always helps."},
+          {key:"c", text:"Eviction is faster to train."},
+          {key:"d", text:"Senior is wrong; junior is right."},
         ]}
-        trap={<>(a) misreads the plateau. (c) sacrifices clear quality wins. (d) ignores that 1024 is strictly better quality.</>}
-        lens={<>The classic "knee of the curve." NDCG plateaus at M=1024; M=4096 spends 3x latency for no quality and actually regresses (likely because the extra slots add noise). Ship M=1024 unless your domain shifts.</>}
-        stretch={<>Why might NDCG actually regress at M=4096 instead of just plateau?</>}
+        trap={<>(b)/(c)/(d) are standard misreads.</>}
+        lens={<>Data scaling helps only when the bottleneck is signal-amount, not signal-retention. HMT's bottleneck is retention (the memory), so more data without fixing the policy makes things worse.</>}
+        stretch={<>When would the junior actually be right?</>}
       />
 
-      <VIS.TrapProblem
-        id="hmt-p9"
-        difficulty="hard"
-        title="P9 — Distinguishing HMT from a Set Transformer over history"
-        scenario={<>A teammate says: "HMT's memory module is just a Set Transformer over the user's history. Why is this a new architecture?"</>}
+      <VIS.TrapProblem id="hmt-d4" difficulty="hard"
+        title="D4 — HMT online cold-tail recall drops 6%; which cause?"
+        scenario={<>HMT shipped at full traffic. Online cold-tail-item recall drops 6% vs HGT. NDCG@10 is +1.5%. Three plausible causes: (1) memory eviction is dropping rare-item slots, (2) attention dilution at large M, (3) graph diameter changed. Most likely?</>}
         options={[
-          {key:"a", text:"It is the same — the paper just renames the idea."},
-          {key:"b", text:"HMT couples the memory with a heterogeneous graph encoder, not just a sequence. The cross-attention reads memory at every GNN layer, so memory and graph signal mix multiple times — a Set Transformer over history alone gives one read.", correct:true},
-          {key:"c", text:"Set Transformer requires fixed-size input; memory is variable."},
-          {key:"d", text:"Set Transformer cannot use heterogeneous features."},
+          {key:"a", text:"Memory eviction — the FIFO write policy that ships by default in the reference implementation evicts the user's earliest rare-item interactions; those were the only signal pointing at the long tail, and the loss didn't care because head-CTR was unchanged.", correct:true},
+          {key:"b", text:"Attention dilution — but NDCG@10 is up, so memory attention is working in aggregate."},
+          {key:"c", text:"Graph diameter — wouldn't shift overnight."},
+          {key:"d", text:"GPU silent corruption."},
         ]}
-        trap={<>(a) is the dismissive reading. (c) and (d) are technical inaccuracies about Set Transformer.</>}
-        lens={<>The novelty is the COUPLING. A Set Transformer summarizes a sequence once; HMT's memory is queried by EVERY GNN layer's node embeddings, so the graph and memory representations interact L times. That iterative refinement is what the architecture buys you.</>}
-        stretch={<>If you ran a Set Transformer over history and concatenated its output to each node embedding once, how would that ablate against HMT?</>}
+        trap={<>(b) is plausible but ruled out by NDCG up. (c)/(d) are exotic.</>}
+        lens={<>HMT-specific failure: eviction-driven cold-tail collapse with healthy head metrics. Fix: priority-aware eviction (recency × frequency × rarity).</>}
+        stretch={<>Design an offline metric that would catch this before launch.</>}
       />
 
-      <VIS.TrapProblem
-        id="hmt-p10"
-        difficulty="hard"
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      <VIS.TrapProblem id="hmt-e1" difficulty="hard"
+        title="E1 — Memory + online learning: failure mode"
+        scenario={<>HMT serving uses a memory cached per-user. Concurrently, user-side new interactions arrive at ~10/sec and the memory write path runs every 5 min. What's the failure mode?</>}
+        options={[
+          {key:"a", text:"Between writes, the served memory is stale — new interactions that would've evicted/overwritten slots are queued; the model scores using a memory that doesn't reflect the user's latest preferences. Worse, after the batch write, attention re-allocates across slots and prediction jumps discontinuously.", correct:true},
+          {key:"b", text:"GPU OOM."},
+          {key:"c", text:"Latency drops to zero."},
+          {key:"d", text:"Online learning is unaffected."},
+        ]}
+        trap={<>(b) is a side issue. (c)/(d) miss the staleness.</>}
+        lens={<>Either reduce write interval (cost) or accept staleness (quality). The discontinuity at batch-write boundaries is HMT-specific — DLRM doesn't have this surface.</>}
+        stretch={<>What metric tracks the prediction-jump at write boundaries?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-e2" difficulty="hard"
+        title="E2 — Friday 3am: cold-tail recall down, NDCG up — why HMT?"
+        scenario={<>HMT shipped Thursday. Friday 3am page: cold-tail-item recall down 6%, NDCG@10 up 1.5%, latency unchanged, GPU util unchanged. Why HMT-specifically?</>}
+        options={[
+          {key:"a", text:"HMT's memory eviction (FIFO by default) drops the user's earliest interactions — those are the foundational signals pointing at rare-tail items. The supervised loss + NDCG@10 don't penalize this; only cold-tail-recall does. HGT doesn't have this surface because it has no memory to evict — long-range info goes through message-passing each time.", correct:true},
+          {key:"b", text:"HMT randomly predicts the wrong items."},
+          {key:"c", text:"GPU thermal throttling at 3am."},
+          {key:"d", text:"Friday-specific data drift."},
+        ]}
+        trap={<>(b)/(c)/(d) are red herrings.</>}
+        lens={<>The eviction-driven cold-tail-collapse is the canonical HMT production page. Fix: priority-aware eviction + per-slot age limits.</>}
+        stretch={<>What's the shadow test that catches this Tuesday instead of 3am Friday?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-e3" difficulty="hard"
+        title="E3 — Reference-impl default that bites"
+        scenario={<>You use the open-source HMT reference implementation. There's a default in <code>MemoryConfig</code> that's wrong for many production surfaces. Which?</>}
+        options={[
+          {key:"a", text:"`write_policy='fifo'` — drops oldest slots; on engagement surfaces the OLDEST interactions are the taste-defining ones (the original purchases that anchor the user's category), so FIFO silently destroys cold-tail recall.", correct:true},
+          {key:"b", text:"`dropout=0.0` — fine for most."},
+          {key:"c", text:"`use_bf16=False` — minor speed effect."},
+          {key:"d", text:"`num_layers=2` — paper recommends this."},
+        ]}
+        trap={<>(b)/(c)/(d) are real defaults but not the silent trap.</>}
+        lens={<>FIFO is the wrong eviction policy for user-history memory because the OLDEST entries are often the highest-signal (taste anchors). Better: importance-weighted or recency × rarity.</>}
+        stretch={<>If you can't change the default, what's the data-pipeline workaround?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-e4" difficulty="hard"
+        mode="ordered"
+        title="E4 — Order the HGT → HMT migration phases"
+        scenario={<>Phases: (a) shadow scoring, (b) eviction-policy A/B (FIFO vs priority on shadow), (c) traffic ramp with monitoring on cold-tail recall, (d) full traffic + retire HGT. Top = first.</>}
+        options={[
+          {key:"a", text:"Shadow scoring (HMT computes scores in parallel; no user impact).", order:1},
+          {key:"b", text:"Eviction-policy A/B on shadow (determine the right write policy BEFORE serving).", order:2},
+          {key:"c", text:"Traffic ramp 1-5% with cold-tail-recall watchdog.", order:3},
+          {key:"d", text:"Full traffic + retire HGT.", order:4},
+          {key:"e", text:"Skip shadow; ramp directly."},
+          {key:"f", text:"Retire HGT first to free GPU."},
+        ]}
+        trap={<>Most candidates skip the eviction A/B — but that's the load-bearing decision, and it's irreversible once you start writing in production.</>}
+        lens={<>The HMT-specific bit is determining write policy BEFORE serving — it can't be retroactively fixed because evicted slots are gone.</>}
+        stretch={<>What's the SLA at each ramp stage? When do you roll back?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-e5" difficulty="hard"
+        title="E5 — Reproducing the Nature SR results"
+        scenario={<>The paper claims +X% lift over HGT. Which experimental detail must you match to even approach the numbers?</>}
         multiSelect
-        title="P10 — What ablations should the paper run to convince you?"
-        scenario={<>You are reviewing the HMT paper. Which ablations should appear in the experimental section for the architecture's claims to be convincing? Select all that apply.</>}
         options={[
-          {key:"a", text:"Remove the memory module — does pure HGT at the same depth match HMT?", correct:true},
-          {key:"b", text:"Stack HGT to depth 6-8 — does extra depth recover HMT's quality?", correct:true},
-          {key:"c", text:"Vary M from 0 to large — does quality scale with memory size?", correct:true},
-          {key:"d", text:"Ablate heterogeneous attention to homogeneous — does the typed parameterization matter?", correct:true},
-          {key:"e", text:"Compare against a pure CNN baseline on tabular features."},
+          {key:"a", text:"Long-range-rich heterogeneous graph with effective diameter >3 (the gain disappears on short-diameter graphs).", correct:true},
+          {key:"b", text:"Memory write policy from the supplementary (NOT the default FIFO in many forks).", correct:true},
+          {key:"c", text:"Per-layer cross-attention into memory (some open-source forks only read at the head).", correct:true},
+          {key:"d", text:"Use MovieLens-1M."},
+          {key:"e", text:"Run on CPU."},
         ]}
-        trap={<>(e) is a non-comparable baseline; CNNs are not relevant to graph recsys.</>}
-        lens={<>The four correct ablations isolate each design choice: (a) tests if memory is needed at all, (b) tests if depth alone could substitute, (c) confirms memory contributes positively as a knob, (d) tests if heterogeneity matters separately from memory. Together they cover the architecture's claimed novelties.</>}
-        stretch={<>If (a) ablation shows HGT at depth 3 matches HMT, what's your verdict on the paper?</>}
+        trap={<>(d)/(e) are not in the paper.</>}
+        lens={<>HMT's claims are sensitive to (i) graph diameter, (ii) write policy, (iii) per-layer reads. Production teams often ship one of these wrong and report "we only got half the lift."</>}
+        stretch={<>What's the minimum-viable benchmark slice to sanity-check HMT?</>}
       />
+
+      <VIS.TrapProblem id="hmt-e6" difficulty="hard"
+        title="E6 — Public benchmarks hide HMT's weakness"
+        scenario={<>HMT beats baselines on MovieLens-1M and Amazon-Books in the paper's table. What property of these benchmarks hides a real-world weakness?</>}
+        options={[
+          {key:"a", text:"Both benchmarks are 'flat' — the user-item bipartite graph has effective diameter 2-3; HMT's long-range gain doesn't show. The paper's gains are likely from heterogeneous edges (category, brand) added by the curator — production graphs with sparser type edges may not reproduce.", correct:true},
+          {key:"b", text:"They include synthetic data."},
+          {key:"c", text:"They're too small."},
+          {key:"d", text:"They use BPR not NDCG."},
+        ]}
+        trap={<>(b)/(c)/(d) are misreads.</>}
+        lens={<>Public benchmarks aren't naturally long-range. HMT's value depends on relations that LIVE at distance. Augment your eval with effective-diameter analysis on your own graph before relying on paper numbers.</>}
+        stretch={<>Design a public-benchmark slice that would surface HMT's actual lift.</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      <VIS.TrapProblem id="hmt-f1" difficulty="hard"
+        title="F1 — Smallest input that breaks HMT's advantage"
+        scenario={<>Construct the simplest input that reduces HMT to "HGT with extra compute."</>}
+        options={[
+          {key:"a", text:"Star-graph: 1 user node connected to N items, no longer paths. With no long-range structure to remember, memory writes degenerate to 'compressed copies of immediate neighbors' and HGT matches HMT at lower cost.", correct:true},
+          {key:"b", text:"Empty graph."},
+          {key:"c", text:"Random noise nodes."},
+          {key:"d", text:"Sequences of length 1B."},
+        ]}
+        trap={<>(b)/(c)/(d) hurt every model.</>}
+        lens={<>HMT depends on path-distance &gt;3 carrying useful signal. Strip that and you've paid memory-bank cost for no benefit.</>}
+        stretch={<>How would you detect 'star-graph-ness' before training?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-f2" difficulty="hard"
+        title="F2 — Adversarial: write-bomb"
+        scenario={<>Design an adversarial action stream that maximally degrades HMT but leaves HGT unaffected.</>}
+        options={[
+          {key:"a", text:"A burst of high-frequency near-duplicate interactions (e.g., re-clicks on one item) that flood the memory writer, evicting all the user's foundational slots within minutes. HGT has no eviction surface and is unaffected; HMT's long-range capacity collapses.", correct:true},
+          {key:"b", text:"Random noise tokens."},
+          {key:"c", text:"Empty sequences."},
+          {key:"d", text:"Very long sequences."},
+        ]}
+        trap={<>(b)/(c)/(d) hurt every model. (a) targets HMT's eviction policy.</>}
+        lens={<>HMT introduces a new attack surface — the memory writer. Adversarial defense lives at write-time (rate-limit, deduplication, novelty-gated writes).</>}
+        stretch={<>Sketch a write-time defense against the write-bomb.</>}
+      />
+
+      <VIS.TrapProblem id="hmt-f3" difficulty="hard"
+        title="F3 — Reverse-engineering: NDCG up, attention entropy up"
+        scenario={<>You scale M from 256 → 4096. Offline NDCG climbs. <strong>Cross-attention entropy on the memory also climbs (toward uniform)</strong>. Online watch-time is flat. Which HMT-specific design choice drives this divergence?</>}
+        options={[
+          {key:"a", text:"Memory cross-attention with no temperature regularization — at large M the attention head distributes weight nearly uniformly across stale slots; offline NDCG benefits from the extra capacity acting as a soft regularizer, but the model isn't actually using memory addressably (entropy ↑). Online metrics that depend on PRECISE long-range retrieval (cold-tail) don't move.", correct:true},
+          {key:"b", text:"Heterogeneous edge typing."},
+          {key:"c", text:"GNN depth."},
+          {key:"d", text:"Item-ID embedding dim."},
+        ]}
+        trap={<>(b)/(c)/(d) are HMT components but not the entropy-driving one.</>}
+        lens={<>High attention entropy + flat online means the memory is functioning as regularization, not retrieval. Fix: attention temperature, top-k sparse attention over slots, or M scaled to √(history).</>}
+        stretch={<>What loss-side term would force the memory attention to stay peaked?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-f4" difficulty="hard"
+        title="F4 — Paper-named failure mode"
+        scenario={<>The Nature SR paper flags one regime where pure HMT underperforms. Which?</>}
+        options={[
+          {key:"a", text:"Short, dense user histories where the k-hop neighborhood already contains all relevant signal — memory provides no extra reach, only extra parameter cost and write-policy risk.", correct:true},
+          {key:"b", text:"GPU-rich engagement surfaces."},
+          {key:"c", text:"Heterogeneous-only domains."},
+          {key:"d", text:"Cold-start within 24h."},
+        ]}
+        trap={<>(b) is where HMT wins, not where it loses.</>}
+        lens={<>The paper is honest about regime-of-validity: HMT pays for reach, so domains without need-for-reach are losses.</>}
+        stretch={<>How would you augment HMT to gracefully fall back to HGT when reach isn't needed?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-f5" difficulty="hard"
+        title="F5 — Derive the next paper from HMT's open knobs"
+        scenario={<>The paper flags memory write/eviction as 'an open knob.' Derive what a follow-up paper would target.</>}
+        options={[
+          {key:"a", text:"Learnable write/eviction (e.g. an RL-trained controller; or a differentiable retention head with explicit priority over slots) — formalize the policy that's currently a hard-coded FIFO into a trainable module with its own loss signal from downstream recall.", correct:true},
+          {key:"b", text:"Bigger memory banks."},
+          {key:"c", text:"Deeper GNN."},
+          {key:"d", text:"Cross-domain transfer."},
+        ]}
+        trap={<>(b)/(c)/(d) are not paper-flagged.</>}
+        lens={<>The paper's call-out is policy learning, not capacity. (b) violates the paper's own attention-dilution caution.</>}
+        stretch={<>What's the RL reward function for a memory-eviction controller?</>}
+      />
+
+      <VIS.TrapProblem id="hmt-f6" difficulty="hard"
+        title="F6 — Privacy adversarial: membership inference"
+        scenario={<>A privacy researcher asks whether HMT is more vulnerable to membership inference than HGT. Why might it be?</>}
+        options={[
+          {key:"a", text:"HMT's memory bank stores compressed user-history slots — at training time, slot vectors encode specific interactions in a low-dim reconstructable form. An attacker who queries with a partial history can compare attention patterns to detect whether their target user's interactions were in the train set, more directly than HGT (whose only state is graph-edges + node embeddings).", correct:true},
+          {key:"b", text:"HMT runs on more powerful GPUs."},
+          {key:"c", text:"HGT has built-in DP."},
+          {key:"d", text:"No difference."},
+        ]}
+        trap={<>(b)/(c)/(d) are non-answers.</>}
+        lens={<>Memory is an externalized recorder. The risk vector is recsys-specific (the attacker doesn't need text — just probing inputs). Mitigation: DP-SGD on the write path, slot perturbation.</>}
+        stretch={<>Sketch DP-SGD on the memory-writer specifically. What does it cost in long-tail recall?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://www.nature.com/articles/s41598-025-28266-1" target="_blank" rel="noopener"><strong>HMT — Enhancing graph transformer encoding with graph heterogeneous memory</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, Nature Sci Reports 2025)</span><br/>The source paper. Section 3 (memory module design) and Section 5 (ablations) are the heart of it.</li>
-        <li><a href="https://arxiv.org/abs/2003.01332" target="_blank" rel="noopener"><strong>Hu et al. — Heterogeneous Graph Transformer (HGT)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, WWW 2020)</span><br/>The HGT baseline HMT builds on. Read for the per-type attention parameterization.</li>
-        <li><a href="https://arxiv.org/abs/2006.05205" target="_blank" rel="noopener"><strong>Alon and Yahav — On the Bottleneck of GNNs and its Practical Implications</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, ICLR 2021)</span><br/>The canonical over-squashing paper. Read this to understand why depth alone cannot capture long-range signal.</li>
-        <li><a href="https://distill.pub/2021/gnn-intro/" target="_blank" rel="noopener"><strong>Sanchez-Lengeling et al. — A Gentle Introduction to Graph Neural Networks</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog, Distill)</span><br/>The cleanest visual introduction to GNN message passing. Start here if "k-hop aggregation" still feels abstract.</li>
-        <li><a href="https://michael-bronstein.medium.com/" target="_blank" rel="noopener"><strong>Michael Bronstein — Towards Data Science posts on GNN expressivity</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Bronstein's series is the best practitioner survey of GNN failure modes including over-smoothing and over-squashing.</li>
+        <li>
+          <a href="https://www.nature.com/articles/s41598-025-28266-1" target="_blank" rel="noopener"><strong>Nature SR 2025 — Enhancing graph transformer encoding with graph heterogeneous memory</strong></a> (paper)
+          <br/>The HMT paper. Read sections 3 (memory architecture) and 5 (ablations on M, write policy).
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2003.01332" target="_blank" rel="noopener"><strong>Hu et al. — Heterogeneous Graph Transformer (HGT)</strong></a> (paper, WWW 2020)
+          <br/>The baseline HMT extends. Sections 3–4 cover heterogeneous attention and the type-specific projections HMT inherits.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2006.05205" target="_blank" rel="noopener"><strong>Alon &amp; Yahav — On the Bottleneck of GNNs (over-squashing)</strong></a> (paper, ICLR 2021)
+          <br/>The formal story for why deeper GNNs fail at long-range — HMT is one architectural response.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2206.11140" target="_blank" rel="noopener"><strong>Topping et al. — Understanding over-squashing and bottlenecks via curvature</strong></a> (paper, ICLR 2022)
+          <br/>Quantitative diagnostic for over-squashing; useful when deciding whether HMT is worth the memory cost on your graph.
+        </li>
+        <li>
+          <a href="https://eugeneyan.com/writing/recsys-llm/" target="_blank" rel="noopener"><strong>Eugene Yan — Recsys + LLMs landscape</strong></a> (blog)
+          <br/>Where memory-augmented graph recsys fits in the broader landscape; pragmatic engineering lens.
+        </li>
       </ul>
     </VIS.Section>
   </main>

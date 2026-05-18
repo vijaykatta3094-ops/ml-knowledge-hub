@@ -1414,268 +1414,579 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// S3-Rec — Self-Supervised Sequential Recommendation with Mutual Information Maximization.
+// S3-Rec — Self-Supervised Sequential Recommendation with Mutual Information Maximization (Zhou et al., CIKM 2020)
+// v2 redo — 30+ trap problems anchored on S3-Rec's four SSL objectives over (attribute, item, sequence, subseq).
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Self-supervised pretraining"
+      pill="RecSys SOTA · Self-supervised / Sequential"
       title="S3-Rec — Self-Supervised Sequential Recommendation"
-      subtitle="Four pretraining objectives that maximize mutual information between (attribute, item), (item, sequence), (attribute, sequence), and (subseq, subseq) before fine-tuning."
+      subtitle="Four mutual-information-maximization pretext tasks (attribute↔item, item↔sequence, attribute↔sequence, subseq↔subseq) for pretraining a sequence model before fine-tuning on next-item prediction."
       byline={[
         {label: "Paper", value: "Zhou et al., CIKM 2020"},
-        {label: "URL", value: "arxiv.org/abs/2008.07873"},
+        {label: "Year", value: "2020 (cited through 2024-2025)"},
+        {label: "Domain", value: "Sequential recsys pretraining"},
       ]}/>
 
     <VIS.TLDR>
-      BERT4Rec pretrains a transformer on sequences using a single masked-item-prediction loss. S3-Rec adds <strong>three more</strong> self-supervised tasks that maximize <VIS.Term def="A measure of how much knowing one variable reduces uncertainty about another. MI(X;Y) = H(X) - H(X|Y). Maximizing MI between two views forces the model to encode information they share.">mutual information</VIS.Term> across attributes, items, sequences, and subsequences — then fine-tunes on the actual next-item prediction task.
+      Sequential recsys baselines (<VIS.Term def="Self-Attentive Sequential Recommendation — Kang &amp; McAuley, ICDM 2018; transformer over item sequences with next-item loss.">SASRec</VIS.Term>, <VIS.Term def="BERT-style sequential recsys — Sun et al., CIKM 2019; masked-item prediction.">BERT4Rec</VIS.Term>) optimize only one objective (next-item / masked-item). S3-Rec adds FOUR <VIS.Term def="Mutual Information — a measure of how much knowing one variable reduces uncertainty about another. MI maximization is a standard SSL surrogate.">MI</VIS.Term>-maximization pretext tasks during PRETRAINING, fusing item attributes into the sequence representation, then fine-tunes. Most useful when item-side attribute metadata is rich. Source: <a href="https://arxiv.org/abs/2008.07873" target="_blank" rel="noopener">arXiv:2008.07873</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        S3-Rec uses a transformer encoder (same backbone as BERT4Rec) but enriches pretraining with FOUR self-supervised tasks. Each task takes a pair of "views" and pushes their representations together via an <VIS.Term def="A lower-bound estimator on mutual information used in contrastive learning. Practically: log-softmax of a positive pair against a batch of negatives.">InfoNCE-style</VIS.Term> loss.
+        S3-Rec splits training into two phases:
       </p>
-      <ul>
-        <li><strong>AAP</strong> — Associated Attribute Prediction: maximize MI(item, its attributes). Reading: each item's representation should encode its category/brand/genre attributes.</li>
-        <li><strong>MIP</strong> — Masked Item Prediction: maximize MI(masked item, surrounding context). The BERT4Rec loss, kept as one of four.</li>
-        <li><strong>MAP</strong> — Masked Attribute Prediction: maximize MI(attribute, surrounding context). Predict the masked attribute given its sequence context.</li>
-        <li><strong>SP</strong> — Segment Prediction: maximize MI(subseq A, subseq B) from the same user. Predict whether two subsequences come from the same user session.</li>
-      </ul>
+      <ol>
+        <li><strong>Pretraining</strong> with four MI-max self-supervised tasks (no next-item label needed):
+          <ul>
+            <li><strong>Associated Attribute Prediction (AAP)</strong>: MI(item, its attributes) — given a masked item, predict its attribute set.</li>
+            <li><strong>Masked Item Prediction (MIP)</strong>: MI(item, sequence context) — like BERT4Rec.</li>
+            <li><strong>Masked Attribute Prediction (MAP)</strong>: MI(attribute, sequence context) — predict masked attribute given surrounding sequence.</li>
+            <li><strong>Segment Prediction (SP)</strong>: MI(subseq, subseq) — predict a masked sub-segment given the rest.</li>
+          </ul>
+        </li>
+        <li><strong>Fine-tuning</strong> on the supervised next-item objective on the pretrained transformer.</li>
+      </ol>
       <VIS.Mermaid chart={`
 flowchart TB
-  SEQ["User sequence + attributes"]
-  T["Shared transformer encoder"]
-  SEQ --> T
-  T --> AAP["AAP: item to attribute"]
-  T --> MIP["MIP: masked item"]
-  T --> MAP["MAP: masked attribute"]
-  T --> SP["SP: subseq to subseq"]
-  AAP --> PRE["Pretraining total"]
-  MIP --> PRE
-  MAP --> PRE
-  SP --> PRE
-  PRE --> FT["Fine-tune on next-item"]
-  style PRE fill:#fef3c7,stroke:#d97706,stroke-width:2px
-  style FT fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+  D["Item sequences + attributes"]
+  D --> P["Pretrain: AAP + MIP + MAP + SP"]
+  P --> F["Fine-tune: next-item"]
+  F --> S["Serve"]
+  style P fill:#fef3c7,stroke:#d97706,stroke-width:2px
+  style F fill:#dcfce7,stroke:#16a34a,stroke-width:2px
       `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-differs" title="How it differs from BERT4Rec and SASRec">
-      <table style={{width: "100%", borderCollapse: "collapse", fontSize: 14}}>
-        <thead><tr style={{background: "#1f3a5f", color: "white"}}>
-          <th style={{padding: 8, textAlign: "left"}}>Model</th>
-          <th style={{padding: 8, textAlign: "left"}}>Pretrain tasks</th>
-          <th style={{padding: 8, textAlign: "left"}}>Uses attributes?</th>
-          <th style={{padding: 8, textAlign: "left"}}>Fine-tunes?</th>
-        </tr></thead>
-        <tbody>
-          <tr><td style={{padding: 8}}>SASRec</td><td style={{padding: 8}}>None (supervised)</td><td style={{padding: 8}}>No</td><td style={{padding: 8}}>N/A</td></tr>
-          <tr><td style={{padding: 8}}>BERT4Rec</td><td style={{padding: 8}}>Masked item only</td><td style={{padding: 8}}>No</td><td style={{padding: 8}}>Yes</td></tr>
-          <tr style={{background: "#e8f0fa"}}><td style={{padding: 8}}><strong>S3-Rec</strong></td><td style={{padding: 8}}>AAP + MIP + MAP + SP</td><td style={{padding: 8}}><strong>Yes</strong></td><td style={{padding: 8}}>Yes</td></tr>
-        </tbody>
-      </table>
-      <p style={{color: "#475569", fontSize: 14}}>
-        S3-Rec's headline differentiator is the attribute-aware objectives. If your items have rich side info (category, brand, genre, color), S3-Rec extracts more from them than BERT4Rec.
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from BERT4Rec, SASRec, and CL4SRec">
+      <p>
+        <strong>SASRec.</strong> Causal transformer; loss = next-item BCE on the last position. One objective; no attribute fusion.
+      </p>
+      <p>
+        <strong>BERT4Rec.</strong> Masked-item prediction over the sequence. One objective. S3-Rec extends with three additional attribute/segment objectives.
+      </p>
+      <p>
+        <strong>CL4SRec (sibling, 2022).</strong> Sequence contrastive learning (sequence-level augmentations + InfoNCE) instead of MI-max pretraining. CL4SRec doesn't require attribute metadata; S3-Rec needs it.
+      </p>
+      <p>
+        <strong>S3-Rec's deliberate bet.</strong> Item ATTRIBUTES carry useful side information; current sequential models ignore them. The four objectives explicitly fuse attribute information into the sequence representation.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick S3-Rec">
-      <ul>
-        <li><strong>Items have rich attributes.</strong> E-commerce with category/brand/price-tier; movies with genre/director/year; music with artist/album/genre.</li>
-        <li><strong>You have pretraining compute.</strong> Four-task pretraining is significantly more expensive than single-task. The lift only materializes if you can afford it.</li>
-        <li><strong>Catalogs are mid-to-large.</strong> Small catalogs do not need attribute pretraining; the supervised signal is already enough.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick S3-Rec">
+      <p>
+        Pick S3-Rec when (a) items have rich, reliable attributes (genre, category, brand, tags), (b) catalog is large enough that pretraining infra is worth the spend, (c) supervised data is limited (cold-start, new surface). Don't pick S3-Rec on attribute-poor surfaces (raw ID sequences only) or on small catalogs where pretraining infra dominates the cost.
+      </p>
+      <VIS.Mermaid chart={`
+flowchart TB
+  D["Surface assessment"]
+  D --> Q1{"Rich item attributes?"}
+  Q1 -->|No| CL["CL4SRec or SASRec"]
+  Q1 -->|Yes| Q2{"Supervised data limited?"}
+  Q2 -->|No| BERT["BERT4Rec sufficient"]
+  Q2 -->|Yes| S3["S3-Rec"]
+  style S3 fill:#dcfce7,stroke:#16a34a
+  style CL fill:#fee2e2,stroke:#dc2626
+      `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations">
-      <VIS.Callout kind="gotcha" title="Pretraining infra cost may not be worth it on small catalogs">
-        Below ~100K items, the four-task pretraining may be more code complexity and compute than the resulting NDCG gain justifies. Always run the BERT4Rec baseline first.
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
+      <p>
+        Pretraining infra is not always worth it on small catalogs — the four MI losses each need clean attribute labels, which is an ETL cost in itself. The fine-tune step can OVER-WRITE pretrained representations if the LR is too high in the first epoch.
+      </p>
+      <VIS.Callout kind="gotcha" title="Catastrophic forgetting of pretrained representations">
+        If fine-tune LR is set the same as a from-scratch SASRec (e.g. 1e-3), the first few hundred steps wipe the pretrained attribute fusion. Use a much smaller LR (1e-4 or below) and warm-up.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="Attribute quality matters">
-        AAP and MAP only help if attributes are clean and discriminative. Noisy attributes (e.g., free-text product descriptions with typos) make the MI objectives unstable.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Four loss weights to tune">
-        Each of AAP, MIP, MAP, SP needs a weight in the total loss. The paper's defaults are starting points, not universal. Domains vary.
+      <VIS.Callout kind="warn" title="MAP objective collapses on noisy attribute labels">
+        If attribute labels are incomplete or noisy, the MAP loss converges to predicting the majority attribute — adding noise rather than signal.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-problems" title="Drill — trap problems">
-      <p style={{color:"#475569", marginBottom: 16}}>Ten senior-MLE prompts on S3-Rec's design choices and failure modes.</p>
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        30+ problems on S3-Rec's four-objective MI pretraining. Redact "S3-Rec" → "Model X" and the right answer should NOT survive.
+      </p>
 
-      <VIS.TrapProblem
-        id="s3-p1"
-        difficulty="hard"
-        title="P1 — When does the attribute-MI objective fail to help?"
-        scenario={<>You add S3-Rec on top of BERT4Rec for a music streaming service. Items have artist, album, genre, mood, and BPM as attributes. After pretraining, downstream NDCG@10 is FLAT vs BERT4Rec. Diagnose.</>}
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity &amp; comparison</h3>
+
+      <VIS.TrapProblem id="s3-a1" difficulty="hard"
+        title="A1 — S3-Rec vs BERT4Rec: same family, opposite cost"
+        scenario={<>Both pretrain a transformer on sequences. The discriminator?</>}
         options={[
-          {key:"a", text:"Bug in the pretraining loop — re-run."},
-          {key:"b", text:"Likely cause: the attributes are too redundant with item-ID for AAP to add new signal. If 'genre' is already perfectly inferable from item-ID via the item embedding, MI(item, genre) is trivially maximized and the loss provides no useful gradient.", correct:true},
-          {key:"c", text:"BERT4Rec is just better."},
-          {key:"d", text:"Need bigger transformer."},
+          {key:"a", text:"BERT4Rec uses ONE objective: masked-item prediction (MIP). S3-Rec adds three more (AAP, MAP, SP) that explicitly bring item ATTRIBUTES and sub-segment structure into the pretrained representation. The cost: S3-Rec needs reliable per-item attribute metadata at pretraining time; BERT4Rec doesn't.", correct:true},
+          {key:"b", text:"BERT4Rec is supervised; S3-Rec is not."},
+          {key:"c", text:"Both are identical."},
+          {key:"d", text:"BERT4Rec is autoregressive."},
         ]}
-        trap={<>(a) is a non-diagnosis. (c) and (d) ignore the actual mechanism.</>}
-        lens={<>Attribute MI only helps when attributes carry information NOT already inferable from item-ID. For a streaming service with millions of songs, item-ID embeddings can memorize genre with enough data — so AAP is redundant. AAP shines when attributes generalize across cold items (new song from a known artist).</>}
-        stretch={<>How would you test whether attributes are redundant with item-ID BEFORE pretraining?</>}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>S3-Rec is BERT4Rec's MIP + 3 attribute/segment-aware MI tasks. The attribute requirement is the trade-off.</>}
+        stretch={<>What if you have attributes but they're 50% noisy?</>}
       />
 
-      <VIS.TrapProblem
-        id="s3-p2"
-        difficulty="hard"
+      <VIS.TrapProblem id="s3-a2" difficulty="hard"
+        title="A2 — S3-Rec vs CL4SRec"
+        scenario={<>Both extend SASRec/BERT4Rec with self-supervised signal. Discriminator?</>}
+        options={[
+          {key:"a", text:"CL4SRec adds InfoNCE on AUGMENTED sequences (item-crop, item-mask, item-reorder) — no attribute requirement. S3-Rec adds MI maximization between (item, attribute), (item, sequence), (attribute, sequence), (subseq, subseq) — explicitly USES attribute metadata. CL4SRec's contrastive is sequence-level; S3-Rec's MI is finer-grained and attribute-bound.", correct:true},
+          {key:"b", text:"CL4SRec uses attributes too."},
+          {key:"c", text:"They're equivalent."},
+          {key:"d", text:"S3-Rec doesn't use attention."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>The two split on attribute availability. Use S3-Rec when attributes are rich; CL4SRec when they're not.</>}
+        stretch={<>Can you stack the two? Where do gradients conflict?</>}
+      />
+
+      <VIS.TrapProblem id="s3-a3" difficulty="medium"
+        title="A3 — Counterfactual: no S3-Rec, fallback cost?"
+        scenario={<>S3-Rec doesn't exist. To match its attribute-fusion lift, you'd...</>}
+        options={[
+          {key:"a", text:"Concatenate attribute embeddings to item embeddings + train SASRec from scratch; pays in attribute embedding capacity competing with item embeddings for gradient + no explicit MI objective tying them, so attribute-side information is only weakly fused; lift typically smaller than S3-Rec's pretrained model.", correct:true},
+          {key:"b", text:"Just train SASRec longer."},
+          {key:"c", text:"Use a bigger model."},
+          {key:"d", text:"Add more data."},
+        ]}
+        trap={<>(b)/(c)/(d) don't address the attribute-fusion mechanism.</>}
+        lens={<>Naive concat doesn't tie item↔attribute via an MI objective; S3-Rec's explicit objective is the lift.</>}
+        stretch={<>How would you build a one-objective fusion model that approaches S3-Rec?</>}
+      />
+
+      <VIS.TrapProblem id="s3-a4" difficulty="hard"
+        title="A4 — Composition: S3-Rec + RQ-VAE Semantic IDs"
+        scenario={<>You replace item-IDs with RQ-VAE Semantic IDs. Which S3-Rec objectives survive cleanly?</>}
         multiSelect
-        title="P2 — Which of the four tasks are most expendable?"
-        scenario={<>Your training infra can afford pretraining with 2 of the 4 tasks, not all 4. Which pair gives most of the gain on a catalog with rich attributes? Select all that apply.</>}
         options={[
-          {key:"a", text:"MIP + AAP — masked item plus item-attribute. Captures both contextual prediction and attribute grounding.", correct:true},
-          {key:"b", text:"MIP + SP — masked item plus segment prediction. Captures contextual prediction and long-range coherence.", correct:true},
-          {key:"c", text:"MAP + SP — attribute masking plus segment. Skips item-level signal entirely."},
-          {key:"d", text:"AAP + MAP — both attribute tasks. Skips item-level entirely."},
-          {key:"e", text:"MIP + MAP — masked item plus masked attribute. Symmetric masking objectives.", correct:true},
+          {key:"a", text:"AAP (item↔attribute) — survives, but the 'item' side is now a Semantic-ID prefix; the MI prediction is between attribute and Semantic-ID prefix, which is semantically aligned but may be redundant.", correct:true},
+          {key:"b", text:"MIP (masked-item) — survives, predicting Semantic-IDs instead of item-IDs; vocab gets multiplicative.", correct:true},
+          {key:"c", text:"SP (segment) — survives unchanged (it's structural).", correct:true},
+          {key:"d", text:"All objectives are unaffected by tokenization."},
         ]}
-        trap={<>(c) and (d) drop the item-level signal entirely; the model never directly learns to predict items.</>}
-        lens={<>MIP is the backbone (it directly mirrors the downstream task). Pair it with ONE of AAP, MAP, or SP depending on what your data has. AAP if attributes are clean; MAP if you want symmetric masking; SP if user sessions are long and coherent.</>}
-        stretch={<>If you could only do ONE task, which gives the best single-task lift?</>}
+        trap={<>(d) ignores that the prediction vocab changes.</>}
+        lens={<>Semantic IDs interact with each objective via the prediction vocabulary. AAP becomes partly redundant; MIP's vocab explodes; SP is unchanged.</>}
+        stretch={<>Which objective should you drop after the swap?</>}
       />
 
-      <VIS.TrapProblem
-        id="s3-p3"
-        difficulty="hard"
-        title="P3 — Loss-weight tuning"
-        scenario={<>You set all four loss weights to 1.0 in the total pretraining loss. Downstream NDCG is poor and pretraining loss curves show one task dominating gradients. What is the senior-MLE move?</>}
+      <VIS.TrapProblem id="s3-a5" difficulty="hard"
+        title="A5 — Boundary: when does S3-Rec stop beating BERT4Rec?"
+        scenario={<>At what attribute-coverage rate does S3-Rec's lift over BERT4Rec collapse?</>}
         options={[
-          {key:"a", text:"Pick the dominating task's weight and lower it; or normalize each loss by its initial magnitude so they contribute equal gradients early.", correct:true},
-          {key:"b", text:"Train longer."},
-          {key:"c", text:"All-1.0 is the published config — accept it."},
-          {key:"d", text:"Switch to summing log-losses instead of cross-entropy."},
+          {key:"a", text:"~70-80% coverage with reliable labels"},
+          {key:"b", text:"~50% coverage with reliable labels", correct:true},
+          {key:"c", text:"~10% coverage"},
+          {key:"d", text:"It always wins regardless of coverage."},
         ]}
-        trap={<>(b) wastes compute on a config issue. (c) ignores that defaults rarely transfer. (d) is unrelated.</>}
-        lens={<>Multi-task pretraining requires loss-magnitude balancing. The standard trick: warm up briefly with each loss alone to measure its scale, then set weights so each contributes a comparable gradient norm. Without this, one task drowns the others.</>}
-        stretch={<>What's a learned alternative to fixed weights?</>}
+        trap={<>(a) is too lenient; (c) is too low; (d) is marketing.</>}
+        lens={<>Around 50% reliable-attribute coverage, the MAP objective starts producing noise dominated by uncertainty; below that, three of the four S3-Rec objectives degrade.</>}
+        stretch={<>What's the diagnostic for attribute coverage on your catalog?</>}
       />
 
-      <VIS.TrapProblem
-        id="s3-p4"
-        difficulty="hard"
-        title="P4 — Pretraining cost"
-        scenario={<>BERT4Rec pretraining takes 24h on a single A100. S3-Rec adds three more tasks. What is a realistic pretraining time budget, and what's the right way to argue for or against it?</>}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      <VIS.TrapProblem id="s3-b1" difficulty="hard"
+        title="B1 — Amazon-Books: 500K books, 200 genres, 50M users"
+        scenario={<>Amazon-Books: 500K items with 200 reliable genre tags + author + series; 50M users with median 20 books read. Pick S3-Rec, BERT4Rec, CL4SRec.</>}
         options={[
-          {key:"a", text:"S3-Rec is 4x BERT4Rec because there are 4 tasks — about 96h."},
-          {key:"b", text:"S3-Rec is roughly 1.5-2x BERT4Rec — the transformer forward pass is shared across tasks, only the task heads and loss computation are added. Argue cost/benefit against measured NDCG lift.", correct:true},
-          {key:"c", text:"S3-Rec is faster because mutual information losses converge quickly."},
-          {key:"d", text:"S3-Rec is 100x slower because of the segment prediction sampling."},
+          {key:"a", text:"BERT4Rec — keep it simple."},
+          {key:"b", text:"S3-Rec — rich attributes (genre, author, series) at high coverage + medium sequence length + supervised data limited (median 20 books) — exactly the regime where attribute fusion via MI pretraining helps.", correct:true},
+          {key:"c", text:"CL4SRec — but only after S3-Rec."},
+          {key:"d", text:"Doesn't matter."},
         ]}
-        trap={<>(a) is the naive estimate that misses shared forward passes. (c) is wishful. (d) is alarmist.</>}
-        lens={<>The shared encoder amortizes most of the compute; the extra tasks only add lightweight heads and loss terms. Empirical 1.5-2x is the right number. Argue the trade-off with REAL ablations: how much NDCG do you lose by dropping each task?</>}
-        stretch={<>Above what NDCG lift would you defend the 1.5-2x pretraining cost?</>}
+        trap={<>(a) leaves attribute signal on the table. (c)/(d) ignore the strong fit.</>}
+        lens={<>Book recs is a textbook S3-Rec win condition: rich attributes, modest user-sequence length, attribute-heavy taste signal.</>}
+        stretch={<>If half the books are missing genre, do you still pick S3-Rec?</>}
       />
 
-      <VIS.TrapProblem
-        id="s3-p5"
-        difficulty="hard"
+      <VIS.TrapProblem id="s3-b2" difficulty="hard"
+        title="B2 — 'More pretraining objectives is always better'"
+        scenario={<>A staff engineer suggests adding three MORE MI objectives. Why might this hurt?</>}
+        options={[
+          {key:"a", text:"Each MI objective adds a head + a gradient signal; at some point the four S3-Rec objectives saturate the pretrained representation's capacity. Adding more dilutes each head's gradient signal and introduces task interference — the dominant task (often MIP) gets pushed aside by lower-signal additions.", correct:true},
+          {key:"b", text:"More objectives is always better."},
+          {key:"c", text:"Memory will OOM."},
+          {key:"d", text:"Pretraining will be slower (irrelevant)."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>Multi-task pretraining has interference. The four S3-Rec tasks were selected to be complementary; adding more without theory is gradient noise.</>}
+        stretch={<>How would you measure objective interference?</>}
+      />
+
+      <VIS.TrapProblem id="s3-b3" difficulty="hard"
+        title="B3 — Pitch S3-Rec to a CTO (must require S3-Rec mechanism)"
+        scenario={<>Your CTO asks why pretraining is worth a 4x compute spend over BERT4Rec. Single sentence that <em>requires</em> understanding S3-Rec's MI-task mechanism.</>}
+        options={[
+          {key:"a", text:"'It's pretraining like ChatGPT.' (Generic — survives redaction.)"},
+          {key:"b", text:"'S3-Rec's four MI-max pretext tasks explicitly fuse item-attribute metadata into the sequence representation BEFORE the next-item head sees it — that means our attribute-rich catalog (every book has genre + author + series) becomes a free signal multiplier on top of click data, and we measure that in 30%+ NDCG lift on the cold-launch slice that BERT4Rec provably cannot recover with masked-item pretraining alone.'", correct:true},
+          {key:"c", text:"'+5% NDCG offline.'"},
+          {key:"d", text:"'Used at Alibaba.'"},
+        ]}
+        trap={<>(a) survives redaction; (c)/(d) are not concept-specific.</>}
+        lens={<>The pitch must turn on attribute-fusion via MI pretraining, not "pretraining = good." Drop that and any pretraining-vs-from-scratch story works.</>}
+        stretch={<>If your attributes are 30% missing, how does the pitch change?</>}
+      />
+
+      <VIS.TrapProblem id="s3-b4" difficulty="hard"
+        title="B4 — When NOT to use S3-Rec"
+        scenario={<>News recs: 10M articles, but the only reliable per-item attribute is 'publish date.' Median user reads ~5 articles/session. Pick S3-Rec, BERT4Rec, CL4SRec.</>}
+        options={[
+          {key:"a", text:"S3-Rec — modern."},
+          {key:"b", text:"CL4SRec — no rich attributes (just date), so 3 of S3-Rec's 4 objectives have nothing to learn from; short sessions make MAP especially weak. CL4SRec's sequence-level contrastive doesn't need attributes.", correct:true},
+          {key:"c", text:"BERT4Rec — same as today."},
+          {key:"d", text:"None — just SASRec."},
+        ]}
+        trap={<>(a) ignores the attribute prerequisite.</>}
+        lens={<>Attribute-poor surfaces don't get S3-Rec's lift; CL4SRec is the right SSL fit.</>}
+        stretch={<>What's the minimum attribute richness for S3-Rec to be worth it?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      <VIS.TrapProblem id="s3-c1" difficulty="hard"
+        title="C1 — Why four objectives instead of one combined?"
+        scenario={<>Why does S3-Rec use four separate MI-max objectives rather than one combined contrastive loss?</>}
+        options={[
+          {key:"a", text:"Each objective targets a DIFFERENT level of granularity: AAP = item-level (which attribute belongs to which item), MIP = position-level (which item belongs where in the sequence), MAP = context-level (which attribute fits where), SP = segment-level (which sub-segment continues a partial sequence). Each granularity contributes a distinct gradient signal; combining them into one loss collapses the granularities.", correct:true},
+          {key:"b", text:"Four is the magic number."},
+          {key:"c", text:"One loss is harder to optimize."},
+          {key:"d", text:"They are equivalent."},
+        ]}
+        trap={<>(b)/(c)/(d) miss the multi-granularity argument.</>}
+        lens={<>S3-Rec's design encodes a hierarchy: item-attribute-position-segment. Each MI task pins one level. Combining sacrifices the hierarchy.</>}
+        stretch={<>Which two granularities, if you had to drop two, would you keep?</>}
+      />
+
+      <VIS.TrapProblem id="s3-c2" difficulty="hard"
+        title="C2 — Why MI maximization, not direct prediction?"
+        scenario={<>Why does the paper frame these tasks as MI maximization rather than just direct prediction?</>}
+        options={[
+          {key:"a", text:"MI maximization is implemented via an InfoNCE-style estimator (positive pair vs negatives), which gives implicit hard negatives via the batch and avoids the softmax-over-large-vocab cost of direct prediction. Direct prediction (cross-entropy over all items) is computationally infeasible at recsys vocab scales.", correct:true},
+          {key:"b", text:"MI is faster on GPU."},
+          {key:"c", text:"Direct prediction doesn't work for sequences."},
+          {key:"d", text:"They are equivalent."},
+        ]}
+        trap={<>(b) is a side effect; (c)/(d) misread.</>}
+        lens={<>MI-via-InfoNCE replaces V-way softmax with (1+K)-way softmax over batch negatives — the computational and statistical sweet spot for recsys.</>}
+        stretch={<>What's the negative-sampling strategy in S3-Rec's InfoNCE estimator?</>}
+      />
+
+      <VIS.TrapProblem id="s3-c3" difficulty="hard"
+        title="C3 — What S3-Rec deliberately drops"
+        scenario={<>S3-Rec is a pretraining method. What does it deliberately NOT include?</>}
         multiSelect
-        title="P5 — Cold-start items: does S3-Rec help?"
-        scenario={<>You add 10K new items per day; each new item has attributes but zero interactions. Does S3-Rec help cold-start more than BERT4Rec? Select all that apply.</>}
         options={[
-          {key:"a", text:"Yes — AAP grounds item embeddings in their attributes, so a new item's attributes can be used to compute a usable embedding even without interactions.", correct:true},
-          {key:"b", text:"Yes — MAP teaches the model to predict items from attribute context, which is exactly the cold-start direction.", correct:true},
-          {key:"c", text:"No — pretraining only helps items seen during pretraining."},
-          {key:"d", text:"Yes, but only if the new items share attribute distributions with the pretraining catalog.", correct:true},
-          {key:"e", text:"No — cold-start needs a separate model."},
+          {key:"a", text:"Direct next-item prediction during pretraining — moved to fine-tuning.", correct:true},
+          {key:"b", text:"Item attributes — preserved.", correct:false},
+          {key:"c", text:"Sequence ordering — preserved.", correct:false},
+          {key:"d", text:"Single-objective optimization — replaced with four objectives.", correct:true},
         ]}
-        trap={<>(c) and (e) are too absolute. (a), (b), and (d) capture the real mechanism and its caveat.</>}
-        lens={<>Attribute-aware pretraining is one of the few places S3-Rec clearly beats BERT4Rec — new items have attributes even if they lack interactions. But the new items' attributes must overlap with what was seen during pretraining; brand-new attribute values would still be cold.</>}
-        stretch={<>What's the standard way to handle a brand-new attribute value?</>}
+        trap={<>(b)/(c) are preserved.</>}
+        lens={<>The split: pretraining = MI tasks; fine-tuning = next-item.</>}
+        stretch={<>What goes wrong if you mix next-item into pretraining?</>}
       />
 
-      <VIS.TrapProblem
-        id="s3-p6"
-        difficulty="hard"
-        title="P6 — Segment prediction's value"
-        scenario={<>"Why does S3-Rec include the SP (segment prediction) task? Isn't that redundant with MIP, which already conditions items on their sequence context?"</>}
+      <VIS.TrapProblem id="s3-c4" difficulty="hard"
+        mode="ordered"
+        title="C4 — Rank S3-Rec hyperparams by 'production-breaking if mis-set'"
+        scenario={<>Rank: (a) fine-tune LR, (b) pretraining mask rate, (c) loss weight balance across the four objectives, (d) sequence length. Top = most catastrophic.</>}
         options={[
-          {key:"a", text:"It is redundant — the paper just adds it for variety."},
-          {key:"b", text:"MIP works at a local level (predict an item from its surrounding tokens). SP works at a global level (do two subseqs belong to the same user). They probe different scales of coherence.", correct:true},
-          {key:"c", text:"SP is the only loss that prevents catastrophic forgetting."},
-          {key:"d", text:"SP doubles as a regularizer."},
+          {key:"a", text:"Fine-tune LR (too high wipes pretrained representations — catastrophic forgetting).", order:1},
+          {key:"b", text:"Mask rate (too low: MIP/MAP have no signal; too high: sequence incoherent).", order:2},
+          {key:"c", text:"Loss weights across objectives (unbalanced: one task dominates, hierarchy collapses).", order:3},
+          {key:"d", text:"Sequence length — well-explored knob."},
         ]}
-        trap={<>(a) dismisses the design. (c) and (d) misattribute the mechanism.</>}
-        lens={<>Local vs global is the right framing. MIP forces token-level prediction; SP forces user-level coherence. A sequence model that's good at MIP but bad at SP would be predicting individual items without understanding user identity — exactly the failure mode SP catches.</>}
-        stretch={<>How would you build a stronger SP — what specific positive/negative pairs would you sample?</>}
+        trap={<>Many candidates rank loss weights first because it's the most 'S3-Rec-specific' knob — but fine-tune LR is the silent production killer.</>}
+        lens={<>Fine-tune LR is the canonical S3-Rec production failure: pretraining is wasted because the first epoch overwrote it.</>}
+        stretch={<>How would you detect catastrophic forgetting during fine-tuning?</>}
       />
 
-      <VIS.TrapProblem
-        id="s3-p7"
-        difficulty="medium"
-        title="P7 — Why MI maximization and not classification?"
-        scenario={<>"Why does S3-Rec use mutual information maximization (InfoNCE-style) instead of just a classification head per task?"</>}
+      <VIS.TrapProblem id="s3-c5" difficulty="hard"
+        title="C5 — Data assumption: noisy attribute labels"
+        scenario={<>Your catalog has 30% noisy attribute labels (mis-tagged genres). What S3-Rec objective breaks first?</>}
         options={[
-          {key:"a", text:"MI is a fad — classification works equally well."},
-          {key:"b", text:"MI losses are non-parametric in the label space — they need no fixed-size softmax over all items or all attributes, which would not scale to millions of items.", correct:true},
-          {key:"c", text:"MI losses train faster."},
-          {key:"d", text:"Classification heads cannot do masked prediction."},
+          {key:"a", text:"MAP (Masked Attribute Prediction): predicting attribute from sequence context — with 30% noisy labels, the supervised target itself is wrong 30% of the time, and the model learns the majority class instead of useful representations. AAP also degrades but less severely (item-side noise is more structured).", correct:true},
+          {key:"b", text:"MIP."},
+          {key:"c", text:"SP."},
+          {key:"d", text:"All four equally."},
         ]}
-        trap={<>(a) dismisses the choice. (c) and (d) are unsupported claims.</>}
-        lens={<>InfoNCE-style losses sample negatives from a batch, so vocabulary size only affects the negative sampling, not the loss structure. A full softmax over 10M items would be infeasible; InfoNCE makes it tractable.</>}
-        stretch={<>What's the trade-off vs hierarchical softmax or sampled softmax?</>}
+        trap={<>(b)/(c)/(d) misread which task is attribute-dependent.</>}
+        lens={<>MAP is the most attribute-noise-sensitive task.</>}
+        stretch={<>At what noise level do you drop MAP entirely?</>}
       />
 
-      <VIS.TrapProblem
-        id="s3-p8"
-        difficulty="hard"
-        title="P8 — Negative sampling for the four tasks"
-        scenario={<>For each of AAP/MIP/MAP/SP, you need negatives. What's the right sampling strategy?</>}
+      <VIS.TrapProblem id="s3-c6" difficulty="hard"
+        title="C6 — Why segment prediction (SP)?"
+        scenario={<>Why does S3-Rec include the segment-prediction task on TOP of masked-item and masked-attribute?</>}
         options={[
-          {key:"a", text:"Random sampling from the catalog for all four tasks."},
-          {key:"b", text:"In-batch negatives are the standard cheap default; for tasks where popularity dominates (MIP), consider mixed in-batch plus uniform-from-catalog. The right answer is task-specific.", correct:true},
-          {key:"c", text:"Hard-negative mining for all four tasks."},
-          {key:"d", text:"No negatives needed for MI losses."},
+          {key:"a", text:"SP captures HIGHER-ORDER sequential structure: a single masked item can be predicted from local context (last few items), but a masked segment requires the model to maintain longer-range coherence. This forces the encoder to develop sequence-level (not just position-level) representations.", correct:true},
+          {key:"b", text:"SP is the same as MIP."},
+          {key:"c", text:"SP is cheap."},
+          {key:"d", text:"SP is borrowed from BERT."},
         ]}
-        trap={<>(a) ignores popularity skew. (c) is overkill at pretraining. (d) is wrong; InfoNCE requires negatives.</>}
-        lens={<>In-batch negatives are the default and usually adequate during pretraining. The paper's exact sampling matters less than the order of operations: get the InfoNCE framework working with simple negatives first, then mine harder negatives only if validation NDCG plateaus.</>}
-        stretch={<>When would you switch from in-batch to hard-mined negatives during pretraining?</>}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>Different masking granularities force different representation levels.</>}
+        stretch={<>Could you replace SP with autoregressive next-segment generation?</>}
       />
 
-      <VIS.TrapProblem
-        id="s3-p9"
-        difficulty="hard"
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      <VIS.TrapProblem id="s3-d1" difficulty="hard"
+        title="D1 — 'Pretraining is always worth it if you have data'"
+        scenario={<>The intuition 'pretraining helps when you have lots of data' is true for LLMs. Why does it fail for S3-Rec on small catalogs?</>}
+        options={[
+          {key:"a", text:"For LLMs the pretraining data is text (essentially unlimited). For S3-Rec, the pretraining data IS the recsys catalog + attributes — same data as fine-tuning, just used with different objectives. On small catalogs the four-task pretraining cost can dwarf the fine-tune lift.", correct:true},
+          {key:"b", text:"Pretraining never helps."},
+          {key:"c", text:"Bigger models are always better."},
+          {key:"d", text:"Catalogs are unrelated to pretraining."},
+        ]}
+        trap={<>(b)/(c)/(d) over-generalize.</>}
+        lens={<>S3-Rec's pretraining is on the same data as fine-tuning — its lift is structural, not data-scale.</>}
+        stretch={<>At what catalog size does S3-Rec's lift become worth the infra cost?</>}
+      />
+
+      <VIS.TrapProblem id="s3-d2" difficulty="hard"
+        title="D2 — Cascade: 'S3-Rec is BERT4Rec with attribute features'"
+        scenario={<>Tech lead assumes 'S3-Rec is BERT4Rec with attribute embeddings concatenated.' Wrong consequences?</>}
         multiSelect
-        title="P9 — Fine-tuning gotchas"
-        scenario={<>You pretrained S3-Rec successfully. Now you fine-tune on next-item prediction. Which fine-tuning details matter? Select all that apply.</>}
         options={[
-          {key:"a", text:"Lower learning rate during fine-tuning (e.g., 1e-5) to avoid destroying the pretrained representations.", correct:true},
-          {key:"b", text:"Optionally freeze early transformer layers, fine-tune only top layers plus the prediction head.", correct:true},
-          {key:"c", text:"Discard the AAP/MAP/SP heads — only the encoder transfers.", correct:true},
-          {key:"d", text:"Fine-tune on attribute prediction too — keeps the encoder honest."},
-          {key:"e", text:"Use the same loss weights from pretraining."},
+          {key:"a", text:"Assumes single objective: wrong, S3-Rec has FOUR pretraining objectives.", correct:true},
+          {key:"b", text:"Assumes feature engineering is enough: wrong, the value is the JOINT (item, attribute) MI objective, not the attribute embedding alone.", correct:true},
+          {key:"c", text:"Assumes hyperparameter inheritance: wrong, fine-tune LR is dramatically lower than from-scratch.", correct:true},
+          {key:"d", text:"Assumes architecture unchanged: fine, the transformer is mostly the same.", correct:false},
         ]}
-        trap={<>(d) and (e) misunderstand fine-tuning. You want the encoder optimized for next-item, not split across four objectives.</>}
-        lens={<>Standard transfer-learning recipe applies. Lower LR, optionally freeze, drop the auxiliary heads, train on the downstream task only. Mixing in auxiliary losses during fine-tuning often hurts because it pulls the encoder back toward pretraining objectives that no longer match the deployment task.</>}
-        stretch={<>When IS it beneficial to keep an auxiliary loss during fine-tuning?</>}
+        trap={<>(d) is largely correct — the architecture IS mostly the same; the bet is in the objectives.</>}
+        lens={<>Concat-embedding is a different (much weaker) model. The MI objectives are what make S3-Rec a pretraining method.</>}
+        stretch={<>What's the smallest change that converts concat-embeddings into S3-Rec?</>}
       />
 
-      <VIS.TrapProblem
-        id="s3-p10"
-        difficulty="hard"
-        title="P10 — S3-Rec vs LLM-as-recommender"
-        scenario={<>"In 2026, why would I bother with S3-Rec when I can just fine-tune a 7B LLM on user sequences (LLaRA-style)?"</>}
+      <VIS.TrapProblem id="s3-d3" difficulty="hard"
+        title="D3 — Junior: 'add more data.' Senior: ?"
+        scenario={<>S3-Rec regresses on a new surface. Junior: '2x data.' Senior reaches for: attribute-coverage check + fine-tune LR. Why?</>}
         options={[
-          {key:"a", text:"S3-Rec is obsolete — always use an LLM."},
-          {key:"b", text:"S3-Rec's transformer is tiny (millions of params), serves in single-digit ms, and the four-task pretraining captures most of the structured signal without LLM-scale compute. LLMs win when language understanding matters; S3-Rec wins when latency, cost, and pure sequence prediction matter.", correct:true},
-          {key:"c", text:"LLMs are always worse at sequences."},
-          {key:"d", text:"S3-Rec only works on small catalogs; LLMs only work on big ones."},
+          {key:"a", text:"On a new surface, if attribute coverage is below 50% or the fine-tune LR is wrong, more data just amplifies a broken pipeline. The senior verifies upstream assumptions (attribute richness + LR schedule) before scaling.", correct:true},
+          {key:"b", text:"More data always helps."},
+          {key:"c", text:"Senior is wrong."},
+          {key:"d", text:"LR doesn't matter at scale."},
         ]}
-        trap={<>(a) and (c) take absolute positions that ignore the trade-off. (d) is wrong on the facts.</>}
-        lens={<>This is a classic 2025-2026 senior question. The honest answer acknowledges both regimes: LLMs unlock natural-language understanding and zero-shot generalization at the cost of latency and infra. S3-Rec is the lean, well-understood baseline that ships at high QPS. Most production stacks use a small model for feed ranking and an LLM for conversational layers.</>}
-        stretch={<>Design a hybrid that uses S3-Rec for candidate generation and an LLM for re-ranking. What's the latency budget?</>}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>S3-Rec's failure modes are structural, not data-scale.</>}
+        stretch={<>When IS more data the right answer?</>}
       />
+
+      <VIS.TrapProblem id="s3-d4" difficulty="hard"
+        title="D4 — Online NDCG flat after fine-tune — diagnose"
+        scenario={<>You pretrain S3-Rec, fine-tune. Pretraining loss converged nicely; fine-tune NDCG matches a from-scratch baseline. Most likely cause?</>}
+        options={[
+          {key:"a", text:"Catastrophic forgetting during fine-tuning: fine-tune LR was set the same as a from-scratch baseline (e.g., 1e-3) and the first few hundred gradient steps overwrote the pretrained attribute fusion. Use 1e-4 with warm-up.", correct:true},
+          {key:"b", text:"Pretraining didn't converge."},
+          {key:"c", text:"Wrong loss."},
+          {key:"d", text:"GPU OOM."},
+        ]}
+        trap={<>(b) contradicted by 'pretraining loss converged'. (c)/(d) red herrings.</>}
+        lens={<>The signature: pretrain looks fine; fine-tune erases it.</>}
+        stretch={<>Sketch a layer-wise LR schedule for S3-Rec fine-tuning.</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      <VIS.TrapProblem id="s3-e1" difficulty="hard"
+        title="E1 — Pretraining infra: when is it worth standing up?"
+        scenario={<>S3-Rec requires a separate pretraining pipeline distinct from your serving pipeline. What's the production cost?</>}
+        options={[
+          {key:"a", text:"Two-stage training pipeline with checkpoint management between phases; attribute ETL must be reliable and reproducible (small catalog changes invalidate pretraining); ~4x total compute vs BERT4Rec for a single shot; weekly pretraining cadence to absorb catalog drift adds ongoing cost.", correct:true},
+          {key:"b", text:"No infra cost."},
+          {key:"c", text:"Same infra as BERT4Rec."},
+          {key:"d", text:"Only inference cost."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>S3-Rec is an MLOps cost as much as a modeling cost.</>}
+        stretch={<>What's the minimum-viable pretraining cadence (daily vs weekly)?</>}
+      />
+
+      <VIS.TrapProblem id="s3-e2" difficulty="hard"
+        title="E2 — Friday: NDCG flat after fine-tune"
+        scenario={<>S3-Rec shipped Thursday. Friday: NDCG matches old BERT4Rec; pretraining metrics looked fine. Why S3-Rec specifically?</>}
+        options={[
+          {key:"a", text:"Catastrophic forgetting at fine-tune: the LR carried over from the from-scratch BERT4Rec recipe (1e-3) wiped the pretrained attribute fusion in the first epoch. BERT4Rec doesn't have this trap because it's never had a separate pretraining checkpoint to forget.", correct:true},
+          {key:"b", text:"Random."},
+          {key:"c", text:"GPU thermal."},
+          {key:"d", text:"Friday data drift."},
+        ]}
+        trap={<>(b)/(c)/(d) red herrings.</>}
+        lens={<>Catastrophic forgetting is the canonical S3-Rec production page.</>}
+        stretch={<>What's a 30-min diagnostic that would have caught this?</>}
+      />
+
+      <VIS.TrapProblem id="s3-e3" difficulty="hard"
+        title="E3 — Reference-impl default that bites"
+        scenario={<>OSS S3-Rec has a default that's wrong for many production surfaces. Which?</>}
+        options={[
+          {key:"a", text:"`finetune_lr=1e-3` (same as pretraining LR) — the default doesn't lower the LR for fine-tuning, causing catastrophic forgetting on most pretrained checkpoints. Should be 1e-4 with warm-up.", correct:true},
+          {key:"b", text:"`mask_rate=0.15`."},
+          {key:"c", text:"`use_bf16=False`."},
+          {key:"d", text:"`num_layers=4`."},
+        ]}
+        trap={<>(b)/(c)/(d) are real defaults but not the silent trap.</>}
+        lens={<>Fine-tune LR is the load-bearing default.</>}
+        stretch={<>If you can't change the default, what's the pipeline workaround?</>}
+      />
+
+      <VIS.TrapProblem id="s3-e4" difficulty="hard"
+        mode="ordered"
+        title="E4 — Order the BERT4Rec → S3-Rec migration phases"
+        scenario={<>Phases: (a) attribute ETL pipeline + coverage audit, (b) pretrain on shadow data, (c) fine-tune with low-LR + warm-up, (d) A/B at 5%, (e) full. Top = first.</>}
+        options={[
+          {key:"a", text:"Attribute ETL + coverage audit (decide if S3-Rec is even worth it).", order:1},
+          {key:"b", text:"Pretrain on shadow data.", order:2},
+          {key:"c", text:"Fine-tune with low-LR + warm-up.", order:3},
+          {key:"d", text:"A/B at 5% with watch-time + NDCG.", order:4},
+          {key:"e", text:"Full rollout.", order:5},
+          {key:"f", text:"Skip ETL; pretrain on whatever you have."},
+        ]}
+        trap={<>Skipping ETL guarantees the pretraining is wasted if attribute coverage is low.</>}
+        lens={<>ETL-first is the S3-Rec-specific ordering: pretraining only helps if attributes are good.</>}
+        stretch={<>Set SLAs for each phase.</>}
+      />
+
+      <VIS.TrapProblem id="s3-e5" difficulty="hard"
+        title="E5 — Reproducing the CIKM 2020 numbers"
+        scenario={<>Paper claims S3-Rec beats BERT4Rec on Amazon-Beauty / Toys / Sports. Which details matter most to reproduce?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Attribute coverage on the chosen subset (the paper used dense-attribute subsets).", correct:true},
+          {key:"b", text:"Low fine-tune LR (paper uses ~1e-4 with warm-up; default in some forks is 1e-3).", correct:true},
+          {key:"c", text:"Mask rate (paper uses 0.2 for items and attributes).", correct:true},
+          {key:"d", text:"Use MovieLens-1M."},
+          {key:"e", text:"Run on CPU."},
+        ]}
+        trap={<>(d)/(e) are not in the paper.</>}
+        lens={<>S3-Rec reproducibility hinges on (i) attribute quality, (ii) LR, (iii) mask rate.</>}
+        stretch={<>Build a minimum-viable check before scaling.</>}
+      />
+
+      <VIS.TrapProblem id="s3-e6" difficulty="hard"
+        title="E6 — Public benchmarks hide a weakness"
+        scenario={<>S3-Rec wins on Amazon-Beauty. What does that benchmark hide?</>}
+        options={[
+          {key:"a", text:"Amazon-Beauty was filtered to items with reliable attributes (genre/category present) — real-world catalogs have 20-40% missing or noisy attribute fields, where MAP collapses; benchmark numbers don't reflect this.", correct:true},
+          {key:"b", text:"Benchmark uses synthetic data."},
+          {key:"c", text:"Too small."},
+          {key:"d", text:"Wrong loss."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>Public benchmarks pre-filter to attribute-rich items. Add a coverage-stratified slice to your own eval.</>}
+        stretch={<>Sketch the coverage-stratified slice.</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      <VIS.TrapProblem id="s3-f1" difficulty="hard"
+        title="F1 — Smallest input that breaks S3-Rec's advantage"
+        scenario={<>What's the simplest input that reduces S3-Rec to BERT4Rec?</>}
+        options={[
+          {key:"a", text:"Catalog with attribute coverage near 0 (only item-IDs available). AAP and MAP have no signal; SP barely helps; only MIP carries the load — at that point S3-Rec is BERT4Rec with extra training time.", correct:true},
+          {key:"b", text:"Empty sequence."},
+          {key:"c", text:"Random sequence."},
+          {key:"d", text:"Length-1B sequence."},
+        ]}
+        trap={<>(b)/(c)/(d) hurt every model.</>}
+        lens={<>S3-Rec's value is gated on attribute presence.</>}
+        stretch={<>Could you partially train (3 of 4 objectives) with partial coverage?</>}
+      />
+
+      <VIS.TrapProblem id="s3-f2" difficulty="hard"
+        title="F2 — Adversarial: mislabel-attribute attack"
+        scenario={<>Design adversarial input that hurts S3-Rec but not BERT4Rec.</>}
+        options={[
+          {key:"a", text:"Inject systematically WRONG attribute labels for a subset of items (e.g., label all Sci-Fi books as Romance). AAP and MAP learn the lie; the encoder fuses the wrong attribute into the item representation; fine-tuning can't fully recover. BERT4Rec ignores attributes and is unaffected.", correct:true},
+          {key:"b", text:"Random noise."},
+          {key:"c", text:"Empty."},
+          {key:"d", text:"Long sequences."},
+        ]}
+        trap={<>(b)/(c)/(d) hurt every model.</>}
+        lens={<>S3-Rec's attribute-fusion is a new attack surface.</>}
+        stretch={<>Sketch an attribute-confidence-aware MAP loss.</>}
+      />
+
+      <VIS.TrapProblem id="s3-f3" difficulty="hard"
+        title="F3 — Reverse engineering: pretrain loss converges, fine-tune NDCG flat"
+        scenario={<>Symptom: pretraining loss converges; fine-tune NDCG matches a from-scratch BERT4Rec. Which S3-Rec design choice is most likely responsible?</>}
+        options={[
+          {key:"a", text:"Fine-tune LR was carried over from a from-scratch recipe — catastrophic forgetting wiped the pretrained representation in early fine-tune steps.", correct:true},
+          {key:"b", text:"Wrong attention type."},
+          {key:"c", text:"Item-ID embedding dim."},
+          {key:"d", text:"Sequence ordering."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>The signature: pretrain works; fine-tune erases it.</>}
+        stretch={<>How would you instrument fine-tune to catch this in 1 epoch?</>}
+      />
+
+      <VIS.TrapProblem id="s3-f4" difficulty="hard"
+        title="F4 — Paper-named failure mode"
+        scenario={<>The S3-Rec paper itself flags one regime where the method underperforms. Which?</>}
+        options={[
+          {key:"a", text:"Catalogs with sparse / unreliable attribute metadata — three of the four objectives lose signal and S3-Rec's lift over BERT4Rec collapses.", correct:true},
+          {key:"b", text:"Catalogs with rich attributes."},
+          {key:"c", text:"Long user sequences."},
+          {key:"d", text:"GPU-rich infra."},
+        ]}
+        trap={<>(b) is where it wins.</>}
+        lens={<>The paper is honest about attribute prerequisite.</>}
+        stretch={<>How would you decide before pretraining?</>}
+      />
+
+      <VIS.TrapProblem id="s3-f5" difficulty="hard"
+        title="F5 — Derive the follow-up from S3-Rec's open knobs"
+        scenario={<>From S3-Rec's mechanism alone, derive a natural follow-up direction.</>}
+        options={[
+          {key:"a", text:"Replace attribute MI tasks with text-encoded item descriptions via an LLM (no need for structured attributes) — closes the attribute-coverage gap that limits S3-Rec to attribute-rich catalogs. This is the modern UnisRec / LC-Rec line.", correct:true},
+          {key:"b", text:"More objectives."},
+          {key:"c", text:"Larger model."},
+          {key:"d", text:"More data."},
+        ]}
+        trap={<>(b)/(c)/(d) aren't the natural follow-up.</>}
+        lens={<>S3-Rec's coverage constraint suggests encoding raw item text. That's UnisRec / LC-Rec.</>}
+        stretch={<>What changes if attributes are replaced by LLM embeddings?</>}
+      />
+
+      <VIS.TrapProblem id="s3-f6" difficulty="hard"
+        title="F6 — Privacy: attribute-leakage attack"
+        scenario={<>Why might S3-Rec's pretrained representation leak more user-attribute information than BERT4Rec's?</>}
+        options={[
+          {key:"a", text:"S3-Rec EXPLICITLY fuses attribute information into the item representation via AAP/MAP; an attacker who probes the encoder with a known sequence can recover attribute-level information about the user (e.g., 'mostly reads Sci-Fi') more directly than from BERT4Rec, which only encodes interaction structure.", correct:true},
+          {key:"b", text:"S3-Rec uses more GPUs."},
+          {key:"c", text:"BERT4Rec has built-in DP."},
+          {key:"d", text:"No difference."},
+        ]}
+        trap={<>(b)/(c)/(d) are non-answers.</>}
+        lens={<>Attribute-fusion is a privacy attack surface.</>}
+        stretch={<>Sketch DP-SGD on the four-objective pretraining.</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/2008.07873" target="_blank" rel="noopener"><strong>Zhou et al. — S3-Rec: Self-Supervised Learning for Sequential Recommendation with Mutual Information Maximization</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, CIKM 2020)</span><br/>The source paper. Sections 3 (the four objectives) and 4 (ablations) are the must-reads.</li>
-        <li><a href="https://arxiv.org/abs/1904.06690" target="_blank" rel="noopener"><strong>Sun et al. — BERT4Rec</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, CIKM 2019)</span><br/>The single-task pretraining baseline S3-Rec extends. Reading this first makes the "add three more tasks" framing click.</li>
-        <li><a href="https://arxiv.org/abs/1808.06670" target="_blank" rel="noopener"><strong>Hjelm et al. — Deep InfoMax</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, ICLR 2019)</span><br/>The foundational MI maximization paper that S3-Rec borrows from. Read for the MI-via-discriminator framing.</li>
-        <li><a href="https://lilianweng.github.io/posts/2019-11-10-self-supervised/" target="_blank" rel="noopener"><strong>Lilian Weng — Self-Supervised Representation Learning</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>The clearest survey of self-supervised objectives and their relationship to MI. Best single source for understanding why the four tasks are not redundant.</li>
-        <li><a href="https://eugeneyan.com/writing/recsys2022/" target="_blank" rel="noopener"><strong>Eugene Yan — System Design for Recommendations</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Practitioner survey covering when pretraining pays off in production vs the simpler supervised baseline.</li>
+        <li>
+          <a href="https://arxiv.org/abs/2008.07873" target="_blank" rel="noopener"><strong>Zhou et al. — S3-Rec</strong></a> (paper, CIKM 2020)
+          <br/>The original paper. Sections 3 (four MI tasks) and 4.3 (ablations).
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/1904.06690" target="_blank" rel="noopener"><strong>Sun et al. — BERT4Rec</strong></a> (paper, CIKM 2019)
+          <br/>The single-objective predecessor.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/1808.09781" target="_blank" rel="noopener"><strong>Kang &amp; McAuley — SASRec</strong></a> (paper, ICDM 2018)
+          <br/>Causal-transformer sequential baseline; the from-scratch alternative.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2010.14395" target="_blank" rel="noopener"><strong>Xie et al. — CL4SRec</strong></a> (paper, ICDE 2022)
+          <br/>The contrastive-augmentation sibling; doesn't require attributes.
+        </li>
+        <li>
+          <a href="https://dl.acm.org/doi/10.1145/3746280" target="_blank" rel="noopener"><strong>Survey on SSL for Recommendation</strong></a> (ACM CSUR 2025, HKU DS Lab)
+          <br/>Where S3-Rec fits in the broader SSL recsys taxonomy.
+        </li>
       </ul>
     </VIS.Section>
   </main>

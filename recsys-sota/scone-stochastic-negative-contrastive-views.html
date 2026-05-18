@@ -1414,262 +1414,571 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// SCONE — Stochastic Sampling for Contrastive Views and Hard Negatives.
+// SCONE — Stochastic Sampling for Contrastive Views AND Hard Negatives (Choi et al., WWW 2024)
+// v2 redo — 30+ trap problems anchored on SCONE's unified augmentation+hard-negative sampling.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Contrastive learning"
-      title="SCONE — Stochastic Negative Contrastive Views"
-      subtitle="One stochastic sampling process generates BOTH the augmented views AND the hard negatives, so negatives stay consistent with the augmentation distribution."
+      pill="RecSys SOTA · Contrastive / Hard-negative sampling"
+      title="SCONE — Stochastic Contrastive Views &amp; Negatives"
+      subtitle="A single stochastic sampling process generates BOTH augmented views and hard negatives — so the negatives match the augmentation distribution instead of being drawn independently."
       byline={[
         {label: "Paper", value: "Choi et al., WWW 2024"},
-        {label: "URL", value: "arxiv.org/abs/2405.00287"},
+        {label: "Year", value: "2024"},
+        {label: "Domain", value: "Graph contrastive recsys"},
       ]}/>
 
     <VIS.TLDR>
-      In SGL, augmented views and hard negatives are produced by SEPARATE mechanisms — so high-noise augmentation can drift the views away from where the negatives live, and the contrastive signal stalls.
-      SCONE unifies the two: a single stochastic process emits both the view and the negatives, keeping them in the same distribution. Plateaus that bit SGL at high augmentation noise disappear.
+      In SGL + DNS-style pipelines, augmentations and hard negatives are sampled INDEPENDENTLY. SCONE's insight: at high augmentation noise, the independently-sampled negatives drift away from the augmented view's support — so the contrastive signal becomes incoherent (positives are augmented; negatives are not). SCONE generates both from a SINGLE stochastic process so the negative distribution matches the augmentation distribution. Source: <a href="https://arxiv.org/abs/2405.00287" target="_blank" rel="noopener">arXiv:2405.00287</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        SCONE replaces SGL's "edge-drop then sample negatives uniformly" two-step with a single sampling process. For each anchor user-item pair, SCONE samples a stochastic perturbation of the local graph; that perturbation simultaneously defines (1) the augmented view of the anchor and (2) the hard negatives whose embeddings come from the same perturbation.
+        Standard graph contrastive recsys pipeline: SGL (or SimGCL) produces augmented graph views; a separate hard-negative sampler (e.g., <VIS.Term def="Dynamic Negative Sampling — samples the highest-scoring not-clicked item under the current model.">DNS</VIS.Term>) picks negatives by their current model score. SCONE replaces this with a single stochastic process that emits the augmented view AND the candidate hard negatives JOINTLY.
       </p>
       <p>
-        Mechanically: a learned (or heuristic) distribution scores edges near the anchor; high-score edges become part of the augmented view, low-score edges become hard negatives. The InfoNCE loss then pulls the anchor's two augmented views together while pushing the same-perturbation hard negatives apart.
+        Concretely: given the user-item graph, SCONE samples a perturbation (edge subset to drop, noise to add); the SAME perturbation is used to determine which items are hard negatives for the contrastive loss. The augmentation distribution and the negative distribution are coupled by construction.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  ANCHOR["Anchor user-item"]
-  S["Stochastic sampler<br/>(joint view + negative)"]
-  ANCHOR --> S
-  S --> VIEW["Augmented view"]
-  S --> NEG["Hard negatives<br/>(same perturbation)"]
-  VIEW --> ENC["GCN encoder"]
-  NEG --> ENC
-  ENC --> CL["InfoNCE: pull view, push neg"]
+  G["Graph + items"]
+  G --> S["Stochastic sampler theta"]
+  S --> V["Augmented view"]
+  S --> N["Hard negatives"]
+  V --> CL["InfoNCE"]
+  N --> CL
+  G --> BPR["BPR loss"]
+  CL --> L["L = L_BPR + lambda * L_InfoNCE"]
+  BPR --> L
   style S fill:#fef3c7,stroke:#d97706,stroke-width:2px
-  style CL fill:#dcfce7,stroke:#16a34a,stroke-width:2px
       `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-differs" title="How it differs from SGL and DNS">
-      <table style={{width: "100%", borderCollapse: "collapse", fontSize: 14}}>
-        <thead><tr style={{background: "#1f3a5f", color: "white"}}>
-          <th style={{padding: 8, textAlign: "left"}}>Approach</th>
-          <th style={{padding: 8, textAlign: "left"}}>Augmentation</th>
-          <th style={{padding: 8, textAlign: "left"}}>Negatives</th>
-          <th style={{padding: 8, textAlign: "left"}}>Coupled?</th>
-        </tr></thead>
-        <tbody>
-          <tr><td style={{padding: 8}}>SGL</td><td style={{padding: 8}}>Edge drop</td><td style={{padding: 8}}>In-batch uniform</td><td style={{padding: 8}}>No</td></tr>
-          <tr><td style={{padding: 8}}>DNS</td><td style={{padding: 8}}>None</td><td style={{padding: 8}}>Hard-mined</td><td style={{padding: 8}}>N/A</td></tr>
-          <tr style={{background: "#e8f0fa"}}><td style={{padding: 8}}><strong>SCONE</strong></td><td style={{padding: 8}}>Stochastic perturbation</td><td style={{padding: 8}}>Hard, from same perturbation</td><td style={{padding: 8}}><strong>Yes</strong></td></tr>
-        </tbody>
-      </table>
-      <p style={{color: "#475569", fontSize: 14}}>
-        DNS (Dynamic Negative Sampling) does hard negatives but has no augmented view. SGL does augmentation but uses cheap uniform negatives. SCONE is the unification.
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from SGL + DNS, SimGCL, MixGCF">
+      <p>
+        <strong>SGL + DNS.</strong> Two independent processes: SGL drops edges; DNS picks high-score not-clicked items. At high SGL noise (p &gt; 0.3) the DNS-picked negatives are now drawn from a different distribution than the augmented positives — the InfoNCE signal becomes incoherent.
+      </p>
+      <p>
+        <strong>SimGCL.</strong> Embedding-space noise + random negatives. No hard-negative sampling. Cheap; works for moderate-density graphs.
+      </p>
+      <p>
+        <strong>MixGCF.</strong> Mixes positive and negative embeddings to create synthetic hard negatives. SCONE's bet is that this MIXING introduces synthetic samples; SCONE keeps real items but couples them through one process.
+      </p>
+      <p>
+        <strong>SCONE.</strong> One stochastic process emits both views and hard negatives — coherence preserved.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick SCONE">
-      <ul>
-        <li><strong>SGL plateaus at high augmentation rate.</strong> The signature failure SCONE was designed to fix.</li>
-        <li><strong>Long-tail dominates your business.</strong> Hard negatives are essential when popular items drown the gradient.</li>
-        <li><strong>You can afford more compute per step.</strong> SCONE's joint sampling is heavier than SGL's two-step.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick SCONE">
+      <p>
+        Pick SCONE when (a) you already use SGL/SimGCL + a separate hard-negative sampler, (b) SGL's gains have plateaued or regressed at high augmentation strength, (c) you have GPU budget for the joint sampler (it's heavier per step than the independent baseline). Don't pick SCONE on dense graphs with no augmentation need, or on surfaces where SGL alone is sufficient.
+      </p>
+      <VIS.Mermaid chart={`
+flowchart TB
+  D["Already on SGL + DNS?"]
+  D -->|No| OTHER["Start with SGL"]
+  D -->|Yes| Q1{"Plateaued at high p?"}
+  Q1 -->|No| KEEP["Keep SGL+DNS"]
+  Q1 -->|Yes| SCONE["Try SCONE"]
+  style SCONE fill:#dcfce7,stroke:#16a34a
+  style OTHER fill:#fee2e2,stroke:#dc2626
+      `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations">
-      <VIS.Callout kind="gotcha" title="Heavier per-step compute">
-        Joint sampling adds 10-30% per-step latency over SGL. Throughput drops; tune batch size.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Sampler hyperparameters">
-        The stochastic sampler itself has knobs — temperature, perturbation rate, how the score function is parameterized. Defaults from the paper may not transfer.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Gains are biggest at high augmentation rates">
-        If SGL with moderate dropout (p=0.1-0.2) already works for you, SCONE's lift is modest. SCONE shines specifically when you NEED high augmentation noise and SGL stalls.
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
+      <p>
+        Heavier per-step compute (one sample produces both view and negatives — but the JOINT process is more expensive than two independent ones). Implementation must be careful about gradient flow through the sampler: if the joint sampler is non-differentiable, you need a straight-through or REINFORCE estimator.
+      </p>
+      <VIS.Callout kind="gotcha" title="Coupling can backfire on dense graphs">
+        On dense graphs, the augmentation is mild (p ≈ 0.1) and SGL+DNS already produces coherent negatives. SCONE's coupling adds compute without benefit — the failure mode it solves doesn't appear.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-problems" title="Drill — trap problems">
-      <p style={{color:"#475569", marginBottom: 16}}>Ten senior-MLE prompts on SCONE's design choices and failure modes.</p>
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        30+ problems on SCONE's joint-sampling mechanism. Redact "SCONE" → "Model X" and the right answer should NOT survive.
+      </p>
 
-      <VIS.TrapProblem
-        id="scone-p1"
-        difficulty="hard"
-        title="P1 — Diagnose SGL's plateau at high augmentation"
-        scenario={<>You run SGL on a sparse e-commerce dataset. Sweeping edge-drop rate: NDCG = 0.30, 0.34, 0.36, 0.36, 0.35, 0.33 at p = 0.05, 0.1, 0.2, 0.3, 0.4, 0.5. The plateau between 0.2 and 0.3 is suspicious — past 0.3 quality DROPS. Diagnose.</>}
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity &amp; comparison</h3>
+
+      <VIS.TrapProblem id="scone-a1" difficulty="hard"
+        title="A1 — SCONE vs SGL+DNS: same family, opposite coupling"
+        scenario={<>Both produce augmented views + hard negatives for graph contrastive. The discriminator?</>}
         options={[
-          {key:"a", text:"At high p the augmented views drift far from the original graph; SGL's uniformly-sampled negatives still come from the ORIGINAL graph's distribution. The view-negative distribution mismatch makes the InfoNCE signal noisy, so adding more augmentation no longer helps.", correct:true},
-          {key:"b", text:"Augmentation rate is irrelevant past 0.2."},
-          {key:"c", text:"Need a bigger model."},
-          {key:"d", text:"Bug in the code."},
+          {key:"a", text:"SGL and DNS are TWO INDEPENDENT samplers: SGL's edge dropout draws from one distribution, DNS's model-score-based negative selection draws from another. At high augmentation noise the two distributions drift apart. SCONE uses ONE stochastic process that emits both, so the negatives MATCH the augmented-view support by construction.", correct:true},
+          {key:"b", text:"SCONE uses different loss."},
+          {key:"c", text:"DNS is supervised; SCONE isn't."},
+          {key:"d", text:"They're equivalent."},
         ]}
-        trap={<>(b) ignores the empirical drop. (c) and (d) avoid diagnosis.</>}
-        lens={<>This IS the SCONE motivation. SGL augmentation and SGL negative sampling are decoupled — the augmented view lives in one distribution, the negatives in another, and at high noise these distributions diverge. SCONE fixes this by sampling both from the same process.</>}
-        stretch={<>How would you EMPIRICALLY measure the view-negative distribution mismatch?</>}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>The coupling vs independence of the two samplers is the entire story.</>}
+        stretch={<>At what augmentation rate do the two distributions diverge enough to hurt?</>}
       />
 
-      <VIS.TrapProblem
-        id="scone-p2"
-        difficulty="hard"
+      <VIS.TrapProblem id="scone-a2" difficulty="hard"
+        title="A2 — SCONE vs MixGCF"
+        scenario={<>Both target the 'hard-negative quality' problem. Discriminator?</>}
+        options={[
+          {key:"a", text:"MixGCF creates SYNTHETIC hard negatives by MIXING positive and negative embeddings; SCONE keeps REAL items as negatives but ensures they're drawn from the augmentation-coupled distribution. MixGCF risks injecting unrealistic samples; SCONE preserves item identity but coordinates sampling.", correct:true},
+          {key:"b", text:"They are equivalent."},
+          {key:"c", text:"MixGCF doesn't use InfoNCE."},
+          {key:"d", text:"SCONE creates synthetic items."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>Two different fixes for the same problem: synthetic-mix vs joint-sampling.</>}
+        stretch={<>Could you combine the two? When?</>}
+      />
+
+      <VIS.TrapProblem id="scone-a3" difficulty="medium"
+        title="A3 — Counterfactual: no SCONE, fallback cost?"
+        scenario={<>SCONE doesn't exist. To close the augmentation-negative coherence gap, you'd...</>}
+        options={[
+          {key:"a", text:"Reduce SGL's augmentation strength (lowers the issue but loses contrastive lift) OR retune DNS's hard-negative threshold (band-aid; doesn't address the distributional drift). Both leave performance on the table compared to a coupled sampler.", correct:true},
+          {key:"b", text:"Just train SGL longer."},
+          {key:"c", text:"Use a bigger model."},
+          {key:"d", text:"Add more data."},
+        ]}
+        trap={<>(b)/(c)/(d) don't address the sampling distribution mismatch.</>}
+        lens={<>Without SCONE, fixes are band-aids over the independent-sampling root cause.</>}
+        stretch={<>What's the gradient signature of incoherent negatives during training?</>}
+      />
+
+      <VIS.TrapProblem id="scone-a4" difficulty="hard"
+        title="A4 — Composition: SCONE on top of LightGCN vs NGCF"
+        scenario={<>Does SCONE's win depend on encoder choice?</>}
         multiSelect
-        title="P2 — Hard negatives: what makes them 'hard'?"
-        scenario={<>SCONE produces "hard" negatives via its joint sampler. Which definitions of hardness are reasonable here? Select all that apply.</>}
         options={[
-          {key:"a", text:"Items with high embedding similarity to the positive but the user did not interact with them.", correct:true},
-          {key:"b", text:"Items the user almost interacted with but did not (impressed-not-clicked).", correct:true},
-          {key:"c", text:"Items from the same category as the positive that the user has interacted with.", correct:true},
-          {key:"d", text:"Items chosen uniformly at random from the catalog."},
-          {key:"e", text:"The most popular items in the catalog."},
+          {key:"a", text:"On LightGCN: clean optimization landscape lets the coupled sampler's improved coherence translate directly to NDCG gains.", correct:true},
+          {key:"b", text:"On NGCF: extra transforms add gradient noise that competes with the coherence improvement; gains shrink.", correct:true},
+          {key:"c", text:"SCONE only works on LightGCN."},
+          {key:"d", text:"SCONE is encoder-agnostic in practice."},
         ]}
-        trap={<>(d) is the SGL baseline; that's "easy" negative sampling. (e) is popularity-biased and not specifically hard for THIS user.</>}
-        lens={<>"Hard" means "close to the positive in embedding space but a true negative." Multiple operational definitions: similarity-mined (a), behavior-mined impression negatives (b), category-aware (c). SCONE's sampler chooses among these based on its score function.</>}
-        stretch={<>Which definition of hard negative is RISKIEST to use without careful filtering?</>}
+        trap={<>(c) overstates; (d) understates.</>}
+        lens={<>Coherent negatives need a clean signal to act on. NGCF's extra noise dilutes the benefit.</>}
+        stretch={<>What if you used a deeper encoder? When does SCONE stop helping?</>}
       />
 
-      <VIS.TrapProblem
-        id="scone-p3"
-        difficulty="hard"
-        title="P3 — Sampler temperature"
-        scenario={<>SCONE's joint sampler uses a softmax over local edges with temperature &tau;. You sweep &tau;: NDCG = 0.36, 0.39, 0.42, 0.40, 0.36. Diagnose &tau; sweet spot and the trade-off.</>}
+      <VIS.TrapProblem id="scone-a5" difficulty="hard"
+        title="A5 — Boundary: at what augmentation rate does SCONE win?"
+        scenario={<>You sweep edge-drop rate p from 0.05 to 0.5. At what p does SCONE start materially beating SGL+DNS?</>}
         options={[
-          {key:"a", text:"&tau; controls how peaked the sampling is. Too low: only the single hardest negative is ever picked, gradient becomes spiky. Too high: sampling becomes uniform and SCONE degenerates to SGL.", correct:true},
-          {key:"b", text:"&tau; is the learning rate."},
-          {key:"c", text:"&tau; is irrelevant — pick anything."},
-          {key:"d", text:"Always use &tau;=1.0."},
+          {key:"a", text:"p ≈ 0.05"},
+          {key:"b", text:"p ≈ 0.25-0.35", correct:true},
+          {key:"c", text:"p ≈ 0.95"},
+          {key:"d", text:"Always — independent of p."},
         ]}
-        trap={<>(b), (c), (d) all dodge the mechanism.</>}
-        lens={<>The temperature interpolates between deterministic hard-mining and uniform sampling. At &tau;=0 you always pick the same hardest negative; at &tau;=&infin; you uniform-sample. The middle is where SCONE works because the sampler is stochastic (escapes single-negative collapse) but biased toward hard cases.</>}
-        stretch={<>How does the right &tau; depend on batch size?</>}
+        trap={<>(a) is too low — SGL+DNS handle it; (c) destroys signal; (d) is marketing.</>}
+        lens={<>SCONE's value is in the regime where SGL's augmentation has decoupled from DNS's negatives — around p = 0.25–0.35.</>}
+        stretch={<>What metric tracks this decoupling directly?</>}
       />
 
-      <VIS.TrapProblem
-        id="scone-p4"
-        difficulty="hard"
-        title="P4 — SGL or SCONE for a dense in-house dataset?"
-        scenario={<>You have a dense interaction graph (every user touches 200+ items, popular items get millions of clicks). SGL gave +0.2% NDCG over LightGCN. Would you ship SCONE on top?</>}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      <VIS.TrapProblem id="scone-b1" difficulty="hard"
+        title="B1 — Sparse e-commerce on top of SGL — SGL plateaued"
+        scenario={<>You're on SGL+DNS for sparse e-commerce. Lift was +3% NDCG initially; gains have flattened at p=0.3. Pick: keep SGL, switch to SimGCL, try SCONE.</>}
         options={[
-          {key:"a", text:"Yes — SCONE is always better."},
-          {key:"b", text:"Probably not. Dense data lets LightGCN/SGL get most of the signal; SCONE's hard-negative emphasis pays off most on long-tail/sparse domains. Engineer time goes where the gain is biggest.", correct:true},
-          {key:"c", text:"Yes — hard negatives always help."},
-          {key:"d", text:"No — SCONE breaks on dense data."},
+          {key:"a", text:"Keep SGL."},
+          {key:"b", text:"SimGCL — cheaper."},
+          {key:"c", text:"SCONE — plateau at p=0.3 is the signature of augmentation-negative decoupling; SCONE's joint sampler is the targeted fix.", correct:true},
+          {key:"d", text:"Doesn't matter."},
         ]}
-        trap={<>(a) and (c) ignore the diminishing-returns reality. (d) is too strong.</>}
-        lens={<>SCONE's gain depends on where SGL leaves slack. Dense data leaves little slack; long-tail data leaves a lot. Make the call based on YOUR data, not on the paper's headline number.</>}
-        stretch={<>What specific metric, computed on YOUR data, predicts SCONE's likely lift over SGL?</>}
+        trap={<>(a)/(b)/(d) miss the diagnostic.</>}
+        lens={<>SGL plateau at high p → SCONE is the targeted fix.</>}
+        stretch={<>How would you A/B-test SCONE vs SGL+DNS to isolate the joint-sampler effect?</>}
       />
 
-      <VIS.TrapProblem
-        id="scone-p5"
-        difficulty="hard"
+      <VIS.TrapProblem id="scone-b2" difficulty="hard"
+        title="B2 — 'Just use harder negatives'"
+        scenario={<>A staff engineer says 'plateau means we need harder negatives — crank DNS's threshold.' Why is this wrong?</>}
+        options={[
+          {key:"a", text:"Harder negatives from DNS are drawn from the FULL graph, not the augmented view; at high p they're even MORE incoherent with the augmented positives. Cranking DNS makes the mismatch worse, not better. The fix is coupling the samplers.", correct:true},
+          {key:"b", text:"DNS doesn't exist."},
+          {key:"c", text:"Harder negatives always help."},
+          {key:"d", text:"Bigger batch fixes it."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>Harder is not better when the negatives are drawn from a different distribution than the positives.</>}
+        stretch={<>What's the metric that distinguishes 'hard' from 'incoherent' negatives?</>}
+      />
+
+      <VIS.TrapProblem id="scone-b3" difficulty="hard"
+        title="B3 — Pitch SCONE to a CTO (must require SCONE mechanism)"
+        scenario={<>Your CTO asks why SCONE over SGL+DNS. Single sentence that requires SCONE's joint-sampler mechanism.</>}
+        options={[
+          {key:"a", text:"'It's a more advanced contrastive method.' (Generic — survives redaction.)"},
+          {key:"b", text:"'SCONE replaces our two independent samplers (edge-drop + DNS) with a single coupled process — at our augmentation rate p=0.3 our positives were augmented but our negatives were drawn from the full graph, so InfoNCE was comparing apples to oranges. Coupling the samplers fixes that mismatch and that's the +1.8% NDCG @ recall we see in shadow.'", correct:true},
+          {key:"c", text:"'+2% NDCG.'"},
+          {key:"d", text:"'Used at top tech.'"},
+        ]}
+        trap={<>(a) survives redaction; (c)/(d) generic.</>}
+        lens={<>The pitch must turn on the coupled-sampler mechanism. Drop it and the sentence reduces to "more advanced", which is empty.</>}
+        stretch={<>If you haven't reproduced the lift yet, what do you ask for in 30 days?</>}
+      />
+
+      <VIS.TrapProblem id="scone-b4" difficulty="hard"
+        title="B4 — When NOT to use SCONE"
+        scenario={<>Dense in-house movie dataset with high SGL gains at low p=0.1. Pick SCONE, SGL+DNS, or SimGCL.</>}
+        options={[
+          {key:"a", text:"SCONE — modernize."},
+          {key:"b", text:"SGL+DNS — at low augmentation the independent samplers' distributions still overlap; the SCONE coupling pays compute for no coherence problem; stay on the simpler stack.", correct:true},
+          {key:"c", text:"SimGCL."},
+          {key:"d", text:"Doesn't matter."},
+        ]}
+        trap={<>(a) is the modernization reflex.</>}
+        lens={<>SCONE's value vanishes at low augmentation. Check your operating point first.</>}
+        stretch={<>What p threshold triggers re-considering SCONE?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      <VIS.TrapProblem id="scone-c1" difficulty="hard"
+        title="C1 — Why couple the samplers?"
+        scenario={<>Why does SCONE couple augmentation and negative-sampling into one process, rather than running two correlated samplers?</>}
+        options={[
+          {key:"a", text:"Coupling guarantees by construction that the augmented-view distribution = negative distribution. Two correlated-but-separate samplers can drift apart (random seeds, batch-level vs item-level state). One process eliminates the consistency burden entirely.", correct:true},
+          {key:"b", text:"One process is faster."},
+          {key:"c", text:"Two processes is memory-heavy."},
+          {key:"d", text:"They are equivalent."},
+        ]}
+        trap={<>(b)/(c) are side effects; (d) misreads.</>}
+        lens={<>Coupling-by-construction is stronger than coupling-by-correlation. The architecture is the guarantee.</>}
+        stretch={<>What's the simplest way to break the coupling and check it matters?</>}
+      />
+
+      <VIS.TrapProblem id="scone-c2" difficulty="hard"
+        title="C2 — Why does augmentation+negative coherence matter for InfoNCE specifically?"
+        scenario={<>Why does the augmentation-negative mismatch hurt InfoNCE but not BPR?</>}
+        options={[
+          {key:"a", text:"InfoNCE compares the SAME node's embedding under two augmented views (positive pair) against negatives from the batch. If positives are perturbed but negatives are not, the loss says 'augmented self != non-augmented other' — the easy axis it learns is augmentation status, not user preference. BPR uses scalar score comparisons without augmentation in the positive definition, so the issue doesn't arise.", correct:true},
+          {key:"b", text:"BPR uses sigmoid."},
+          {key:"c", text:"InfoNCE has a temperature."},
+          {key:"d", text:"BPR doesn't use negatives."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>The shortcut-learning failure is InfoNCE-specific because the loss is defined over augmented vs non-augmented samples.</>}
+        stretch={<>Sketch an InfoNCE variant where positives are NOT augmented but negatives are.</>}
+      />
+
+      <VIS.TrapProblem id="scone-c3" difficulty="hard"
+        title="C3 — What SCONE drops vs SGL+DNS"
+        scenario={<>SCONE replaces SGL+DNS. What does it deliberately give up?</>}
         multiSelect
-        title="P5 — False-positive hard negatives"
-        scenario={<>You ship SCONE; some "hard negatives" turn out to be items the user genuinely would have liked but never saw (impression bias). Which mitigations make sense? Select all that apply.</>}
         options={[
-          {key:"a", text:"Filter hard negatives against an impression log — only items the user was shown but did not click qualify.", correct:true},
-          {key:"b", text:"Mix hard negatives with uniform-random negatives at a fixed ratio to dilute false negatives.", correct:true},
-          {key:"c", text:"Use a 'safe radius' — exclude items whose embedding cosine to the positive is above a threshold.", correct:true},
-          {key:"d", text:"Trust the sampler completely; false negatives are noise that averages out."},
-          {key:"e", text:"Drop hard negatives entirely and use only uniform."},
+          {key:"a", text:"Independent control over augmentation rate and negative hardness — they're now tied through one process.", correct:true},
+          {key:"b", text:"Per-step compute efficiency — SCONE's joint sampler is heavier than two cheap independent ones.", correct:true},
+          {key:"c", text:"BPR loss — preserved.", correct:false},
+          {key:"d", text:"Hard negatives entirely — preserved.", correct:false},
         ]}
-        trap={<>(d) is too cavalier — false negatives in a contrastive loss systematically corrupt the gradient direction. (e) gives up the whole point of SCONE.</>}
-        lens={<>False negatives are the canonical failure of hard-mining. The fix is some combination of (a) using actual exposure signal, (b) mixing in safe random negatives so the gradient isn't dominated by potentially-mislabeled hard ones, (c) excluding items too close to the positive in embedding space.</>}
-        stretch={<>Of (a), (b), (c), which generalizes best across domains?</>}
+        trap={<>(c)/(d) NOT dropped.</>}
+        lens={<>SCONE trades independent knobs for coherence-by-construction.</>}
+        stretch={<>When would the independent control matter enough to abandon SCONE?</>}
       />
 
-      <VIS.TrapProblem
-        id="scone-p6"
-        difficulty="medium"
-        title="P6 — Naming check: stochastic vs deterministic"
-        scenario={<>"Why is the sampler called 'stochastic' rather than just 'hard-negative mining'?"</>}
+      <VIS.TrapProblem id="scone-c4" difficulty="hard"
+        mode="ordered"
+        title="C4 — Rank SCONE hyperparams by production impact"
+        scenario={<>Rank: (a) joint-sampler temperature, (b) augmentation rate p, (c) batch size, (d) InfoNCE temperature τ. Top = most catastrophic.</>}
         options={[
-          {key:"a", text:"Marketing — researchers like new names."},
-          {key:"b", text:"Deterministic hard-mining always picks the same hardest negative, leading to a brittle gradient (one item dominates). Stochastic sampling adds noise so the model sees a distribution of hard negatives, avoiding single-item collapse.", correct:true},
-          {key:"c", text:"Stochastic is faster than deterministic."},
-          {key:"d", text:"Stochastic supports GPUs better."},
+          {key:"a", text:"Joint-sampler temperature (controls augmentation-negative coupling strength).", order:1},
+          {key:"b", text:"Augmentation rate p.", order:2},
+          {key:"c", text:"InfoNCE temperature.", order:3},
+          {key:"d", text:"Batch size — well-explored."},
         ]}
-        trap={<>(a), (c), (d) miss the mechanism.</>}
-        lens={<>Stochasticity is essential. Deterministic hard mining tends to fixate — one item gets picked over and over, distorting embeddings. Sampling with temperature gives you the BIAS toward hard cases without the brittleness of always picking the same single one.</>}
-        stretch={<>What's a deterministic variant of SCONE called, and when would you prefer it?</>}
+        trap={<>Many candidates rank p first because that's the SGL knob — but SCONE's unique knob is the sampler temperature.</>}
+        lens={<>Sampler temperature is SCONE-specific in a way the others aren't.</>}
+        stretch={<>How would you A/B-test sampler temperature?</>}
       />
 
-      <VIS.TrapProblem
-        id="scone-p7"
-        difficulty="hard"
-        title="P7 — Joint sampler design choice"
-        scenario={<>How is SCONE's "joint" sampler actually built — what specifically couples views and negatives?</>}
+      <VIS.TrapProblem id="scone-c5" difficulty="hard"
+        title="C5 — Data assumption: dense graph"
+        scenario={<>You apply SCONE on a graph where every user has 500+ items. What breaks first?</>}
         options={[
-          {key:"a", text:"Views and negatives are drawn from the SAME score distribution over local edges. High-score edges define the augmented view (kept); low-score edges define hard negatives (excluded but used in contrast). This shared score function ensures consistency.", correct:true},
-          {key:"b", text:"Views and negatives share random seed only."},
-          {key:"c", text:"Views and negatives are computed from the same batch."},
-          {key:"d", text:"There is no real coupling; the name is misleading."},
+          {key:"a", text:"At dense interaction levels SGL's effective augmentation at p=0.1 leaves both views nearly identical; SCONE's joint sampler has nothing to couple because the views and negatives are already co-distributed under low perturbation. Lift evaporates; compute overhead remains.", correct:true},
+          {key:"b", text:"GPU OOM."},
+          {key:"c", text:"BPR fails."},
+          {key:"d", text:"Cold-start improves."},
         ]}
-        trap={<>(b), (c), (d) sound technical but miss the actual mechanism.</>}
-        lens={<>The score function is the coupling. It scores every edge near the anchor; the high end becomes the augmented view, the low end becomes hard negatives. Same scoring, same sampling distribution. Drift between views and negatives is impossible by construction.</>}
-        stretch={<>If you parameterized the score function as a tiny neural net, how would you train it?</>}
+        trap={<>(b)/(c)/(d) non-explanations.</>}
+        lens={<>SCONE's value is regime-bound: high augmentation or sparse graphs.</>}
+        stretch={<>How do you decide before training?</>}
       />
 
-      <VIS.TrapProblem
-        id="scone-p8"
-        difficulty="hard"
+      <VIS.TrapProblem id="scone-c6" difficulty="hard"
+        title="C6 — Gradient through the sampler?"
+        scenario={<>Does SCONE backprop through its joint sampler? What does the implementation look like?</>}
+        options={[
+          {key:"a", text:"Most implementations use a Gumbel-softmax / straight-through estimator so the joint sampler is differentiable — the InfoNCE gradient can shape the sampling distribution. A REINFORCE alternative exists but trains slower.", correct:true},
+          {key:"b", text:"No gradient; sampler is fixed."},
+          {key:"c", text:"Sampler is hand-tuned."},
+          {key:"d", text:"Sampler uses backprop without trick (standard reparameterization)."},
+        ]}
+        trap={<>(b) misreads; (c)/(d) inaccurate.</>}
+        lens={<>The estimator matters: straight-through is faster but biased; REINFORCE is unbiased but high-variance.</>}
+        stretch={<>When would you switch from straight-through to REINFORCE?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      <VIS.TrapProblem id="scone-d1" difficulty="hard"
+        title="D1 — 'Stronger augmentation = better contrastive'"
+        scenario={<>The intuition: 'crank augmentation strength p; harder positives = harder learning.' Why does it fail in SGL+DNS specifically?</>}
+        options={[
+          {key:"a", text:"At high p, positives are heavily perturbed but DNS's hard negatives are drawn from the FULL graph (not perturbed). The loss now mainly distinguishes 'augmented' from 'non-augmented' — a shortcut that doesn't transfer to recommendation quality. SCONE fixes this by coupling negatives to the augmentation distribution.", correct:true},
+          {key:"b", text:"More augmentation = more compute."},
+          {key:"c", text:"Augmentation doesn't matter."},
+          {key:"d", text:"DNS is broken."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>The shortcut-learning failure is the SCONE-motivating diagnosis.</>}
+        stretch={<>What's a held-out metric that catches shortcut learning?</>}
+      />
+
+      <VIS.TrapProblem id="scone-d2" difficulty="hard"
+        title="D2 — Cascade: 'SCONE is SGL with a new sampler'"
+        scenario={<>Tech lead assumes 'SCONE = SGL with one different sampler module.' Wrong consequences?</>}
         multiSelect
-        title="P8 — Production trade-offs of joint sampling"
-        scenario={<>You're shipping SCONE in production. Which trade-offs matter? Select all that apply.</>}
         options={[
-          {key:"a", text:"Per-step compute is 1.1-1.3x SGL because the joint sampler does extra scoring work.", correct:true},
-          {key:"b", text:"GPU memory peaks higher because both views and hard negatives must be encoded.", correct:true},
-          {key:"c", text:"Throughput drops, so the practical batch size may shrink.", correct:true},
-          {key:"d", text:"Inference latency at serving doubles."},
-          {key:"e", text:"Convergence may be slower because the sampler is stochastic."},
+          {key:"a", text:"Assumes SGL's hyperparameters carry over: wrong, the p sweep depends on the coupled sampler.", correct:true},
+          {key:"b", text:"Assumes DNS is preserved: wrong, DNS is REPLACED by the joint sampler.", correct:true},
+          {key:"c", text:"Assumes encoder unchanged: largely correct.", correct:false},
+          {key:"d", text:"Assumes single loss: largely correct (still BPR + InfoNCE).", correct:false},
         ]}
-        trap={<>(d) is wrong — SCONE only changes TRAINING, not serving. (e) goes the wrong way — stochasticity often helps convergence.</>}
-        lens={<>Training-only cost. Once trained, the model is exactly the same shape as LightGCN/SGL — no serving cost. Plan capacity around the training spike, not the serving cost.</>}
-        stretch={<>What's the smartest way to reduce training cost if it becomes a blocker?</>}
+        trap={<>(c)/(d) are the unchanged pieces.</>}
+        lens={<>'SGL with new sampler' miscounts what's being replaced. DNS is gone; sweeps must be redone.</>}
+        stretch={<>What's the smallest change that converts SGL+DNS into SCONE?</>}
       />
 
-      <VIS.TrapProblem
-        id="scone-p9"
-        difficulty="hard"
-        title="P9 — Hard negatives vs longer training"
-        scenario={<>"If hard negatives matter, why not just train SGL for 10x more epochs — eventually it sees the same hard cases by chance."</>}
+      <VIS.TrapProblem id="scone-d3" difficulty="hard"
+        title="D3 — Junior: 'add more data.' Senior: ?"
+        scenario={<>SCONE shadow regresses 0.4% on dense surface. Junior: 'more data.' Senior: 'lower p or fall back to SGL.' Why?</>}
         options={[
-          {key:"a", text:"You can — but you waste 90% of compute on easy negatives that contribute negligible gradient. SCONE delivers the same effective hard-negative exposure in fewer epochs.", correct:true},
-          {key:"b", text:"Longer training does not help."},
-          {key:"c", text:"Longer training overfits."},
-          {key:"d", text:"Longer training has the same convergence behavior as SCONE."},
+          {key:"a", text:"On dense surfaces SCONE pays compute for no coherence gain because SGL+DNS at low p already produces coherent negatives. The fix isn't data scale; it's recognizing the surface doesn't have the regime SCONE addresses.", correct:true},
+          {key:"b", text:"More data always helps."},
+          {key:"c", text:"Senior is wrong."},
+          {key:"d", text:"p is irrelevant."},
         ]}
-        trap={<>(b) and (c) are too absolute. (d) ignores compute efficiency.</>}
-        lens={<>The argument is efficiency. With random negatives, hard cases appear rarely; you need many epochs to see enough. SCONE biases sampling toward hard cases so fewer epochs cover the same useful gradient.</>}
-        stretch={<>If compute is free, is SCONE still worth it?</>}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>SCONE is regime-bound; data scale doesn't move the regime.</>}
+        stretch={<>When IS more data the right answer?</>}
       />
 
-      <VIS.TrapProblem
-        id="scone-p10"
-        difficulty="hard"
-        title="P10 — When SCONE is overkill"
-        scenario={<>Your team has a tight Q deadline; you can't afford to debug a new method. SGL works. When would SCONE genuinely be the wrong call?</>}
+      <VIS.TrapProblem id="scone-d4" difficulty="hard"
+        title="D4 — Plateau symptom — which cause?"
+        scenario={<>SGL+DNS plateaus at p=0.3; NDCG stops climbing. Three plausible causes: (1) augmentation-negative decoupling, (2) batch size too small for InfoNCE, (3) encoder capacity. Most likely?</>}
         options={[
-          {key:"a", text:"Whenever SGL works."},
-          {key:"b", text:"When SGL is not yet plateaued (your augmentation sweep has not run), OR your data is dense, OR your team lacks bandwidth to tune SCONE's sampler hyperparameters. SCONE is a targeted fix, not a default upgrade.", correct:true},
-          {key:"c", text:"Never — SCONE always wins."},
-          {key:"d", text:"Only on small datasets."},
+          {key:"a", text:"Augmentation-negative decoupling: the signature of SGL+DNS plateauing at high p; SCONE is the targeted fix. (2) and (3) wouldn't be tied to p crossing a threshold.", correct:true},
+          {key:"b", text:"Batch size — but plateau is at high p specifically."},
+          {key:"c", text:"Encoder — unrelated to p."},
+          {key:"d", text:"GPU thermal."},
         ]}
-        trap={<>(a) is dismissive. (c) is the cheerleader answer. (d) is unsupported.</>}
-        lens={<>Engineering judgment. SCONE is a targeted fix for a specific failure (SGL plateauing at high augmentation). If SGL is not yet plateaued, or your data does not benefit from hard negatives, the additional complexity isn't worth it.</>}
-        stretch={<>What test would you run to KNOW whether SGL is plateaued?</>}
+        trap={<>(b)/(c)/(d) don't match the p-dependent symptom.</>}
+        lens={<>Plateau-at-high-p is the diagnostic signature for SCONE adoption.</>}
+        stretch={<>How would you confirm the diagnosis before migrating?</>}
       />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      <VIS.TrapProblem id="scone-e1" difficulty="hard"
+        title="E1 — SCONE per-step cost"
+        scenario={<>SCONE replaces two cheap samplers with one heavier one. What's the operating cost?</>}
+        options={[
+          {key:"a", text:"Per-step compute ~25–40% higher than SGL+DNS; throughput drops; need to re-tune batch size to compensate; if using straight-through estimator the bias-variance trade-off requires per-domain re-tuning.", correct:true},
+          {key:"b", text:"No cost."},
+          {key:"c", text:"Same as SGL+DNS."},
+          {key:"d", text:"Cheaper."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>The coupling has a compute cost; budget for it.</>}
+        stretch={<>How would you A/B SCONE vs SGL+DNS for the same compute budget?</>}
+      />
+
+      <VIS.TrapProblem id="scone-e2" difficulty="hard"
+        title="E2 — Friday: lift vanishes after launch"
+        scenario={<>SCONE shipped Thursday with strong shadow gains. Friday: live NDCG matches old SGL+DNS. Why specifically SCONE?</>}
+        options={[
+          {key:"a", text:"The shadow data had high augmentation rate matching the training regime; in production, an A/B traffic splitter applied an upstream filter that effectively reduced augmentation noise on the live request stream — SCONE's joint coupling now has no decoupling to fix, so the lift disappears. Diagnose by checking the live augmentation distribution.", correct:true},
+          {key:"b", text:"Random noise."},
+          {key:"c", text:"GPU throttling."},
+          {key:"d", text:"Friday-specific drift."},
+        ]}
+        trap={<>(b)/(c)/(d) red herrings.</>}
+        lens={<>SCONE's gain depends on the operating regime. Live vs shadow regime drift is a SCONE-specific failure.</>}
+        stretch={<>What's a regime-tracking metric you'd log post-launch?</>}
+      />
+
+      <VIS.TrapProblem id="scone-e3" difficulty="hard"
+        title="E3 — Reference-impl default that bites"
+        scenario={<>OSS SCONE has a default that's wrong for many production surfaces. Which?</>}
+        options={[
+          {key:"a", text:"`gumbel_temperature=1.0` for the joint sampler — at this temperature the sampler is too smooth; the coupling becomes weak and the InfoNCE signal degrades to SGL+DNS. Paper-tuned temperature is closer to 0.3-0.5 depending on graph sparsity.", correct:true},
+          {key:"b", text:"`augmentation_rate=0.1`."},
+          {key:"c", text:"`use_bf16=False`."},
+          {key:"d", text:"`num_layers=3`."},
+        ]}
+        trap={<>(b)/(c)/(d) are real defaults but not the silent trap.</>}
+        lens={<>Gumbel temperature is the SCONE-specific knob whose default is calibrated for the paper benchmark.</>}
+        stretch={<>How would you tune the Gumbel temperature?</>}
+      />
+
+      <VIS.TrapProblem id="scone-e4" difficulty="hard"
+        mode="ordered"
+        title="E4 — Order the SGL+DNS → SCONE migration phases"
+        scenario={<>Phases: (a) confirm SGL+DNS is plateauing at high p, (b) shadow SCONE, (c) tune Gumbel temp + p, (d) A/B at 5%, (e) full. Top = first.</>}
+        options={[
+          {key:"a", text:"Confirm SGL+DNS plateaus at high p (diagnose before migrating).", order:1},
+          {key:"b", text:"Shadow SCONE.", order:2},
+          {key:"c", text:"Tune Gumbel temp + p.", order:3},
+          {key:"d", text:"A/B at 5%.", order:4},
+          {key:"e", text:"Full rollout.", order:5},
+          {key:"f", text:"Skip diagnostic; migrate immediately."},
+        ]}
+        trap={<>Skipping the diagnostic is the common mistake — SCONE without the right regime is dead compute.</>}
+        lens={<>Regime-first is the SCONE-specific ordering.</>}
+        stretch={<>Set SLAs at each phase.</>}
+      />
+
+      <VIS.TrapProblem id="scone-e5" difficulty="hard"
+        title="E5 — Reproducing the paper's lift"
+        scenario={<>Paper claims +1.5-2% NDCG over SGL on Gowalla / Yelp. Which details matter most to reproduce?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Augmentation rate in 0.25-0.35 (where decoupling matters).", correct:true},
+          {key:"b", text:"Gumbel temperature in the joint sampler (paper-tuned).", correct:true},
+          {key:"c", text:"Sparse benchmark (Gowalla has ~30 interactions/user).", correct:true},
+          {key:"d", text:"Use MovieLens-1M."},
+          {key:"e", text:"Run on CPU."},
+        ]}
+        trap={<>(d)/(e) not in paper.</>}
+        lens={<>SCONE's reproducibility hinges on (i) augmentation rate, (ii) Gumbel temp, (iii) sparsity.</>}
+        stretch={<>Build a minimum-viable check.</>}
+      />
+
+      <VIS.TrapProblem id="scone-e6" difficulty="hard"
+        title="E6 — Public benchmarks hide a weakness"
+        scenario={<>SCONE wins on Gowalla and Yelp. What does that hide?</>}
+        options={[
+          {key:"a", text:"Both are sparse, mid-size benchmarks where high augmentation is needed and the augmentation-negative decoupling shows. On dense industrial graphs the operating point is naturally low p, and SCONE's lift is much smaller. Paper numbers may overstate prod gains.", correct:true},
+          {key:"b", text:"They use synthetic data."},
+          {key:"c", text:"Too small."},
+          {key:"d", text:"Wrong loss."},
+        ]}
+        trap={<>(b)/(c)/(d) misread.</>}
+        lens={<>Public benchmarks pre-pick the SCONE regime. Production may not be there.</>}
+        stretch={<>How to slice your own data for a SCONE-realistic eval?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      <VIS.TrapProblem id="scone-f1" difficulty="hard"
+        title="F1 — Smallest input that breaks SCONE's advantage"
+        scenario={<>Construct the simplest input that reduces SCONE to SGL+DNS performance.</>}
+        options={[
+          {key:"a", text:"Apply SCONE at p=0.05: the augmentation is mild, the augmented view ≈ original graph, and the augmented-positive vs full-graph-negative distributions are nearly identical even under independent sampling. SGL+DNS already matches; SCONE adds compute for no benefit.", correct:true},
+          {key:"b", text:"Empty graph."},
+          {key:"c", text:"Random noise."},
+          {key:"d", text:"Length-1B sequence."},
+        ]}
+        trap={<>(b)/(c)/(d) hurt every model.</>}
+        lens={<>SCONE depends on operating in the high-p / decoupled regime.</>}
+        stretch={<>How would you check operating point in 5 minutes?</>}
+      />
+
+      <VIS.TrapProblem id="scone-f2" difficulty="hard"
+        title="F2 — Adversarial: gradient through Gumbel"
+        scenario={<>Design an adversarial input that exploits SCONE's straight-through Gumbel estimator.</>}
+        options={[
+          {key:"a", text:"A batch of items where the model's score margins are near zero — the Gumbel softmax is near-uniform, the straight-through gradient is high-variance noise, and the sampler converges slowly. SGL+DNS doesn't have this issue because its samplers don't depend on the model.", correct:true},
+          {key:"b", text:"Empty batch."},
+          {key:"c", text:"Single-item batch."},
+          {key:"d", text:"Random noise."},
+        ]}
+        trap={<>(b)/(c)/(d) hurt every model.</>}
+        lens={<>The straight-through estimator is a new attack surface. Mitigation: temperature annealing.</>}
+        stretch={<>What's a defense against near-uniform-score batches?</>}
+      />
+
+      <VIS.TrapProblem id="scone-f3" difficulty="hard"
+        title="F3 — Reverse engineering: NDCG up, attention entropy up"
+        scenario={<>You scale SCONE training. Offline NDCG climbs but the sampler's attention entropy over candidate negatives keeps RISING toward uniform. Online watch-time flat. Which SCONE design choice is responsible?</>}
+        options={[
+          {key:"a", text:"The joint sampler's Gumbel temperature was left too high — the sampling distribution flattens toward uniform; SCONE's coherence guarantee weakens because the 'hard' negatives are now mild. NDCG benefits from the regularization but online metrics depending on precise negative discrimination don't.", correct:true},
+          {key:"b", text:"BPR loss."},
+          {key:"c", text:"Encoder depth."},
+          {key:"d", text:"Item-ID embedding dim."},
+        ]}
+        trap={<>(b)/(c)/(d) are unchanged.</>}
+        lens={<>Sampler temperature flatness is the SCONE-specific entropy-rise signature.</>}
+        stretch={<>Sketch a temperature-annealing schedule.</>}
+      />
+
+      <VIS.TrapProblem id="scone-f4" difficulty="hard"
+        title="F4 — Paper-named failure mode"
+        scenario={<>The SCONE paper itself flags a regime where it underperforms. Which?</>}
+        options={[
+          {key:"a", text:"Dense graphs / low-augmentation regimes — the coherence problem SCONE solves doesn't appear, and the joint sampler's compute overhead is wasted.", correct:true},
+          {key:"b", text:"Sparse engagement-loop surfaces."},
+          {key:"c", text:"Large catalogs."},
+          {key:"d", text:"GPU-rich infra."},
+        ]}
+        trap={<>(b) is where SCONE wins.</>}
+        lens={<>The paper is honest about regime.</>}
+        stretch={<>How to decide before training?</>}
+      />
+
+      <VIS.TrapProblem id="scone-f5" difficulty="hard"
+        title="F5 — Derive the follow-up direction"
+        scenario={<>From SCONE's mechanism alone, derive a natural follow-up.</>}
+        options={[
+          {key:"a", text:"Make the joint sampler ITSELF learnable end-to-end — replace the fixed Gumbel parameterization with a small policy network that maps user-state to (view, negatives). This generalizes SCONE's coupling to user-conditional sampling.", correct:true},
+          {key:"b", text:"Bigger encoder."},
+          {key:"c", text:"More layers."},
+          {key:"d", text:"More data."},
+        ]}
+        trap={<>(b)/(c)/(d) aren't the natural follow-up.</>}
+        lens={<>SCONE introduced coupling; the next step is making the coupling personalized.</>}
+        stretch={<>What's the loss-side cost of a learnable sampler?</>}
+      />
+
+      <VIS.TrapProblem id="scone-f6" difficulty="hard"
+        title="F6 — Privacy: sampler leakage"
+        scenario={<>Why might SCONE's joint sampler leak more user info than SGL+DNS?</>}
+        options={[
+          {key:"a", text:"SCONE's sampler is conditioned on the user-item graph state; an attacker who queries with controlled inputs can infer the sampler's logits, which in turn reveal information about which negatives were considered 'hard' for that user — a side-channel that independent DNS doesn't have because it's not jointly conditioned.", correct:true},
+          {key:"b", text:"SCONE uses more GPUs."},
+          {key:"c", text:"SGL+DNS has built-in DP."},
+          {key:"d", text:"No difference."},
+        ]}
+        trap={<>(b)/(c)/(d) are non-answers.</>}
+        lens={<>The joint sampler is a new privacy attack surface.</>}
+        stretch={<>Sketch DP-SGD on the sampler.</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/2405.00287" target="_blank" rel="noopener"><strong>Choi et al. — SCONE: A Novel Stochastic Sampling to Generate Contrastive Views and Hard Negative Samples for Recommendation</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, WWW 2024)</span><br/>The source. Sections 3 (joint sampler design) and 4 (ablation of view vs negative coupling) are the must-reads.</li>
-        <li><a href="https://dl.acm.org/doi/10.1145/3404835.3462862" target="_blank" rel="noopener"><strong>Wu et al. — Self-supervised Graph Learning for Recommendation (SGL)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, SIGIR 2021)</span><br/>The baseline SCONE fixes. Reading SGL first makes the "decoupled augmentation and negative" framing click.</li>
-        <li><a href="https://arxiv.org/abs/1310.4546" target="_blank" rel="noopener"><strong>Mikolov et al. — Word2Vec with Negative Sampling</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2013)</span><br/>The foundational paper on negative sampling for representation learning. The lineage SCONE descends from.</li>
-        <li><a href="https://lilianweng.github.io/posts/2021-05-31-contrastive/" target="_blank" rel="noopener"><strong>Lilian Weng — Contrastive Representation Learning</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>The clearest practitioner survey of InfoNCE, hard negatives, and the temperature-batch-size interaction relevant to P3 and P6.</li>
-        <li><a href="https://eugeneyan.com/writing/recsys2022/" target="_blank" rel="noopener"><strong>Eugene Yan — System Design for Recommendations and Search</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Practitioner survey of when contrastive recsys methods pay off in production vs. research benchmarks.</li>
+        <li>
+          <a href="https://arxiv.org/abs/2405.00287" target="_blank" rel="noopener"><strong>Choi et al. — SCONE</strong></a> (paper, WWW 2024)
+          <br/>The original paper. Sections 3 (joint sampler) and 4.4 (ablation).
+        </li>
+        <li>
+          <a href="https://dl.acm.org/doi/10.1145/3404835.3462862" target="_blank" rel="noopener"><strong>Wu et al. — SGL</strong></a> (paper, SIGIR 2021)
+          <br/>The augmentation half of SCONE's lineage.
+        </li>
+        <li>
+          <a href="https://dl.acm.org/doi/10.1145/2484028.2484126" target="_blank" rel="noopener"><strong>Zhang et al. — DNS</strong></a> (paper, SIGIR 2013)
+          <br/>Dynamic Negative Sampling — the hard-negative half SCONE replaces.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2103.13278" target="_blank" rel="noopener"><strong>Huang et al. — MixGCF</strong></a> (paper, KDD 2021)
+          <br/>Synthetic-mix hard-negative alternative to SCONE.
+        </li>
+        <li>
+          <a href="https://dl.acm.org/doi/10.1145/3746280" target="_blank" rel="noopener"><strong>Survey on SSL for Recommendation</strong></a> (ACM CSUR 2025, HKU DS Lab)
+          <br/>Broader SSL recsys taxonomy and SCONE's place in it.
+        </li>
       </ul>
     </VIS.Section>
   </main>
