@@ -1782,17 +1782,17 @@ flowchart TB
       <VIS.TrapProblem
         id="lp-d2"
         difficulty="hard"
-        title="D2 — Wrong-assumption cascade: ignore backbone quality"
-        scenario={<>You assume "any backbone will do — prompts compensate." Trace the production cascade.</>}
+        title="D2 — Wrong-assumption cascade: task boundaries are easy to label"
+        scenario={<>You assume "we can label task boundaries cleanly from the campaign calendar" and feed those as task IDs at train time. Trace the cascade when boundaries are noisy (e.g., a BIN attack started 4 days before marketing announced the campaign).</>}
         options={[
-          {key:"a", text:"Weak backbone → backbone features fail to discriminate the relevant fraud signal (e.g., merchant-category embedding lacks the resolution needed) → prompts try but cannot synthesize features the backbone never represents → per-task AUPRC stays low across all tasks → team adds more prompts → no improvement → root cause is the backbone, not the prompt design. Fix is upstream: fine-tune backbone on a wide-fraud corpus, THEN freeze.", correct:true},
-          {key:"b", text:"Any backbone is fine."},
-          {key:"c", text:"More prompts always fix it."},
-          {key:"d", text:"L2P does not need a backbone."},
+          {key:"a", text:"Mis-segmented tasks → key training is supervised on the wrong task labels → the learned keys cluster around campaign IDs instead of MO regimes → retrieval collapses across the real boundaries (similar MO samples retrieve from different 'tasks'; different MO samples retrieve the same prompt). Fix: drop the campaign-ID supervision; use unsupervised task discovery on the query embedding stream, or accept noisy boundaries and add a key-orthogonality regularizer.", correct:true},
+          {key:"b", text:"Mis-segmented tasks don't matter — keys are robust."},
+          {key:"c", text:"Add more campaign labels — boundaries get cleaner."},
+          {key:"d", text:"L2P doesn't use task IDs at training."},
         ]}
-        trap={<>(b), (c), (d) deny the backbone dependency.</>}
-        lens={<>Backbone quality is the upper bound on L2P performance. Prompts modulate; they cannot synthesize missing features.</>}
-        stretch={<>What's your backbone-quality acceptance test before freezing?</>}
+        trap={<>(b) ignores the supervision signal in key training. (c) doubles down on the bad source. (d) is false for L2P-with-task-ID variants.</>}
+        lens={<>Task-boundary labels are a hidden supervision channel. Bad labels train the keys against the wrong partition; the symptom shows up downstream as retrieval collapse.</>}
+        stretch={<>Design the unsupervised task-discovery signal you'd use instead of campaign IDs.</>}
       />
 
       <VIS.TrapProblem
@@ -1814,17 +1814,17 @@ flowchart TB
       <VIS.TrapProblem
         id="lp-d4"
         difficulty="hard"
-        title="D4 — Plausible misattribution: prompt collapse"
-        scenario={<>L2P's per-task AUPRC declines after task 15 although no MO repeats. Causes: (i) data quality drift, (ii) key-query collapse, (iii) pool saturation, (iv) backbone degradation. Most likely?</>}
+        title="D4 — Plausible misattribution: 'drift caused the AUPRC drop'"
+        scenario={<>L2P's last-task AUPRC drops 4 points overnight. On-call blames concept drift and queues a new task. Then someone notes: the upstream training pipeline was changed last week — the frozen backbone's classification head was re-initialised. Re-attribute.</>}
         options={[
-          {key:"a", text:"(ii) Key-query collapse OR (iii) pool saturation. Without a key-orthogonality regularizer, the keys drift toward the query centroid; retrieval picks similar prompts regardless of task. Diagnose by measuring pairwise cosine of learned keys — if it has risen toward 1, you have collapse. Fix: cosine-orthogonality penalty in the loss.", correct:true},
-          {key:"b", text:"(i) Data quality."},
-          {key:"c", text:"(iv) Backbone degradation."},
-          {key:"d", text:"Random fluctuation."},
+          {key:"a", text:"The head-layer re-init is the cause, not drift. L2P assumes the BACKBONE's representations are stable so the keys (trained against them) remain meaningful; the classification head sits on top and was 'frozen' by policy, not by code. When the head silently re-initialised, every prompt's downstream contribution shifted — the prompts are still retrieved correctly but the head no longer maps their conditioned features to the right logits. Fix: pin the head-layer hash to CI; revert; no new task needed.", correct:true},
+          {key:"b", text:"Concept drift — add a new task."},
+          {key:"c", text:"Pool saturation."},
+          {key:"d", text:"GPU instability."},
         ]}
-        trap={<>(b), (c), (d) miss the L2P-specific failure.</>}
-        lens={<>Key collapse is a SILENT failure mode — performance drops without any error sign. Monitor pairwise key cosines as a diagnostic.</>}
-        stretch={<>Design the key-orthogonality regularizer term.</>}
+        trap={<>(b) is the obvious-looking answer that wastes a task slot. (c), (d) miss the upstream pipeline cause.</>}
+        lens={<>'Frozen' is a CI invariant, not a vibe. L2P's stability assumes the backbone AND head are byte-identical between rounds — verify by hash, not by policy.</>}
+        stretch={<>What's the CI check that would have caught the head re-init before deploy?</>}
       />
 
       <h3 style={{marginTop:24, color:"#1f3a5f"}}>E. Operations</h3>
@@ -1832,33 +1832,33 @@ flowchart TB
       <VIS.TrapProblem
         id="lp-e1"
         difficulty="hard"
-        title="E1 — L2P-specific gotcha"
-        scenario={<>Pick the gotcha most specific to L2P (would not bite EWC or Replay):</>}
+        title="E1 — Prompt-pool size selection: why N=10?"
+        scenario={<>Junior asks: "the paper sets the pool size N=10. Why not N=5 or N=100?" Best answer:</>}
         options={[
-          {key:"a", text:"Key-collapse: keys drift toward the centroid of frequent queries, the retrieval stops discriminating, and forgetting returns despite the frozen backbone. Monitor pairwise key cosine; add cosine-orthogonality regularizer; reset collapsed keys.", correct:true},
-          {key:"b", text:"GPU memory."},
-          {key:"c", text:"Cold-start models."},
-          {key:"d", text:"Slow inference."},
+          {key:"a", text:"N is a key-coverage knob. Small N (5): two MOs end up sharing a single (key, prompt) and interfere on contradictory patterns → forward-transfer breaks. Large N (100): keys are sparsely supervised → many keys never get selected, orthogonality regularizer cannot tell them apart, retrieval becomes noisy on rare tasks. N=10 is L2P's empirical sweet-spot for the 10-task split benchmarks; in fraud, scale N to roughly the count of distinct active MO regimes you can name, then audit per-prompt selection counts to retune.", correct:true},
+          {key:"b", text:"N is arbitrary."},
+          {key:"c", text:"Bigger N is always better."},
+          {key:"d", text:"N must equal the model depth."},
         ]}
-        trap={<>(b), (c), (d) are generic.</>}
-        lens={<>Key collapse is L2P's signature failure — and it's silent until performance drops. Diagnose with pairwise cosines.</>}
-        stretch={<>What's the early-warning threshold on key cosine?</>}
+        trap={<>(b), (c), (d) ignore the under-/over-capacity tradeoff.</>}
+        lens={<>N trades inter-task interference (too small) against under-supervised keys (too large). Audit per-prompt selection counts to tell which side you're on.</>}
+        stretch={<>What's the per-prompt selection-count distribution that signals N is too big?</>}
       />
 
       <VIS.TrapProblem
         id="lp-e2"
         difficulty="hard"
-        title="E2 — Friday: task-15 AUPRC drops"
-        scenario={<>Friday: task-15 (just trained) AUPRC = 0.62; task-1 (trained 14 months ago) AUPRC also = 0.62. What's going on?</>}
+        title="E2 — Friday: DualPrompt's G-prompt is silently swallowing tasks"
+        scenario={<>DualPrompt splits task-shared knowledge (G-prompt) from task-specific (E-prompt). Production audit shows per-task AUPRC tightly clustered (all tasks ~0.71) instead of E-prompt-driven differentiation. Diagnose.</>}
         options={[
-          {key:"a", text:"Pool has saturated AND/OR keys have collapsed. Diagnose: (i) measure pairwise key cosine — should be near 0 with orthogonality; if rising toward 1, collapse. (ii) Visualize top-K retrieval for current vs past inputs — if both retrieve the same prompts, retrieval is broken. Fix: add orthogonality regularizer, prune dead prompts, optionally reset the most-collapsed key/prompt pair.", correct:true},
-          {key:"b", text:"Random fluctuation."},
-          {key:"c", text:"Backbone drift."},
-          {key:"d", text:"GPU failure."},
+          {key:"a", text:"The G-prompt has grown too expressive (too many G-prompt layers / too long G-prompt length) and is absorbing per-task signal that should live in the E-prompts. E-prompt gradients see little residual to fit, so they trend toward zero contribution → all tasks effectively share the G-pathway → forward transfer rises but backward retention degrades and per-task differentiation disappears. Fix: shrink G-prompt layer count, lengthen E-prompt, and audit gradient norms per pathway.", correct:true},
+          {key:"b", text:"E-prompts are over-regularized — remove the orthogonality term."},
+          {key:"c", text:"Tasks are too similar — merge them."},
+          {key:"d", text:"Inference batch size is too small."},
         ]}
-        trap={<>(b), (c), (d) miss the L2P diagnostic.</>}
-        lens={<>Key-cosine and retrieval-overlap are L2P's vital signs. Monitor both.</>}
-        stretch={<>What's the dashboard you would build for these signals?</>}
+        trap={<>(b) attacks the wrong term. (c) hides the symptom. (d) is unrelated.</>}
+        lens={<>DualPrompt's G/E split is a capacity allocation: too much G-capacity starves E. Per-pathway gradient norms tell you which side is over-budgeted.</>}
+        stretch={<>What's the G/E gradient-norm ratio you'd target in a healthy DualPrompt setup?</>}
       />
 
       <VIS.TrapProblem
@@ -1965,17 +1965,17 @@ flowchart TB
       <VIS.TrapProblem
         id="lp-f4"
         difficulty="medium"
-        title="F4 — Paper-admitted limitation"
-        scenario={<>Which limitation does the L2P paper itself acknowledge?</>}
+        title="F4 — Paper-admitted limitation: known-task evaluation"
+        scenario={<>Which limitation does the L2P paper itself acknowledge about its evaluation?</>}
         options={[
-          {key:"a", text:"The pool's retrieval depends on the backbone's representation quality — a poor backbone makes the query embedding uninformative, degrading retrieval. The paper notes that L2P assumes a strong pretrained backbone (ViT-B/16 in vision); the assumption is doing more work than the abstract suggests.", correct:true},
-          {key:"b", text:"L2P works for all backbones equally."},
+          {key:"a", text:"The paper claims L2P does not require task IDs at inference, but its main experiments use known-task evaluation protocols (split-CIFAR with task IDs visible at eval time). Whether L2P holds under fully task-agnostic streaming (no IDs ever) is admitted as open in the discussion — and is exactly the fraud-production regime.", correct:true},
+          {key:"b", text:"L2P needs task IDs at training only — eval is task-free."},
           {key:"c", text:"L2P has no limitations."},
-          {key:"d", text:"L2P requires CPU only."},
+          {key:"d", text:"L2P only works on CPUs."},
         ]}
-        trap={<>(b), (c), (d) miss the paper's honest caveat.</>}
-        lens={<>L2P inherits backbone dependence. Knowing this signals careful reading.</>}
-        stretch={<>What's the backbone-quality threshold below which L2P is wrong?</>}
+        trap={<>(b) overstates. (c), (d) wrong.</>}
+        lens={<>The gap between 'algorithm doesn't need task IDs' and 'experiments don't use task IDs' is a senior tell. Read the experimental protocol, not the abstract.</>}
+        stretch={<>What's the task-agnostic eval you'd run to fill this gap?</>}
       />
 
       <VIS.TrapProblem

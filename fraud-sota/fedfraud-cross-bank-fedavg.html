@@ -1725,17 +1725,17 @@ flowchart TB
       <VIS.TrapProblem
         id="ff-c4"
         difficulty="hard"
-        title="C4 — Which knob, mis-set, breaks FedFraud?"
-        scenario={<>Rank: (i) PSI cadence, (ii) partial-embedding dimension, (iii) DP noise scale, (iv) number of silos.</>}
+        title="C4 — Model-side knob hierarchy: dim vs DP-noise vs aggregator type"
+        scenario={<>Rank the MODEL-side (not ops-side) knobs by how badly mis-setting each breaks FedFraud's accuracy: (i) partial-embedding dimension d, (ii) DP-SGD noise multiplier σ, (iii) secure-agg quantization bit-width, (iv) FedAvg vs FedProx aggregator choice.</>}
         options={[
-          {key:"a", text:"(i) PSI cadence > (iv) silo count > (iii) DP noise > (ii) embedding dim. PSI cadence sets the training cadence (mis-set = pipeline starvation). Silo count drives secure-agg cost (linear in N). DP noise trades accuracy for privacy. Embedding dim is secondary.", correct:true},
-          {key:"b", text:"Embedding dim dominates."},
-          {key:"c", text:"All equally important."},
-          {key:"d", text:"DP noise dominates."},
+          {key:"a", text:"(ii) σ > (iii) bit-width > (i) d > (iv) aggregator. σ directly multiplies into every gradient and is the privacy-utility frontier; too high and the signal disappears. Bit-width caps the SNR of the secure sum — too few bits flattens small but meaningful gradient components. d sets per-bank capacity; too small starves the joint head but too big over-fits per silo. FedAvg-vs-FedProx matters only in heterogeneous-loss regimes.", correct:true},
+          {key:"b", text:"Aggregator choice dominates — FedProx always wins."},
+          {key:"c", text:"All four are equally important."},
+          {key:"d", text:"Bit-width is irrelevant; secure-agg is exact."},
         ]}
-        trap={<>(b), (c), (d) miss the ops-cost hierarchy.</>}
-        lens={<>PSI cadence and silo count are the cost-defining knobs. Embedding dim is the model-defining knob.</>}
-        stretch={<>How do you tune PSI cadence in your stack?</>}
+        trap={<>(b) overstates FedProx. (c) is hand-wavy. (d) is false: secure-agg uses fixed-point quantization.</>}
+        lens={<>The model-side ranking puts privacy noise first (σ), then signal SNR (bit-width), then capacity (d), then aggregator. This is orthogonal to the ops hierarchy (PSI, silo count).</>}
+        stretch={<>At σ that meets ε=4, what bit-width still preserves AUPRC?</>}
       />
 
       <VIS.TrapProblem
@@ -1791,17 +1791,17 @@ flowchart TB
       <VIS.TrapProblem
         id="ff-d2"
         difficulty="hard"
-        title="D2 — Wrong-assumption cascade: ignore PSI cost"
-        scenario={<>You assume "PSI is a one-time setup cost." Trace the cascade.</>}
+        title="D2 — Wrong-assumption cascade: 'embeddings are private'"
+        scenario={<>You assume partial embeddings exchanged across banks are 'private because they aren't raw features.' Trace the cascade when an attacker controls one silo.</>}
         options={[
-          {key:"a", text:"PSI on 100M customers per silo with N silos = N(N-1)/2 PSI runs per refresh, hours each → daily PSI infeasible → weekly settled on → customer churn at 1%/week → stale customer set degrades training → team adds 'streaming PSI' as a research project → 6 months to ship → real fix would have been to architect PSI cost into the training cadence from day 1.", correct:true},
-          {key:"b", text:"PSI is one-time."},
-          {key:"c", text:"PSI has no cost."},
-          {key:"d", text:"PSI is parallel."},
+          {key:"a", text:"Embeddings are differentiable functions of features → an attacker who logs embeddings across rounds runs gradient-based model inversion to reconstruct rare-customer features (income brackets, merchant patterns) at near-original fidelity → regulator audits find PII reconstruction → privacy claim invalidated → emergency retrofit of DP-SGD with σ tuned for ε=4 → 6 weeks of AUPRC regression while σ is tuned → real fix: ship DP-SGD on day 1, treat embeddings as PII-equivalent.", correct:true},
+          {key:"b", text:"Embeddings cannot leak features."},
+          {key:"c", text:"Only raw features leak."},
+          {key:"d", text:"Secure aggregation prevents all inversion."},
         ]}
-        trap={<>(b), (c), (d) deny PSI's recurring cost.</>}
-        lens={<>PSI is a recurring cost driven by customer churn. Architect it into the design budget.</>}
-        stretch={<>What's the PSI amortization strategy?</>}
+        trap={<>(b), (c), (d) all collapse the difference between 'not raw' and 'private.'</>}
+        lens={<>Privacy claims need a threat model and a mechanism. Embeddings are intermediate representations, not anonymized data — DP-SGD is what bounds the leakage, not the absence of raw data.</>}
+        stretch={<>Sketch the model-inversion proof-of-concept you'd run before claiming privacy.</>}
       />
 
       <VIS.TrapProblem
@@ -1857,17 +1857,17 @@ flowchart TB
       <VIS.TrapProblem
         id="ff-e2"
         difficulty="hard"
-        title="E2 — Friday: Bank C goes offline"
-        scenario={<>Friday: Bank C's silo loses connectivity for 4 hours. What does FedFraud do?</>}
+        title="E2 — Friday: gradient-injection attack from a single silo"
+        scenario={<>One silo's training endpoint is compromised; the attacker submits gradients with norms 100x the typical update. Naïve FedAvg averages them in. What's the defense the FedFraud architecture should already have?</>}
         options={[
-          {key:"a", text:"If running threshold secret sharing with N-1 reconstruction: training continues with 3 silos but privacy guarantee degrades (collusion among 2 silos can now recover the third's input — was 3-of-4 before, now 2-of-3). Without secret sharing: rounds fail until Bank C returns. Mitigation: pre-declare a dropout budget; pause and audit when degradation crosses the budget; resume with full quorum.", correct:true},
-          {key:"b", text:"Continue normally — no effect."},
-          {key:"c", text:"Roll back."},
-          {key:"d", text:"Page DevOps."},
+          {key:"a", text:"Per-silo gradient-norm clipping enforced AT THE SECURE-AGGREGATOR layer, BEFORE summing. Each silo's contribution is bounded to a pre-set L2 norm; outlier contributions are clipped (not rejected, so the protocol still completes). Pair with a per-silo norm-distribution audit (post-aggregation, on the cleartext sum) and threshold-based silo quarantine if a silo repeatedly clips. This is the FedAvg-Byzantine defense that DOES survive secure aggregation (clipping is linear).", correct:true},
+          {key:"b", text:"Reject the silo — refuse the round."},
+          {key:"c", text:"Trust the silo — secure agg prevents tampering."},
+          {key:"d", text:"Average and move on; one bank can't break N-bank training."},
         ]}
-        trap={<>(b) ignores privacy degradation. (c), (d) skip the protocol-specific handling.</>}
-        lens={<>Silo dropout has BOTH availability and privacy-degradation effects. Track both.</>}
-        stretch={<>What's your audit log for privacy-degradation events?</>}
+        trap={<>(b) is too brittle and reveals the detection. (c) confuses secrecy with integrity. (d) is exactly the attack vector.</>}
+        lens={<>Secure agg gives secrecy, not Byzantine-robustness. Norm clipping is the cheap, linear-in-aggregator defense — robust median is not, because median is non-linear in secret-shared space.</>}
+        stretch={<>Why is robust-median Byzantine defense hard under secure aggregation?</>}
       />
 
       <VIS.TrapProblem
@@ -1974,17 +1974,17 @@ flowchart TB
       <VIS.TrapProblem
         id="ff-f4"
         difficulty="medium"
-        title="F4 — Paper-admitted limitation"
-        scenario={<>Which limitation does the FedFraud paper itself acknowledge?</>}
+        title="F4 — Paper-admitted limitation: small-N + honest-but-curious threat model"
+        scenario={<>Which limitation does the FedFraud paper itself acknowledge about its experimental design?</>}
         options={[
-          {key:"a", text:"PSI scaling: the paper notes PSI is expensive at the 100M+ customer scale and proposes amortized / cached PSI as a practical workaround. The crypto-cost gap between research and production is explicitly discussed.", correct:true},
-          {key:"b", text:"FedFraud is perfectly private."},
-          {key:"c", text:"FedFraud always wins."},
-          {key:"d", text:"GPU not needed."},
+          {key:"a", text:"Two: (i) experiments use small N (≈3–5 silos) and the paper does not characterize how communication / secure-agg cost or accuracy scale to N=20+ banks; (ii) the threat model is honest-but-curious — Byzantine and adaptive adversaries are explicitly out of scope, so production deployment needs an extra Byzantine-robust layer (norm clipping, anomaly detection) beyond what the paper validates.", correct:true},
+          {key:"b", text:"The paper claims FedFraud is perfectly private under all threat models."},
+          {key:"c", text:"The paper says no limitations exist."},
+          {key:"d", text:"The paper requires GPU-only deployment."},
         ]}
-        trap={<>(b), (c), (d) are wrong.</>}
-        lens={<>The paper is honest about PSI cost. Reading the limitations is the senior tell.</>}
-        stretch={<>What's the smallest PSI-cost-aware design tweak you'd implement?</>}
+        trap={<>(b), (c), (d) misread the paper's discussion section.</>}
+        lens={<>Two honest caveats: scale untested and threat model narrow. Both must be engineered around before production.</>}
+        stretch={<>What's the smallest experiment that probes the N=20 scaling regime?</>}
       />
 
       <VIS.TrapProblem

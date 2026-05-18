@@ -1580,17 +1580,17 @@ flowchart TB
       <VIS.TrapProblem
         id="cd-a5"
         difficulty="hard"
-        title="A5 — Where CDLF stops winning"
-        scenario={<>When does CDLF stop beating static class weights?</>}
+        title="A5 — Where CDLF stops winning: teacher capacity flip"
+        scenario={<>You set up CDLF with a small teacher (GBDT 100-trees) and a big student (deep MLP). Surprising result: CDLF underperforms uniform-weighted training. Why?</>}
         options={[
-          {key:"a", text:"When drift is SLOW enough that teacher confidence trajectories barely change across rounds. d_i ≈ 0 for all samples → all weights ≈ 1 → CDLF degenerates to uniform training. The framework's added complexity buys nothing in stable regimes.", correct:true},
-          {key:"b", text:"CDLF always wins."},
-          {key:"c", text:"On large batches."},
-          {key:"d", text:"On GPUs."},
+          {key:"a", text:"Small-teacher confidence is too noisy to anchor d_i trajectories — the teacher's own confidence swings across rounds reflect its limited capacity, not true distribution drift. CDLF then up-weights samples that confuse the teacher (small-model artefacts), not samples reflecting real concept change. Fix: require teacher capacity ≥ student capacity, or smooth d_i with an ensemble teacher.", correct:true},
+          {key:"b", text:"CDLF always wins regardless of teacher size."},
+          {key:"c", text:"GBDT cannot be a teacher."},
+          {key:"d", text:"Big students always lose to small teachers."},
         ]}
-        trap={<>(b), (c), (d) miss the regime dependency.</>}
-        lens={<>CDLF's advantage scales with drift speed × burstiness. Slow drift = degenerate to uniform.</>}
-        stretch={<>What's the smallest drift rate at which CDLF helps?</>}
+        trap={<>(b) overstates. (c), (d) wrong by construction.</>}
+        lens={<>CDLF's d_i quality is bounded by teacher quality. A weak teacher injects noise as 'drift signal'; the student wastes capacity chasing it.</>}
+        stretch={<>What's the teacher-vs-student capacity gap above which d_i becomes reliable?</>}
       />
 
       <h3 style={{marginTop:24, color:"#1f3a5f"}}>B. Application</h3>
@@ -1812,17 +1812,17 @@ flowchart TB
       <VIS.TrapProblem
         id="cd-d4"
         difficulty="hard"
-        title="D4 — Plausible misattribution: high α 'wins'"
-        scenario={<>You bump α from 1 to 5 and AUPRC on the current week improves by 1 point. Is α=5 better?</>}
+        title="D4 — Plausible misattribution: 'the α bump won' or did the teacher refresh win?"
+        scenario={<>Same week you raised α from 1 to 3, the monthly teacher refresh landed. AUPRC jumped 1.5 points. Junior credits α. What's the senior diagnostic?</>}
         options={[
-          {key:"a", text:"Maybe — but probably overfitting to the current snapshot. Verify: (i) per-MO recall on past MOs should NOT have dropped; (ii) AUPRC on a held-out future week (not training week) should improve. If past-MO recall dropped while current-week AUPRC rose, α=5 is overfitting today at the cost of old MOs — a textbook short-term gain, long-term loss.", correct:true},
-          {key:"b", text:"Higher α is always better."},
-          {key:"c", text:"AUPRC improvement = ship it."},
-          {key:"d", text:"α has no effect on past-MO recall."},
+          {key:"a", text:"Refuse the attribution until you separate the two changes. Run two replays on a frozen offline stream: (i) old-teacher × α=1 vs old-teacher × α=3 (isolates α), (ii) old-teacher × α=1 vs new-teacher × α=1 (isolates refresh). If the refresh delta explains most of the lift, α is being credited for the teacher's better-calibrated d_i. CDLF makes α-changes and teacher-changes confounded — separate them explicitly or you'll keep over-tuning α.", correct:true},
+          {key:"b", text:"α is the bigger lever — credit it."},
+          {key:"c", text:"Teacher refresh has no AUPRC effect."},
+          {key:"d", text:"Run α=5 next."},
         ]}
-        trap={<>(b), (c), (d) ignore the temporal-fairness tradeoff.</>}
-        lens={<>α is a temporal-tradeoff dial. Always verify past-MO recall when increasing.</>}
-        stretch={<>Sketch the per-MO eval grid for α sweeps.</>}
+        trap={<>(b) over-claims. (c) is false. (d) compounds the misattribution.</>}
+        lens={<>Two CDLF knobs move at once (α and teacher) and both affect d_i × w_i. Confounded changes need 2-way replay isolation; never credit a single knob without the controlled rerun.</>}
+        stretch={<>Sketch the 2x2 replay table you'd run weekly.</>}
       />
 
       <h3 style={{marginTop:24, color:"#1f3a5f"}}>E. Operations</h3>
@@ -1846,17 +1846,17 @@ flowchart TB
       <VIS.TrapProblem
         id="cd-e2"
         difficulty="hard"
-        title="E2 — Friday: per-MO recall drops"
-        scenario={<>Friday: recall on a 3-month-old MO drops from 80% to 50% over 2 weeks. CDLF is in production. Diagnose.</>}
+        title="E2 — Friday: per-modality-output (MO) drift signal is one-sided"
+        scenario={<>Friday: dashboards show CDLF's d_i mass concentrated on a SINGLE multi-class output (say MO_3 for high-value e-com). MO_1 and MO_2 recall start tanking even though their absolute d_i is small. What's the diagnosis?</>}
         options={[
-          {key:"a", text:"CDLF over-weighting current samples (high d_i for new MOs) AT THE COST OF old-MO weight. The old MO's samples have stable teacher confidence (d_i ≈ 0) and small weight; new MO samples dominate the gradient. Mitigation: floor on minimum weight (w_min = 0.5), regularization toward uniform weights, or reduce α.", correct:true},
-          {key:"b", text:"GPU failure."},
-          {key:"c", text:"Random fluctuation."},
-          {key:"d", text:"Backbone drift."},
+          {key:"a", text:"CDLF computes d_i per-sample over a SHARED teacher trajectory — when one modality output (MO_3) is drifting heavily, its samples grab most of the loss-weight budget and the optimizer effectively reallocates capacity away from MO_1/MO_2. Diagnose by computing per-MO d_i distributions; if mass is concentrated on one head, switch to per-MO d_i normalization (each MO's weight pool sums to a fixed budget) or run CDLF per-head.", correct:true},
+          {key:"b", text:"Random fluctuation."},
+          {key:"c", text:"GPU OOM."},
+          {key:"d", text:"All MOs share the same d_i — impossible scenario."},
         ]}
-        trap={<>(b), (c), (d) miss the CDLF-specific over-weighting cascade.</>}
-        lens={<>CDLF's per-sample weighting CAN starve old-MO samples of gradient. Monitor per-MO recall as the canary.</>}
-        stretch={<>Sketch the per-MO recall dashboard.</>}
+        trap={<>(b), (c) miss the budget-stealing dynamic. (d) misunderstands multi-output CDLF.</>}
+        lens={<>Multi-output CDLF needs per-output budget normalization. A single drifting head can starve the others through the shared loss-weight pool.</>}
+        stretch={<>Design the per-MO budget normalizer.</>}
       />
 
       <VIS.TrapProblem
@@ -1931,17 +1931,17 @@ flowchart TB
       <VIS.TrapProblem
         id="cd-f1"
         difficulty="hard"
-        title="F1 — Smallest input that breaks CDLF"
-        scenario={<>Construct the smallest scenario where CDLF reduces to uniform-weight training.</>}
+        title="F1 — Smallest input that breaks CDLF: one-class-only stream"
+        scenario={<>Construct the smallest scenario where CDLF mis-fires AND silently degrades the student.</>}
         options={[
-          {key:"a", text:"A stable distribution: the teacher's confidence on every sample is identical across all K past rounds → d_i = 0 for every sample → w_i = 1 for every sample → uniform training. CDLF's machinery has no signal to work with.", correct:true},
-          {key:"b", text:"Empty input."},
+          {key:"a", text:"A training batch containing only one class (only fraud, no benign — e.g., from an over-aggressive hard-negative sampler). The teacher's confidence shifts only along the fraud-axis; d_i is computed on a one-class trajectory; the change-of-mind signal is degenerate (no benign anchor). CDLF up-weights samples that look 'more drifting' than others within fraud-only — but the student loses calibration on benign and AUPRC silently degrades. Fix: enforce a class-mix lower bound in the per-batch d_i computation.", correct:true},
+          {key:"b", text:"Empty batch."},
           {key:"c", text:"One sample."},
-          {key:"d", text:"CDLF never reduces."},
+          {key:"d", text:"CDLF cannot break."},
         ]}
-        trap={<>(b), (c), (d) miss the stable-distribution degenerate.</>}
-        lens={<>CDLF requires drift. Stable distribution = no signal.</>}
-        stretch={<>What's the minimum drift rate at which CDLF's signal is informative?</>}
+        trap={<>(b), (c) are trivial. (d) is overconfident.</>}
+        lens={<>CDLF's d_i implicitly assumes a balanced reference; one-class-only collapses the trajectory geometry while staying numerically well-defined — the silent failure.</>}
+        stretch={<>What's the minimum benign-fraction in a CDLF batch?</>}
       />
 
       <VIS.TrapProblem

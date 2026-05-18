@@ -1689,17 +1689,17 @@ flowchart TB
       <VIS.TrapProblem
         id="fg-c2"
         difficulty="medium"
-        title="C2 — Graph completion depth"
-        scenario={<>How deep does FedGNN-Fraud's HE-protected graph completion go (k-hop)?</>}
+        title="C2 — Why CKKS over BFV for embeddings"
+        scenario={<>Why does FedGNN-Fraud use CKKS rather than BFV/BGV for the HE-encrypted cross-silo step?</>}
         options={[
-          {key:"a", text:"Typically 1-2 hops in HE. Each HE-protected message-pass step accumulates quantization noise and costs ~100x plaintext. Beyond 2 hops, the noise dominates and the embedding becomes uninformative. Deeper structure (3+ hop rings) is captured by stacking the trained GNN's local message-passing layers on top of the cross-silo-completed 1-2 hop neighbourhood.", correct:true},
-          {key:"b", text:"10 hops in HE."},
-          {key:"c", text:"Zero hops."},
-          {key:"d", text:"Unlimited."},
+          {key:"a", text:"CKKS natively encodes real-valued vectors with batched SIMD slots — embeddings are real and high-dimensional, and CKKS's packing gives ~thousands of values per ciphertext at ~constant per-op cost. BFV/BGV encode integers, so embeddings would need fixed-point quantization rounds, dimension would not pack as cleanly, and per-op cost would multiply by dim. CKKS pays for it with approximate arithmetic (small noise per op) — acceptable for embeddings, not for exact counts.", correct:true},
+          {key:"b", text:"CKKS is faster than BFV at every operation."},
+          {key:"c", text:"BFV cannot be used with GNNs at all."},
+          {key:"d", text:"Both are equivalent for this workload."},
         ]}
-        trap={<>(b), (c), (d) misrepresent HE depth.</>}
-        lens={<>HE depth is bounded by noise accumulation. 1-2 hops in HE, deeper hops via local GNN layers on the completed graph.</>}
-        stretch={<>How would you measure the HE-depth noise budget?</>}
+        trap={<>(b) overstates. (c) is false (BFV would work, just inefficiently). (d) collapses the choice.</>}
+        lens={<>CKKS = real-valued, batched, approximate. BFV/BGV = integer, exact, scalar-or-batched. Embeddings are the textbook CKKS use case.</>}
+        stretch={<>What's the SIMD slot count you'd target for a 128-dim embedding?</>}
       />
 
       <VIS.TrapProblem
@@ -1722,17 +1722,17 @@ flowchart TB
       <VIS.TrapProblem
         id="fg-c4"
         difficulty="hard"
-        title="C4 — Which knob, mis-set, breaks FedGNN-Fraud?"
-        scenario={<>Rank: (i) HE scheme parameters, (ii) cross-silo aggregation depth, (iii) PSI cadence, (iv) GNN architecture.</>}
+        title="C4 — GNN-architecture choice under HE noise"
+        scenario={<>Which GNN block survives HE-noisy neighbour embeddings better — GAT, GraphSAGE-mean, or GCN — and why?</>}
         options={[
-          {key:"a", text:"(i) HE parameters > (ii) cross-silo depth > (iii) PSI cadence > (iv) architecture. HE parameter choice (polynomial degree, noise budget) determines whether the protocol is viable at all; depth determines noise accumulation; PSI cadence determines training cadence; architecture is secondary.", correct:true},
-          {key:"b", text:"Architecture dominates."},
-          {key:"c", text:"All equally important."},
-          {key:"d", text:"PSI cadence dominates."},
+          {key:"a", text:"GraphSAGE-mean. The mean aggregator is linear in inputs → HE noise averages toward zero across the neighbour set → variance of the aggregated embedding drops as 1/k for k neighbours. GAT applies a softmax-attention over neighbours: softmax of noisy logits sharpens noise into high-variance weights → noise is concentrated, not averaged. GCN sits between (normalized sum, no learned attention). Pick mean for HE; pay capacity tax to recover with deeper local layers.", correct:true},
+          {key:"b", text:"GAT — attention always wins."},
+          {key:"c", text:"All three are equivalent under HE."},
+          {key:"d", text:"GCN, because it has the fewest parameters."},
         ]}
-        trap={<>(b), (c), (d) miss the crypto-cost hierarchy.</>}
-        lens={<>HE params and depth are the gating crypto knobs. Get them right or the protocol fails before model concerns matter.</>}
-        stretch={<>What's your HE parameter selection process?</>}
+        trap={<>(b) ignores softmax noise amplification. (c) collapses real differences. (d) confuses parameter count with HE robustness.</>}
+        lens={<>Linear aggregators average noise; non-linear (softmax) aggregators amplify it. HE protocols favour linear-aggregation GNNs at the encrypted step.</>}
+        stretch={<>Sketch the noise-variance derivation for SAGE-mean vs GAT.</>}
       />
 
       <VIS.TrapProblem
@@ -1788,17 +1788,17 @@ flowchart TB
       <VIS.TrapProblem
         id="fg-d2"
         difficulty="hard"
-        title="D2 — Wrong-assumption cascade: real-time HE inference"
-        scenario={<>You design assuming "HE inference is fine at 100ms." Trace the cascade.</>}
+        title="D2 — Wrong-assumption cascade: 'deeper completed graph beats shallower'"
+        scenario={<>You assume "completing the cross-silo graph to 3 hops will outperform a 2-hop completion." You ship the 3-hop variant. Eval AUPRC is LOWER, not higher. Trace the cascade.</>}
         options={[
-          {key:"a", text:"HE add/multiply ~50ms each; a 2-hop GNN message-pass needs hundreds of HE ops per node. Real measurement: ~5 seconds per node at inference. P99 latency blows past SLO. Team adds caches → cross-silo neighbourhood staleness → fraud rings evolving inside the cache TTL slip through. Real fix: TRAINING-ONLY HE; inference on local graphs.", correct:true},
-          {key:"b", text:"HE at inference works."},
-          {key:"c", text:"HE has no latency."},
-          {key:"d", text:"Caches solve everything."},
+          {key:"a", text:"Each cross-silo HE hop accumulates noise — by hop 3 the variance of the aggregated embedding exceeds the signal variance. Decrypted neighbour embeddings near the noise budget train the GNN on noise → embedding-space geometry corrupts → downstream classification head learns to ignore the cross-silo channel → AUPRC drops below the 2-hop variant AND below the local-only baseline (the model has wasted capacity learning to discount noise). Real fix: cap HE depth at 2 hops, recover deeper structure via local GNN layers on the completed 2-hop graph.", correct:true},
+          {key:"b", text:"3-hop is always better — re-run with more epochs."},
+          {key:"c", text:"3-hop fails because PSI was outdated."},
+          {key:"d", text:"3-hop must use BFV not CKKS."},
         ]}
-        trap={<>(b), (c), (d) deny HE cost.</>}
-        lens={<>The training/inference split is forced by HE cost. Architect for it from day 1.</>}
-        stretch={<>What's the staleness budget on a cached cross-silo neighbourhood?</>}
+        trap={<>(b) doubles down. (c), (d) name the wrong cause.</>}
+        lens={<>HE-depth scaling is non-monotonic: noise accumulation eventually flips the sign of the depth advantage. The depth vs noise tradeoff has a maximum, not a monotone curve.</>}
+        stretch={<>Compute the empirical hop-count at which your HE noise budget flips.</>}
       />
 
       <VIS.TrapProblem
@@ -1838,33 +1838,33 @@ flowchart TB
       <VIS.TrapProblem
         id="fg-e1"
         difficulty="hard"
-        title="E1 — FedGNN-Fraud-specific gotcha"
-        scenario={<>Pick the gotcha most specific to FedGNN-Fraud:</>}
+        title="E1 — Key-rotation mid-training corrupts cached ciphertexts"
+        scenario={<>Compliance rotates HE keys every 90 days. Mid-training the rotation lands — caches of cross-silo ciphertexts (1.4M for the active customer set) are under the OLD key while the protocol moves to the NEW. What breaks and how do you recover?</>}
         options={[
-          {key:"a", text:"HE noise budget exhaustion: each HE op accumulates noise; after ~2 hops of graph completion, decrypted embeddings are too noisy. Bootstrapping (refreshing the ciphertext) is expensive (~100ms per refresh per ciphertext). Production must architect for shallow HE-aggregation (1-2 hops) + deeper local GNN layers on the completed graph.", correct:true},
-          {key:"b", text:"GPU memory."},
-          {key:"c", text:"Cold-start models."},
-          {key:"d", text:"Slow GBDT."},
+          {key:"a", text:"Cached ciphertexts from before the rotation cannot be decrypted with the new key — the cache is silently invalidated; training reads garbage decryptions and gradients corrupt. Recover by (i) freezing cache writes pre-rotation, (ii) running proxy re-encryption (or decrypt-and-re-encrypt) on the active ciphertext set, (iii) tagging every ciphertext with a key-epoch and rejecting cross-epoch reads.", correct:true},
+          {key:"b", text:"HE keys never need rotation."},
+          {key:"c", text:"Key rotation is transparent; nothing breaks."},
+          {key:"d", text:"The only recovery is to restart training from scratch."},
         ]}
-        trap={<>(b), (c), (d) are generic.</>}
-        lens={<>HE noise budget is the silent failure mode. Plan for shallow HE, deep local.</>}
-        stretch={<>Sketch the noise-budget audit you'd run before training.</>}
+        trap={<>(b) violates compliance. (c) is false. (d) overpays.</>}
+        lens={<>HE keys are operational state; rotation needs key-epoch versioning on every ciphertext, not a compliance ticket dropped mid-run.</>}
+        stretch={<>Sketch the proxy re-encryption flow that avoids a full decrypt-re-encrypt round trip.</>}
       />
 
       <VIS.TrapProblem
         id="fg-e2"
         difficulty="hard"
-        title="E2 — Friday: HE accuracy drop"
-        scenario={<>Friday: training-time AUPRC drops from 0.81 to 0.62 after deepening the HE step from 1 hop to 3 hops. Diagnosis?</>}
+        title="E2 — Friday: one silo deploys a new GNN architecture"
+        scenario={<>Friday: Bank C deploys a new GNN that increases the embedding dim from 128 to 256. The secure-exchange step starts failing — what's the rollback protocol?</>}
         options={[
-          {key:"a", text:"HE noise accumulation across 3 hops corrupts the cross-silo embeddings. Decrypted embeddings near the noise budget are essentially random; the GNN trains on noise. Fix: cap HE depth at 1-2 hops; add HE bootstrapping if more depth needed (more expensive but recovers signal); compensate with deeper LOCAL GNN layers on the completed (1-2-hop) graph.", correct:true},
-          {key:"b", text:"GNN is overfit."},
-          {key:"c", text:"GPU OOM."},
-          {key:"d", text:"Random."},
+          {key:"a", text:"FedGNN-Fraud's secure exchange requires identical embedding shapes across silos so the HE-encrypted aggregation slots line up. A 128 vs 256 mismatch fails at the protocol level (not silently corrupting — the secure-agg returns a shape error). Rollback: (i) freeze Bank C at the old 128-dim head and continue with the old protocol; (ii) version the dim in the schema; (iii) when all silos are ready, run a coordinated cut-over round with dim=256 — never single-silo. The protocol is a CONTRACT — versioning it is mandatory.", correct:true},
+          {key:"b", text:"Pad Bank C's 256-dim embeddings to 128 — problem solved."},
+          {key:"c", text:"Other silos auto-upgrade to 256."},
+          {key:"d", text:"GPU OOM."},
         ]}
-        trap={<>(b), (c), (d) miss the HE noise.</>}
-        lens={<>HE depth has a noise ceiling. Beyond it, the protocol degrades gracefully into noise.</>}
-        stretch={<>What's the empirical noise ceiling on your HE config?</>}
+        trap={<>(b) destroys information. (c) is not how federated rollouts work. (d) is unrelated.</>}
+        lens={<>The secure-exchange wire format is a contract. Architectural changes on any silo need coordinated, versioned cut-overs across all silos.</>}
+        stretch={<>Sketch the schema-versioning protocol for cross-silo wire format changes.</>}
       />
 
       <VIS.TrapProblem
@@ -1971,17 +1971,17 @@ flowchart TB
       <VIS.TrapProblem
         id="fg-f4"
         difficulty="medium"
-        title="F4 — Paper-admitted limitation"
-        scenario={<>Which limitation does the FedGNN-Fraud paper itself acknowledge?</>}
+        title="F4 — Paper-admitted limitation: synthetic cross-silo graphs + key management"
+        scenario={<>Which limitations does the FedGNN-Fraud paper itself acknowledge?</>}
         options={[
-          {key:"a", text:"HE compute cost: the paper notes that real-time inference is infeasible and that the protocol is for batch training; suggests training-time HE + local-graph inference as the production pattern. Explicit.", correct:true},
-          {key:"b", text:"No limitations."},
-          {key:"c", text:"FedGNN-Fraud is online-only."},
-          {key:"d", text:"GPU-only."},
+          {key:"a", text:"Two: (i) the cross-silo graph experiments use SYNTHETIC bank graphs (controlled edge density, IID structure) and the paper warns that REAL cross-bank topologies may differ — particularly that real graphs have heavy-tail degree distributions that magnify HE noise on hub nodes; (ii) HE key management (rotation, distribution, revocation) is treated as out of scope, and any production deployment must engineer a key-lifecycle layer that the paper does not validate.", correct:true},
+          {key:"b", text:"The paper claims no limitations."},
+          {key:"c", text:"FedGNN-Fraud only supports online inference."},
+          {key:"d", text:"The paper requires GPU-only deployment."},
         ]}
-        trap={<>(b), (c), (d) are wrong.</>}
-        lens={<>The paper is honest about HE cost. Reading the limitations is the senior tell.</>}
-        stretch={<>What's the paper's suggested training cadence?</>}
+        trap={<>(b), (c), (d) misread the discussion section.</>}
+        lens={<>Two honest caveats: synthetic graph topology and out-of-scope key lifecycle. Both must be engineered around before production.</>}
+        stretch={<>Sketch the heavy-tail-degree experiment you'd run to validate the synthetic-graph assumption.</>}
       />
 
       <VIS.TrapProblem

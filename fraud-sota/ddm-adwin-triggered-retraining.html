@@ -1637,10 +1637,10 @@ flowchart TB
         title="B3 — Pitch DDM/ADWIN-triggered retraining to ops"
         scenario={<>Your VP-Eng asks "Why move off the Monday cron?" Pick the pitch that requires understanding the detector mechanism.</>}
         options={[
-          {key:"a", text:"Our cron retrains every Monday at 02:00 UTC. A BIN-attack on Tuesday morning has 6 days of running room before our model sees its first new sample. ADWIN watches the score distribution event-by-event with a calibrated false-positive budget and fires within hours of the attack signature, triggering a targeted retrain. We trade a fixed-period cron for a statistical-bound detector that reacts on the order of the attack horizon, not the calendar.", correct:true},
-          {key:"b", text:"It saves compute."},
-          {key:"c", text:"Retraining more is better."},
-          {key:"d", text:"Drift is bad."},
+          {key:"a", text:"Our Monday cron gives a Tuesday BIN-attack 6 days of free running. A Hoeffding-bound detector on the score stream fires within hours at a calibrated FP budget — trading fixed-period lag for an event-driven trigger.", correct:true},
+          {key:"b", text:"It saves GPU compute on quiet weeks — that's the main pitch to ops."},
+          {key:"c", text:"More frequent retraining is uniformly better; cadence is the only knob."},
+          {key:"d", text:"Drift is bad and the cron does not address drift at all."},
         ]}
         trap={<>(b) is partial; the win is mostly latency, not compute. (c), (d) are empty.</>}
         lens={<>The concept-specific pitch names the calendar lag, the event-stream detector, and the calibrated false-positive budget. Strip "DDM/ADWIN" — the listener must understand cron-lag-vs-statistical-trigger to evaluate.</>}
@@ -1784,17 +1784,17 @@ flowchart TB
       <VIS.TrapProblem
         id="dd-d2"
         difficulty="hard"
-        title="D2 — Wrong-assumption cascade: trust DDM blindly"
-        scenario={<>You assume "DDM is the gold standard because it uses labels." Trace the production cascade in a fraud setting with 45-day-delayed labels.</>}
+        title="D2 — DDM warning vs drift levels: only watching the wrong one"
+        scenario={<>Ops dashboards alert on DDM's <em>drift</em> level (p_i + s_i &gt; p_min + 3 s_min) and ignore the <em>warning</em> level (+ 2 s_min). What breaks?</>}
         options={[
-          {key:"a", text:"DDM fires only when chargebacks land → 45-day detection lag → MO ran wild for 6 weeks → recall on the new MO was zero throughout → losses booked → team blames 'model drift' when the real issue was DDM's structural delay → only fix is ADWIN on scores to provide leading signal.", correct:true},
-          {key:"b", text:"DDM is always accurate."},
-          {key:"c", text:"Nothing happens."},
-          {key:"d", text:"DDM accelerates detection."},
+          {key:"a", text:"Warning is DDM's pre-drift staging buffer — by spec, you should start collecting the new context window the moment warning fires, so the retrain has fresh data ready when drift confirms. Skipping warning means the retrain has only post-drift data → smaller training set on the new regime → unstable v_{k+1}.", correct:true},
+          {key:"b", text:"Nothing — drift is the only useful level."},
+          {key:"c", text:"Warning is for ADWIN only, not DDM."},
+          {key:"d", text:"Warning means model is broken — retrain now."},
         ]}
-        trap={<>(b), (c), (d) ignore the label-delay reality.</>}
-        lens={<>DDM is gold for labels-now domains (spam click-through). In fraud, label-delay structurally caps its detection latency to the chargeback window.</>}
-        stretch={<>Sketch your dual-channel detector with DDM-as-confirmation.</>}
+        trap={<>(b) discards Gama 2004's two-level design. (c) confuses the detectors. (d) over-triggers.</>}
+        lens={<>DDM's two-level threshold is a context-buffer protocol, not noise. Warning starts the data-collection clock for the next retrain.</>}
+        stretch={<>How long should the warning-to-drift window be allowed to stretch before you reset p_min, s_min?</>}
       />
 
       <VIS.TrapProblem
@@ -1850,17 +1850,17 @@ flowchart TB
       <VIS.TrapProblem
         id="dd-e2"
         difficulty="hard"
-        title="E2 — Friday: 20 firings in 4 hours"
-        scenario={<>Friday afternoon: ADWIN fires 20 times on the score stream over 4 hours. Pre-flight diagnostics:</>}
+        title="E2 — Friday: ADWIN fires, DDM stays silent — who wins?"
+        scenario={<>Friday: ADWIN flags drift on the score stream; DDM (on the chargeback error stream, 45-day delay) is silent. A retrain is queued. Ratify or rollback?</>}
         options={[
-          {key:"a", text:"Pull the calendar: is it Black Friday? Check the score distribution diff: is it a heavy mass shift (real MO change) or a uniform mean shift (population). Check upstream features: did a deploy go out 4 hours ago? If seasonality: apply holiday baseline. If feature: roll back. If real MO change: ratify one retrain, suppress detector with 24h cooldown, escalate to fraud-ops.", correct:true},
-          {key:"b", text:"Page DevOps."},
-          {key:"c", text:"Roll back the model."},
-          {key:"d", text:"Disable ADWIN."},
+          {key:"a", text:"Ratify the ADWIN trigger but tag the retrained model v_{k+1} as 'unconfirmed.' DDM cannot ratify in real-time (label delay). Compromise: shadow v_{k+1} for the chargeback window; promote to primary only when DDM agrees post-label, or when v_{k+1}'s shadow AUPRC beats v_k by a pre-set margin.", correct:true},
+          {key:"b", text:"Rollback — DDM is the source of truth."},
+          {key:"c", text:"Ship v_{k+1} immediately."},
+          {key:"d", text:"Wait 45 days for DDM."},
         ]}
-        trap={<>(b), (c), (d) skip diagnostics.</>}
-        lens={<>The detector storm has 3 causes — seasonality, upstream feature shift, real MO. Distinguish before retraining 20 times.</>}
-        stretch={<>What's the alert-aggregation policy for sub-hour repeat firings?</>}
+        trap={<>(b) over-weights DDM. (c) skips ratification. (d) freezes the system through the attack window.</>}
+        lens={<>ADWIN-DDM disagreement is structural (label delay), not a bug. Shadow-deploy is the bridge between the two detection horizons.</>}
+        stretch={<>What's the AUPRC-margin rule for promoting an unconfirmed v_(k+1)?</>}
       />
 
       <VIS.TrapProblem
@@ -1916,18 +1916,18 @@ flowchart TB
       <VIS.TrapProblem
         id="dd-e6"
         difficulty="hard"
-        title="E6 — Eval contamination"
-        scenario={<>Which contamination paths inflate drift-trigger claims?</>}
+        title="E6 — Multi-stream Bonferroni: when 'one fired' means nothing"
+        scenario={<>Production runs ADWIN on 8 score streams (per-region, per-product). Daily, ~1-2 fire by chance at delta=0.05. Team treats each as a real drift. What's the audit fix?</>}
         multiSelect
         options={[
-          {key:"a", text:"Calibrating delta on the same year used for evaluation (overfit to the test stream's drift events).", correct:true},
-          {key:"b", text:"Using known drift events (e.g., the Capital One breach period) for both tuning and eval.", correct:true},
-          {key:"c", text:"Comparing to a stale calendar baseline (monthly) when production uses weekly — sandbagging.", correct:true},
-          {key:"d", text:"Reporting per-retrain AUPRC lift."},
+          {key:"a", text:"Apply a Bonferroni or BH correction: per-stream delta tightened to 0.05/8 ≈ 0.006 so the family-wise FP rate stays at 0.05/day.", correct:true},
+          {key:"b", text:"Require concordance: only trigger when ≥2 streams fire within a 1-hour window (cuts FP rate sharply).", correct:true},
+          {key:"c", text:"Switch to per-stream cooldowns and rank firings by effect size, not just p-value.", correct:true},
+          {key:"d", text:"Run more streams — more signal."},
         ]}
-        trap={<>(d) is fine reporting.</>}
-        lens={<>Three contaminations: in-sample tuning, known-event reuse, sandbagged baseline. All inflate the detector's lift.</>}
-        stretch={<>Which contamination is hardest to spot in published blog posts?</>}
+        trap={<>(d) inflates the multiple-comparisons problem instead of fixing it.</>}
+        lens={<>Each ADWIN stream has its own FP budget; running K of them at delta multiplies the family FP rate by ~K. Correct for it or burn the on-call.</>}
+        stretch={<>What's the right correction when streams are correlated (e.g., region streams during a national event)?</>}
       />
 
       <h3 style={{marginTop:24, color:"#1f3a5f"}}>F. Failure modes & edge cases</h3>
@@ -1983,18 +1983,17 @@ flowchart TB
       <VIS.TrapProblem
         id="dd-f5"
         difficulty="hard"
-        title="F5 — The 'detectors don't beat tuned calendar' critique"
-        scenario={<>What does fair-eval find about ADWIN-triggered vs heavily-tuned daily retrain?</>}
-        multiSelect
+        title="F5 — Base-rate shift looks like concept shift"
+        scenario={<>ADWIN fires on the score stream. Investigation: feature distributions unchanged, MO unchanged — but the fraud base rate jumped from 0.4% to 0.7% (e.g., a new merchant onboarded with worse traffic). Does the detector lie?</>}
         options={[
-          {key:"a", text:"On bursty drift (BIN attacks), ADWIN-triggered wins decisively — detection lag is the dominant cost.", correct:true},
-          {key:"b", text:"On smooth drift, daily retrain matches or beats — the detector's binary trigger discards continuous information that daily retrain integrates.", correct:true},
-          {key:"c", text:"Compute cost of daily retrain can exceed ADWIN-triggered's costs of (detector + 5 triggered retrains per quarter).", correct:true},
-          {key:"d", text:"ADWIN never wins."},
+          {key:"a", text:"No — ADWIN is doing exactly what it was told: the score mean shifted because the prior shifted, and that IS a change in the watched signal. But the right action is recalibration (threshold-move on score), NOT a full retrain. Confusing P(y) drift with P(y|x) drift wastes a retrain and may hurt the model when re-fit on a non-representative new mix.", correct:true},
+          {key:"b", text:"Yes — ADWIN is broken if features are unchanged."},
+          {key:"c", text:"Retrain — drift is drift."},
+          {key:"d", text:"Ignore — score shifts are noise."},
         ]}
-        trap={<>(d) overstates.</>}
-        lens={<>The regime decides: bursty drift = ADWIN wins; smooth drift = daily wins; cost depends on retrain frequency. Senior MLEs report by drift regime.</>}
-        stretch={<>What's the regime threshold (drift speed) at which the methods flip?</>}
+        trap={<>(b) blames the detector for correctly reporting what it watches. (c) conflates prior shift with concept shift. (d) over-corrects.</>}
+        lens={<>ADWIN sees P(score) shifts — that fuses P(x), P(y), and P(y|x). Decompose before retraining: prior shift → recalibrate; covariate shift → maybe; concept shift → retrain.</>}
+        stretch={<>Sketch the 3-test diagnostic that separates P(y), P(x), P(y|x) drift after an ADWIN fire.</>}
       />
 
       <VIS.TrapProblem
