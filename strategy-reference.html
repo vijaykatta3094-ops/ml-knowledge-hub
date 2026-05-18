@@ -1,0 +1,1769 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>visualize</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+  <style>
+    body { font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+           margin: 0; background: #ffffff; color: #0f172a; }
+    /* Mobile-responsive baseline. All visuals load this block — they should
+       degrade gracefully down to a 360px viewport. */
+    img, svg, video, canvas { max-width: 100%; height: auto; }
+    table { border-collapse: collapse; }
+    pre  { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    code { word-break: break-word; }
+    @media (max-width: 720px) {
+      body { overflow-x: hidden; }
+      main { padding-left: 14px !important; padding-right: 14px !important; }
+      h1   { font-size: 26px !important; line-height: 1.2 !important; }
+      h2   { font-size: 20px !important; line-height: 1.25 !important; }
+      h3   { font-size: 17px !important; }
+      /* Tables: scroll horizontally rather than overflow the viewport. */
+      table { display: block; max-width: 100%; overflow-x: auto;
+              -webkit-overflow-scrolling: touch; white-space: nowrap; }
+      /* Mermaid + Vega SVGs: keep within viewport. */
+      .vis-mermaid, .vis-vega { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .vis-mermaid svg, .vis-vega svg { max-width: 100%; height: auto; }
+      /* Trap problem buttons: thumb-friendly tap targets. */
+      .vis-trap button, .vis-trap-option { min-height: 44px; }
+      /* TrapProblem options: stack readably; allow long options to wrap. */
+      .vis-trap-option { white-space: normal; }
+      /* Hero byline can wrap to multiple lines without breaking layout. */
+      .rv-hero .rv-byline { gap: 8px 14px; }
+      /* Tooltip max-width capped to viewport. */
+      .vis-term-tip { max-width: calc(100vw - 24px); }
+    }
+    /* Touch devices (no hover): make jargon-glossed terms more visibly tappable. */
+    @media (hover: none) {
+      .vis-term { text-decoration: underline dotted;
+                  text-decoration-color: #2563eb;
+                  text-underline-offset: 3px; }
+    }
+  </style>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/@lottiefiles/lottie-player@2.0.8/dist/lottie-player.js" async></script>
+  <script>
+// vis-components.js — design-system JSX components for the /visualize skill.
+// Exposed as window.VIS.{Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle}.
+// window.RV is aliased to window.VIS for report-viewer back-compat.
+// Available globally to any visual.jsx without imports.
+// (CSS class prefix kept as "rv-" — internal namespace; preserves report-viewer interop.)
+
+(function () {
+  "use strict";
+
+  if (!window.React) {
+    console.warn("[vis-components] React not loaded yet; skipping setup");
+    return;
+  }
+  const h = React.createElement;
+
+  // Lazy-load a CDN script; cache the load Promise so repeats are cheap.
+  const _scriptCache = new Map();
+  function _loadScript(src) {
+    if (_scriptCache.has(src)) return _scriptCache.get(src);
+    const p = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[data-vis-cdn="${src}"]`);
+      if (existing) return existing.addEventListener("load", resolve);
+      const s = document.createElement("script");
+      s.src = src; s.async = false; s.dataset.visCdn = src;
+      s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+    _scriptCache.set(src, p);
+    return p;
+  }
+
+  let _katexCssInjected = false;
+  function _ensureKatexCss() {
+    if (_katexCssInjected) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css";
+    document.head.appendChild(link);
+    _katexCssInjected = true;
+  }
+
+  let _hljsCssInjected = false;
+  function _ensureHljsCss() {
+    if (_hljsCssInjected) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css";
+    document.head.appendChild(link);
+    _hljsCssInjected = true;
+  }
+
+  // ----- Styles, injected once ----- //
+  (function injectStyles() {
+    if (document.getElementById("rv-components-styles")) return;
+    const css = `
+      .rv-hero {
+        background: radial-gradient(120% 90% at 20% 0%, #dbeafe 0%, #ffffff 60%);
+        padding: 28px 28px 22px; border-radius: 16px; margin-bottom: 20px;
+        border: 1px solid #e2e8f0;
+      }
+      .rv-hero h1 {
+        font-size: 38px; line-height: 1.1; letter-spacing: -0.02em;
+        font-weight: 700; margin: 10px 0 6px; color: #0f172a;
+      }
+      .rv-hero .rv-sub {
+        font-size: 16px; color: #475569; margin: 0; max-width: 60ch;
+      }
+      .rv-hero .rv-byline {
+        font-size: 12px; color: #64748b; margin-top: 14px;
+        display: flex; gap: 14px; flex-wrap: wrap;
+      }
+      .rv-hero .rv-byline span strong { color: #1e293b; font-weight: 600; }
+
+      .rv-pill {
+        display: inline-block; padding: 2px 10px; border-radius: 999px;
+        background: #2563eb; color: #fff; font-size: 11px; font-weight: 600;
+        letter-spacing: 0.6px; text-transform: uppercase;
+      }
+
+      .rv-tag {
+        display: inline-block; padding: 1px 8px; border-radius: 999px;
+        font-size: 11px; font-weight: 600; vertical-align: middle;
+      }
+      .rv-tag-green  { background: #dcfce7; color: #166534; }
+      .rv-tag-yellow { background: #fef9c3; color: #854d0e; }
+      .rv-tag-red    { background: #fee2e2; color: #991b1b; }
+      .rv-tag-blue   { background: #dbeafe; color: #1e40af; }
+      .rv-tag-gray   { background: #e4e4e7; color: #3f3f46; }
+
+      .rv-card {
+        border: 1px solid #e4e4e7; border-radius: 10px;
+        padding: 14px 16px; margin: 12px 0;
+        background: linear-gradient(180deg, #fafafa, #fff);
+      }
+
+      .rv-tldr {
+        background: #f1f5f9;
+        border-left: 4px solid #2563eb;
+        border-radius: 0 10px 10px 0;
+        padding: 14px 18px; margin: 0 0 24px;
+        font-size: 15px; line-height: 1.55; color: #0f172a;
+      }
+      .rv-tldr .rv-tldr-label {
+        display: inline-block; margin-right: 8px;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+        color: #2563eb; text-transform: uppercase;
+        vertical-align: 1px;
+      }
+      .vis-callout {
+        border-left: 4px solid; border-radius: 0 8px 8px 0;
+        padding: 12px 16px; margin: 14px 0;
+      }
+      .vis-callout-title { display: block; margin-bottom: 4px; }
+      .vis-callout-info   { background: #dbeafe; border-color: #2563eb; color: #1e3a8a; }
+      .vis-callout-warn   { background: #fef3c7; border-color: #d97706; color: #78350f; }
+      .vis-callout-gotcha { background: #fee2e2; border-color: #dc2626; color: #7f1d1d; }
+      .vis-callout-ok     { background: #dcfce7; border-color: #16a34a; color: #14532d; }
+
+      .vis-term {
+        text-decoration: underline dotted;
+        text-decoration-color: #94a3b8;
+        text-underline-offset: 3px;
+        cursor: help;
+      }
+      .vis-term:focus { outline: 2px solid #2563eb; outline-offset: 2px; }
+      .vis-term-tip {
+        position: fixed; z-index: 10001; max-width: 340px;
+        background: #0f172a; color: #f8fafc; font-size: 13px; line-height: 1.45;
+        padding: 8px 10px; border-radius: 6px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.22);
+        pointer-events: none; white-space: pre-wrap;
+      }
+
+      /* Trap problem (MCQ with click-to-reveal). One block per problem. */
+      .vis-trap {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px 22px;
+        margin: 24px 0;
+        background: #fafbfc;
+      }
+      .vis-trap-header {
+        display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      .vis-trap-difficulty {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+        padding: 3px 10px; border-radius: 999px; text-transform: uppercase;
+      }
+      .vis-trap-diff-easy   { background: #dcfce7; color: #166534; }
+      .vis-trap-diff-medium { background: #fef9c3; color: #854d0e; }
+      .vis-trap-diff-hard   { background: #fee2e2; color: #991b1b; }
+      .vis-trap-title { font-size: 17px; color: #0f172a; }
+      .vis-trap-multi-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #e0e7ff; color: #3730a3;
+        text-transform: uppercase;
+      }
+      .vis-trap-scenario { margin: 0 0 12px; line-height: 1.65; }
+      .vis-trap-diagram  { margin: 12px 0; }
+      .vis-trap-options  { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; }
+      .vis-trap-option {
+        text-align: left;
+        padding: 11px 14px;
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        font: inherit; color: #0f172a;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .vis-trap-option:hover:not(:disabled) {
+        border-color: #2563eb; background: #f1f5f9;
+      }
+      .vis-trap-option.is-selected {
+        border-color: #2563eb; background: #dbeafe;
+      }
+      .vis-trap-option.is-correct {
+        border-color: #16a34a; background: #dcfce7;
+      }
+      .vis-trap-option.is-wrong-selected {
+        border-color: #dc2626; background: #fee2e2;
+      }
+      .vis-trap-option.is-correct-wrong-pos {
+        border-color: #d97706; background: #fef3c7;
+      }
+      .vis-trap-option.is-disabled {
+        opacity: 0.6;
+      }
+      .vis-trap-key { font-weight: 700; margin-right: 4px; color: #475569; }
+      .vis-trap-tick { color: #16a34a; font-weight: 700; margin-left: 6px; }
+      .vis-trap-x    { color: #dc2626; font-weight: 700; margin-left: 6px; }
+      .vis-trap-actions {
+        display: flex; align-items: center; gap: 12px;
+        margin-top: 8px;
+      }
+      .vis-trap-reveal-btn, .vis-trap-reset-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 10px 18px; border-radius: 8px;
+        font: inherit; font-weight: 600;
+        cursor: pointer;
+      }
+      .vis-trap-reveal-btn:hover, .vis-trap-reset-btn:hover { background: #1d4ed8; }
+      .vis-trap-reset-btn {
+        background: #64748b; margin-top: 12px;
+        font-size: 13px; padding: 8px 14px;
+      }
+      .vis-trap-reset-btn:hover { background: #475569; }
+      .vis-trap-hint { color: #64748b; font-size: 14px; }
+      .vis-trap-reveal-block {
+        margin-top: 18px; padding-top: 16px; border-top: 1px solid #e2e8f0;
+      }
+      .vis-trap-trap, .vis-trap-lens, .vis-trap-stretch {
+        margin: 10px 0; padding: 12px 16px; border-radius: 8px;
+      }
+      .vis-trap-trap    { background: #fef3c7; border-left: 4px solid #d97706; color: #78350f; }
+      .vis-trap-lens    { background: #dcfce7; border-left: 4px solid #16a34a; color: #14532d; }
+      .vis-trap-stretch { background: #e0e7ff; border-left: 4px solid #6366f1; color: #312e81; }
+      .vis-trap-trap strong, .vis-trap-lens strong, .vis-trap-stretch strong {
+        display: block; margin-bottom: 4px;
+      }
+      .vis-trap-trap p, .vis-trap-lens p, .vis-trap-stretch p { margin: 0; line-height: 1.55; }
+
+      /* System Design — pick-and-connect block diagram */
+      .vis-sd {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px 22px;
+        margin: 24px 0;
+        background: #fafbfc;
+      }
+      .vis-sd-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+      .vis-sd-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #fef3c7; color: #78350f; text-transform: uppercase;
+      }
+      .vis-sd-scenario { margin: 0 0 14px; line-height: 1.65; }
+      .vis-sd-label { font-size: 13px; font-weight: 600; color: #475569; margin: 14px 0 6px; }
+      .vis-sd-palette { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px;
+                        background: #ffffff; border: 1px dashed #cbd5e1; border-radius: 8px; }
+      .vis-sd-piece {
+        padding: 8px 12px;
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+        font: inherit; font-size: 13px; cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+        white-space: nowrap;
+      }
+      .vis-sd-piece:hover:not(:disabled) { border-color: #2563eb; background: #f1f5f9; }
+      .vis-sd-piece.is-placed { opacity: 0.4; cursor: default; }
+      .vis-sd-piece.cat-data    { border-left: 4px solid #0ea5e9; }
+      .vis-sd-piece.cat-model   { border-left: 4px solid #8b5cf6; }
+      .vis-sd-piece.cat-infra   { border-left: 4px solid #f59e0b; }
+      .vis-sd-piece.cat-monitor { border-left: 4px solid #10b981; }
+
+      .vis-sd-canvas {
+        display: flex; flex-wrap: wrap; gap: 10px;
+        min-height: 80px;
+        padding: 14px;
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+      }
+      .vis-sd-canvas-empty { color: #94a3b8; font-style: italic; font-size: 14px; }
+      .vis-sd-placed {
+        padding: 9px 13px;
+        background: #ffffff; border: 1.5px solid #2563eb; border-radius: 8px;
+        font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+        position: relative;
+        transition: all 0.15s;
+      }
+      .vis-sd-placed:hover { background: #eff6ff; }
+      .vis-sd-placed.is-connect-source {
+        background: #dbeafe; border-color: #1d4ed8; border-width: 2.5px;
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+      }
+      .vis-sd-placed.is-correct  { background: #dcfce7; border-color: #16a34a; }
+      .vis-sd-placed.is-wrong    { background: #fee2e2; border-color: #dc2626; }
+      .vis-sd-remove {
+        margin-left: 8px; color: #94a3b8; font-weight: 700;
+        cursor: pointer; padding: 0 4px;
+      }
+      .vis-sd-remove:hover { color: #dc2626; }
+
+      .vis-sd-actions { display: flex; align-items: center; gap: 12px; margin: 12px 0 8px; }
+      .vis-sd-connect-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 8px 14px; border-radius: 6px;
+        font: inherit; font-weight: 600; font-size: 13px; cursor: pointer;
+      }
+      .vis-sd-connect-btn:hover { background: #1d4ed8; }
+      .vis-sd-connect-status { color: #475569; font-size: 14px; font-style: italic; }
+      .vis-sd-connect-cancel {
+        background: transparent; color: #dc2626; border: 1px solid #fca5a5;
+        padding: 4px 10px; border-radius: 6px;
+        font: inherit; font-size: 12px; cursor: pointer;
+      }
+
+      .vis-sd-edges { background: #ffffff; border: 1px solid #e2e8f0;
+                      border-radius: 8px; padding: 10px 14px; }
+      .vis-sd-edges ul { list-style: none; padding: 0; margin: 6px 0 0; }
+      .vis-sd-edges li {
+        padding: 6px 10px; margin: 4px 0; border-radius: 6px;
+        display: flex; align-items: center; gap: 8px;
+        background: #f8fafc; font-size: 14px;
+      }
+      .vis-sd-edges li.is-correct { background: #dcfce7; }
+      .vis-sd-edges li.is-wrong   { background: #fee2e2; }
+      .vis-sd-edge-x {
+        background: transparent; color: #94a3b8; border: none;
+        cursor: pointer; padding: 0 4px; margin-left: auto;
+      }
+      .vis-sd-edge-x:hover { color: #dc2626; }
+      .vis-sd-reveal-btn {
+        background: #2563eb; color: #ffffff; border: none;
+        padding: 10px 18px; border-radius: 8px;
+        font: inherit; font-weight: 600; cursor: pointer;
+        margin-top: 12px;
+      }
+      .vis-sd-reveal-btn:hover { background: #1d4ed8; }
+      .vis-sd-score {
+        background: #eff6ff; border: 1px solid #93c5fd;
+        padding: 10px 14px; border-radius: 8px;
+        margin: 12px 0;
+        font-size: 14px; color: #1e3a8a;
+      }
+      .vis-sd-missing-block {
+        background: #fef3c7; border-left: 4px solid #d97706;
+        padding: 10px 14px; border-radius: 8px;
+        margin: 10px 0;
+        font-size: 14px; color: #78350f;
+      }
+      .vis-sd-missing-block strong { display: block; margin-bottom: 4px; }
+
+      /* CodeFillin — fill-in-the-blank code exercise */
+      .vis-cf-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #dcfce7; color: #14532d; text-transform: uppercase;
+      }
+      .vis-cf-code-wrap {
+        position: relative;
+        background: #0f172a; color: #e2e8f0;
+        padding: 16px 18px 14px;
+        border-radius: 8px;
+        margin: 12px 0;
+        font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+        font-size: 14px; line-height: 1.65;
+        overflow-x: auto;
+      }
+      .vis-cf-code-lang {
+        position: absolute; top: 6px; right: 12px;
+        font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px;
+      }
+      .vis-cf-code { background: transparent !important; color: inherit; margin: 0; }
+      .vis-cf-line { white-space: pre; }
+      .vis-cf-blank {
+        background: #1e293b; color: #fbbf24; border: 1px dashed #475569;
+        padding: 1px 8px; border-radius: 4px;
+        font-family: inherit; font-size: 13.5px; cursor: pointer;
+        margin: 0 1px;
+        transition: all 0.12s;
+      }
+      .vis-cf-blank:hover:not(:disabled) { background: #334155; border-color: #94a3b8; }
+      .vis-cf-blank.is-filled {
+        background: #1e3a8a; color: #ffffff; border-style: solid; border-color: #3b82f6;
+      }
+      .vis-cf-blank.is-correct { background: #14532d; color: #bbf7d0; border-color: #16a34a; }
+      .vis-cf-blank.is-wrong   { background: #7f1d1d; color: #fecaca; border-color: #dc2626; }
+      .vis-cf-options {
+        display: flex; flex-wrap: wrap; gap: 8px;
+        margin: 8px 0 12px;
+      }
+      .vis-cf-option {
+        background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px;
+        padding: 8px 12px; font: inherit; cursor: pointer;
+        transition: all 0.12s;
+      }
+      .vis-cf-option:hover:not(:disabled) { border-color: #2563eb; background: #f1f5f9; }
+      .vis-cf-option.is-picked { border-color: #2563eb; background: #dbeafe; border-width: 2px; }
+      .vis-cf-option.is-used { opacity: 0.5; }
+      .vis-cf-option.is-correct-option { background: #f0fdf4; border-color: #16a34a; }
+      .vis-cf-option code { background: #f1f5f9; padding: 1px 6px; border-radius: 4px; font-size: 13.5px; }
+      .vis-cf-correct-mark { color: #16a34a; font-size: 12px; margin-left: 6px; }
+
+      /* MathDerivation — step-by-step proof */
+      .vis-md-mode-badge {
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        padding: 2px 8px; border-radius: 999px;
+        background: #e0e7ff; color: #312e81; text-transform: uppercase;
+      }
+      .vis-md-steps { padding: 0; list-style: none; counter-reset: vmds; }
+      .vis-md-step {
+        background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px;
+        padding: 14px 16px; margin: 10px 0;
+      }
+      .vis-md-step-label { margin-bottom: 8px; }
+      .vis-md-show-btn {
+        background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1;
+        padding: 6px 12px; border-radius: 6px; font: inherit; font-size: 13px;
+        cursor: pointer;
+      }
+      .vis-md-show-btn:hover { background: #e2e8f0; }
+      .vis-md-mcq { display: flex; flex-direction: column; gap: 8px; }
+      .vis-md-step-option {
+        background: #ffffff; border: 1.5px solid #cbd5e1; border-radius: 8px;
+        padding: 14px 16px; cursor: pointer;
+        transition: border-color 0.12s, background 0.12s;
+        text-align: left; font: inherit;
+      }
+      .vis-md-step-option:hover { border-color: #2563eb; background: #f1f5f9; }
+      .vis-md-pick-feedback {
+        padding: 6px 12px; border-radius: 6px; margin-bottom: 8px;
+        font-size: 13px; font-weight: 600;
+      }
+      .vis-md-pick-feedback.is-correct { background: #dcfce7; color: #14532d; }
+      .vis-md-pick-feedback.is-wrong   { background: #fee2e2; color: #7f1d1d; }
+      .vis-md-step-body { margin-top: 10px; }
+      .vis-md-explain { margin: 8px 0 0; color: #475569; line-height: 1.6; }
+
+      /* Responsive SVG wrappers — diagrams shrink to fit narrow containers
+         instead of overflowing the parent. Without these, Mermaid/Vega SVGs
+         render at their intrinsic width and get clipped on the left/right
+         when viewport is narrower than ~900px. */
+      .vis-mermaid svg, .vis-vega svg {
+        max-width: 100%;
+        height: auto;
+        display: inline-block;
+      }
+      .vis-mermaid, .vis-vega { overflow-x: auto; }
+
+      /* Mermaid text rendering fixes for Mermaid 10. By default the auto-sized
+         node fill rect and the edge-label background rect are both tight to the
+         text, which clips descenders (g/p/y/j/q) at the bottom of nodes AND
+         the right edge of edge labels ("Yes" → "Ye"). Force overflow:visible
+         everywhere and give the labels generous padding. */
+      .vis-mermaid svg,
+      .vis-mermaid foreignObject,
+      .vis-mermaid .node foreignObject,
+      .vis-mermaid .edgeLabel,
+      .vis-mermaid .edgeLabel foreignObject,
+      .vis-mermaid .label,
+      .vis-mermaid .label foreignObject {
+        overflow: visible !important;
+      }
+      .vis-mermaid .node .nodeLabel,
+      .vis-mermaid .node .label,
+      .vis-mermaid .label foreignObject div {
+        line-height: 1.5;
+        padding: 2px 4px;
+      }
+      .vis-mermaid .edgeLabel {
+        padding: 2px 8px;
+        background: #ffffff;
+        border-radius: 3px;
+        line-height: 1.4;
+      }
+      .vis-mermaid .edgeLabel foreignObject div,
+      .vis-mermaid .edgeLabel span,
+      .vis-mermaid .edgeLabel .labelBkg {
+        padding: 0 4px !important;
+        background: transparent !important;
+      }
+    `;
+    const tag = document.createElement("style");
+    tag.id = "rv-components-styles";
+    tag.textContent = css;
+    document.head.appendChild(tag);
+  })();
+
+  // ----- Components ----- //
+
+  // <RV.Pill>v0.2</RV.Pill>  →  small uppercase pill
+  function Pill({ children, color }) {
+    const style = color ? { background: color } : null;
+    return h("span", { className: "rv-pill", style }, children);
+  }
+
+  // <RV.Tag color="green">ok</RV.Tag>  →  status pill
+  function Tag({ children, color = "gray" }) {
+    return h("span", { className: "rv-tag rv-tag-" + color }, children);
+  }
+
+  // <RV.ByLine items={[{label:"Build",value:"2026-05-15"}, ...]} />
+  function ByLine({ items = [] }) {
+    return h("div", { className: "rv-byline" },
+      items.map((it, i) =>
+        h("span", { key: i },
+          h("strong", null, it.label), " ", it.value
+        )
+      )
+    );
+  }
+
+  // Set the browser tab title. Auto-called by RV.Hero; reports without a
+  // Hero can call this directly: RV.setTitle("...").
+  function setTitle(str) {
+    if (typeof str === "string" && str.trim()) document.title = str.trim();
+  }
+
+  // <RV.Hero title="..." subtitle="..." pill="v0.2" byline={[...]}>
+  //   children (optional, rendered below subtitle)
+  // </RV.Hero>
+  function Hero({ title, subtitle, pill, byline, accent, children }) {
+    React.useEffect(() => { setTitle(title); }, [title]);
+    return h("section", { className: "rv-hero" },
+      pill ? h(Pill, null, pill) : null,
+      h("h1", null,
+        accent ? h("span", { className: accent }) : null,
+        accent ? " " : null,
+        title
+      ),
+      subtitle ? h("p", { className: "rv-sub" }, subtitle) : null,
+      byline && byline.length ? h(ByLine, { items: byline }) : null,
+      children
+    );
+  }
+
+  // <RV.Card><strong>title</strong><p>body</p></RV.Card>
+  function Card({ children, className }) {
+    return h("div", {
+      className: "rv-card" + (className ? " " + className : "")
+    }, children);
+  }
+
+  // <RV.Section id="sec-foo" title="Foo">...</RV.Section>
+  //   — renders <h2 id={id}>{title}</h2> + body. The id is picked up by
+  //   the auto-TOC sidebar.
+  function Section({ id, title, children }) {
+    return h(React.Fragment, null,
+      h("h2", { id }, title),
+      children
+    );
+  }
+
+  // <RV.TLDR>One-paragraph headline answer.</RV.TLDR>
+  // ALWAYS render this immediately after <RV.Hero>, before any sections.
+  // Reader should be able to leave after reading it.
+  function TLDR({ children }) {
+    return h("aside", { className: "rv-tldr", role: "note" },
+      h("span", { className: "rv-tldr-label" }, "TL;DR"),
+      children
+    );
+  }
+
+  function Mermaid({ chart, id }) {
+    const ref = React.useRef(null);
+    const autoId = React.useId();
+    React.useEffect(() => {
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js")
+        .then(() => {
+          if (!window.mermaid._inited) {
+            window.mermaid._inited = true;
+            // trusted-author content; "loose" enables click handlers + HTML labels in mermaid
+            // trusted-author content; "loose" enables click handlers + HTML labels in mermaid.
+            // flowchart.padding + nodePadding give descenders (g, p, y, j, q) room to render
+            // inside diamond/rectangle nodes — without this Mermaid 10 clips them at the bottom edge.
+            window.mermaid.initialize({
+              startOnLoad: false,
+              theme: "default",
+              securityLevel: "loose",
+              flowchart: { padding: 18, nodeSpacing: 50, rankSpacing: 60, useMaxWidth: true, htmlLabels: true },
+              themeVariables: { fontSize: "14px" }
+            });
+          }
+          return window.mermaid.render((id || "mmd") + "-" + autoId.replace(/:/g, ""), chart);
+        })
+        .then(({ svg }) => {
+          if (cancelled || !ref.current) return;
+          ref.current.innerHTML = svg;
+          // POST-PROCESS to fix Mermaid 10 descender clipping (g, p, y, j, q).
+          // Mermaid sizes foreignObjects to the font em-box, which does NOT include
+          // descender depth. Grow each foreignObject by 12px (6 top + 6 bottom) so
+          // descenders render fully. Also grow rectangle node fills to match so the
+          // colored box doesn't show a thin sliver above/below the text.
+          const svgEl = ref.current.querySelector("svg");
+          if (!svgEl) return;
+          svgEl.querySelectorAll("foreignObject").forEach((fo) => {
+            const h = parseFloat(fo.getAttribute("height") || "0");
+            const y = parseFloat(fo.getAttribute("y") || "0");
+            fo.setAttribute("height", String(h + 12));
+            fo.setAttribute("y", String(y - 6));
+          });
+          svgEl.querySelectorAll("g.node > rect").forEach((rect) => {
+            const h = parseFloat(rect.getAttribute("height") || "0");
+            const y = parseFloat(rect.getAttribute("y") || "0");
+            rect.setAttribute("height", String(h + 12));
+            rect.setAttribute("y", String(y - 6));
+          });
+          // Diamonds use <polygon points="..."/>. Expand vertically by translating
+          // top and bottom vertices outward from the centroid by 6px each.
+          svgEl.querySelectorAll("g.node > polygon").forEach((poly) => {
+            const pts = (poly.getAttribute("points") || "").trim().split(/\s+/)
+              .map((p) => p.split(",").map(parseFloat));
+            if (pts.length < 3 || pts.some((p) => p.length < 2 || p.some(isNaN))) return;
+            const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+            const grown = pts.map(([x, py]) => [x, py + (py < cy ? -6 : 6)]);
+            poly.setAttribute("points", grown.map((p) => p.join(",")).join(" "));
+          });
+        })
+        .catch((e) => { if (ref.current) ref.current.textContent = "[mermaid error] " + e; });
+      return () => { cancelled = true; };
+    }, [chart, id, autoId]);
+    return h("div", { ref, className: "vis-mermaid", style: { margin: "16px 0", textAlign: "center" } });
+  }
+
+  function VegaLite({ spec, data }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      let cancelled = false;
+      Promise.all([
+        _loadScript("https://cdn.jsdelivr.net/npm/vega@5"),
+        _loadScript("https://cdn.jsdelivr.net/npm/vega-lite@5"),
+        _loadScript("https://cdn.jsdelivr.net/npm/vega-embed@6"),
+      ]).then(() => {
+        if (cancelled || !ref.current) return;
+        const full = data ? { ...spec, data: { values: data } } : spec;
+        window.vegaEmbed(ref.current, full, { actions: false, renderer: "svg" });
+      }).catch((e) => { if (ref.current) ref.current.textContent = "[vega error] " + e; });
+      return () => { cancelled = true; };
+    }, [spec, data]);
+    return h("div", { ref, className: "vis-vega", style: { margin: "16px 0" } });
+  }
+
+  function Equation({ tex, display = false }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      _ensureKatexCss();
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js")
+        .then(() => {
+          if (cancelled || !ref.current) return;
+          window.katex.render(tex, ref.current, { displayMode: display, throwOnError: false });
+        });
+      return () => { cancelled = true; };
+    }, [tex, display]);
+    const Tag = display ? "div" : "span";
+    return h(Tag, { ref, className: "vis-eq" });
+  }
+
+  function CodeBlock({ lang = "plaintext", children }) {
+    const ref = React.useRef(null);
+    React.useEffect(() => {
+      _ensureHljsCss();
+      let cancelled = false;
+      _loadScript("https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js")
+        .then(() => _loadScript(`https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/${lang}.min.js`).catch(() => {}))
+        .then(() => {
+          if (cancelled || !ref.current) return;
+          // Reset so hljs re-highlights when `children` or `lang` change
+          ref.current.removeAttribute("data-highlighted");
+          ref.current.className = "language-" + lang;
+          ref.current.textContent = String(Array.isArray(children) ? children.join("") : children);
+          window.hljs.highlightElement(ref.current);
+        });
+      return () => { cancelled = true; };
+    }, [lang, children]);
+    return h("pre", { style: { margin: "12px 0", borderRadius: 8, overflow: "auto" } },
+      h("code", { ref, className: `language-${lang}` }, children));
+  }
+
+  function Callout({ kind = "info", title, children }) {
+    return h("aside", { className: `vis-callout vis-callout-${kind}`, role: "note" },
+      title ? h("strong", { className: "vis-callout-title" }, title) : null,
+      children);
+  }
+
+  // <VIS.Term def="1-2 sentence plain-English explanation">jargon</VIS.Term>
+  //
+  // Wraps any technical term so a non-technical reader can hover for an
+  // immediate definition. The explanation should:
+  //   - assume the reader knows English but not software/your domain
+  //   - fit in 1-2 short sentences (a tooltip, not a paragraph)
+  //   - avoid further jargon (or wrap that too)
+  //
+  // The element exposes `data-rv-info` so the report-viewer overlay reuses
+  // its own tooltip + double-click "explain this" feedback flow. In
+  // standalone /visualize mode (no overlay), the lightweight hover handler
+  // below renders the tooltip directly.
+  function Term({ def, children }) {
+    if (!def) return h(React.Fragment, null, children);
+    return h("span", {
+      className: "vis-term",
+      "data-rv-info": def,
+      "aria-label": def,
+      tabIndex: 0,
+    }, children);
+  }
+
+  // Standalone hover tooltip for <VIS.Term>. If the report-viewer overlay
+  // is loaded it already shows tooltips for any [data-rv-info] element, so
+  // we short-circuit here to avoid double-rendering.
+  (function installTermTooltip() {
+    let tip = null;
+    function show(el) {
+      if (window.__rvReady) return;  // overlay.js owns the tooltip in report-viewer mode
+      const text = el.getAttribute("data-rv-info");
+      if (!text) return;
+      if (!tip) {
+        tip = document.createElement("div");
+        tip.className = "vis-term-tip";
+        document.body.appendChild(tip);
+      }
+      tip.textContent = text;
+      const r = el.getBoundingClientRect();
+      const tr = tip.getBoundingClientRect();
+      const pad = 8;
+      let left = Math.max(pad,
+        Math.min(r.left, window.innerWidth - tr.width - pad));
+      const above = r.top - tr.height - pad;
+      const below = r.bottom + pad;
+      tip.style.left = left + "px";
+      tip.style.top  = (above >= pad ? above : below) + "px";
+      tip.style.display = "block";
+    }
+    function hide() { if (tip) tip.style.display = "none"; }
+    document.addEventListener("mouseover", (e) => {
+      const el = e.target.closest && e.target.closest(".vis-term");
+      if (el) show(el); else hide();
+    });
+    document.addEventListener("focusin", (e) => {
+      const el = e.target.closest && e.target.closest(".vis-term");
+      if (el) show(el);
+    });
+    document.addEventListener("focusout", hide);
+    document.addEventListener("scroll", hide, true);
+    // Touch / tap support: on a tap, toggle the tip for the tapped term.
+    // Tapping anywhere else (including a different term) hides the current.
+    let lastTappedTerm = null;
+    document.addEventListener("click", (e) => {
+      const el = e.target.closest && e.target.closest(".vis-term");
+      if (el) {
+        if (el === lastTappedTerm) { lastTappedTerm = null; hide(); }
+        else { lastTappedTerm = el; show(el); }
+      } else {
+        lastTappedTerm = null; hide();
+      }
+    });
+  })();
+
+  // <VIS.TrapProblem
+  //   id="bv-q1"
+  //   difficulty="hard"
+  //   title="..."
+  //   scenario={<>...JSX...</>}
+  //   diagram={<VIS.Mermaid chart={...} />}
+  //   options={[
+  //     {key:"a", text:"...", correct:false},
+  //     {key:"b", text:"...", correct:true},
+  //     ...
+  //   ]}
+  //   trap={<>The most tempting wrong is X because...</>}
+  //   lens={<>The right answer + reasoning</>}
+  //   stretch="optional follow-up question"
+  // />
+  //
+  // Trap problem from the Idea Engine /learn template. MCQ with click-to-pick,
+  // then click-to-reveal model answer. Each problem owns its own state.
+  // Trap problem from the Idea Engine /learn template. MCQ with click-to-pick,
+  // then click-to-reveal model answer. Each problem owns its own state.
+  //
+  // Three modes, chosen per-problem based on what the concept needs:
+  //   mode="single"  (default): one option is correct (radio-style)
+  //   mode="multi":  multiple options correct, user picks any subset
+  //                  (set `multiSelect={true}` OR `mode="multi"`)
+  //   mode="ordered": real-world priority test — options have an `order` field
+  //                  (1, 2, 3 …) saying their correct rank. Wrong-move options
+  //                  have `order: null` and should NOT be picked at all.
+  //                  User clicks in order; each pick gets a position badge.
+  //                  Reveal shows correct rank, marks wrong-position picks and
+  //                  wrong-move picks differently.
+  function TrapProblem(props) {
+    const { id, difficulty = "hard", title, scenario, diagram,
+            options = [], trap, lens, stretch,
+            multiSelect = false, mode } = props;
+    const effectiveMode = mode || (multiSelect ? "multi" : "single");
+    const isOrdered = effectiveMode === "ordered";
+    const isMulti = effectiveMode === "multi";
+
+    // Selection state shape varies by mode:
+    //   single  → string | null
+    //   multi   → Set<string>
+    //   ordered → string[]  (in pick order)
+    const [selected, setSelected] = React.useState(
+      isOrdered ? [] : (isMulti ? new Set() : null)
+    );
+    const [revealed, setRevealed] = React.useState(false);
+
+    function isSelected(key) {
+      if (isOrdered) return selected.includes(key);
+      if (isMulti) return selected.has(key);
+      return selected === key;
+    }
+    function pickOrder(key) {
+      if (isOrdered) {
+        const idx = selected.indexOf(key);
+        return idx >= 0 ? idx + 1 : null;
+      }
+      return null;
+    }
+    function pick(key) {
+      if (revealed) return;
+      if (isOrdered) {
+        setSelected(
+          selected.includes(key)
+            ? selected.filter((k) => k !== key)
+            : [...selected, key]
+        );
+      } else if (isMulti) {
+        const next = new Set(selected);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        setSelected(next);
+      } else {
+        setSelected(key);
+      }
+    }
+    function reveal() { setRevealed(true); }
+    function reset() {
+      setSelected(isOrdered ? [] : (isMulti ? new Set() : null));
+      setRevealed(false);
+    }
+    function optionClass(o) {
+      if (!revealed) return "vis-trap-option" + (isSelected(o.key) ? " is-selected" : "");
+      if (isOrdered) {
+        // Right move at right rank → fully correct
+        const userPos = pickOrder(o.key);
+        const correctPos = o.order; // null = wrong move
+        if (correctPos != null && userPos === correctPos) return "vis-trap-option is-correct";
+        // Right move at wrong rank → partial credit (yellow)
+        if (correctPos != null && userPos != null && userPos !== correctPos)
+          return "vis-trap-option is-correct-wrong-pos";
+        // Right move not picked → "you missed this"
+        if (correctPos != null && userPos == null) return "vis-trap-option is-correct";
+        // Wrong move picked → red
+        if (correctPos == null && userPos != null) return "vis-trap-option is-wrong-selected";
+        // Wrong move not picked → faded
+        return "vis-trap-option is-disabled";
+      }
+      if (o.correct) return "vis-trap-option is-correct";
+      if (isSelected(o.key)) return "vis-trap-option is-wrong-selected";
+      return "vis-trap-option is-disabled";
+    }
+    const anyPicked = isOrdered ? selected.length > 0
+                                : (isMulti ? selected.size > 0 : selected !== null);
+    const correctCount = isOrdered
+      ? options.filter((o) => o.order != null).length
+      : options.filter((o) => o.correct).length;
+    const modeBadge = isOrdered ? "Pick in correct ORDER"
+                                : (isMulti ? "Select all that apply" : null);
+
+    function optionPrefix(o) {
+      if (isOrdered) {
+        const pos = pickOrder(o.key);
+        if (revealed) {
+          // After reveal: show user pos vs correct pos
+          if (o.order != null && pos != null)
+            return pos === o.order ? `#${pos} ✓` : `you:#${pos} → correct:#${o.order}`;
+          if (o.order != null) return `correct:#${o.order}`;
+          if (pos != null) return `you:#${pos}`;
+          return "—";
+        }
+        return pos != null ? `#${pos}` : "○";
+      }
+      if (isMulti) return isSelected(o.key) ? "☑" : "☐";
+      return "○";
+    }
+
+    function pickSummary() {
+      if (!anyPicked) return null;
+      if (isOrdered) return `Your order: ${selected.map((k) => "(" + k + ")").join(" → ")}`;
+      if (isMulti) return "You picked " + selected.size + " of " + correctCount + " correct option" + (correctCount === 1 ? "" : "s");
+      return "You picked (" + selected + ")";
+    }
+
+    return h("section", { id, className: "vis-trap" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        modeBadge ? h("span", { className: "vis-trap-multi-badge" }, modeBadge) : null
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      diagram ? h("div", { className: "vis-trap-diagram" }, diagram) : null,
+      h("div", { className: "vis-trap-options",
+                 role: (isMulti || isOrdered) ? "group" : "radiogroup" },
+        options.map((o) => h("button", {
+          key: o.key,
+          type: "button",
+          className: optionClass(o),
+          onClick: () => pick(o.key),
+          disabled: revealed && (
+            isOrdered
+              ? (o.order == null && !isSelected(o.key))
+              : (!o.correct && !isSelected(o.key))
+          ),
+          "aria-pressed": isSelected(o.key)
+        },
+          h("span", { className: "vis-trap-key" },
+            optionPrefix(o) + " (" + o.key + ")"),
+          " ",
+          o.text
+        ))
+      ),
+      !revealed ? h("div", { className: "vis-trap-actions" },
+        h("button", {
+          type: "button",
+          className: "vis-trap-reveal-btn",
+          onClick: reveal
+        }, anyPicked ? "Reveal model answer" : "Skip & reveal"),
+        anyPicked ? h("span", { className: "vis-trap-hint" }, pickSummary()) : null
+      ) : null,
+      revealed ? h("div", { className: "vis-trap-reveal-block" },
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"),
+          h("div", null, trap)
+        ) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The lens (model answer)"),
+          h("div", null, lens)
+        ) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"),
+          h("div", null, stretch)
+        ) : null,
+        h("button", {
+          type: "button",
+          className: "vis-trap-reset-btn",
+          onClick: reset
+        }, "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.SystemDesign> — pick-and-connect block-diagram problem for system
+  // design questions. Palette of N pieces (some are distractors), user clicks
+  // to add to canvas, then clicks pairs of placed pieces to draw directed
+  // edges. Reveal compares both the picked SET and the edge TOPOLOGY against
+  // expected. Pieces have categories that drive color coding.
+  function SystemDesign(props) {
+    const { id, difficulty = "hard", title, scenario,
+            pieces = [], expectedPieces = [], expectedEdges = [],
+            trap, lens, stretch } = props;
+    const [placed, setPlaced] = React.useState([]);     // [pieceId]
+    const [edges, setEdges] = React.useState([]);       // [[src, tgt]]
+    const [connectMode, setConnectMode] = React.useState(null); // null | "waiting" | {src}
+    const [revealed, setRevealed] = React.useState(false);
+
+    const pieceById = Object.fromEntries(pieces.map((p) => [p.id, p]));
+    function pieceLabel(id) { return pieceById[id]?.label || id; }
+
+    function addPiece(pieceId) {
+      if (revealed || placed.includes(pieceId)) return;
+      setPlaced([...placed, pieceId]);
+    }
+    function removePiece(pieceId) {
+      if (revealed) return;
+      setPlaced(placed.filter((p) => p !== pieceId));
+      setEdges(edges.filter(([s, t]) => s !== pieceId && t !== pieceId));
+    }
+    function startConnect() {
+      if (revealed || placed.length < 2) return;
+      setConnectMode("waiting");
+    }
+    function clickPlacedPiece(pieceId) {
+      if (revealed) return;
+      if (connectMode === "waiting") {
+        setConnectMode({ src: pieceId });
+      } else if (connectMode && connectMode.src) {
+        if (connectMode.src === pieceId) {
+          setConnectMode(null);
+        } else {
+          const edge = [connectMode.src, pieceId];
+          if (!edges.some(([s, t]) => s === edge[0] && t === edge[1])) {
+            setEdges([...edges, edge]);
+          }
+          setConnectMode(null);
+        }
+      }
+    }
+    function removeEdge(idx) {
+      if (revealed) return;
+      setEdges(edges.filter((_, i) => i !== idx));
+    }
+    function reveal() { setRevealed(true); setConnectMode(null); }
+    function reset() {
+      setPlaced([]); setEdges([]); setConnectMode(null); setRevealed(false);
+    }
+
+    function paletteClass(p) {
+      const base = "vis-sd-piece" + (p.category ? " cat-" + p.category : "");
+      return placed.includes(p.id) ? base + " is-placed" : base;
+    }
+    function placedClass(pieceId) {
+      let cls = "vis-sd-placed";
+      if (connectMode && connectMode.src === pieceId) cls += " is-connect-source";
+      if (revealed) {
+        cls += expectedPieces.includes(pieceId) ? " is-correct" : " is-wrong";
+      }
+      return cls;
+    }
+    function edgeIsExpected(edge) {
+      return expectedEdges.some(([s, t]) => s === edge[0] && t === edge[1]);
+    }
+
+    const correctPicks = placed.filter((id) => expectedPieces.includes(id)).length;
+    const correctEdges = edges.filter((e) => edgeIsExpected(e)).length;
+    const missingPieces = expectedPieces.filter((id) => !placed.includes(id));
+    const missingEdges = expectedEdges.filter(([s, t]) =>
+      !edges.some(([es, et]) => es === s && et === t)
+    );
+    const distractorPicks = placed.filter((id) => !expectedPieces.includes(id));
+    const wrongEdges = edges.filter((e) => !edgeIsExpected(e));
+
+    return h("section", { id, className: "vis-sd" },
+      h("div", { className: "vis-sd-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-sd-mode-badge" }, "Pick & connect")
+      ),
+      scenario ? h("div", { className: "vis-sd-scenario" }, scenario) : null,
+      h("div", { className: "vis-sd-label" },
+        "Palette — click a piece to add it to your design"),
+      h("div", { className: "vis-sd-palette" },
+        pieces.map((p) => h("button", {
+          key: p.id, type: "button",
+          className: paletteClass(p),
+          onClick: () => addPiece(p.id),
+          disabled: revealed || placed.includes(p.id),
+          title: p.description || p.label,
+        }, p.label))
+      ),
+      h("div", { className: "vis-sd-label" },
+        "Your design (" + placed.length + " piece" + (placed.length === 1 ? "" : "s") + ")"),
+      h("div", { className: "vis-sd-canvas" },
+        placed.length === 0
+          ? h("div", { className: "vis-sd-canvas-empty" },
+              "Click pieces above to start building your design.")
+          : placed.map((pieceId) => h("button", {
+              key: pieceId, type: "button",
+              className: placedClass(pieceId),
+              onClick: () => clickPlacedPiece(pieceId),
+            },
+              pieceLabel(pieceId),
+              !revealed ? h("span", {
+                className: "vis-sd-remove",
+                onClick: (e) => { e.stopPropagation(); removePiece(pieceId); },
+                role: "button", "aria-label": "Remove"
+              }, " ✕") : null
+            ))
+      ),
+      !revealed && placed.length >= 2 ? h("div", { className: "vis-sd-actions" },
+        connectMode === null ? h("button", {
+          type: "button", className: "vis-sd-connect-btn", onClick: startConnect,
+        }, "+ Add connection") : null,
+        connectMode === "waiting" ? h("span", { className: "vis-sd-connect-status" },
+          "Click the SOURCE piece on the canvas...") : null,
+        connectMode && connectMode.src ? h("span", { className: "vis-sd-connect-status" },
+          "Source: " + pieceLabel(connectMode.src) + ". Click the TARGET piece.") : null,
+        connectMode ? h("button", {
+          type: "button", className: "vis-sd-connect-cancel",
+          onClick: () => setConnectMode(null),
+        }, "cancel") : null
+      ) : null,
+      edges.length > 0 ? h("div", { className: "vis-sd-edges" },
+        h("div", { className: "vis-sd-label", style: { margin: "0 0 4px" } },
+          "Connections (" + edges.length + ")"),
+        h("ul", null,
+          edges.map((edge, idx) => h("li", {
+            key: idx, className: revealed ? (edgeIsExpected(edge) ? "is-correct" : "is-wrong") : ""
+          },
+            pieceLabel(edge[0]) + " → " + pieceLabel(edge[1]),
+            revealed && edgeIsExpected(edge) ? h("span", null, " ✓") : null,
+            revealed && !edgeIsExpected(edge) ? h("span", null, " ✗") : null,
+            !revealed ? h("button", {
+              type: "button", className: "vis-sd-edge-x",
+              onClick: () => removeEdge(idx)
+            }, "✕") : null
+          ))
+        )
+      ) : null,
+      !revealed ? h("button", {
+        type: "button", className: "vis-sd-reveal-btn", onClick: reveal,
+      }, "Reveal model design") : null,
+      revealed ? h("div", null,
+        h("div", { className: "vis-sd-score" },
+          "Pieces correct: " + correctPicks + " / " + expectedPieces.length + ".  ",
+          "Connections correct: " + correctEdges + " / " + expectedEdges.length + "."
+        ),
+        distractorPicks.length > 0 ? h("div", { className: "vis-sd-missing-block",
+          style: { background: "#fee2e2", borderLeftColor: "#dc2626", color: "#7f1d1d" } },
+          h("strong", null, "✗ You picked pieces that don't belong"),
+          distractorPicks.map(pieceLabel).join(", ")
+        ) : null,
+        missingPieces.length > 0 ? h("div", { className: "vis-sd-missing-block" },
+          h("strong", null, "⚠ You missed these pieces"),
+          missingPieces.map(pieceLabel).join(", ")
+        ) : null,
+        missingEdges.length > 0 ? h("div", { className: "vis-sd-missing-block" },
+          h("strong", null, "⚠ Missing connections"),
+          missingEdges.map(([s, t]) => pieceLabel(s) + " → " + pieceLabel(t)).join("; ")
+        ) : null,
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"), h("div", null, trap)
+        ) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The model design"), h("div", null, lens)
+        ) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"), h("div", null, stretch)
+        ) : null,
+        h("button", {
+          type: "button", className: "vis-trap-reset-btn", onClick: reset,
+        }, "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.CodeFillin> — fill-in-the-blank code exercise.
+  //   code: array of lines. Blanks are written as __N__ (e.g., __1__, __2__).
+  //   options: pool of pickable answers. Each {key, text, fills: [blankN, ...]}
+  //            where `fills` is the set of blanks this option is correct for.
+  //            Options without `fills` (or with empty fills) are pure decoys.
+  // Workflow: click option → it highlights. Click blank → it gets filled with
+  //           the picked option's text. Click a filled blank → clears it.
+  function CodeFillin(props) {
+    const { id, difficulty = "hard", title, scenario,
+            language = "python", code = [], options = [],
+            trap, lens, stretch } = props;
+    const [fills, setFills] = React.useState({}); // {blankN: optionKey}
+    const [picked, setPicked] = React.useState(null);
+    const [revealed, setRevealed] = React.useState(false);
+
+    const optionByKey = Object.fromEntries(options.map((o) => [o.key, o]));
+    function correctOptionsFor(blank) {
+      return options.filter((o) => Array.isArray(o.fills) && o.fills.includes(blank));
+    }
+    function isOptionCorrectForBlank(optionKey, blank) {
+      const o = optionByKey[optionKey];
+      return o && Array.isArray(o.fills) && o.fills.includes(blank);
+    }
+    function clickOption(key) {
+      if (revealed) return;
+      setPicked(picked === key ? null : key);
+    }
+    function clickBlank(blank) {
+      if (revealed) return;
+      if (fills[blank]) {
+        const next = { ...fills }; delete next[blank]; setFills(next);
+        return;
+      }
+      if (!picked) return;
+      setFills({ ...fills, [blank]: picked });
+      setPicked(null);
+    }
+    function reveal() { setRevealed(true); setPicked(null); }
+    function reset() { setFills({}); setPicked(null); setRevealed(false); }
+
+    function blankClass(blank) {
+      let cls = "vis-cf-blank";
+      if (fills[blank]) cls += " is-filled";
+      if (revealed) {
+        cls += isOptionCorrectForBlank(fills[blank], blank) ? " is-correct" : " is-wrong";
+      }
+      return cls;
+    }
+    function optionClass(o) {
+      let cls = "vis-cf-option";
+      if (!revealed && picked === o.key) cls += " is-picked";
+      const usedInBlank = Object.entries(fills).find(([, v]) => v === o.key);
+      if (usedInBlank) cls += " is-used";
+      if (revealed) {
+        const correctSlots = Array.isArray(o.fills) ? o.fills : [];
+        if (correctSlots.length > 0) cls += " is-correct-option";
+      }
+      return cls;
+    }
+
+    function renderLine(line, lineIdx) {
+      const parts = []; let last = 0;
+      const re = /__(\d+)__/g; let m;
+      while ((m = re.exec(line)) !== null) {
+        if (m.index > last)
+          parts.push(h("span", { key: "t" + parts.length }, line.slice(last, m.index)));
+        const n = parseInt(m[1], 10);
+        const filled = fills[n];
+        parts.push(h("button", {
+          key: "b" + n,
+          type: "button",
+          className: blankClass(n),
+          onClick: () => clickBlank(n),
+          title: filled ? "Click to clear" : "Pick an option first, then click here",
+          disabled: revealed,
+        }, filled ? optionByKey[filled]?.text || filled : `␣${n}`));
+        last = m.index + m[0].length;
+      }
+      if (last < line.length)
+        parts.push(h("span", { key: "tail" }, line.slice(last)));
+      return h("div", { key: lineIdx, className: "vis-cf-line" }, parts);
+    }
+
+    const blanksInCode = new Set();
+    code.forEach((line) => {
+      let m; const re = /__(\d+)__/g;
+      while ((m = re.exec(line)) !== null) blanksInCode.add(parseInt(m[1], 10));
+    });
+    const totalBlanks = blanksInCode.size;
+    const correctFills = Object.entries(fills).filter(([b, k]) =>
+      isOptionCorrectForBlank(k, parseInt(b, 10))).length;
+
+    return h("section", { id, className: "vis-trap vis-cf" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-cf-mode-badge" }, "Fill in the code")
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      h("div", { className: "vis-cf-code-wrap" },
+        h("div", { className: "vis-cf-code-lang" }, language),
+        h("pre", { className: "vis-cf-code" },
+          code.map((line, idx) => renderLine(line, idx))
+        )
+      ),
+      h("div", { className: "vis-trap-scenario", style: { fontSize: 14, color: "#475569", margin: "12px 0 6px" } },
+        "Pick an option below (it highlights), then click a blank in the code to fill it. Click a filled blank to clear it."),
+      h("div", { className: "vis-cf-options" },
+        options.map((o) => h("button", {
+          key: o.key, type: "button",
+          className: optionClass(o),
+          onClick: () => clickOption(o.key),
+          disabled: revealed,
+        },
+          h("code", null, o.text),
+          revealed && Array.isArray(o.fills) && o.fills.length > 0
+            ? h("span", { className: "vis-cf-correct-mark" }, " ✓ (fills " + o.fills.map((b) => "␣" + b).join(", ") + ")") : null
+        ))
+      ),
+      !revealed ? h("div", { className: "vis-trap-actions" },
+        h("button", { type: "button", className: "vis-trap-reveal-btn", onClick: reveal },
+          Object.keys(fills).length > 0 ? "Reveal answer" : "Skip & reveal"),
+        Object.keys(fills).length > 0 ? h("span", { className: "vis-trap-hint" },
+          "Filled " + Object.keys(fills).length + " of " + totalBlanks + " blanks") : null
+      ) : null,
+      revealed ? h("div", { className: "vis-trap-reveal-block" },
+        h("div", { className: "vis-sd-score" },
+          "Correct blanks: " + correctFills + " / " + totalBlanks),
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The trap"), h("div", null, trap)) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The reference implementation"), h("div", null, lens)) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"), h("div", null, stretch)) : null,
+        h("button", { type: "button", className: "vis-trap-reset-btn", onClick: reset },
+          "↺ Try again")
+      ) : null
+    );
+  }
+
+  // <VIS.MathDerivation> — step-by-step proof with click-to-reveal per step.
+  //   steps: [{label, tex, decoyTex?, explain}]
+  // Each step starts collapsed; "Show step N" reveals the equation + explanation.
+  // If decoyTex is provided, the step becomes a 2-option MCQ first (right vs decoy).
+  function MathDerivation(props) {
+    const { id, difficulty = "hard", title, scenario, steps = [],
+            trap, lens, stretch } = props;
+    const [stepState, setStepState] = React.useState(
+      steps.map(() => ({ shown: false, picked: null }))
+    );
+    const [revealedAll, setRevealedAll] = React.useState(false);
+
+    function showStep(idx) {
+      const next = stepState.map((s, i) => i === idx ? { ...s, shown: true } : s);
+      setStepState(next);
+    }
+    function pickStep(idx, which) {
+      const next = stepState.map((s, i) =>
+        i === idx ? { ...s, shown: true, picked: which } : s);
+      setStepState(next);
+    }
+    function revealAll() {
+      setStepState(stepState.map((s) => ({ ...s, shown: true })));
+      setRevealedAll(true);
+    }
+    function reset() {
+      setStepState(steps.map(() => ({ shown: false, picked: null })));
+      setRevealedAll(false);
+    }
+
+    return h("section", { id, className: "vis-trap vis-md" },
+      h("div", { className: "vis-trap-header" },
+        h("span", { className: "vis-trap-difficulty vis-trap-diff-" + difficulty },
+          difficulty.toUpperCase()),
+        h("strong", { className: "vis-trap-title" }, title),
+        h("span", { className: "vis-md-mode-badge" }, "Step-by-step proof")
+      ),
+      scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
+      h("ol", { className: "vis-md-steps" },
+        steps.map((step, idx) => {
+          const st = stepState[idx];
+          const hasDecoy = !!step.decoyTex;
+          return h("li", { key: idx, className: "vis-md-step" },
+            h("div", { className: "vis-md-step-label" },
+              h("strong", null, "Step " + (idx + 1) + " — " + step.label)),
+            !st.shown && hasDecoy ? h("div", { className: "vis-md-mcq" },
+              h("p", { style: { margin: "4px 0", fontSize: 14, color: "#475569" } },
+                "Which is correct for this step?"),
+              h("button", {
+                type: "button", className: "vis-md-step-option",
+                onClick: () => pickStep(idx, "right"),
+              }, h(Equation, { tex: step.tex, display: true })),
+              h("button", {
+                type: "button", className: "vis-md-step-option",
+                onClick: () => pickStep(idx, "decoy"),
+              }, h(Equation, { tex: step.decoyTex, display: true }))
+            ) : null,
+            !st.shown && !hasDecoy ? h("button", {
+              type: "button", className: "vis-md-show-btn",
+              onClick: () => showStep(idx),
+            }, "Show step " + (idx + 1)) : null,
+            st.shown ? h("div", { className: "vis-md-step-body" },
+              hasDecoy && st.picked ? h("div", {
+                className: "vis-md-pick-feedback " +
+                  (st.picked === "right" ? "is-correct" : "is-wrong")
+              }, st.picked === "right" ? "✓ You picked correctly" : "✗ The other option is correct") : null,
+              h(Equation, { tex: step.tex, display: true }),
+              step.explain ? h("p", { className: "vis-md-explain" }, step.explain) : null
+            ) : null
+          );
+        })
+      ),
+      !revealedAll ? h("button", {
+        type: "button", className: "vis-trap-reveal-btn",
+        onClick: revealAll,
+        style: { marginTop: 12 },
+      }, "Reveal full proof") : null,
+      revealedAll ? h("div", { className: "vis-trap-reveal-block" },
+        trap ? h("div", { className: "vis-trap-trap" },
+          h("strong", null, "⚠ The common mistake"),
+          h("div", null, trap)) : null,
+        lens ? h("div", { className: "vis-trap-lens" },
+          h("strong", null, "✓ The intuition"),
+          h("div", null, lens)) : null,
+        stretch ? h("div", { className: "vis-trap-stretch" },
+          h("strong", null, "◯ Stretch"),
+          h("div", null, stretch)) : null,
+        h("button", { type: "button", className: "vis-trap-reset-btn", onClick: reset },
+          "↺ Try again")
+      ) : null
+    );
+  }
+
+  window.VIS = { Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle,
+                 Mermaid, VegaLite, Equation, CodeBlock, Callout, Term,
+                 TrapProblem, SystemDesign, CodeFillin, MathDerivation };
+  // Back-compat: report-viewer downstream uses window.RV. Keep both bindings.
+  window.RV = window.VIS;
+  console.log("[vis-components] ready: window.VIS =", Object.keys(window.VIS));
+})();
+
+</script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+// Question Generation Strategy — Reference Visual
+// One-page strategy doc that captures every rule we've evolved for designing
+// senior-MLE interview-prep problems. Read this before authoring a visual,
+// before commenting on one, and when a visual feels weak.
+
+const App = () => (
+  <main style={{maxWidth: 920, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
+    <VIS.Hero
+      pill="Strategy · Reference"
+      title="How we design interview-prep problems"
+      subtitle="Every rule we've crystallized over the iterations. Apply to every new visual; use as a checklist when auditing an existing one."
+      byline={[
+        {label: "Audience", value: "Anyone authoring or reviewing a visual"},
+        {label: "Use", value: "Read once; reference often"},
+        {label: "Anti-pattern signal", value: "Visual feels generic / repetitive"},
+      ]}/>
+
+    <VIS.TLDR>
+      The whole strategy is one sentence: <strong>every problem must hinge on the specific concept being taught, in a scenario rich enough that the discriminating answer requires reading the brief.</strong> Recipes are not enough at the senior bar — every option in every MCQ should be defensible in <em>some</em> world; the trap is identifying which world the scenario describes.
+    </VIS.TLDR>
+
+    {/* ============== 0. Canonical format reference ============== */}
+    <VIS.Section id="sec-0" title="0. Canonical format reference">
+      <p>
+        Before authoring anything, match the typography and sheet format of the gold-standard reference. <a href="https://docs.google.com/spreadsheets/d/17OTu1X0gzFXSSAoWZldCYVkT7OqVW14ixz0Vk419Y_k/edit?gid=103335091#gid=103335091" target="_blank" rel="noopener"><strong>📐 Idea Engine Tracker — Machine Learning tab</strong></a> sets the bar: <strong>Inter font, font size 13, navy header (#1f3a5f) on white text, alternating row banding (#e8f0fa), frozen header + L1 column, wide prose columns (340/320px), narrow numeric columns.</strong>
+      </p>
+      <VIS.Callout kind="info" title="Why this rule exists">
+        The default Google Sheets look (Arial 10, no header style, OVERFLOW_CELL wrap) hides the content. We want a curated knowledge base feel, not raw ETL output. Apply via <code>mcp__gworkspace__format_sheet_range</code> + <code>resize_sheet_dimensions</code> + <code>manage_conditional_formatting</code> the moment a new tab is populated.
+      </VIS.Callout>
+    </VIS.Section>
+
+    {/* ============== 1. Context IS the question ============== */}
+    <VIS.Section id="sec-1" title="1. Context IS the question (rich onsite brief)">
+      <p>
+        A real onsite design <strong>hinges on the brief</strong>. Strip the brief and the "right answer" becomes arbitrary — the candidate guesses what you meant, not solves what you'd actually solve on the job.
+      </p>
+      <table style={{width:"100%", borderCollapse:"collapse", margin:"12px 0", fontSize:14}}>
+        <thead>
+          <tr style={{background:"#1f3a5f", color:"#fff"}}>
+            <th style={{padding:"8px 10px", textAlign:"left", width:"50%"}}>❌ Wrong (skeletal)</th>
+            <th style={{padding:"8px 10px", textAlign:"left", width:"50%"}}>✅ Right (rich brief)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style={{background:"#fef2f2"}}>
+            <td style={{padding:"10px", verticalAlign:"top", borderRight:"1px solid #e5e7eb"}}>"Design retrieval for Prime Video. 14 pieces, 12 belong, 2 don't."</td>
+            <td style={{padding:"10px", verticalAlign:"top"}}>"Prime Video — 200M subs across US/EU/APAC, 10M catalog refreshed nightly, 100M home-page renders/day spiking 3× during evening prime-time, p99 100ms end-to-end, ~5B impression events/day. Existing infra: Kafka topics, S3 datalake, Spark batch, Flink streaming, model registry, CDN. Constraints: regional licensing, diversity guarantee, cold-start within 24h of release, plays today must influence tomorrow's recs."</td>
+          </tr>
+        </tbody>
+      </table>
+      <p><strong>Test:</strong> If you remove the scale numbers + existing infra + constraints, do multiple defensible designs collapse to one? If yes, your brief is too thin.</p>
+    </VIS.Section>
+
+    {/* ============== 2. No answer-key leakage ============== */}
+    <VIS.Section id="sec-2" title="2. Never leak the answer key in the prompt">
+      <p><strong>Forbidden phrasings</strong> — these tell the candidate the cardinality of the answer:</p>
+      <ul style={{margin:"4px 0 12px 24px"}}>
+        <li>"X belong, Y are distractors"</li>
+        <li>"5 correct options + 4 decoys"</li>
+        <li>"pick the 3 correct answers"</li>
+        <li>"the diagram has 6 nodes"</li>
+      </ul>
+      <p>Mention that distractors exist; do not count them. <em>"Some of these don't belong"</em> is fine. <em>"Two of these don't belong"</em> is not. For multi-select MCQs, say "select all that apply" — never "select the 3 correct."</p>
+      <VIS.Callout kind="warn" title="Text-length leakage (subtle variant)">
+        Same family: if the <code>correct: true</code> option runs 3-4 lines and decoys run 2, a tired senior spots the right answer by length alone. <strong>Normalize option lengths (~2 lines each).</strong> The discriminating detail goes in the SCENARIO, not the option text.
+      </VIS.Callout>
+    </VIS.Section>
+
+    {/* ============== 2a. Concept-specificity test — THE BIG ONE ============== */}
+    <VIS.Section id="sec-2a" title="2a. Concept-specificity test (NEW — the big one)">
+      <p>
+        When a visual is anchored to a specific SOTA technique / concept (HSTU, FraudGT, conformal prediction, etc.), <strong>every trap problem must hinge on something distinctively true of THAT concept</strong> — not a generic recsys / fraud / ML question that mentions the concept's name in the scenario.
+      </p>
+
+      <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>Failure mode — "concept as costume"</h3>
+      <div style={{background:"#fef2f2", borderLeft:"4px solid #dc2626", padding:"12px 16px", margin:"8px 0", borderRadius:"0 8px 8px 0"}}>
+        <strong style={{color:"#991b1b"}}>❌ Generic question wearing HSTU's name</strong>
+        <p style={{margin:"6px 0 0"}}>"You launched HSTU at p99 80ms and need to serve 500 candidates. Which of (a) precompute user encoding, (b) KV-cache attention, (c) FP4 quantization, (d) truncate history, (e) replace with DLRM are valid?"</p>
+        <p style={{margin:"6px 0 0", color:"#7f1d1d"}}>The correct answers (a/b/c) apply to <strong>every</strong> large transformer. HSTU is scenery. A candidate could answer correctly without knowing what HSTU is.</p>
+      </div>
+
+      <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>Fix — the concept IS the discriminator</h3>
+      <div style={{background:"#f0fdf4", borderLeft:"4px solid #16a34a", padding:"12px 16px", margin:"8px 0", borderRadius:"0 8px 8px 0"}}>
+        <strong style={{color:"#14532d"}}>✅ Tied to HSTU's unique architecture</strong>
+        <p style={{margin:"6px 0 0"}}>"HSTU's native loss is next-token cross-entropy over an action vocabulary. Your offline NDCG@10 looks great, but the model is unaware of the candidate set it scores against at serving time. Why does this matter, and what specific training-time change closes the offline–online gap?"</p>
+        <p style={{margin:"6px 0 0", color:"#14532d"}}>The trap turns on HSTU's <strong>generative loss</strong> (not pointwise sigmoid), the <strong>action vocabulary</strong> (not item-ID embedding tables), and the candidate-set mismatch <em>induced by that loss shape</em>. A candidate who doesn't know HSTU's internals can't reason about this.</p>
+      </div>
+
+      <VIS.Callout kind="ok" title="Litmus test before shipping any trap problem">
+        <ol style={{margin:"4px 0 0 20px"}}>
+          <li>Read the problem with the concept name <strong>redacted</strong> (replace "HSTU" with "Model X").</li>
+          <li>Can you still answer it correctly using only generic ML knowledge?</li>
+          <li><strong>Yes → concept-as-costume.</strong> Rewrite to turn on the concept's unique property, or drop.</li>
+          <li><strong>No → concept is genuinely the discriminator.</strong> Keep.</li>
+        </ol>
+      </VIS.Callout>
+
+      <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>Where to find 20 concept-specific angles</h3>
+      <p>Read the source paper / blog and look for the <em>surprising</em> claims. Every one of these is a problem seed:</p>
+      <ul style={{margin:"4px 0 0 24px"}}>
+        <li><strong>Architectural design choice</strong> — HSTU's pointwise+aggregated-norm attention; TIGER's RQ-VAE codebook collisions; FraudGT's k-hop attention vs MPNN over-smoothing</li>
+        <li><strong>Loss / objective</strong> — HSTU's generative softmax vs pointwise; BISER's dual-model self-debias; TRADES's KL objective</li>
+        <li><strong>What's gone vs the baseline</strong> — HSTU drops crosses → MTGR fixes; PC-GNN samples differently than CARE-GNN's RL filter</li>
+        <li><strong>Scaling story</strong> — HSTU's power-law vs DLRM's plateau; OneRec's 10.6% cost claim</li>
+        <li><strong>Failure modes named in the paper</strong> — DiffRec's "illusion of progress" critique; GADBench's "tuned GBDT rivals fraud-GNNs"</li>
+        <li><strong>Production-specific gotcha</strong> — speculative-decoding's batch-size gotcha; ConFL's replay-buffer DP-epsilon composition</li>
+      </ul>
+      <p style={{marginTop:12}}><strong>Aim for 20 trap problems per visual.</strong> If you can't find 20 facets that pass the redaction test, you don't have 20 problems — you have N concept-specific problems + filler. Better to ship fewer real problems than to pad with generic ones.</p>
+    </VIS.Section>
+
+    {/* ============== 3. Hide signal in plausible noise ============== */}
+    <VIS.Section id="sec-3" title="3. Hide the discriminating signal inside plausible noise">
+      <p>A trap problem only works if the trap is <strong>buried</strong>. Decoys must be defensible in SOME context; the trap = the textbook-confident answer that misses the scenario detail.</p>
+      <table style={{width:"100%", borderCollapse:"collapse", margin:"10px 0", fontSize:14}}>
+        <thead>
+          <tr style={{background:"#1f3a5f", color:"#fff"}}>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Concept</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>What's buried in scenario</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Textbook trap candidates fall for</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style={{padding:"8px 10px"}}>Fraud bias-vs-variance</td><td style={{padding:"8px 10px"}}>"75% label noise rate"</td><td style={{padding:"8px 10px"}}>Diagnose bias/variance without noticing noise dominates</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:"8px 10px"}}>Training divergence</td><td style={{padding:"8px 10px"}}>grad_norm 1.9 → 124 → 1842 → NaN AND missing warmup config</td><td style={{padding:"8px 10px"}}>Add gradient clipping (band-aid) instead of fixing the lr (root cause)</td></tr>
+          <tr><td style={{padding:"8px 10px"}}>HSTU calibration</td><td style={{padding:"8px 10px"}}>"DLRM had Platt scaler trained nightly"</td><td style={{padding:"8px 10px"}}>Reuse Platt scaler; missing that generative softmax ≠ pointwise sigmoid</td></tr>
+        </tbody>
+      </table>
+    </VIS.Section>
+
+    {/* ============== 3a. Tradeoffs over recipes ============== */}
+    <VIS.Section id="sec-3a" title="3a. Senior MLE = tradeoffs under scenario constraints, not recipes">
+      <p>Most "ML systems" problems at the senior bar are not "draw the right architecture" — they are <em>"given THIS use case, THIS data shape, THIS constraint, which knob do you turn?"</em> The textbook answer is often wrong because the scenario violates one of its assumptions.</p>
+      <ul style={{margin:"8px 0 0 24px"}}>
+        <li><strong>Cache TTL:</strong> aggressive caching is right for stable catalog, wrong for flash-sale inventory.</li>
+        <li><strong>Online vs batch features:</strong> online needed for recency-sensitive signals (last click), batch sufficient for slow-changing.</li>
+        <li><strong>Recall vs precision in candidate gen:</strong> high recall when the ranker is strong, high precision when the ranker is weak or expensive.</li>
+        <li><strong>Distillation vs quantization vs pruning:</strong> which compression wins depends on whether you're latency / memory / accuracy bound.</li>
+        <li><strong>Fine-tune vs prompt vs adapter:</strong> depends on data volume, eval rigor, deployment cost.</li>
+      </ul>
+    </VIS.Section>
+
+    {/* ============== 4. Match answer mode to question ============== */}
+    <VIS.Section id="sec-4" title="4. Match answer mode to the question — don't force one variation everywhere">
+      <table style={{width:"100%", borderCollapse:"collapse", margin:"10px 0", fontSize:14}}>
+        <thead>
+          <tr style={{background:"#1f3a5f", color:"#fff"}}>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Answer mode</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Use when</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style={{padding:"8px 10px"}}><strong>Single-correct MCQ</strong></td><td style={{padding:"8px 10px"}}>One tight answer; testing recognition</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:"8px 10px"}}><strong>Multi-select MCQ</strong></td><td style={{padding:"8px 10px"}}>Several causes / fixes legitimately co-apply</td></tr>
+          <tr><td style={{padding:"8px 10px"}}><strong>Ordered ranking</strong></td><td style={{padding:"8px 10px"}}>Sequence matters (diagnostic order, rollout sequence, variance-reduction priority)</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:"8px 10px"}}><strong>Fill-in-blank + decoy pool</strong></td><td style={{padding:"8px 10px"}}>ML coding (Q @ K.T, math.sqrt(d_k), F.softmax(dim=-1))</td></tr>
+          <tr><td style={{padding:"8px 10px"}}><strong>Step-by-step derivation pick</strong></td><td style={{padding:"8px 10px"}}>Math: each step shows correct TeX vs plausibly-wrong TeX</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:"8px 10px"}}><strong>Free-form canvas (Excalidraw)</strong></td><td style={{padding:"8px 10px"}}>System design where topology genuinely diverges</td></tr>
+          <tr><td style={{padding:"8px 10px"}}><strong>Debug case study + multi-select</strong></td><td style={{padding:"8px 10px"}}>Log + config in &lt;pre&gt;, then "which of these are root cause + actual fix?"</td></tr>
+        </tbody>
+      </table>
+      <p style={{marginTop:10}}><strong>Don't force variation per problem.</strong> Choose the mode that fits the question. Mixed shapes within a 20-problem visual is the natural state.</p>
+    </VIS.Section>
+
+    {/* ============== 5. Shape conventions for canvas ============== */}
+    <VIS.Section id="sec-5" title="5. Shape conventions (when using the Excalidraw canvas)">
+      <p>The visual primitive teaches the architecture. Don't use all rectangles. Print the legend above the canvas.</p>
+      <table style={{width:"100%", borderCollapse:"collapse", margin:"10px 0", fontSize:14}}>
+        <thead>
+          <tr style={{background:"#1f3a5f", color:"#fff"}}>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Architectural role</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Visual primitive</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td style={{padding:"8px 10px"}}>Stateless service / model</td><td style={{padding:"8px 10px"}}>Sharp solid rectangle</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:"8px 10px"}}>Stateful store</td><td style={{padding:"8px 10px"}}><strong>Cylinder</strong> (composite: 2 ellipses + body rectangle, grouped)</td></tr>
+          <tr><td style={{padding:"8px 10px"}}>Static data source</td><td style={{padding:"8px 10px"}}>Solid ellipse</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:"8px 10px"}}>Streaming source</td><td style={{padding:"8px 10px"}}>Dashed ellipse, hachure fill</td></tr>
+          <tr><td style={{padding:"8px 10px"}}>Queue / pipe</td><td style={{padding:"8px 10px"}}>Dashed rounded rect, hachure fill</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:"8px 10px"}}>Control / monitoring / decision</td><td style={{padding:"8px 10px"}}>Diamond, cross-hatch fill</td></tr>
+        </tbody>
+      </table>
+    </VIS.Section>
+
+    {/* ============== 6. Canvas-vs-MCQ gate ============== */}
+    <VIS.Section id="sec-6" title="6. Canvas vs MCQ gate (Learning 14)">
+      <p>
+        <strong>When the senior test is</strong> <em>where</em> in the pipeline a constraint lives, <em>what order</em> operations run, or <em>which knob</em> under hardware/cost math <strong>→ MCQ</strong>.
+      </p>
+      <p>
+        <strong>Canvas only when the topology itself diverges</strong> from the standard funnel — event-streaming, cascade+HITL, inline fast-path, multi-tenant federation, graph pre-materialization.
+      </p>
+      <VIS.Mermaid chart={`flowchart TB
+  start[Concept needs a problem]
+  q1{Is the architecture<br/>standard or divergent?}
+  mcq[Tradeoff MCQ<br/>single/multi/ordered]
+  q2{Is topology distinctly<br/>NEW or just standard funnel?}
+  canvas[Excalidraw canvas]
+  start --> q1
+  q1 -->|Standard pipeline| mcq
+  q1 -->|Divergent| q2
+  q2 -->|Standard funnel rehash| mcq
+  q2 -->|Genuinely new topology| canvas
+  style mcq fill:#bae6fd,stroke:#0284c7
+  style canvas fill:#bbf7d0,stroke:#16a34a`}/>
+    </VIS.Section>
+
+    {/* ============== 7. Trap-problem 6-beat structure ============== */}
+    <VIS.Section id="sec-7" title="7. Trap-problem 6-beat structure">
+      <p>Every trap problem exposes six beats, rendered in the order the candidate experiences them:</p>
+      <ol style={{margin:"6px 0 0 24px"}}>
+        <li><strong>Scenario</strong> — the brief, rich, with hidden signal</li>
+        <li><strong>Diagram / artifact</strong> — log, config, code, chart that contains the trap</li>
+        <li><strong>The question</strong> — single / multi / ordered / fill-in / canvas</li>
+        <li><strong>Trap</strong> <span style={{color:"#64748b"}}>(revealed on submit)</span> — what catches careless candidates, named specifically</li>
+        <li><strong>Lens</strong> <span style={{color:"#64748b"}}>(revealed on submit)</span> — the correct mental model, why the right answer is right</li>
+        <li><strong>Stretch</strong> <span style={{color:"#64748b"}}>(optional)</span> — one follow-up question pushing toward the next concept</li>
+      </ol>
+      <VIS.Callout kind="info" title="Reveal discipline">
+        Trap + lens + stretch are revealed only <strong>after the candidate commits</strong>. Pre-showing them defeats the entire format. The <code>&lt;VIS.TrapProblem&gt;</code> component handles this for you.
+      </VIS.Callout>
+    </VIS.Section>
+
+    {/* ============== 8. Twenty problems per visual ============== */}
+    <VIS.Section id="sec-8" title="8. Twenty problems per visual (NEW floor — was 10)">
+      <p>
+        Ten problems per visual was the prior floor. The new floor is <strong>20 problems</strong>, every one of which hinges on a different facet of the concept. This forces the author to find <em>twenty</em> concept-specific angles, which is what makes the visual genuinely deep.
+      </p>
+      <p>
+        If you can't find 20 facets that pass the <strong>redaction litmus test (§2a)</strong>, you don't have 20 problems. You have N concept-specific problems + filler. Ship fewer real problems instead.
+      </p>
+      <p>
+        Use the <em>20 facets</em> taxonomy:
+      </p>
+      <ul style={{margin:"4px 0 0 24px"}}>
+        <li>Architectural choice (×3-4 sub-angles)</li>
+        <li>Loss / objective (×2-3)</li>
+        <li>What's dropped vs baseline (×2-3)</li>
+        <li>Scaling / cost story (×2)</li>
+        <li>Failure modes from the paper (×2-3)</li>
+        <li>Production gotcha (×2-3)</li>
+        <li>Compare-to-sibling-technique (×1-2)</li>
+        <li>Eval / metric mismatch (×1-2)</li>
+        <li>Rollout / migration (×1-2)</li>
+        <li>Cold-start / edge-case (×1-2)</li>
+      </ul>
+    </VIS.Section>
+
+    {/* ============== 9. Difficulty calibration ============== */}
+    <VIS.Section id="sec-9" title="9. Difficulty calibration">
+      <ul style={{margin:"4px 0 0 24px"}}>
+        <li><strong>Easy:</strong> decoys are obviously wrong; the right answer is in the question stem.</li>
+        <li><strong>Medium:</strong> one or two plausibly-wrong decoys; right answer requires reading the brief carefully.</li>
+        <li><strong>Hard:</strong> every decoy is plausible; right answer requires <em>connecting two facts</em> spaced apart in the brief.</li>
+      </ul>
+      <p style={{marginTop:8}}><strong>Aim hard.</strong> A senior-MLE prep corpus that's mostly easy/medium teaches nothing. Distribution per visual: ~70% hard, ~25% medium, ~5% easy for warm-up.</p>
+    </VIS.Section>
+
+    {/* ============== 10. Implementation gotchas ============== */}
+    <VIS.Section id="sec-10" title="10. Implementation gotchas (JSX + Excalidraw)">
+      <ul style={{margin:"4px 0 0 24px"}}>
+        <li><strong>JSX: <code>&lt;N</code> (less-than + digit) in text position</strong> reads as a JSX tag opener. Use <code>&amp;lt;N</code> or "under N" prose. Safe inside JS string literals.</li>
+        <li><strong>JSX template strings: <code>{`{varname}`}</code></strong> inside JSX text is parsed as a JS expression. Use ALL-CAPS placeholders (<code>USER_ID</code>) or HTML entities.</li>
+        <li><strong>Option-length leakage</strong> — see §2 warning above. Normalize.</li>
+        <li><strong>Excalidraw <code>convertToExcalidrawElements</code></strong> for a labeled shape returns the shape AND a bound text element. Take the whole array, not <code>[0]</code>.</li>
+        <li><strong>Composite shapes</strong> (cylinder = 3 grouped primitives): tag ONE primitive with <code>customData.pieceId</code>; walk <code>groupIds</code> in the grader.</li>
+        <li><strong>GitHub Pages caches</strong> the file path aggressively — use <code>?cb=&lt;timestamp&gt;</code> query strings when iterating.</li>
+        <li><strong>Mobile</strong> — every visual must work down to 360px viewport. Tables wrap to horizontal-scroll; SVGs bounded; tap targets ≥44px; jargon-glossed terms tap-toggle (not hover-only).</li>
+      </ul>
+    </VIS.Section>
+
+    {/* ============== 11. Hover-gloss for jargon ============== */}
+    <VIS.Section id="sec-11" title="11. Hover-gloss every jargon term">
+      <p>
+        Assume the reader knows English but not your domain. Wrap every jargon term on first appearance with <code>&lt;VIS.Term def="..."&gt;</code> — a 1-2 sentence plain-English definition shown on hover (desktop) or tap (mobile).
+      </p>
+      <p>
+        Example: A <VIS.Term def="A statistical model that learns from data instead of being explicitly programmed.">machine-learning model</VIS.Term> turns examples into predictions. The dotted underline is the visual affordance — readers know it's hoverable / tappable.
+      </p>
+      <p>
+        <strong>Definition rules:</strong> 1-2 short sentences; assume reader knows English but not your domain (smart business person, not engineer); don't use jargon inside the definition (or wrap that term too); a term not worth defining is not worth using — rephrase.
+      </p>
+    </VIS.Section>
+
+    {/* ============== 12. Ship checklist ============== */}
+    <VIS.Section id="sec-12" title="12. Ship checklist (before merging any visual)">
+      <ul style={{margin:"4px 0 0 24px", lineHeight:1.85}}>
+        <li>☐ Context rich enough that tradeoffs are visible without giving the answer</li>
+        <li>☐ <strong>Concept-specificity test §2a passes</strong> on every problem (redact concept name → can't answer with generic ML)</li>
+        <li>☐ No count of correct / incorrect items in any prompt</li>
+        <li>☐ ≥20 trap problems (or fewer-but-honest if 20 concept-specific angles don't exist)</li>
+        <li>☐ At least one decoy in each problem is plausible enough that a tired senior would pick it</li>
+        <li>☐ Answer mode matches concept (no fill-in-blank for system design, no canvas for math derivation)</li>
+        <li>☐ Option lengths normalized (~2 lines each, no length leakage)</li>
+        <li>☐ If visual: shapes encode role; legend printed</li>
+        <li>☐ Trap + lens + stretch revealed only after submit</li>
+        <li>☐ Every jargon term wrapped in <code>&lt;VIS.Term def="..."&gt;</code></li>
+        <li>☐ Mobile-validated at 390px width (no overflow, tap targets sized)</li>
+        <li>☐ <code>see_web</code> returns <code>errors: []</code></li>
+      </ul>
+    </VIS.Section>
+
+    {/* ============== Meta: a live trap problem demonstrating the rules ============== */}
+    <VIS.Section id="sec-meta" title="Meta — a well-formed trap problem (live demo)">
+      <p>
+        Below is a trap problem about <strong>this very strategy</strong>. It follows all the rules: rich scenario, hidden signal, plausible decoys, concept-specific (the concept is "trap-problem design"), trap + lens + stretch revealed on submit.
+      </p>
+      <VIS.TrapProblem
+        id="meta-1"
+        difficulty="hard"
+        multiSelect
+        title="A reviewer flags a problem on the HSTU visual as 'too generic'"
+        scenario={<>You're auditing HSTU's drill section. Problem P5 reads: <em>"You launched HSTU at p99 80ms scoring 500 candidates. Which of (a) precompute user encoding, (b) KV-cache attention, (c) FP4 quantization, (d) truncate history are valid?"</em> A reviewer says "this isn't really about HSTU." Which of the following are correct critiques (select all)?</>}
+        options={[
+          {key:"a", text:"The correct answers (a/b/c) apply to any large transformer; HSTU is scenery, not the discriminator.", correct:true},
+          {key:"b", text:"Redacting 'HSTU' to 'Model X' doesn't reduce the candidate's ability to answer correctly.", correct:true},
+          {key:"c", text:"The problem fails the concept-specificity test (§2a) — fix by anchoring on HSTU's generative loss, action vocabulary, or dropped crosses.", correct:true},
+          {key:"d", text:"The problem is fine because it mentions HSTU and the scenario is detailed."},
+          {key:"e", text:"Adding more options would solve it — push to 8 options for harder selection."},
+        ]}
+        trap={<>(d) is the seductive defense — the scenario IS detailed (p99 budget, candidate count, A100). But scenario detail doesn't equal concept anchoring. (e) confuses option count with concept specificity; adding more generic options just makes a generic question harder, not concept-specific.</>}
+        lens={<>The redaction test is the cleanest filter. If "Model X" answers the same way as "HSTU," the concept isn't doing work. The fix is to find an HSTU-unique facet (generative loss vs pointwise sigmoid → calibration regression; dropped crosses → cold-start gap; MTGR motivation; action token vocabulary; power-law scaling claim) and rewrite around that.</>}
+        stretch={<>Apply the redaction test to <a href="https://vijaykatta3094-ops.github.io/ml-knowledge-hub/recsys-sota/fraudgt.html" target="_blank" rel="noopener">FraudGT</a>'s drill section. Which problems pass? Which are graph-transformer-generic with FraudGT as scenery?</>}
+      />
+    </VIS.Section>
+
+    {/* ============== Related skills ============== */}
+    <VIS.Section id="sec-related" title="Related skills + reference visuals">
+      <ul style={{margin:"4px 0 0 24px"}}>
+        <li><strong><code>/question-generation-strategy</code></strong> — the SKILL.md with the full rules (this visual is its rendered review version). Path: <code>~/.claude/skills/question-generation-strategy/SKILL.md</code></li>
+        <li><strong><code>/visualize</code></strong> — page craft (four-beat pattern, VIS.Term, Mermaid discipline, per-section validation). Path: <code>~/.claude/skills/visualize/SKILL.md</code></li>
+        <li><a href="https://vijaykatta3094-ops.github.io/ml-knowledge-hub/bias-variance-decomposition.html" target="_blank" rel="noopener"><strong>Gold-standard reference visual: bias-variance</strong></a> — 10 trap problems, mixed shapes, perfect concept anchoring. The pattern every SOTA visual extends.</li>
+        <li><a href="https://docs.google.com/spreadsheets/d/17OTu1X0gzFXSSAoWZldCYVkT7OqVW14ixz0Vk419Y_k/edit?gid=103335091#gid=103335091" target="_blank" rel="noopener"><strong>Idea Engine Tracker (Machine Learning tab)</strong></a> — canonical sheet aesthetic.</li>
+      </ul>
+    </VIS.Section>
+  </main>
+);
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+
+</script>
+  <script>
+    window.addEventListener("error", function (e) {
+      const pre = document.createElement("pre");
+      pre.style.cssText = "position:fixed;top:0;left:0;right:0;max-height:35vh;"
+        + "overflow:auto;background:#fee2e2;color:#7f1d1d;padding:8px;"
+        + "margin:0;font:12px/1.4 monospace;z-index:10002;";
+      pre.textContent = "[visualize] " + (e.error?.stack || e.message || e);
+      document.body.appendChild(pre);
+    }, true);
+  </script>
+</body>
+</html>
