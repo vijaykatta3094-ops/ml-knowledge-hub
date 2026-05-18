@@ -1414,326 +1414,558 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// Step-up auth policy via contextual bandit — adaptively choose challenge level
-// (no challenge / SMS / biometric / security question) based on risk signal + friction cost.
+// Step-up auth via contextual bandit — POLICY that picks WHICH challenge to issue per session.
+// ANCHOR: bandit-as-policy (LinUCB / Thompson sampling). Arms = challenge types.
+// Reward = success - friction. NOT a classifier.
+// Unique mechanism: exploration-exploitation under DELAYED reward.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="Fraud SOTA · Adaptive auth"
-      title="Step-up auth policy via contextual bandit"
-      subtitle="Replace static risk thresholds with a contextual bandit that picks the challenge (none / SMS / biometric / security Q) per session, balancing ATO catch against user-friction cost."
+      pill="Fraud SOTA · Decision policy · CONTEXTUAL BANDIT"
+      title="Step-up auth as a contextual-bandit policy"
+      subtitle="A contextual bandit (LinUCB or Thompson sampling) chooses WHICH step-up challenge to issue at a high-risk session — SMS OTP, push to authenticator, biometric, hardware key, or knowledge-based question — to minimize friction while preserving fraud-catch rate."
       byline={[
-        {label: "Source", value: "Contextual Bandits for Adaptive Step-up Auth, RecSys 2024 Industry"},
-        {label: "Year", value: "2024"},
-        {label: "L3", value: "Account takeover (ATO)"},
+        {label: "Mechanism", value: "Contextual bandit policy (not a classifier)"},
+        {label: "Arms", value: "{SMS, push, biometric, KBA, hardware key, no-action}"},
+        {label: "Reward", value: "success - friction - latency, with delayed fraud penalty"},
       ]}/>
 
     <VIS.TLDR>
-      A static rule ("if risk score above 0.7, challenge with SMS") over-friction the long tail of legitimate users while still missing some attackers. A{" "}
-      <VIS.Term def="A reinforcement-learning setup where each step the agent sees a context vector (user, session, risk signals), picks one of several actions (challenge levels), and observes a reward (caught fraud minus friction cost). It learns a context-conditional policy.">contextual bandit</VIS.Term>{" "}
-      learns a context-conditional policy. The senior question is not "is RL better than rules" — it's "how do you explore in a security setting where one wrong 'no challenge' is a real ATO, and how do you handle the reward that arrives weeks late via chargeback?"
+      Once the fraud risk model says "step up", the system still has to pick a{" "}
+      <VIS.Term def="A second-factor challenge issued at runtime to verify the user — e.g., SMS OTP, push-notification approval, FIDO security key tap, fingerprint, or a knowledge-based question.">step-up challenge</VIS.Term>{" "}
+      to issue. A contextual bandit treats each challenge type as an{" "}
+      <VIS.Term def="In bandit language, one of the discrete actions the policy can take. Here, each challenge type is an arm.">arm</VIS.Term>, sees the session{" "}
+      <VIS.Term def="The feature vector that describes this decision — risk score, device, user history, amount, prior challenge outcomes.">context</VIS.Term>, and chooses the arm that maximizes expected{" "}
+      <VIS.Term def="A scalar derived from the user completing the challenge (positive) minus friction proxies (drop-off, latency, support contacts) minus a delayed fraud-confirmation penalty.">reward</VIS.Term>. The policy{" "}
+      <VIS.Term def="In bandit learning, deliberately choosing actions whose expected reward is uncertain so that the policy learns about them. Without it, the policy stays stuck on whatever looked good early.">explores</VIS.Term>{" "}
+      to learn which arm fits which context — explore SMS for low-risk new-device sessions, exploit FIDO for known-device returning users. The unique mechanism is exploration-vs-exploitation under DELAYED reward (fraud confirmed weeks later) — not present in any classifier-based design.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="What it is — bandit-as-policy">
       <p>
-        Each login session produces a context vector: user history, behavioral biometrics score, device + IP risk, transaction-context features. The bandit's actions are a small discrete set: <code>no_challenge</code>, <code>sms_otp</code>, <code>biometric_re_auth</code>, <code>security_question</code>, <code>hard_block</code>. The reward combines (i) ATO loss avoided minus (ii) friction cost in user abandonment + support load. The bandit learns which action minimizes expected cost in each context.
+        A classifier answers "is this session fraudulent?" A bandit answers a different question: "given the risk model already said 'flag', WHICH action gets the best outcome?" The actions are step-up challenges; the outcome is a reward combining user success, friction, and (eventually-confirmed) fraud avoidance.
       </p>
+      <ol>
+        <li><strong>Context vector</strong> per session: risk score from upstream model, device class, user tenure, prior step-up outcomes, amount, time-of-day, country.</li>
+        <li><strong>Arms:</strong> {`{SMS OTP, push to authenticator app, FIDO hardware key, biometric on-device, knowledge-based question, no-action}`}.</li>
+        <li><strong>Policy:</strong> at decision time, the bandit samples or upper-bounds each arm's expected reward given the context, picks one, and serves it.</li>
+        <li><strong>Reward:</strong> immediate proxy (did the user complete the challenge? did they drop off?) plus a delayed fraud-outcome signal (was the session reversed in 30-90 days?).</li>
+        <li><strong>Update:</strong> after the reward arrives, the policy updates its per-arm-per-context model. Over time, the policy concentrates on the right arm per context segment.</li>
+      </ol>
 
       <VIS.Mermaid chart={`
 flowchart TB
-  CTX["Session context"]
-  POL["Bandit policy"]
-  ACT["Action: none / SMS / biometric / Q / block"]
-  OUT["Session outcome"]
-  REW["Reward: ATO avoided minus friction"]
-  CTX --> POL
-  POL --> ACT
-  ACT --> OUT
-  OUT --> REW
-  REW --> POL
-  style POL fill:#dbeafe,stroke:#2563eb,stroke-width:2px
-  style REW fill:#fef3c7,stroke:#d97706,stroke-width:2px
+  RISK["Upstream risk model says step-up"]
+  RISK --> CTX["Context vector"]
+  CTX --> BAN["Contextual bandit"]
+  BAN -->|"arm a"| CH["Issue challenge a"]
+  CH --> OUT["User outcome"]
+  OUT --> RW1["Immediate reward: complete or drop"]
+  OUT -.-> RW2["Delayed reward: fraud outcome 30-90 days"]
+  RW1 --> BAN
+  RW2 -.-> BAN
+  style BAN fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+  style RW2 fill:#fef3c7,stroke:#d97706,stroke-width:2px
       `} />
       <p>
-        Blue = the learned policy that picks an action given context. Yellow = the reward signal that closes the loop. The feedback path is the hard part: ATO outcomes can take days or weeks to surface via chargebacks, while friction outcomes (user gave up, contacted support) surface in seconds.
+        The dashed delayed-reward path is the unique structural difficulty. Standard contextual-bandit theory (LinUCB, Thompson sampling) assumes one-step rewards; here the operating system has to handle reward that lands months after the action.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
+    <VIS.Section id="sec-math" title="The math — LinUCB and Thompson sampling, in 4 lines">
+      <p>
+        Two canonical bandit policies. Both take a context vector x and pick an arm a to optimize an expected linear reward.
+      </p>
+      <p style={{marginTop:8, fontWeight:600}}>LinUCB (Upper Confidence Bound) per arm:</p>
+      <VIS.Equation display tex="\\hat{a} = \\arg\\max_a \\;\\; \\hat\\theta_a^\\top x \\;+\\; \\alpha \\sqrt{x^\\top A_a^{-1} x}" />
+      <p>The first term is the expected reward; the second is a confidence-interval bonus that shrinks as the arm is tried more. The bonus drives exploration.</p>
+      <p style={{marginTop:8, fontWeight:600}}>Thompson sampling per arm:</p>
+      <VIS.Equation display tex="\\tilde\\theta_a \\sim \\mathcal{N}(\\hat\\theta_a, A_a^{-1}\\sigma^2),\\quad \\hat{a} = \\arg\\max_a \\;\\; \\tilde\\theta_a^\\top x" />
+      <p>Sample a parameter from each arm's posterior and pick the arm with the highest sampled value. Exploration emerges from posterior variance.</p>
+      <p style={{marginTop:8}}>
+        Both reduce to "pick the arm whose expected reward might be highest given uncertainty." LinUCB is deterministic given a tie-break; Thompson is randomized. Both update the arm's parameters using observed reward only for the arm chosen — never for the arms not pulled. That counterfactual gap is the bandit's defining structure.
+      </p>
+    </VIS.Section>
+
+    <VIS.Section id="sec-diff" title="How it differs from a classifier OR a multi-class predictor">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
         <thead>
           <tr style={{background:"#1f3a5f", color:"#fff"}}>
             <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Static threshold</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Risk score plus rules</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Risk classifier</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Multi-class challenge predictor</th>
             <th style={{padding:"8px 10px", textAlign:"left"}}>Contextual bandit</th>
           </tr>
         </thead>
         <tbody>
           <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Adapts to per-user context</td>
-            <td style={{padding:"8px 10px"}}>No</td>
-            <td style={{padding:"8px 10px"}}>Coarsely</td>
-            <td style={{padding:"8px 10px"}}>Yes</td>
+            <td style={{padding:"8px 10px"}}>Output</td>
+            <td style={{padding:"8px 10px"}}>P(fraud)</td>
+            <td style={{padding:"8px 10px"}}>Best challenge class (supervised)</td>
+            <td style={{padding:"8px 10px"}}>Action under uncertainty + exploration</td>
           </tr>
           <tr>
-            <td style={{padding:"8px 10px"}}>Balances friction vs catch directly</td>
-            <td style={{padding:"8px 10px"}}>No</td>
-            <td style={{padding:"8px 10px"}}>Manual tuning</td>
-            <td style={{padding:"8px 10px"}}>Yes (reward function)</td>
+            <td style={{padding:"8px 10px"}}>Counterfactuals</td>
+            <td style={{padding:"8px 10px"}}>None needed</td>
+            <td style={{padding:"8px 10px"}}>Needs labels for ALL challenges per session</td>
+            <td style={{padding:"8px 10px"}}>Only the chosen arm's reward is observed</td>
           </tr>
           <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Cold-start on new users</td>
-            <td style={{padding:"8px 10px"}}>Easy (always challenge)</td>
-            <td style={{padding:"8px 10px"}}>Easy</td>
-            <td style={{padding:"8px 10px"}}>Hard — needs exploration policy</td>
+            <td style={{padding:"8px 10px"}}>Selection bias</td>
+            <td style={{padding:"8px 10px"}}>Mostly inherits historic threshold</td>
+            <td style={{padding:"8px 10px"}}>Heavy — training labels reflect past policy</td>
+            <td style={{padding:"8px 10px"}}>Explored arms protect against it</td>
           </tr>
           <tr>
-            <td style={{padding:"8px 10px"}}>Audit trail</td>
-            <td style={{padding:"8px 10px"}}>Trivial</td>
-            <td style={{padding:"8px 10px"}}>Easy</td>
-            <td style={{padding:"8px 10px"}}>Requires logged policy + counterfactual eval</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Exploration cost</td>
-            <td style={{padding:"8px 10px"}}>None</td>
-            <td style={{padding:"8px 10px"}}>None</td>
-            <td style={{padding:"8px 10px"}}>Real (wrong action sometimes)</td>
+            <td style={{padding:"8px 10px"}}>Cold-start arm</td>
+            <td style={{padding:"8px 10px"}}>N/A</td>
+            <td style={{padding:"8px 10px"}}>Cannot recommend a new arm</td>
+            <td style={{padding:"8px 10px"}}>Native — exploration covers new arms</td>
           </tr>
         </tbody>
       </table>
+      <p style={{marginTop:12}}>
+        <strong>Why not just a multi-class classifier?</strong> A supervised model needs the "right answer" per session. In production you only know the outcome of the challenge you ISSUED — not the counterfactual outcomes of the four you didn't. That asymmetry is exactly what bandits handle natively. Training a multi-class model on past data bakes in your historic policy's biases and cannot recommend a new arm (FIDO key launched last month — the classifier has zero labels).
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick">
-      <ul>
-        <li><strong>You have a mature risk-scoring stack already</strong> — bandit consumes its output; bandit is not a replacement for the scoring model.</li>
-        <li><strong>The friction cost is meaningful and measurable</strong> — abandonment rates, support tickets, NPS. Without measurable friction the reward function is one-sided.</li>
-        <li><strong>You can tolerate exploration cost</strong> — bandit will occasionally take the "wrong" action by design. In security, this is a real expected cost.</li>
-        <li><strong>You're willing to invest in counterfactual policy evaluation</strong> — IPS / doubly-robust estimators on logged data. Naive A-B alone won't give a clean read.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <VIS.Callout kind="gotcha" title="Delayed reward: chargebacks lag weeks">
-        Friction signals arrive in seconds (abandonment, support ticket). ATO confirmation arrives in days-to-weeks via chargeback. Naive bandit updates over-weight the immediate friction signal and under-react to delayed ATO losses. Need a delayed-reward-aware update rule.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Exploration in security has real cost">
-        Epsilon-greedy with epsilon=0.1 on a "no_challenge" action is a real 10% ATO leakage on contexts where the policy might have picked SMS. Constrain exploration to actions that are SAFE in the context (e.g., never explore weakening below the rule baseline).
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="GDPR Art. 22: solely automated decisions">
-        EU users have a right not to be subject to solely automated decisions with legal/significant effects. A bandit auto-blocking accounts likely qualifies. Constrain the action space in EU to non-block actions, and ensure a human-or-multi-factor downstream step exists for block recommendations.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Ten interview-grade traps on bandit setup, reward design, exploration safety, counterfactual eval, and end-to-end deployment.
+        Twenty-four interview-grade traps anchored on bandit-as-policy, exploration under delayed reward, off-policy evaluation, and the operational realities of a step-up-auth bandit in production.
       </p>
 
       <VIS.TrapProblem
-        id="cba-p1"
+        id="su-p1"
         difficulty="hard"
-        title="P1 — Bandit picked no_challenge on a high-risk session that became ATO. Diagnose."
-        scenario={<>The bandit picked <code>no_challenge</code> on a session whose downstream risk score was 0.82. Two weeks later the account chargebacks $4,000 in fraud. Tech lead says "fire the bandit, go back to rules." What's the real diagnosis?</>}
+        title="P1 — Why use a contextual bandit instead of a multi-class classifier for picking challenges?"
+        scenario={<>You have 6 months of historical sessions where step-up challenges were issued by rule. PM proposes a multi-class classifier (challenge type as label) trained on "successful step-ups" as positives.</>}
         options={[
-          {key:"a", text:"The bandit's training data is dominated by low-risk no_challenge sessions (the bulk of traffic), so it has under-explored the no_challenge action in high-risk contexts. Combined with delayed chargeback reward, the policy hasn't yet learned that no_challenge is wrong here. Fix: constrain exploration so no_challenge is never chosen above a hard risk-score threshold (safety constraint), AND credit delayed chargebacks to the bandit's update via a chargeback-attribution job.", correct:true},
-          {key:"b", text:"Bandit is wrong by design; only rules work for auth."},
-          {key:"c", text:"Increase exploration epsilon to 0.3."},
-          {key:"d", text:"Add 100x more training data."},
+          {key:"a", text:"That training set has heavy selection bias: it only contains challenges your past rules ISSUED. For each session you have one challenge's outcome, not all six. The classifier learns to predict the past policy, not the optimal one. New arms (e.g., a FIDO key launched last quarter) have zero labels. A contextual bandit handles all three: explores to learn counterfactuals, breaks selection bias through randomization, and natively handles new arms via the exploration bonus / posterior variance. The classifier framing fundamentally cannot.", correct:true},
+          {key:"b", text:"Classifiers cannot handle 6 arms."},
+          {key:"c", text:"Bandits are more accurate."},
+          {key:"d", text:"Classifiers need more data."},
         ]}
-        trap={<>(b) is the rules-purist overreaction. (c) makes the problem WORSE — more exploration = more ATO leakage. (d) ignores the structural delayed-reward issue; more data doesn't fix the credit-assignment problem.</>}
-        lens={<>(a). Two senior moves: SAFETY CONSTRAINTS that cap the bandit's action space in dangerous contexts ("no_challenge is not available when risk_score above 0.7"), AND a delayed-reward attribution pipeline that credits chargebacks back to the session that should have been challenged. The bandit becomes constrained optimization within a safe envelope, not free exploration.</>}
-        stretch={<>How do you decide the safety threshold for "no_challenge is not available"?</>}
+        trap={<>(b) is false. (c)(d) are vague.</>}
+        lens={<><em>Discriminating insight:</em> the classifier learns past policy + cannot extrapolate to new arms; the bandit learns optimal policy + handles new arms via exploration. The discriminating word is COUNTERFACTUAL.</>}
+        stretch={<>What is the minimal way to retrofit counterfactual handling onto a classifier?</>}
       />
 
       <VIS.TrapProblem
-        id="cba-p2"
+        id="su-p2"
         difficulty="hard"
-        multiSelect
-        title="P2 — Reward function design"
-        scenario={<>You're designing the bandit's reward. Three signals available: (i) was this session ATO? (chargeback, days later), (ii) did the user abandon at the challenge? (immediate), (iii) did the user open a support ticket? (hours later). Which choices are right?</>}
+        title="P2 — Reward design: what is the right reward signal for the step-up bandit?"
+        scenario={<>Design the reward function r(session, arm, outcome). The PM suggests "+1 if user completes, -1 if user drops, 0 otherwise."</>}
         options={[
-          {key:"a", text:"Combine all three into a weighted reward with weights set by business cost: ATO chargeback dollars, abandonment lifetime-value loss, support ticket cost.", correct:true},
-          {key:"b", text:"Use only chargeback as reward — the only signal that matters."},
-          {key:"c", text:"Use only abandonment — immediate feedback is the strongest learning signal."},
-          {key:"d", text:"Treat the three on different time scales: immediate friction updates flow into the bandit fast; chargeback updates require a delayed-reward attribution pipeline that re-credits sessions weeks later.", correct:true},
-          {key:"e", text:"Make weights configurable so finance/fraud-ops can tune trade-off without retraining the model.", correct:true},
+          {key:"a", text:"That reward is missing the fraud-avoidance signal — the WHOLE point of step-up. Realistic reward: r = w1 * complete - w2 * drop - w3 * latency - w4 * support_contact - w5 * confirmed_fraud_penalty. The fraud term lands 30-90 days later (chargeback or dispute window); the bandit must handle delayed reward. Without the fraud term, the policy will minimize friction and unconditionally pick the lightest challenge — defeating the purpose.", correct:true},
+          {key:"b", text:"Add +1 if completed regardless of fraud."},
+          {key:"c", text:"Use only the fraud signal; ignore drop-off."},
+          {key:"d", text:"Use AUROC as the reward."},
         ]}
-        trap={<>(b) ignores friction — bandit will over-challenge. (c) ignores ATO — bandit will under-challenge. The trap is picking ONE signal in a multi-cost domain.</>}
-        lens={<>Three correct. <strong>(a)</strong> weighted reward with business-grounded weights. <strong>(d)</strong> respect the time-scale gap with delayed attribution. <strong>(e)</strong> separate model from policy — weights are policy levers operations should tune as costs change. Senior signal: rewards are designed, not discovered.</>}
-        stretch={<>How do you protect the bandit from a brief weight-misconfiguration that suddenly devalues ATO?</>}
+        trap={<>(b) is the PM proposal — it ignores fraud and degenerates to friction-minimization. (c) ignores user experience. (d) is a category error — AUROC is for classifiers.</>}
+        lens={<><em>Discriminating insight:</em> reward design is the most consequential bandit decision. Missing the fraud term turns the bandit into a friction-minimizer; missing the friction term turns it into a maximum-friction policy.</>}
+        stretch={<>How would you weight w5 (fraud penalty) relative to w2 (drop)? Bonus: in dollars.</>}
       />
 
       <VIS.TrapProblem
-        id="cba-p3"
+        id="su-p3"
         difficulty="hard"
-        title="P3 — Counterfactual policy evaluation"
-        scenario={<>You want to compare a new bandit policy to the current one without an A/B test. You have logged data from the current policy: contexts, actions, rewards. What's the right evaluation method?</>}
+        title="P3 — The fraud outcome lands 60 days after the bandit decision. How do you train the bandit?"
+        scenario={<>Standard LinUCB updates on a one-step reward. Your fraud reward is 60 days delayed. Two-thirds of recent decisions have unknown reward at training time.</>}
         options={[
-          {key:"a", text:"Inverse propensity scoring (IPS) on the logged data: estimate the new policy's value as a re-weighted average of logged rewards where the weight is the ratio of new-policy action-prob to logging-policy action-prob. Add a doubly-robust estimator to reduce variance and handle propensity misspecification.", correct:true},
-          {key:"b", text:"Replay the new policy on the logged contexts — its picked actions are its evaluation."},
-          {key:"c", text:"Train a reward model and use it as the simulator."},
-          {key:"d", text:"You cannot evaluate without A/B; ship behind a small holdout."},
+          {key:"a", text:"Use a two-stage reward update: (1) immediate proxy reward (completion, drop, latency) updates the bandit at decision-time; (2) when fraud reward arrives, the bandit issues a retrospective correction update against those same decisions. This requires LOGGING the action probability at decision-time (importance-sampling weight) so the correction is unbiased. Alternative: model the delayed reward separately (delayed-feedback survival model) and feed a calibrated expected-reward estimate into the bandit at decision time. The thing you CAN'T do is wait 60 days for every decision — the policy stagnates.", correct:true},
+          {key:"b", text:"Train every 60 days using only fully-resolved sessions."},
+          {key:"c", text:"Ignore the delayed reward and train only on immediate proxies."},
+          {key:"d", text:"Treat unresolved sessions as fraud=0."},
         ]}
-        trap={<>(b) is the naive replay — counterfactual rewards are unobserved if the new policy picks an action the logging policy didn't. (c) creates a model-of-a-model that compounds errors. (d) gives up the offline option entirely.</>}
-        lens={<>(a). Counterfactual policy evaluation is the standard tool. IPS gives an unbiased estimator under the assumption you know the logging propensities (you should — they're logged). Doubly-robust combines IPS with a learned reward model to reduce variance. Both are core RecSys + bandit literature (Dudik, Bottou, et al.).</>}
-        stretch={<>What's the variance pathology of pure IPS that doubly-robust fixes?</>}
+        trap={<>(b) makes the policy stagnant. (c) is the original problem — the proxy maximizes friction. (d) is the survival-analysis bug (treats censored data as negative).</>}
+        lens={<><em>Discriminating insight:</em> delayed reward + bandit = importance-sampled retrospective updates OR an upstream delayed-feedback model that emits a calibrated reward estimate. Naive solutions either stagnate or bias.</>}
+        stretch={<>What is the simplest test that your retrospective update is unbiased?</>}
       />
 
       <VIS.TrapProblem
-        id="cba-p4"
+        id="su-p4"
         difficulty="hard"
-        multiSelect
-        title="P4 — Exploration policy in security"
-        scenario={<>The textbook bandit uses epsilon-greedy or Thompson sampling. In auth, exploration costs are real. Which exploration designs are appropriate?</>}
+        title="P4 — How do you evaluate a new bandit policy offline before deploying?"
+        scenario={<>You trained a new LinUCB variant. PM wants to know cumulative reward vs the current policy before A/B test.</>}
         options={[
-          {key:"a", text:"Constrain exploration to action subsets that are SAFE in each context — never explore no_challenge in high-risk contexts; explore only between sms_otp and biometric_re_auth above the safety threshold.", correct:true},
-          {key:"b", text:"Use Thompson sampling instead of epsilon-greedy — better sample efficiency and the exploration is automatically context-aware.", correct:true},
-          {key:"c", text:"Use 1% epsilon-greedy globally — exploration is cheap at small epsilon."},
-          {key:"d", text:"Schedule exploration during low-traffic windows (3am-5am) to limit user impact.", correct:true},
-          {key:"e", text:"Never explore on a flagged-high-risk user; rely on offline counterfactual eval for those.", correct:true},
+          {key:"a", text:"Off-policy evaluation via inverse propensity scoring (IPS) or doubly-robust estimation. You replay historical sessions, re-weighting each by 1 / P(arm chosen by the OLD policy), and evaluate the NEW policy's actions against the observed rewards. This requires that the OLD policy was randomized enough — if it always chose SMS for high-risk sessions, you have ZERO information about how FIDO would have performed there. So the offline eval is only as good as past exploration coverage. Pair with a small-cell randomized epsilon-greedy in production to keep coverage fresh.", correct:true},
+          {key:"b", text:"Compute the new policy's expected reward directly from its model."},
+          {key:"c", text:"Compare confusion matrices."},
+          {key:"d", text:"Use AUROC on a held-out set."},
         ]}
-        trap={<>(c) treats exploration as cost-symmetric across contexts. The cost of exploring "no_challenge" on a high-risk session is orders of magnitude bigger than exploring "biometric" on a low-risk one. Global epsilon = uniform stupidity.</>}
-        lens={<>Four correct. <strong>(a)</strong> context-aware safe-action sets. <strong>(b)</strong> Thompson sampling for better posterior-informed exploration. <strong>(d)</strong> temporal limiting. <strong>(e)</strong> offline-only learning for the riskiest segment. Together: a constrained-exploration regime that respects the cost structure of auth.</>}
-        stretch={<>What changes about (e) if you have a high-recall fraud-detection model running in parallel?</>}
+        trap={<>(b) is the bandit equivalent of training-set evaluation. (c)(d) are classifier metrics.</>}
+        lens={<><em>Discriminating insight:</em> off-policy evaluation requires past randomization coverage. Without exploration, the offline eval is biased; the more deterministic your old policy was, the less you can learn offline about a new one.</>}
+        stretch={<>What is the variance penalty of IPS when the propensity is very small?</>}
       />
 
       <VIS.TrapProblem
-        id="cba-p5"
+        id="su-p5"
         difficulty="medium"
-        title="P5 — Cold start on a new user"
-        scenario={<>A user registers and logs in for the first time. The bandit has no per-user history. How should the policy behave?</>}
+        title="P5 — Exploration budget: what fraction of step-up decisions should be exploratory?"
+        scenario={<>Engineering wants 1% exploratory; product wants 0% ("every challenge must be optimal for the user"). What is right?</>}
         options={[
-          {key:"a", text:"Fall back to a population-level prior policy specifically trained for the no-history context. Add a 'first-login' feature to the context vector so the bandit learns this regime explicitly. As history accumulates, the bandit's posterior tightens.", correct:true},
-          {key:"b", text:"Always challenge first-time users with the strictest action."},
-          {key:"c", text:"Always let first-time users through with no_challenge — they have no fraud history."},
-          {key:"d", text:"Random action — exploration is what cold-start is for."},
+          {key:"a", text:"Neither extreme. The right answer depends on (1) how fast the population drifts — more drift means more exploration to stay current; (2) per-arm regret cost — if exploring SMS for a high-risk session has limited downside, more exploration is acceptable than exploring 'no-action' there. A reasonable starting point is 5-10% per-arm exploration on LOW-RISK step-ups and tight 1-2% on HIGH-RISK. The Bayesian exploration in Thompson sampling auto-tunes this by posterior width; LinUCB requires explicit alpha tuning. 0% breaks the bandit; >20% gives away too much UX.", correct:true},
+          {key:"b", text:"0% — every decision must be optimal."},
+          {key:"c", text:"50% — exploration is the only safe choice."},
+          {key:"d", text:"Use the historic policy 100% of the time."},
         ]}
-        trap={<>(b) over-friction the (large) honest first-time population. (c) gives free ATO. (d) is "exploration" with no safety constraint — a P1 + P4 violation.</>}
-        lens={<>(a). The general principle: cold-start is a distinct context, not the absence of context. Feature-engineer it explicitly. Use a population prior tuned for that regime. The bandit naturally transitions to per-user as history accumulates.</>}
-        stretch={<>How many sessions of per-user history does it typically take for per-user posterior to dominate the population prior?</>}
+        trap={<>(b) kills learning. (c) destroys UX. (d) freezes the policy.</>}
+        lens={<><em>Discriminating insight:</em> the exploration rate is conditional on RISK TIER. High-risk sessions deserve tighter exploration; low-risk give the bandit room to learn. Constant epsilon-greedy is rarely right.</>}
+        stretch={<>How would you decay exploration over time?</>}
       />
 
       <VIS.TrapProblem
-        id="cba-p6"
-        difficulty="hard"
-        title="P6 — Delayed reward attribution pipeline"
-        scenario={<>Chargebacks arrive 3-21 days after the session that should have been challenged. You need to credit the chargeback back to the bandit's update for that session. How?</>}
-        options={[
-          {key:"a", text:"Log every bandit decision with the session_id and the propensity of the chosen action. Maintain a chargeback-attribution job that maps each new chargeback to the session_id that triggered it, looks up the bandit decision, computes an immediate-and-final reward (combining friction signal already observed + the chargeback cost now), and feeds it to the offline batch retraining job.", correct:true},
-          {key:"b", text:"Discard sessions older than 24h; only train on immediate-feedback sessions."},
-          {key:"c", text:"Approximate the chargeback rate per context and use it as a learned reward; skip the attribution."},
-          {key:"d", text:"Wait until all chargebacks have settled before any update — set retraining cadence to monthly."},
-        ]}
-        trap={<>(b) throws away the ATO signal — pure friction-only learning. (c) creates a reward-model-of-a-model with no ground truth. (d) freezes the model in stale state for a month; under attacker drift this is fatal.</>}
-        lens={<>(a). The attribution job is the production discipline. Sessions are logged with everything needed to credit late rewards (action, propensity, context). The retraining job consumes a join of session-log and chargeback-stream. This is the standard pattern at large risk platforms.</>}
-        stretch={<>What chargeback dispute / reversal scenario could create double-counting? How do you prevent it?</>}
-      />
-
-      <VIS.TrapProblem
-        id="cba-p7"
-        difficulty="hard"
-        title="P7 — A/B test design for bandit vs rules"
-        scenario={<>You want to A/B the bandit against the existing rules system. What's the right experiment design?</>}
-        options={[
-          {key:"a", text:"Stratified hash-based split (e.g., 90% rules / 10% bandit), powered for the delayed chargeback metric not the immediate friction metric. Run for long enough to observe the chargeback-attribution window (at least 30-45 days for credit). Pre-register the primary metric (e.g., total expected cost = chargeback dollars + abandonment dollars). Watch a guardrail: bandit-side ATO rate must not exceed rules-side ATO rate by more than X bps.", correct:true},
-          {key:"b", text:"Run 50/50 for 7 days, declare winner by friction rate."},
-          {key:"c", text:"A/B by random user hash but only on weekdays."},
-          {key:"d", text:"Compare offline counterfactual estimates only; no need for A/B."},
-        ]}
-        trap={<>(b) too short to see chargebacks; wrong primary metric. (c) systematic time bias. (d) abandoning real A/B verification of a high-stakes policy change.</>}
-        lens={<>(a). The senior experimental design respects (i) the time horizon of the slowest signal, (ii) a primary metric grounded in business cost, and (iii) a guardrail to bound regression risk. Pre-registration prevents post-hoc cherry-picking.</>}
-        stretch={<>If you can't run 45 days, what's the second-best design?</>}
-      />
-
-      <VIS.TrapProblem
-        id="cba-p8"
+        id="su-p6"
         difficulty="medium"
-        title="P8 — Adversarial drift in attacker behavior"
-        scenario={<>Attackers learn that no_challenge is more likely on low-velocity, high-account-age sessions. They game the bandit's context by aging a stolen account for 30 days before draining it. What's the right response?</>}
+        title="P6 — FIDO security keys just launched. The bandit's never tried this arm. What happens at first?"
+        scenario={<>You added a new arm (FIDO hardware key). It has zero historical data. Predict the bandit's behavior in week 1.</>}
         options={[
-          {key:"a", text:"Treat this as expected adversarial co-evolution. Add adversary-resistant features to the context (link-graph signals, device-vs-account-history mismatch, sudden behavioral change vs per-user baseline) that are harder to game than account age alone. Retrain. Monitor for further attacker adaptation.", correct:true},
-          {key:"b", text:"Drop the bandit; rules are non-gamable."},
-          {key:"c", text:"Increase challenge level globally to compensate."},
-          {key:"d", text:"Add a hard rule: any account that was idle for 30 days then drained gets blocked."},
+          {key:"a", text:"The new arm's posterior (Thompson) or upper confidence bound (LinUCB) is WIDE — the policy will explore it aggressively on contexts where exploration is cheap (low-risk, low-friction-tolerance users with prior FIDO setup signals). Reward observations narrow the posterior, and after enough pulls the bandit settles into the right contexts. This 'native cold-start for arms' is a key advantage over a multi-class classifier, which would have zero training data for FIDO and could not recommend it at all.", correct:true},
+          {key:"b", text:"The bandit ignores the new arm until manually told to use it."},
+          {key:"c", text:"The bandit assigns it the average reward of existing arms."},
+          {key:"d", text:"The bandit refuses to score until FIDO has 1000 samples."},
         ]}
-        trap={<>(b) is wrong — rules are MORE gamable (they're public via attacker reverse-engineering). (c) over-friction the legitimate population. (d) is a one-off patch that doesn't address the general adversarial-drift problem.</>}
-        lens={<>(a). Adversarial drift is the normal operating condition. The bandit's policy isn't broken — its INPUT SPACE was incomplete. Adding orthogonal features that are harder to game is the structural fix. This loop will repeat; the design needs to support continuous feature-engineering + retraining.</>}
-        stretch={<>Which class of features is hardest for the attacker to manipulate at scale?</>}
+        trap={<>(b)(c)(d) miss the exploration-driven cold-start mechanic.</>}
+        lens={<><em>Discriminating insight:</em> native cold-start for new arms is the bandit's structural advantage over supervised multi-class. The wide posterior IS the cold-start.</>}
+        stretch={<>What context features would make the bandit prefer FIDO over SMS during its exploration phase?</>}
       />
 
       <VIS.TrapProblem
-        id="cba-p9"
+        id="su-p7"
         difficulty="hard"
         multiSelect
-        title="P9 — Bandit auto-blocks an EU user. Compliance fallout."
-        scenario={<>The bandit takes the <code>hard_block</code> action on an EU user. The user complains; the supervisory authority asks for documentation. Which issues apply?</>}
+        title="P7 — Adversarial attack on the bandit. Which are realistic?"
+        scenario={<>An attacker who understands you run a bandit policy. Pick the realistic attacks.</>}
         options={[
-          {key:"a", text:"GDPR Article 22 — the user has a right not to be subject to solely automated decisions with significant effects. A bandit-driven hard-block is solely automated.", correct:true},
-          {key:"b", text:"You need to be able to document the specific reason the action was taken — the bandit's policy output alone is not a sufficient explanation.", correct:true},
-          {key:"c", text:"The action space available to the bandit in EU regions should not include hard_block; a human-or-multi-factor step must intervene before a block is final.", correct:true},
-          {key:"d", text:"The bandit is fine in EU as long as the model is trained on consented data."},
-          {key:"e", text:"GDPR doesn't apply to fraud-prevention decisions."},
+          {key:"a", text:"Repeatedly succeed at SMS challenges from a captured device, pushing the bandit toward SMS for that user — then mount the real attack from a different device.", correct:true},
+          {key:"b", text:"Probe with many low-risk sessions to learn the per-context arm choice, then craft a high-risk session that fits the lowest-friction arm.", correct:true},
+          {key:"c", text:"Inject fake delayed-fraud rewards to corrupt the policy.", correct:true},
+          {key:"d", text:"Modify the bandit's policy weights directly.", correct:false},
+          {key:"e", text:"Force the bandit to give zero reward by always dropping out of challenges.", correct:true},
+          {key:"f", text:"Read the user's password from the bandit's posterior.", correct:false},
         ]}
-        trap={<>(d) and (e) misread GDPR — consent on training data doesn't bypass Art. 22 on automated decisions, and there's no blanket fraud-prevention exemption from Art. 22.</>}
-        lens={<>Three correct. <strong>(a)</strong> Art. 22 squarely applies. <strong>(b)</strong> the right to explanation means the bandit's policy must be auditable / interpretable. <strong>(c)</strong> the action space in EU is constrained — block is downstream of a human-or-multi-factor step, not a bandit terminal action. This is the standard EU posture for adaptive auth.</>}
-        stretch={<>Which bandit-model class (linear LinUCB vs neural) is easier to defend under the right-to-explanation?</>}
+        trap={<>(d) requires write access to model state. (f) is nonsense — the bandit does not store passwords.</>}
+        lens={<><em>Discriminating insight:</em> bandit-specific attacks target the LEARNING LOOP (reward poisoning, exploration probing) — not the model weights directly. Defense is bounded influence per session + anomaly detection on reward streams.</>}
+        stretch={<>How would you detect (a) before it succeeds?</>}
       />
 
       <VIS.TrapProblem
-        id="cba-p10"
+        id="su-p8"
         difficulty="hard"
-        title="P10 — End-to-end pick for a digital-first bank"
-        scenario={<>Digital-first bank, 10M MAU, 80M logins/month, mix of US + EU. ATO loss baseline $30M/yr under rules. Friction baseline: 8% of users who hit a challenge abandon. Pick the architecture for an adaptive step-up policy.</>}
+        title="P8 — Bandit chose SMS for 99% of recent step-ups. Investigate."
+        scenario={<>Observability: the bandit collapses onto SMS as the chosen arm in 99% of step-ups over the last 2 weeks. Diagnose.</>}
         options={[
-          {key:"a", text:"Contextual bandit (Thompson sampling) consuming the risk-score + behavioral biometric + device + session features as context. Action space: no_challenge, sms_otp, biometric_re_auth, security_question, queue-for-review (NOT hard_block as a terminal). Safety constraints: no_challenge unavailable above risk-score threshold; in EU, queue-for-review handled by analyst. Reward: weighted combination of chargeback dollars (delayed, via attribution job), abandonment dollars (immediate), support-ticket cost (hours). Offline evaluation: IPS + doubly-robust on logged data before any policy rollout. A/B: 90/10 stratified, 45-day window, pre-registered primary = total expected cost, guardrail on ATO rate. Continuous retraining weekly; full re-train monthly. Audit: full decision log with propensities for explainability + EU Art. 22 compliance.", correct:true},
-          {key:"b", text:"Deep RL with hard-block as a terminal action available globally."},
-          {key:"c", text:"Static rules tuned by fraud-ops weekly."},
-          {key:"d", text:"Bandit with epsilon-greedy 0.1 exploration on the full action space."},
+          {key:"a", text:"Most likely the reward function rewards completion strongly and SMS has the highest completion rate (users are most familiar). Without a fraud-penalty term that distinguishes 'SMS completion by attacker who has SIM-swapped' from 'SMS completion by user', the bandit can't learn that FIDO completions are HIGHER quality. Fix: re-weight reward to include the delayed-fraud penalty per arm; OR add a per-arm minimum exploration floor; OR add a fraud-rate-per-arm regularizer. Bandit collapse onto one arm is almost always a reward-design bug, not an algorithm bug.", correct:true},
+          {key:"b", text:"LinUCB is broken; switch to Thompson."},
+          {key:"c", text:"More exploration."},
+          {key:"d", text:"The user population homogenized."},
         ]}
-        trap={<>(b) takes on EU Art. 22 risk for marginal gain over a constrained-bandit design. (c) is the status quo — leaves cost on the table. (d) uniformly-aggressive exploration is exactly what P1 + P4 warn against.</>}
-        lens={<>(a). The complete senior architecture: constrained Thompson-sampling bandit with safety action-space, business-cost reward, delayed-attribution pipeline, counterfactual offline eval, disciplined A/B with right metric + window + guardrail, EU compliance baked into the action space, full decision auditability. This is what survives security + compliance + product review at a digital-first bank.</>}
-        stretch={<>What single guardrail metric should pause the bandit (kill switch) and roll back to rules?</>}
+        trap={<>(b) blames algorithm for reward bug. (c) is patch-not-fix. (d) is unsupported.</>}
+        lens={<><em>Discriminating insight:</em> bandit collapse is a reward-design failure. The bandit IS doing what you told it to; you told it the wrong thing.</>}
+        stretch={<>What is the simplest diagnostic to confirm "missing fraud term"?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p9"
+        difficulty="medium"
+        title="P9 — Should the bandit's context include the risk-model score?"
+        scenario={<>The bandit decides only AFTER the risk model says "step up". Does the upstream risk score belong in the bandit's context?</>}
+        options={[
+          {key:"a", text:"Yes — strongly. Among 'step-up worthy' sessions, the optimal challenge depends on HOW risky: borderline cases tolerate a lighter challenge; egregious cases demand FIDO or block. Without the score, the bandit can't tier. Also include continuous risk-derived features (anomaly score, device-novelty score, transaction amount). The risk-classifier output and the bandit policy are complementary, not substitutes — the classifier identifies WHEN to act, the bandit identifies WHAT to do.", correct:true},
+          {key:"b", text:"No — the bandit should learn from scratch."},
+          {key:"c", text:"No — the bandit's job is independent."},
+          {key:"d", text:"Yes, but only as a binary high / low flag."},
+        ]}
+        trap={<>(b)(c) misunderstand composition. (d) loses tier information.</>}
+        lens={<><em>Discriminating insight:</em> classifier and bandit compose. The classifier's continuous output is one of the bandit's most informative context features.</>}
+        stretch={<>What does the bandit do differently for a 0.9 risk vs a 0.99 risk session?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p10"
+        difficulty="hard"
+        title="P10 — Counterfactual: how does the bandit know that FIDO would have caught a fraud that SMS missed?"
+        scenario={<>A fraudster completed an SMS challenge (SIM-swap). The bandit issued SMS, observed 'completed', then 30 days later observed fraud reversal. Did the bandit learn FIDO would have prevented it?</>}
+        options={[
+          {key:"a", text:"Not directly. The bandit learns 'SMS in this context yields delayed-fraud penalty', so SMS's expected reward in that context drops. The bandit will explore other arms (FIDO, push, KBA) in similar contexts going forward — that is how it OBSERVES FIDO's performance. Crucially the bandit cannot back-calculate a counterfactual ('what if FIDO had been issued?'); it only learns from arms it actually pulled. This is why exploration is mandatory — without it, you'd never learn that FIDO is better than SMS in SIM-swap-risk contexts.", correct:true},
+          {key:"b", text:"Yes — the bandit reasons counterfactually."},
+          {key:"c", text:"Yes — via a separate counterfactual model."},
+          {key:"d", text:"The bandit cannot learn from delayed fraud reversals."},
+        ]}
+        trap={<>(b) overstates. (c) is a different system (causal inference) not in vanilla bandit. (d) is wrong — see P3.</>}
+        lens={<><em>Discriminating insight:</em> the bandit learns one arm at a time. Counterfactuals over un-pulled arms only emerge from exploration; this is what makes bandits structurally different from supervised learning.</>}
+        stretch={<>What is one technique to share information across arms? (Hint: hierarchical bandits.)</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p11"
+        difficulty="medium"
+        title="P11 — Per-user vs global bandit?"
+        scenario={<>Some users hate SMS; some hate push notifications. Should the bandit be per-user (each user has their own policy) or global (one policy with user features in context)?</>}
+        options={[
+          {key:"a", text:"Global with rich user context features (preferred channel history, completion rate per arm, device list, account age) plus partial pooling across users. A pure per-user bandit suffers from data sparsity — most users have a handful of step-ups, not enough to converge. A pure global bandit ignores user heterogeneity. The middle is hierarchical (per-user posterior anchored to a global prior) or just-add-features. Trees of bandits are a real production pattern.", correct:true},
+          {key:"b", text:"Pure per-user — privacy demands it."},
+          {key:"c", text:"Pure global — uniformity is fair."},
+          {key:"d", text:"Per-segment, with segments defined by demographics."},
+        ]}
+        trap={<>(b) is privacy-confused. (c) ignores heterogeneity. (d) raises fairness concerns AND is coarser than user-level features.</>}
+        lens={<><em>Discriminating insight:</em> per-user data is too sparse for a vanilla bandit; partial pooling (hierarchical Bayesian) or user-features-in-context is the practical middle.</>}
+        stretch={<>What user features matter most for predicting per-arm completion rate?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p12"
+        difficulty="medium"
+        multiSelect
+        title="P12 — Which arms should be in the bandit's action space?"
+        scenario={<>Pick the arms that belong in the bandit's action space. Not all good-sounding choices are good arms.</>}
+        options={[
+          {key:"a", text:"SMS OTP.", correct:true},
+          {key:"b", text:"Push to authenticator app.", correct:true},
+          {key:"c", text:"FIDO hardware key tap.", correct:true},
+          {key:"d", text:"Knowledge-based question (e.g., 'what street did you live on?').", correct:true},
+          {key:"e", text:"Biometric on enrolled device.", correct:true},
+          {key:"f", text:"'No action' (no challenge issued)."},
+          {key:"g", text:"'Permanent block account'.", correct:false},
+        ]}
+        trap={<>(g) is an irreversible business decision that should never be a bandit arm — the cost of the wrong action is asymmetric (account closure causes legal and reputational damage). (f) IS a valid arm — sometimes the right action is to let the user through (low risk + high friction would harm).</>}
+        lens={<><em>Discriminating insight:</em> bandit arms must have BOUNDED downside per pull. Irreversible decisions (account closure, law-enforcement referral) belong outside the bandit's action space.</>}
+        stretch={<>What is the right policy for the 'permanent block' decision instead?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p13"
+        difficulty="hard"
+        title="P13 — Fairness: bandit picks lower-friction arms for some demographics. Audit how?"
+        scenario={<>Compliance asks: are step-up challenges being issued fairly across demographic groups?</>}
+        options={[
+          {key:"a", text:"Audit at three layers: (1) per-group challenge-MIX (does the bandit pick FIDO more often for one group?); (2) per-group COMPLETION rate per challenge (do some groups drop SMS more?); (3) per-group fraud-OUTCOME rate (do the bandit's choices result in equal fraud rates per group?). Disparity in (1) is allowed IF (2) and (3) are equal — the bandit is correctly using context. Disparity in (2) or (3) is the fairness alarm. Fix: per-segment regularization in the reward, NOT removing protected features (which would push the bandit to use proxies).", correct:true},
+          {key:"b", text:"Remove all demographic features from context."},
+          {key:"c", text:"Force equal challenge distribution across groups."},
+          {key:"d", text:"Ignore — the bandit is fair by construction."},
+        ]}
+        trap={<>(b) creates proxy-discrimination via correlated features. (c) ignores legitimate context heterogeneity. (d) is false.</>}
+        lens={<><em>Discriminating insight:</em> bandit fairness is about OUTCOMES across groups, not about equal arm distribution. Equal arms with unequal completion or fraud rates is a real fairness failure.</>}
+        stretch={<>How would you report this to model-risk in a banking context?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p14"
+        difficulty="hard"
+        title="P14 — The delayed reward arrives but the bandit's posterior is now far from where it was when the action was chosen. Update problem?"
+        scenario={<>An action was chosen 60 days ago when the bandit was at policy version v1.7. Today's policy is v2.3 (retrained 4 times since). The fraud reward just arrived. How do you update?</>}
+        options={[
+          {key:"a", text:"Two clean options. (1) Importance-weighted retrospective update: weight the delayed reward by P_current(arm | context) / P_at_decision(arm | context). This is unbiased but high variance when policies have diverged. (2) Build a separate delayed-feedback model that ESTIMATES the expected reward at decision time (using only features available then); feed that estimate as immediate reward to the bandit. (2) is the production pattern — the delayed-feedback model is its own thing; the bandit operates on calibrated estimates. The thing you CAN'T do is naively apply the delayed reward to the current policy without re-weighting; the policy has moved.", correct:true},
+          {key:"b", text:"Apply the reward directly to the current policy."},
+          {key:"c", text:"Discard the delayed reward."},
+          {key:"d", text:"Roll the bandit back to the version that made the decision."},
+        ]}
+        trap={<>(b) is biased. (c) loses signal. (d) breaks production.</>}
+        lens={<><em>Discriminating insight:</em> delayed reward + a moving policy = importance weighting OR an upstream estimator. The naive "apply when it arrives" is what every paper warns against.</>}
+        stretch={<>What is the variance of the IPS-weighted reward when the policies disagree heavily?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p15"
+        difficulty="medium"
+        title="P15 — Production latency: bandit must decide in &lt;100ms. What dominates?"
+        scenario={<>Per-decision latency budget is 100ms for the bandit (after the risk model). What costs the time?</>}
+        options={[
+          {key:"a", text:"Context-feature lookup (user profile, device history, prior step-up outcomes) dominates — usually 30-60ms of joint Redis / feature-store fetches. The bandit's per-arm linear computation is sub-ms for a handful of arms. Posterior sampling in Thompson is sub-ms too. The engineering work is feature pre-fetching, caching, and avoiding sync calls inside the decision path. Train-time bandit fitting is offline and irrelevant to per-decision latency.", correct:true},
+          {key:"b", text:"The LinUCB matrix inversion."},
+          {key:"c", text:"Thompson posterior sampling."},
+          {key:"d", text:"Logging the decision to the warehouse."},
+        ]}
+        trap={<>(b)(c) are sub-ms for &lt;20 arms. (d) is async and out of the decision path.</>}
+        lens={<><em>Discriminating insight:</em> bandit serving latency is feature-store latency, not algorithm latency. Pre-fetch and cache aggressively.</>}
+        stretch={<>What stale-data tolerance can you accept on context features?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p16"
+        difficulty="medium"
+        title="P16 — Hot-swapping the bandit policy in production: what is the safe procedure?"
+        scenario={<>You trained a new bandit policy offline. You want to deploy it. PM proposes flipping a feature flag to 100%.</>}
+        options={[
+          {key:"a", text:"Stage the rollout: (1) shadow mode — new policy LOGS its choices on production traffic without acting; compare offline against actual actions to detect catastrophic divergence; (2) small interleaved A/B (e.g., 5% new policy, 95% old) with proxy-reward monitoring (completion rate, drop rate, latency) until proxy metrics look healthy; (3) ramp to 50%, watch the delayed-fraud-reward signal as it arrives; (4) full rollout AND keep the old policy on a kill-switch route in case of regression. Hot-flipping to 100% with delayed fraud reward is how you find out 60 days later that you let in a lot of fraud.", correct:true},
+          {key:"b", text:"Flip to 100% — A/B testing is over-engineering."},
+          {key:"c", text:"Keep both policies running forever as a true A/B."},
+          {key:"d", text:"Always defer to manual review."},
+        ]}
+        trap={<>(b) destroys money. (c) wastes UX on the loser. (d) defeats automation.</>}
+        lens={<><em>Discriminating insight:</em> staged rollout is essential under delayed reward — the cost of error compounds during the unobserved-reward window.</>}
+        stretch={<>How long is the safe wait before each ramp stage?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p17"
+        difficulty="hard"
+        multiSelect
+        title="P17 — When does a bandit NOT fit the step-up problem?"
+        scenario={<>Pick the scenarios where a contextual bandit is the WRONG tool.</>}
+        options={[
+          {key:"a", text:"Step-up decisions where each action has compounding downstream effects (e.g., issuing SMS today changes the user's future challenge preferences in a way the next-step bandit ignores).", correct:true},
+          {key:"b", text:"When you have so few step-ups (e.g., 100 per day) that exploration overhead is significant.", correct:true},
+          {key:"c", text:"When the action set is dynamic with very high cardinality (e.g., 'pick which security question to ask out of 10000 possible').", correct:true},
+          {key:"d", text:"When you have ~6 arms and 10k decisions per day.", correct:false},
+          {key:"e", text:"When the reward is a clear scalar.", correct:false},
+          {key:"f", text:"When the reward is heavily delayed and difficult to estimate at decision time.", correct:true},
+        ]}
+        trap={<>(d) and (e) are the ideal bandit setup, not failure modes.</>}
+        lens={<><em>Discriminating insight:</em> bandit fit fails on (a) sequential dependencies — needs RL, (b) data sparsity, (c) huge action space — needs combinatorial bandits or embeddings, and (f) unmodelable delayed reward. The 4-6 arms + clear delayed reward of step-up auth is squarely IN bandit territory.</>}
+        stretch={<>What is the upgrade from a bandit when (a) applies?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p18"
+        difficulty="medium"
+        title="P18 — The bandit just got worse on completion rate. Is this a regression or learning?"
+        scenario={<>The bandit's overall challenge-completion rate dropped 3% this week vs last week. PM says: "regression — roll back." Defend or refute.</>}
+        options={[
+          {key:"a", text:"Refute pending the FRAUD signal. The bandit may have intentionally moved toward higher-friction arms (FIDO over SMS) for sessions where completion is lower but fraud-catch is higher. Completion rate alone is not the metric — completion MINUS friction penalty MINUS expected fraud is the metric. Wait the 30-60 day fraud window before rolling back. Also: a small completion drop is expected during high-exploration phases (the bandit deliberately tries arms it hasn't seen much). A blanket roll-back kills learning.", correct:true},
+          {key:"b", text:"Refute — completion always drops during retraining."},
+          {key:"c", text:"Agree — completion is the only metric that matters."},
+          {key:"d", text:"Agree — bandits are too risky in production."},
+        ]}
+        trap={<>(b) is wrong as a general rule. (c)(d) miss the multi-objective reward.</>}
+        lens={<><em>Discriminating insight:</em> single-metric regressions are a trap under delayed-reward optimization. The bandit's job is multi-objective; judge it on the full reward, not one component.</>}
+        stretch={<>How would you communicate this to the PM in dashboard form?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p19"
+        difficulty="hard"
+        title="P19 — Privacy: what context features are PROBLEMATIC for the bandit?"
+        scenario={<>You are designing the context vector. Which features have privacy concerns specific to the bandit?</>}
+        options={[
+          {key:"a", text:"Direct demographic features (race, religion, sexual orientation) — never. Indirect proxies (zip code, name) — only with consent and audit. Behavioral biometric scores — special-category PII under GDPR, requires explicit consent. The bandit's policy LEARNS to use whatever features you give it; if a proxy correlates with a protected attribute, the bandit will use it unless you constrain it. The fix is per-feature audit AND constraint: drop direct sensitive features, audit proxies for disparate impact in the bandit's choices (see P13).", correct:true},
+          {key:"b", text:"All features are fine if anonymized."},
+          {key:"c", text:"Only PII features are problematic."},
+          {key:"d", text:"Privacy is not a bandit-specific concern."},
+        ]}
+        trap={<>(b) misses proxies. (c) too narrow. (d) misses the policy-amplification angle.</>}
+        lens={<><em>Discriminating insight:</em> bandit privacy is policy-amplification — the bandit will use any feature that improves reward, even proxies for protected attributes. Constrain at feature-selection AND audit fairness at outcomes.</>}
+        stretch={<>What is the right consent UX for collecting biometric features for the bandit's context?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p20"
+        difficulty="hard"
+        title="P20 — Pitch the bandit to a director who runs the fraud risk model"
+        scenario={<>"Why a bandit? My risk model already catches fraud. Defend the layer."</>}
+        options={[
+          {key:"a", text:"The risk model says WHEN to step up; the bandit says WHAT challenge to issue. Without it, you collapse onto one challenge type (usually SMS) and pay for it in three ways: (1) SIM-swap fraud on legitimate-looking SMS completions; (2) friction on users who would have preferred biometric or FIDO; (3) inability to learn — a static challenge-picker can't adapt as new arms (FIDO) launch or as channels (SMS) degrade. The bandit handles delayed fraud reward + exploration + native cold-start for new arms — three structural advantages a rule or a multi-class classifier cannot deliver. The operational tax is reward-design + off-policy evaluation + staged rollouts; manageable.", correct:true},
+          {key:"b", text:"Bandits are SOTA."},
+          {key:"c", text:"Reinforcement learning is the future."},
+          {key:"d", text:"It will reduce friction by 10%."},
+        ]}
+        trap={<>(b) is fashion. (c) is vague. (d) is an unsupported number.</>}
+        lens={<><em>Discriminating insight:</em> the pitch names the structural advantages (delayed-reward handling, exploration, native arm cold-start) AND owns the cost (reward design, off-policy eval, staged rollouts).</>}
+        stretch={<>How does the bandit play with the SMS deprecation that NIST is recommending?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p21"
+        difficulty="medium"
+        title="P21 — Logging at decision time: what MUST be logged for off-policy eval to work?"
+        scenario={<>You must log enough information per decision to support later off-policy evaluation. What is mandatory?</>}
+        options={[
+          {key:"a", text:"At minimum: (1) full context vector AS SEEN at decision time (snapshot — not refetched later); (2) action chosen; (3) policy version; (4) action probability under that policy (the propensity, for IPS); (5) timestamp; (6) immediate outcome; (7) link to delayed-reward source (chargeback, dispute) so it can be joined later. Missing the propensity is the most common bug; without it, you can't reweight in IPS / doubly-robust evaluation. The full context snapshot matters because the feature store will have changed by the time you re-fetch.", correct:true},
+          {key:"b", text:"Just the chosen action and outcome."},
+          {key:"c", text:"Just the context."},
+          {key:"d", text:"The bandit's full posterior."},
+        ]}
+        trap={<>(b)(c) are missing pieces. (d) is overkill and impractical.</>}
+        lens={<><em>Discriminating insight:</em> the propensity at decision time is the bandit-specific log requirement. Forget to log it once and your off-policy eval is biased forever after.</>}
+        stretch={<>How would you handle the case where the policy was deterministic at decision time (propensity = 1)?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p22"
+        difficulty="medium"
+        title="P22 — A/B test design: how do you measure bandit vs rule-based step-up?"
+        scenario={<>You want to run a head-to-head A/B between the bandit and the current rule-based step-up policy. What is the right metric stack?</>}
+        options={[
+          {key:"a", text:"Primary: confirmed-fraud rate per arm (30-60 day window) — the true outcome metric. Secondary: per-segment completion rate, drop-off rate, support-contact rate, latency. Guardrail: total challenge volume per arm (to confirm both policies face similar load mixes) AND user-reported friction (NPS or survey on step-up flow). Sample size driven by the rare fraud rate (often need millions per arm). Interim proxy: completion rate weighted by historical fraud-per-arm to estimate the primary before the 60-day window closes.", correct:true},
+          {key:"b", text:"Just completion rate."},
+          {key:"c", text:"Just AUROC."},
+          {key:"d", text:"Just the bandit's reward."},
+        ]}
+        trap={<>(b)(c) miss fraud. (d) is biased — the bandit optimizes its own reward; need an independent metric.</>}
+        lens={<><em>Discriminating insight:</em> the head-to-head metric must include the delayed-fraud outcome AS PRIMARY, with proxy metrics for early reads. Single-metric A/B is the bandit-deployment trap.</>}
+        stretch={<>How long until you can call the experiment statistically?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p23"
+        difficulty="hard"
+        title="P23 — Compliance asks: 'show me the bandit's decision logic for a specific session'. What do you produce?"
+        scenario={<>An auditor wants per-decision explainability for a step-up choice. The bandit picked KBA for session #99. Justify.</>}
+        options={[
+          {key:"a", text:"Produce: (1) the context vector as snapshotted; (2) the per-arm score the bandit computed (linear contribution: theta_arm dot context, plus exploration bonus); (3) the action probability for each arm at that moment (propensity); (4) the policy version with a link to its model card; (5) the immediate outcome and (when available) the delayed-fraud outcome. LinUCB and Thompson are both linear-friendly so per-feature attribution is straightforward. This is the bandit equivalent of SHAP for a classifier — it exists, it just requires logging the right things at decision time (see P21).", correct:true},
+          {key:"b", text:"The bandit is a black box — explain that it cannot be explained."},
+          {key:"c", text:"Show the bandit's training history."},
+          {key:"d", text:"Show only the final chosen arm."},
+        ]}
+        trap={<>(b) is wrong — linear bandits are very explainable. (c)(d) miss per-decision attribution.</>}
+        lens={<><em>Discriminating insight:</em> linear contextual bandits (LinUCB, Thompson with linear model) are MORE explainable per-decision than a typical deep classifier — but only if you logged the propensity and per-arm score at decision time.</>}
+        stretch={<>How does this story change if you replace LinUCB with a deep contextual bandit?</>}
+      />
+
+      <VIS.TrapProblem
+        id="su-p24"
+        difficulty="hard"
+        title="P24 — End-to-end: design the step-up bandit for a 10M-DAU consumer bank"
+        scenario={<>You inherit a rule-based step-up policy (every flagged session gets SMS) at a 10M-DAU consumer bank. Design the bandit.</>}
+        options={[
+          {key:"a", text:"Arms: SMS OTP, push to authenticator, FIDO key, biometric on enrolled device, KBA, no-action. Exclude permanent block (out of bandit scope). Context: risk-model score + amount + device-class + user-tenure + prior step-up outcomes per arm + channel-availability flags. Algorithm: hierarchical Thompson sampling (global prior, per-user posterior) — partial pooling handles sparsity. Reward: completion - drop_penalty - latency_cost - delayed_fraud_cost (the fraud term arrives via a delayed-feedback survival model that emits a calibrated expected-fraud estimate at decision time AND a retrospective correction when the actual reward arrives). Exploration: 5-10% on low-risk step-ups, 1-2% on high-risk. Logging: full context snapshot + propensity + policy version + action + outcome. Rollout: shadow &rarr; 5% &rarr; 50% &rarr; 100% with kill-switch back to SMS-only. Off-policy eval: doubly-robust IPS on historical data plus interleaved A/B in production. Audit: per-segment outcome fairness, per-decision attribution log retained 7 years for compliance.", correct:true},
+          {key:"b", text:"Pure epsilon-greedy with random exploration."},
+          {key:"c", text:"A multi-class classifier predicting the best challenge."},
+          {key:"d", text:"A reinforcement-learning agent."},
+        ]}
+        trap={<>(b) misses context. (c) misses counterfactuals + cold-start. (d) is over-engineering (no sequential structure in single step-up).</>}
+        lens={<><em>Discriminating insight:</em> the senior design names the algorithm family (hierarchical Thompson), the reward decomposition with delayed-fraud handling, exploration as a function of risk tier, the staged rollout under delayed reward, AND the audit / compliance layer. Every component justified by a real production failure mode.</>}
+        stretch={<>Which decision is hardest to defend to an auditor: exploration on high-risk sessions, or the delayed-fraud reward weighting?</>}
       />
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
         <li>
-          <a href="https://dl.acm.org/doi/10.1145/3640457.3688149" target="_blank" rel="noopener">
-            <strong>RecSys 2024 — Contextual Bandits for Adaptive Step-up Authentication (Industry track)</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, RecSys 2024)</span>
-          <br/>Source paper. Read the action-space constraint section and the delayed-reward design.
-        </li>
-        <li>
-          <a href="https://hunch.net/~jl/projects/interactive/sidebandits/" target="_blank" rel="noopener">
-            <strong>John Langford — Side projects on contextual bandits</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(blog, academic)</span>
-          <br/>The Vowpal Wabbit contextual-bandits primer from the author. Best practitioner-level intro to IPS / DR estimators.
-        </li>
-        <li>
           <a href="https://arxiv.org/abs/1003.0146" target="_blank" rel="noopener">
-            <strong>Li, Chu, Langford, Schapire — A Contextual-Bandit Approach to Personalized News Article Recommendation (LinUCB)</strong>
+            <strong>Li et al. — A Contextual-Bandit Approach to Personalized News Article Recommendation (LinUCB)</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(paper, WWW 2010)</span>
-          <br/>The classic contextual-bandit paper. Linear bandit with confidence-bound exploration. Foundation for understanding the Thompson-sampling alternative.
+          <br/>The original LinUCB paper. Section 3 (algorithm) and Section 5 (offline evaluation via replay) are the keepers — both directly map to step-up auth.
         </li>
         <li>
-          <a href="https://arxiv.org/abs/1103.4601" target="_blank" rel="noopener">
+          <a href="https://lilianweng.github.io/posts/2018-01-23-multi-armed-bandit/" target="_blank" rel="noopener">
+            <strong>Lilian Weng — The Multi-Armed Bandit Problem and Its Solutions</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
+          <br/>Practitioner-grade walkthrough of LinUCB and Thompson sampling with intuition for exploration trade-offs. Pair with the paper for working understanding.
+        </li>
+        <li>
+          <a href="https://research.netflix.com/research-area/recommendations" target="_blank" rel="noopener">
+            <strong>Netflix Research — Bandits and Recommendations</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(blog series)</span>
+          <br/>Production-grade write-up of contextual bandits + off-policy evaluation + delayed reward at scale. The closest public analogue to the step-up-auth problem.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/1003.5956" target="_blank" rel="noopener">
             <strong>Dudik, Langford, Li — Doubly Robust Policy Evaluation and Learning</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(paper, ICML 2011)</span>
-          <br/>The DR estimator for offline policy evaluation. Section 3 has the variance argument.
+          <br/>The off-policy evaluation paper. Read for the IPS/doubly-robust machinery you need to evaluate a new bandit policy before deploying.
         </li>
         <li>
-          <a href="https://gdpr-info.eu/art-22-gdpr/" target="_blank" rel="noopener">
-            <strong>GDPR Article 22 — Automated individual decision-making</strong>
+          <a href="https://pages.nist.gov/800-63-3/sp800-63b.html" target="_blank" rel="noopener">
+            <strong>NIST SP 800-63B — Digital Identity Guidelines: Authenticators</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(regulation text)</span>
-          <br/>The text that constrains bandit-driven hard-blocks in EU. Read alongside the Art. 22 ICO guidance for practical interpretation.
+          <span style={{color:"#64748b", fontSize:14}}>(standard)</span>
+          <br/>The authoritative reference on what each step-up arm actually buys you in security terms (why FIDO &gt; SMS, why KBA is weakest). The bandit's reward should reflect these tiers.
         </li>
       </ul>
     </VIS.Section>

@@ -1414,296 +1414,505 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// Behavioral biometrics ensemble — stacked classifier on keystroke + mouse + device + session signals
-// for account-takeover (ATO) defense in banking apps.
+// BioCatch-style ENSEMBLE — late-fusion across MULTIPLE single-modality behavioral biometrics.
+// ANCHOR: cross-signal correlation (keystroke + mouse + swipe + accelerometer/gait).
+// The unique strength is JOINT consistency — fraudsters can mimic one modality;
+// reliably mimicking all of them at once is hard.
+// NOT the same as: TypeNet (keystroke alone), mouse-TCN (cursor alone), gait-accel (mobile alone).
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="Fraud SOTA · ATO defense"
-      title="Behavioral biometrics ensemble (BioCatch-style)"
-      subtitle="Stack keystroke dynamics, mouse trajectories, device fingerprint, and session-level behavior into a single ATO risk score — no one biometric is reliable alone, but the ensemble is."
+      pill="Fraud SOTA · Behavioral biometrics · ENSEMBLE"
+      title="BioCatch-style behavioral biometrics ensemble"
+      subtitle="Late-fusion over per-modality scorers (keystroke + mouse + swipe + accelerometer/gait) so the joint consistency check, not any single signal, decides ATO. Fraudsters can imitate one modality; consistent imitation across all four is the hard part."
       byline={[
-        {label: "Source", value: "BioCatch / NuData / Sift whitepapers 2024-25"},
-        {label: "Year", value: "2025"},
-        {label: "L3", value: "Account takeover (ATO)"},
+        {label: "Mechanism", value: "Late fusion + cross-signal consistency"},
+        {label: "Vendor", value: "BioCatch, Pindrop-Behavioral, NuData (commercial canon)"},
+        {label: "Distinct from", value: "TypeNet / mouse-TCN / gait-accel (single-modality)"},
       ]}/>
 
     <VIS.TLDR>
-      A single biometric channel (just keystroke timing, or just mouse) ships with brittle false positives — a tired legitimate user types differently after midnight. An{" "}
-      <VIS.Term def="A meta-model whose features are predictions or feature vectors from several base models trained on different signal types. Stacking captures complementary errors the individual models make.">ensemble (stacked classifier)</VIS.Term>{" "}
-      that fuses four orthogonal channels — keystroke, mouse, device, session — stabilizes both precision and recall. The senior question is not "is biometrics enough" — it's "which channels are orthogonal, how do you fuse them under EU consent constraints, and how do you keep the system honest as attackers script around each signal?"
+      A behavioral biometrics ensemble runs several modality-specific scorers in parallel —{" "}
+      <VIS.Term def="Time between key-down and key-up plus the gap to the next key-down. Per-user motor-timing pattern.">keystroke dwell/flight</VIS.Term>,{" "}
+      <VIS.Term def="Cursor path curvature, jerk, pressure dynamics over time. Discriminates RAT-driven cursors from human ones.">mouse curvature</VIS.Term>,{" "}
+      <VIS.Term def="Two-finger touch trajectories on a phone — angle, velocity, finger spread.">swipe geometry</VIS.Term>, and{" "}
+      <VIS.Term def="3-axis accelerometer trace of how the device sways while a user walks or holds it. Walk-cycle phase is per-user.">accelerometer-based gait</VIS.Term>{" "}
+      — then late-fuses their scores with a learned gate. The signature win is the{" "}
+      <VIS.Term def="A check that the per-modality risk scores agree about who is using the device. A mimicry attacker who copies one modality cannot also produce consistent timings on the others.">cross-signal consistency</VIS.Term>{" "}
+      check: any single scorer can be spoofed, but reproducing a coherent multi-modal signature is much harder than the sum of the parts.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="What it is — late fusion over per-modality scorers">
       <p>
-        At login or during a session, the client collects four families of signals: (i) <strong>keystroke dynamics</strong> — dwell time per key and flight time between keys; (ii) <strong>mouse / touch trajectories</strong> — velocity profile, curvature, tremor; (iii) <strong>device fingerprint</strong> — user-agent, canvas hash, fonts, time-zone, sensor entropy; (iv) <strong>session behavior</strong> — page-flow sequence, dwell on each screen, copy-paste use, form-fill order. Each channel feeds its own base learner; a meta-classifier stacks their outputs into one ATO probability.
+        Each modality is a separate, already-trained scorer (TypeNet for keystroke; a TCN for mouse; a small ConvNet for swipes; a gait-cycle classifier for accelerometer). None of them is new. The ensemble is the architecture that sits ABOVE them:
       </p>
+      <ol>
+        <li><strong>Per-modality embedding:</strong> each scorer emits a session embedding plus a per-user similarity score against an enrolled centroid.</li>
+        <li><strong>Coverage gate:</strong> some modalities will be missing per session (no keyboard on a swipe-only mobile session, no accelerometer on web). The gate masks absent modalities so the fusion is over what is actually observed.</li>
+        <li><strong>Late fusion:</strong> a small MLP or learned-attention head takes the per-modality scores plus a coverage mask and outputs a single ATO risk in [0, 1].</li>
+        <li><strong>Consistency feature:</strong> alongside the scores, the fusion head sees pairwise consistency features (e.g., does keystroke agree with mouse about who is at the keyboard?). This is the late-fusion-specific signal NO single modality has.</li>
+      </ol>
 
       <VIS.Mermaid chart={`
 flowchart TB
-  KEY["Keystroke dynamics"]
-  MOUSE["Mouse trajectory"]
-  DEV["Device fingerprint"]
-  SESS["Session behavior"]
-  KM["Keystroke model"]
-  MM["Mouse model"]
-  DM["Device model"]
-  SM["Session model"]
-  STACK["Stacked meta-classifier"]
-  RISK["ATO risk score"]
-  KEY --> KM
-  MOUSE --> MM
-  DEV --> DM
-  SESS --> SM
-  KM --> STACK
-  MM --> STACK
-  DM --> STACK
-  SM --> STACK
-  STACK --> RISK
-  style STACK fill:#dbeafe,stroke:#2563eb,stroke-width:2px
-  style RISK fill:#fef3c7,stroke:#d97706,stroke-width:2px
+  S["Session events"]
+  S --> K["Keystroke scorer"]
+  S --> M["Mouse scorer"]
+  S --> W["Swipe scorer"]
+  S --> G["Gait scorer"]
+  K --> F["Late fusion head"]
+  M --> F
+  W --> F
+  G --> F
+  C["Coverage mask"] --> F
+  X["Cross-signal consistency features"] --> F
+  F --> R["ATO risk in 0 to 1"]
+  style F fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+  style X fill:#fef3c7,stroke:#d97706,stroke-width:2px
+  style R fill:#fee2e2,stroke:#dc2626,stroke-width:2px
       `} />
       <p>
-        Blue = the stacked meta-classifier where signal fusion happens. Yellow = the calibrated ATO score consumed downstream by step-up auth or fraud-ops queues. The four base learners are independently trained per channel so an attacker who scripts around one (e.g., replays mouse paths) still trips the others.
+        The per-modality scorers are frozen during fusion training. Only the late-fusion head trains, on (session features &rarr; labeled ATO outcome) pairs. This separation means a new modality (e.g., a typing-rhythm-on-numeric-pad scorer) can be added by re-training only the fusion head, not the underlying biometrics.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
+    <VIS.Section id="sec-diff" title="How it differs from any single-modality biometric">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
         <thead>
           <tr style={{background:"#1f3a5f", color:"#fff"}}>
             <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Password + 2FA only</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Single biometric</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Stacked ensemble</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Single-modality scorer</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Late-fusion ensemble</th>
           </tr>
         </thead>
         <tbody>
           <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Catches credential-stuffing with valid 2FA</td>
-            <td style={{padding:"8px 10px"}}>No</td>
-            <td style={{padding:"8px 10px"}}>Sometimes</td>
-            <td style={{padding:"8px 10px"}}>Yes</td>
+            <td style={{padding:"8px 10px"}}>Failure under mimicry</td>
+            <td style={{padding:"8px 10px"}}>Defeated when attacker copies that one signal</td>
+            <td style={{padding:"8px 10px"}}>Defeated only when attacker copies ALL signals consistently</td>
           </tr>
           <tr>
-            <td style={{padding:"8px 10px"}}>FPR on legitimate fatigued users</td>
-            <td style={{padding:"8px 10px"}}>Low</td>
-            <td style={{padding:"8px 10px"}}>High</td>
-            <td style={{padding:"8px 10px"}}>Low to medium</td>
+            <td style={{padding:"8px 10px"}}>Coverage</td>
+            <td style={{padding:"8px 10px"}}>Zero if modality is absent</td>
+            <td style={{padding:"8px 10px"}}>Degrades gracefully on whichever modalities are present</td>
           </tr>
           <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Robust to attacker scripting one channel</td>
-            <td style={{padding:"8px 10px"}}>N/A</td>
-            <td style={{padding:"8px 10px"}}>No</td>
-            <td style={{padding:"8px 10px"}}>Yes (other channels still trigger)</td>
+            <td style={{padding:"8px 10px"}}>Unique signal</td>
+            <td style={{padding:"8px 10px"}}>Per-user marginal pattern</td>
+            <td style={{padding:"8px 10px"}}>Per-user joint pattern + cross-modality CONSISTENCY</td>
           </tr>
           <tr>
-            <td style={{padding:"8px 10px"}}>EU GDPR consent overhead</td>
-            <td style={{padding:"8px 10px"}}>None</td>
-            <td style={{padding:"8px 10px"}}>Moderate</td>
-            <td style={{padding:"8px 10px"}}>Heavy (multi-channel disclosure)</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Friction added per login</td>
-            <td style={{padding:"8px 10px"}}>High (always 2FA)</td>
-            <td style={{padding:"8px 10px"}}>Low</td>
-            <td style={{padding:"8px 10px"}}>Low (passive)</td>
+            <td style={{padding:"8px 10px"}}>Calibration burden</td>
+            <td style={{padding:"8px 10px"}}>One threshold</td>
+            <td style={{padding:"8px 10px"}}>Per-modality calibration drift + fusion head re-training</td>
           </tr>
         </tbody>
       </table>
+      <p style={{marginTop:12}}>
+        <strong>Why "late" fusion, not "early":</strong> early fusion would concatenate raw events from all modalities into one giant encoder. That couples training of all four, breaks if any one is offline, and fails to exploit the per-modality progress (TypeNet, mouse-TCN, gait-cycle) the field already has. Late fusion treats each modality as a stable subsystem.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick">
-      <ul>
-        <li><strong>High-value account flows</strong> — wire transfers, crypto withdrawals, primary-bank logins where ATO has a five-figure blast radius per incident.</li>
-        <li><strong>Mobile and web apps with rich client telemetry</strong> — touch sensors, key timings, mouse paths must all be capturable.</li>
-        <li><strong>Coexists with risk-based step-up auth</strong> — the ensemble's score is consumed by a step-up policy that decides whether to challenge.</li>
-        <li><strong>Not on its own for EU users without explicit consent</strong> — privacy disclosures must be reworked; channels may need to be off by default in some jurisdictions.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <VIS.Callout kind="gotcha" title="Stacked models train-test leakage">
-        Naive stacking — train base models on the full train set, then train the meta-classifier on their predictions on the same data — overfits badly. Use out-of-fold predictions for the meta-training set, or hold out a fold.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="GDPR Art. 9 + Art. 22 implications">
-        Behavioral biometrics is considered special-category personal data under GDPR in some EU interpretations. Article 22 also constrains "solely automated decisions"; in EU, the score must feed a human-or-multi-factor downstream, never a unilateral block.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Accessibility false positives">
-        Users with motor impairments, Parkinson's tremor, or screen-reader navigation produce keystroke + mouse patterns that look anomalous to a model trained on able-bodied medians. Stratified-FPR audits per accessibility profile are mandatory.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Ten interview-grade traps on signal orthogonality, stacking discipline, consent, attacker scripting, and end-to-end deployment.
+        Twenty-four interview-grade traps anchored on late fusion, cross-signal consistency, per-modality calibration drift, and the operational realities of running four scorers in parallel.
       </p>
 
       <VIS.TrapProblem
-        id="bbe-p1"
+        id="bio-ens-p1"
+        difficulty="hard"
+        title="P1 — A senior asks: 'why is this ensemble different from running 4 biometrics and taking the max?'"
+        scenario={<>You inherit a system that scores keystroke, mouse, swipe, and gait independently and alerts if ANY of them flags. PM says: "this is already an ensemble." Defend or refute.</>}
+        options={[
+          {key:"a", text:"Refute. An OR-of-flags is not a learned ensemble. Late fusion does two things the OR cannot: (1) it learns weights so noisy modalities (e.g., gait on a stationary phone) do not dominate; (2) it adds cross-signal consistency features — does keystroke timing agree with mouse curvature about who is at the device? A mimicry attacker who imitates ONE modality can defeat OR-of-flags but cannot produce a consistent joint signature across all four. The OR baseline does not exploit cross-signal correlation at all.", correct:true},
+          {key:"b", text:"Defend — OR is a valid ensemble."},
+          {key:"c", text:"Refute, but for the reason that OR has higher latency."},
+          {key:"d", text:"Refute, but only because OR cannot be trained."},
+        ]}
+        trap={<>(b) misses the consistency signal entirely. (c) is wrong — OR is faster. (d) misses both (1) AND (2).</>}
+        lens={<><em>Discriminating insight:</em> the value of late fusion is NOT in any single modality — it is in the cross-signal consistency that becomes a feature ONLY when scores are jointly modeled. OR-of-flags throws this signal away.</>}
+        stretch={<>How would you measure the marginal contribution of consistency features over the per-modality scores alone?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p2"
+        difficulty="hard"
+        title="P2 — On a swipe-only mobile session (no keyboard, no mouse, no walking), how should fusion behave?"
+        scenario={<>A user logs in on iOS, swipes through three screens, and approves a wire transfer. No keystrokes, no mouse events, phone is stationary so gait is empty.</>}
+        options={[
+          {key:"a", text:"The coverage mask zeros out keystroke / mouse / gait inputs and the fusion head consumes only the swipe score plus the mask itself. The mask is an input — not an exclusion — so the head learns 'on swipe-only sessions, the swipe score carries more weight AND I should be more conservative because cross-signal consistency cannot verify identity.' Practical outcome: lower default risk threshold for swipe-only sessions; step up auth at the transfer step rather than blocking outright.", correct:true},
+          {key:"b", text:"Fall back to a global mean risk score because three modalities are missing."},
+          {key:"c", text:"Refuse to score and force step-up regardless."},
+          {key:"d", text:"Impute the missing modalities to zero and feed them into the same fusion head."},
+        ]}
+        trap={<>(b) discards the swipe signal that IS available. (c) is high-friction. (d) is the bug that breaks every naive late-fusion implementation — zero is not "missing", it is a numeric value the head will weight.</>}
+        lens={<><em>Discriminating insight:</em> the coverage mask is itself a feature; treating absence as a numeric zero conflates "missing" with "extreme score" and corrupts the joint posterior.</>}
+        stretch={<>What is the simplest test that your fusion head respects the mask?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p3"
         difficulty="hard"
         multiSelect
-        title="P1 — Which signals are actually orthogonal?"
-        scenario={<>You propose four base channels: keystroke timings, mouse trajectories, device fingerprint, and IP geolocation. Your tech lead asks: are these orthogonal enough that ensembling buys real lift over the strongest single channel? Which statements correctly reason about orthogonality?</>}
+        title="P3 — Which of these is a cross-signal CONSISTENCY feature (not a per-modality score)?"
+        scenario={<>Pick all features that depend on JOINT structure across modalities, not on any single modality alone.</>}
         options={[
-          {key:"a", text:"Keystroke timing and mouse trajectory are physically generated by different motor systems and often by different input devices; their error patterns are largely uncorrelated and ensembling adds real lift.", correct:true},
-          {key:"b", text:"Device fingerprint and IP geolocation are highly correlated — attackers with a stolen device on a VPN look anomalous on both simultaneously; treating them as independent overcounts evidence.", correct:true},
-          {key:"c", text:"All four signals are independent because they measure different things; ensemble lift is guaranteed."},
-          {key:"d", text:"Replace IP geolocation with session behavior (page-flow sequence) — orthogonal to the other three because it's about higher-level intent, not motor or hardware identity.", correct:true},
-          {key:"e", text:"Add a fifth channel that re-uses keystroke features under a different name (e.g., 'typing rhythm spectral density'); diversity always helps."},
+          {key:"a", text:"Keystroke score agrees with mouse score (both say 'looks like enrolled user').", correct:true},
+          {key:"b", text:"Keystroke score is high.", correct:false},
+          {key:"c", text:"The user types in bursts AND moves the cursor smoothly between bursts (motor-coupling pattern).", correct:true},
+          {key:"d", text:"Swipe pressure rises while accelerometer shows walking (a stationary user shouldn't be applying walking-grip pressure).", correct:true},
+          {key:"e", text:"Gait score alone is high.", correct:false},
+          {key:"f", text:"Time between last keystroke and first mouse movement matches enrolled user's typical hand-transition latency.", correct:true},
         ]}
-        trap={<>(c) is the naive "different feature, different model" reflex — features can MEASURE different things and still produce correlated ERRORS. (e) is the diversity-cargo-cult: adding a renamed channel doesn't add information. The real orthogonality question is "do the channels' MISTAKES disagree" — and that's empirical, not nominal.</>}
-        lens={<>Three correct. <strong>(a)</strong> keystroke and mouse use different motor systems — empirically uncorrelated errors. <strong>(b)</strong> device + IP both move together under VPN attacks — combining them double-counts the same evidence. <strong>(d)</strong> session-behavior signals are orthogonal because they measure intent at the page level, not motor or hardware. The senior signal here is rejecting nominal diversity in favor of measured error-correlation.</>}
-        stretch={<>How would you EMPIRICALLY measure orthogonality between two channels before ensembling them?</>}
+        trap={<>(b) and (e) are per-modality scores, not consistency features.</>}
+        lens={<><em>Discriminating insight:</em> consistency features have a JOINT structure — they cannot be computed from any single modality alone. They vanish the moment you average or OR per-modality flags.</>}
+        stretch={<>Which consistency feature would survive if the attacker controls the keystroke modality entirely?</>}
       />
 
       <VIS.TrapProblem
-        id="bbe-p2"
+        id="bio-ens-p4"
         difficulty="hard"
-        title="P2 — Stacking leakage"
-        scenario={<>You build four base learners on 10M sessions (8M train, 1M val, 1M test). You train each base learner on the full 8M train set, then compute their predictions on the same 8M train set and feed those predictions as features into a logistic-regression meta-classifier. Val AUC = 0.97, test AUC = 0.81. What went wrong?</>}
+        title="P4 — Keystroke scorer was recalibrated last week; mouse scorer was not. How does this break the fusion head?"
+        scenario={<>An engineer recalibrates the keystroke scorer so its score distribution shifts left by 0.2 (it is now more conservative). They forget to retrain the fusion head. What goes wrong?</>}
         options={[
-          {key:"a", text:"Bug in feature extraction; rebuild pipeline."},
-          {key:"b", text:"Each base learner saw the meta-training labels indirectly because it trained on the same rows whose predictions are now meta-features. The meta-classifier overfits to the optimistic in-sample base predictions. Fix: train base learners with K-fold out-of-fold predictions, or hold out a separate fold dedicated to meta-training.", correct:true},
-          {key:"c", text:"Logistic regression is too simple for stacking; switch to XGBoost."},
-          {key:"d", text:"More training data would close the gap."},
+          {key:"a", text:"The fusion head learned the old keystroke score distribution. With the new one, its 'keystroke is low' decisions misfire — the head reads a 0.6 as 'concerning' when it now means 'normal.' The cross-signal consistency features also drift because consistency between keystroke and mouse was defined relative to the old calibration. Fix: every per-modality recalibration MUST trigger fusion-head retraining (or at minimum, a histogram-matching adapter at the head input). This is the operational tax of late fusion that single-modality systems do not pay.", correct:true},
+          {key:"b", text:"Nothing — the fusion head is invariant to per-modality calibration."},
+          {key:"c", text:"FAR goes down because the keystroke scorer is more conservative."},
+          {key:"d", text:"Only the keystroke output is affected; mouse, swipe, and gait are unchanged."},
         ]}
-        trap={<>(a) misdiagnoses a known design pitfall as code error. (c) wraps the same leakage in a stronger model — the gap stays. (d) "more data" reflex but the gap is structural, not statistical.</>}
-        lens={<>(b). This is the classical stacking-leakage trap. In-sample base predictions are systematically too good; the meta-classifier learns to trust them, then crumbles on truly unseen base predictions at test time. Out-of-fold (OOF) predictions on the train set, or a dedicated holdout fold for meta, is the standard fix. Wolpert's 1992 stacking paper specifies OOF — most practitioners forget.</>}
-        stretch={<>If using a 5-fold OOF scheme, how would you produce base predictions for the val set?</>}
+        trap={<>(b) is the bug. (c) confuses individual scorer with fused decision. (d) misses the cross-signal consistency coupling.</>}
+        lens={<><em>Discriminating insight:</em> per-modality calibration drift in a late-fusion system propagates to the fusion head through BOTH the per-modality score AND the consistency features. It is the unique operational cost of ensembles.</>}
+        stretch={<>How would you detect this silently in production before users complain?</>}
       />
 
       <VIS.TrapProblem
-        id="bbe-p3"
-        difficulty="hard"
-        multiSelect
-        title="P3 — Attacker scripting one channel"
-        scenario={<>Threat intel reports a new ATO kit on the dark web that replays harvested mouse trajectories during login. Your mouse-model precision drops 30% in one week. Which responses are correct?</>}
-        options={[
-          {key:"a", text:"The other three channels are still active — ATO score should degrade gracefully because keystroke, device, and session models were not scripted. If overall AUC drops only marginally, the ensemble design is working as intended.", correct:true},
-          {key:"b", text:"Down-weight the mouse channel in the meta-classifier proportional to its drift — but don't drop it (the kit isn't universal and the channel still helps on the un-scripted majority).", correct:true},
-          {key:"c", text:"Add a freshness adversarial-training set: harvest examples of replayed-mouse sessions; retrain the mouse model to flag replay-specific artifacts (constant inter-event timing, identical Bezier curvature).", correct:true},
-          {key:"d", text:"Drop the mouse channel entirely — once attacked, it's permanently compromised."},
-          {key:"e", text:"Hard-block any session with anomalous mouse score; force step-up for all users."},
-        ]}
-        trap={<>(d) is the overreaction trap — the kit only affects a subset of attackers; legitimate signal remains in the channel. (e) over-friction the legitimate population to defend against a partial-coverage threat.</>}
-        lens={<>Three correct. <strong>(a)</strong> graceful degradation is THE reason to ensemble — one channel compromised, others compensate. <strong>(b)</strong> dynamic re-weighting under drift is the disciplined response. <strong>(c)</strong> adversarial retraining adds replay-specific defenses without giving up the channel. The senior posture is "channels are defensive depth, not single points of failure."</>}
-        stretch={<>How would you DETECT that a specific channel has been scripted before precision drops 30%?</>}
-      />
-
-      <VIS.TrapProblem
-        id="bbe-p4"
-        difficulty="hard"
-        title="P4 — EU consent under GDPR Article 9"
-        scenario={<>You operate the bank in Germany. The DPO informs you that keystroke + mouse biometrics may fall under GDPR Art. 9 special-category data. What's the right product posture?</>}
-        options={[
-          {key:"a", text:"Default the EU keystroke + mouse channels to OFF. Offer them as an opt-in security-upgrade feature with explicit Art. 9 consent. Keep device fingerprint + session-behavior channels (which generally don't fall under Art. 9) running by default. Score the EU users on whichever channels they consented to; meta-classifier handles missing channels via masked input or imputation.", correct:true},
-          {key:"b", text:"Ignore the DPO — fraud-prevention is a legitimate interest under Art. 6(1)(f) that overrides Art. 9."},
-          {key:"c", text:"Block all EU users from using the app until they consent."},
-          {key:"d", text:"Run the channels server-side without informing users — no client-side collection means no consent needed."},
-        ]}
-        trap={<>(b) misreads the GDPR hierarchy — Art. 9 has tighter requirements than Art. 6 legitimate interest. (c) is operationally absurd. (d) is illegal — server-side processing of biometric-derived data still triggers Art. 9 if the source is biometric.</>}
-        lens={<>(a). The right posture is channel-level consent + graceful meta-classifier. Channels users haven't consented to are masked at inference; the meta-classifier was trained to handle the masked-channel case. This is the standard pattern at EU-operating biometrics vendors and survives DPO + supervisory-authority review.</>}
-        stretch={<>How would you TRAIN a meta-classifier robust to one or more masked channels at inference time?</>}
-      />
-
-      <VIS.TrapProblem
-        id="bbe-p5"
+        id="bio-ens-p5"
         difficulty="medium"
-        title="P5 — Per-user vs population baseline"
-        scenario={<>Your keystroke model can be trained as either (i) a population baseline (one model for all users; flag anomalies vs population) or (ii) per-user (one model per user; flag anomalies vs that user's history). Which is right for ATO?</>}
+        title="P5 — Logistic regression vs gradient-boosted tree vs small MLP for the fusion head: which?"
+        scenario={<>You have ~4 modality scores + coverage mask + ~10 consistency features. Pick the fusion head.</>}
         options={[
-          {key:"a", text:"Both, fused. Per-user model is the strongest ATO signal (the attacker is NOT this user), but it cold-starts on new accounts and breaks on long-inactive users. Population baseline covers cold-start and acts as a sanity check. Train both; the meta-classifier learns when to trust which.", correct:true},
-          {key:"b", text:"Per-user only — population baseline can't distinguish user-vs-user."},
-          {key:"c", text:"Population only — per-user requires too much storage."},
-          {key:"d", text:"Either is fine; results are equivalent."},
+          {key:"a", text:"Gradient-boosted tree (LightGBM / XGBoost) is the practical default: it handles the coverage mask cleanly (categorical splits on 'modality present?'), captures non-linear consistency interactions without architecture tuning, is auditable for compliance review, and trains fast on millions of session-level labels. MLP gives marginal lift only with ample data and worse auditability. Logistic regression cannot capture consistency interactions without hand-crafted features.", correct:true},
+          {key:"b", text:"MLP — deep learning is always better."},
+          {key:"c", text:"Logistic regression — simplest is best."},
+          {key:"d", text:"Stacking with all three and a meta-learner."},
         ]}
-        trap={<>(b) and (c) are single-axis arguments that ignore cold-start (b) and signal strength (c). (d) ignores that the two have different operating points — per-user wins on established users, population wins on new ones.</>}
-        lens={<>(a). The fusion design is the senior answer. Per-user is the precision king once you have enough history (~30+ sessions); population is the recall floor for cold-start. Combined: meta-classifier weights per-user higher when history is rich, population higher when history is thin.</>}
-        stretch={<>What single piece of session metadata makes the meta-classifier's fusion most accurate?</>}
+        trap={<>(b) is fashion. (c) misses interaction structure. (d) is over-engineering for ~15 features.</>}
+        lens={<><em>Discriminating insight:</em> the fusion head's job is INTERACTION modeling over a handful of features — boosted trees were designed for exactly this shape. Save deep nets for the per-modality encoders that see raw events.</>}
+        stretch={<>How does the auditability requirement change for an SR 11-7 banking context?</>}
       />
 
       <VIS.TrapProblem
-        id="bbe-p6"
+        id="bio-ens-p6"
+        difficulty="medium"
+        title="P6 — A teammate says 'TypeNet's EER is 1.8%; why do we need anything else?'"
+        scenario={<>Defend the ensemble against the "TypeNet alone is enough" position.</>}
+        options={[
+          {key:"a", text:"TypeNet's 1.8% EER is on a clean desktop free-text benchmark. In production: (1) many sessions have NO keystrokes — TypeNet cannot score them at all; (2) mobile soft-keyboard quantization degrades TypeNet sharply; (3) a fraudster who has captured the user's dwell/flight via malware can replay it — TypeNet sees identical timings. The ensemble adds coverage on no-keystroke sessions, redundancy under per-modality compromise, and the cross-signal consistency check that defeats single-modality replay.", correct:true},
+          {key:"b", text:"TypeNet's 1.8% is wrong; the real EER is higher."},
+          {key:"c", text:"We need more models because more models is always better."},
+          {key:"d", text:"TypeNet is too slow to run alone."},
+        ]}
+        trap={<>(b) is unrelated. (c) is fashion. (d) is operational, not the core argument.</>}
+        lens={<><em>Discriminating insight:</em> the ensemble's case rests on COVERAGE + REDUNDANCY + CROSS-SIGNAL CONSISTENCY — three values that no single modality, however good, can provide.</>}
+        stretch={<>If you had to drop one of the four modalities, which would you drop first and why?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p7"
         difficulty="hard"
         multiSelect
-        title="P6 — Calibration vs ranking"
-        scenario={<>The ensemble has good ranking (AUC = 0.96) but poorly calibrated probabilities (predicted ATO probability at 0.8 actually has a 0.5 empirical rate). Downstream step-up auth uses the probability directly in expected-cost math. Which fixes apply?</>}
+        title="P7 — Adversary knows you run a 4-modality ensemble. What is realistic for them to spoof?"
+        scenario={<>Threat-model the ensemble. Which spoofs are realistic, which are not?</>}
         options={[
-          {key:"a", text:"Apply isotonic regression or Platt scaling on a held-out calibration set — preserves ranking, fixes probability surface.", correct:true},
-          {key:"b", text:"Re-train the meta-classifier with a proper scoring rule loss (log-loss) instead of AUC-style ranking objectives — fixes calibration at training time.", correct:true},
-          {key:"c", text:"Monitor calibration drift on a rolling window; re-fit the calibration map weekly because behavioral fraud distributions shift fast.", correct:true},
-          {key:"d", text:"Switch to a deeper model; calibration improves with capacity."},
-          {key:"e", text:"Ignore — calibration doesn't matter if ranking is good."},
+          {key:"a", text:"Replay captured keystroke timings from malware on the victim's machine.", correct:true},
+          {key:"b", text:"Generate plausible mouse curvature with a learned generative model and a robotic mouse arm.", correct:true},
+          {key:"c", text:"Mimic the victim's exact 3-axis accelerometer gait pattern while controlling their phone remotely.", correct:false},
+          {key:"d", text:"Replay swipe trajectories from a captured session on the same device.", correct:true},
+          {key:"e", text:"Spoof ALL FOUR modalities consistently in real time with the right cross-modal motor-coupling latencies (e.g., hand-transition keyboard&rarr;mouse delay).", correct:false},
+          {key:"f", text:"Substitute the user's enrolled centroid for the attacker's during a session.", correct:false},
         ]}
-        trap={<>(d) deeper models often have WORSE calibration than shallower ones, not better. (e) ignores the actual downstream consumer — step-up auth needs probabilities to do expected-cost math.</>}
-        lens={<>Three correct. <strong>(a)</strong> post-hoc calibration is the standard fix. <strong>(b)</strong> log-loss training directly optimizes calibration. <strong>(c)</strong> calibration drifts under attacker shifts; rolling re-fit is required. Senior signal: distinguishing ranking from calibration, naming the downstream consumer that needs each.</>}
-        stretch={<>What's the right calibration metric to report on the rolling monitor: ECE, MCE, or Brier score?</>}
+        trap={<>(c) requires physical possession of the victim AND mimicking gait — not realistic for remote ATO. (e) is theoretically possible but operationally extreme. (f) requires control of the profile store, a different attack class.</>}
+        lens={<><em>Discriminating insight:</em> the threat model justifies the ensemble. Any one of (a)(b)(d) defeats a single-modality system; defeating all of them with consistent cross-modal coupling is what the ensemble forces the attacker to do.</>}
+        stretch={<>Which consistency feature is hardest for the attacker in (a) + (b) combined?</>}
       />
 
       <VIS.TrapProblem
-        id="bbe-p7"
+        id="bio-ens-p8"
         difficulty="hard"
-        title="P7 — Latency budget"
-        scenario={<>Login flow has a 200ms p99 latency budget. Each base learner takes 30-50ms; meta-classifier adds 10ms. Naively that's 130-210ms. How do you fit?</>}
+        title="P8 — Where do labeled ATO outcomes for the fusion head come from?"
+        scenario={<>The fusion head needs (per-modality scores + consistency features &rarr; ATO label) training pairs. Where do labels come from in production?</>}
         options={[
-          {key:"a", text:"Run the four base learners in PARALLEL (they have independent inputs); their max-latency (~50ms) plus meta (~10ms) is ~60ms p99. Use a thread pool or async/await on the inference server. Keep model weights in shared memory to avoid cold-load.", correct:true},
-          {key:"b", text:"Run base learners serially in order of importance; cut off after 150ms."},
-          {key:"c", text:"Quantize all base learners to INT8; reduces each to under 20ms."},
-          {key:"d", text:"Move all four to a single fused multi-head model so there's only one forward pass."},
+          {key:"a", text:"A noisy mix: confirmed-fraud cases from chargebacks (clean but delayed by 30-90 days), customer-service reversal flags (medium-clean, lagged), step-up-auth declines (proxy — user failed the challenge), and a small synthetic-attack set generated by red team. The fusion head must train on a noisy delayed-label setup; the right framing is delayed-feedback survival modeling, not standard classification. ATO is a positive-unlabeled (PU) problem at session level: most non-ATO sessions are never explicitly labeled non-ATO.", correct:true},
+          {key:"b", text:"User-supplied labels at each session."},
+          {key:"c", text:"Labels come from the per-modality scorers themselves."},
+          {key:"d", text:"Manual review of every session by an analyst."},
         ]}
-        trap={<>(b) early-cutoff drops channels arbitrarily — destroys the ensemble. (c) helps but parallelism is the bigger lever, and INT8 changes the calibration story. (d) sounds elegant but loses orthogonality and complicates per-channel consent (P4 problem).</>}
-        lens={<>(a). Independent inputs → embarrassingly parallel. The four base learners run concurrently; total wall-time = max(channels) + meta. This is the standard pattern at production scoring services (Uber Michelangelo, Meta Looper). The parallel design also preserves per-channel consent — each channel either runs or is masked, independently.</>}
-        stretch={<>If a base learner times out at 80ms, what should the meta-classifier do with the missing input?</>}
+        trap={<>(b) does not exist at scale. (c) is the circular bug — using model output as a label leaks. (d) is impossible at scale.</>}
+        lens={<><em>Discriminating insight:</em> the fusion head's label problem is structurally harder than any single modality's because the label is "session-level ATO" with multi-month delay and heavy PU noise. This is why fusion training cadence is monthly, not daily.</>}
+        stretch={<>How would you bias-correct for the PU structure?</>}
       />
 
       <VIS.TrapProblem
-        id="bbe-p8"
-        difficulty="hard"
-        title="P8 — Concept drift in mouse trajectories"
-        scenario={<>Six months post-launch, mouse-channel AUC drifts from 0.91 → 0.78. Keystroke + device + session are stable. Why might JUST mouse decay?</>}
-        options={[
-          {key:"a", text:"Mouse trajectories are sensitive to hardware + OS-cursor-acceleration changes; a Windows 11 update changed the default cursor acceleration curve, shifting the distribution of legitimate users' velocity profiles. Population baseline is stale.", correct:true},
-          {key:"b", text:"Mouse models are inherently unstable; pick keystroke-only."},
-          {key:"c", text:"Bug — re-derive features."},
-          {key:"d", text:"Concept drift always affects the strongest channel first."},
-        ]}
-        trap={<>(b) overgeneralizes — mouse drift here has a SPECIFIC cause. (c) misdiagnosis. (d) is a made-up rule.</>}
-        lens={<>(a). The senior diagnostic is recognizing that mouse-trajectory distributions are coupled to OS + driver + hardware, which can shift in a single update. The fix is periodic re-fitting on a sliding window of recent legitimate sessions, AND including OS-version as a context feature so the model can learn per-platform medians.</>}
-        stretch={<>What's a lightweight monitor that would catch this kind of drift within hours, not months?</>}
-      />
-
-      <VIS.TrapProblem
-        id="bbe-p9"
+        id="bio-ens-p9"
         difficulty="medium"
-        title="P9 — Score consumer: step-up auth vs hard-block"
-        scenario={<>The meta-classifier outputs an ATO probability. Two consumers want it: (i) step-up auth (decides to challenge with biometric or SMS) and (ii) fraud-ops queue (analysts review high-score sessions). Which consumer should drive threshold choice?</>}
+        title="P9 — Can you A/B test 'ensemble' vs 'TypeNet alone' on real traffic?"
+        scenario={<>PM proposes a 50/50 A/B: half of users routed through ensemble, half through TypeNet alone, compare ATO outcomes after 90 days.</>}
         options={[
-          {key:"a", text:"Each has its own threshold and its own expected-cost math. Step-up auth weighs UX friction vs ATO loss; fraud-ops weighs analyst hours vs catch rate. The model output is one calibrated probability; thresholds are policy decisions per-consumer.", correct:true},
-          {key:"b", text:"Pick one threshold globally; both consumers use the same cutoff."},
-          {key:"c", text:"Let the meta-classifier directly output the action (challenge / block / let through)."},
-          {key:"d", text:"Always default to the strictest threshold to minimize ATO loss."},
+          {key:"a", text:"Yes but two caveats: (1) holding ATO outcomes 90 days adds 90-day attacker time-to-iterate, which is a real cost; (2) ATO is rare (&lt;0.1%) so the A/B needs millions of sessions per arm for statistical power. The mitigations are pre-A/B offline backtest on a labeled replay set AND step-up-auth-decline as a faster proxy metric so you can call the experiment before the 90-day chargeback window closes.", correct:true},
+          {key:"b", text:"No — biometrics cannot be A/B tested."},
+          {key:"c", text:"Yes — run for one week and check ATO rates."},
+          {key:"d", text:"Yes — measure FAR directly during the experiment."},
         ]}
-        trap={<>(b) ignores that the two consumers have different cost functions. (c) couples model and policy — every cost change forces a retrain. (d) over-friction users for no incremental ATO catch beyond the existing step-up.</>}
-        lens={<>(a). Separation of model and policy. The model says "0.73 probability of ATO"; step-up's policy says "challenge above 0.5"; fraud-ops policy says "queue above 0.85." Costs and policies evolve independently of the model. This is standard practice in any mature risk system.</>}
-        stretch={<>If step-up auth itself is a contextual bandit (separate concept), how does its threshold interact with this score?</>}
+        trap={<>(b) overstates. (c) misses the rare-event power problem. (d) requires ground truth which is what we lack.</>}
+        lens={<><em>Discriminating insight:</em> the rarity + label-delay structure of ATO forces the senior to combine offline replay backtest with online proxy metrics. Pure online A/B is too slow and too noisy.</>}
+        stretch={<>What proxy metric correlates best with 90-day ATO outcome?</>}
       />
 
       <VIS.TrapProblem
-        id="bbe-p10"
-        difficulty="hard"
-        title="P10 — End-to-end pick for a top-3 US bank"
-        scenario={<>You're shipping behavioral biometrics for a top-3 US bank. 50M MAU, 200M logins/month, $200M/yr ATO losses. EU subsidiary is 10% of MAU. Mobile + web. Compliance: SOC2, PCI, GDPR (EU only). Pick the architecture.</>}
+        id="bio-ens-p10"
+        difficulty="medium"
+        title="P10 — Fusion head is well-calibrated on backtest but post-deployment scores skew low. Why?"
+        scenario={<>Reliability diagram on backtest looks great (slope 1, intercept 0). In production, the fraction of sessions with score &gt; 0.8 is half what the backtest predicted. What is going on?</>}
         options={[
-          {key:"a", text:"Four parallel base learners (keystroke, mouse/touch, device, session) trained with OOF stacking + log-loss + post-hoc isotonic calibration. Per-user + population baselines per channel, fused. EU users default-off on keystroke/mouse with explicit Art. 9 opt-in; meta-classifier handles masked channels. Channel weights re-fit weekly under rolling drift monitor. Score consumed by (i) risk-based step-up auth (own threshold), (ii) fraud-ops queue (own threshold), (iii) post-login monitoring (own threshold). Annual fair-lending + accessibility audit stratified by self-reported impairment.", correct:true},
-          {key:"b", text:"Single deep model that ingests raw events for all four channels."},
-          {key:"c", text:"Hard-block any session with ATO score above 0.5."},
-          {key:"d", text:"Buy a single vendor product (BioCatch) and trust their score directly."},
+          {key:"a", text:"Covariate shift in the per-modality scorers OR a population shift in coverage (e.g., more mobile-only swipe sessions where keystroke and mouse are absent). Either changes the joint distribution of fusion-head inputs without changing labels, so the head is now evaluating off-manifold. Calibration is conditional on input distribution; production-shifted inputs invalidate the training-set reliability diagram. Fix: monitor input-feature distributions per modality + coverage histogram; re-calibrate (Platt or isotonic) on a recent labeled batch.", correct:true},
+          {key:"b", text:"The head's weights drifted on their own."},
+          {key:"c", text:"Users got more honest."},
+          {key:"d", text:"The threshold is too high."},
         ]}
-        trap={<>(b) sacrifices per-channel consent, calibration, and graceful degradation for a marginal AUC bump. (c) is fair-lending malpractice. (d) vendor lock-in on a signal you can't audit or tune.</>}
-        lens={<>(a). The complete senior architecture: stacked ensemble with OOF + calibration, channel-level consent, masked-channel handling, separated thresholds per consumer, drift monitoring, fair-lending + accessibility audit. This is what survives risk review at a top-3 US bank.</>}
-        stretch={<>What single metric on the rolling drift monitor would pause the entire ensemble (kill switch)?</>}
+        trap={<>(b) is impossible without a deploy. (c) is jokey. (d) confuses calibration with operating point.</>}
+        lens={<><em>Discriminating insight:</em> in a late-fusion ensemble, the fusion head's calibration depends on the JOINT input distribution. Any per-modality drift OR coverage shift breaks calibration even if labels are stable.</>}
+        stretch={<>Would isotonic or Platt scaling restore calibration in this case?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p11"
+        difficulty="hard"
+        title="P11 — An attacker has compromised the keystroke scorer to always emit 'looks normal'. Does the ensemble still help?"
+        scenario={<>Worst-case: keystroke scorer outputs are forged. The other three scorers are intact. What does the fusion head do?</>}
+        options={[
+          {key:"a", text:"It still degrades gracefully because cross-signal consistency features detect the disagreement: 'keystroke says normal, but mouse says anomalous, and the keystroke-mouse transition latency does not match enrolled user' — the consistency feature reads as MISMATCH and contributes ATO signal. Plus the swipe and gait scorers are uncompromised. The OR-of-flags baseline would be FULLY defeated here (it would trust the forged 'normal' from keystroke); the late-fusion ensemble degrades but does not collapse.", correct:true},
+          {key:"b", text:"It is fully defeated; one compromised scorer kills the ensemble."},
+          {key:"c", text:"It works fine — keystroke is dropped from the fusion."},
+          {key:"d", text:"It works fine — the head ignores keystroke since the other three agree."},
+        ]}
+        trap={<>(b) is OR-of-flags thinking. (c)(d) overstate — the head does NOT auto-drop a forged input; what helps is the consistency check.</>}
+        lens={<><em>Discriminating insight:</em> robustness under partial compromise is the cross-signal consistency story. The ensemble's value under attack is exactly that disagreement BETWEEN modalities raises risk even when one modality is forged "clean."</>}
+        stretch={<>What would the attacker need to forge to defeat the consistency check too?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p12"
+        difficulty="medium"
+        multiSelect
+        title="P12 — You have a 200ms per-session latency budget at login. Where does the time go in a 4-modality ensemble?"
+        scenario={<>Pick the components that consume latency. The login step is real-time; biometric scoring must complete in &lt;200ms.</>}
+        options={[
+          {key:"a", text:"Per-modality scorers run in parallel; latency is max(K, M, W, G), not sum.", correct:true},
+          {key:"b", text:"Fusion head adds &lt;5ms (small GBM or MLP over ~15 features).", correct:true},
+          {key:"c", text:"Centroid lookup adds RTT to the user-profile store — usually 10-30ms.", correct:true},
+          {key:"d", text:"Fetching session events from the event bus into the scorer.", correct:false},
+          {key:"e", text:"Consistency features are computed in the head and are essentially free.", correct:true},
+          {key:"f", text:"Re-training the fusion head adds latency to every request.", correct:false},
+        ]}
+        trap={<>(d) is real but typically a one-time cost per session start, not per-decision. (f) is a training-time cost, not serving-time.</>}
+        lens={<><em>Discriminating insight:</em> parallel-modality serving + a tiny fusion head means the bottleneck is centroid lookup, not the models themselves.</>}
+        stretch={<>What is the right caching strategy for the per-user centroid?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p13"
+        difficulty="medium"
+        title="P13 — Cold-start ATO detection for a brand-new user with zero enrollment. What does the ensemble do?"
+        scenario={<>A new user signs up and immediately attempts a high-value transfer. No biometric centroid exists. What does the ensemble emit?</>}
+        options={[
+          {key:"a", text:"It cannot identify the user (no centroid) but each modality's encoder still emits a population-level anomaly score: 'this session's keystroke timing looks human / non-human', 'mouse trajectory looks like RAT / human', etc. The fusion head trained with a 'new user' coverage flag combines these population-level anomaly signals plus non-biometric risk (device fingerprint, IP, velocity). Identity-verification falls back to step-up auth; the ensemble's job in cold start is bot vs human, not user X vs not-X.", correct:true},
+          {key:"b", text:"It outputs maximum risk because there is no enrollment."},
+          {key:"c", text:"It outputs minimum risk because there is no enrollment."},
+          {key:"d", text:"It refuses to score until enrollment completes."},
+        ]}
+        trap={<>(b)(c) are extremes. (d) blocks legitimate signup.</>}
+        lens={<><em>Discriminating insight:</em> in cold start, identity-verification is impossible BUT population-level anomaly (bot vs human) is still useful. The ensemble re-purposes per-modality encoders for a different question.</>}
+        stretch={<>What proxy do you use for 'enrolled enough to switch to identity mode'?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p14"
+        difficulty="hard"
+        title="P14 — Per-modality FRR varies by demographic group. Does fusion fix or amplify the disparity?"
+        scenario={<>Keystroke FRR is higher for non-native typists. Gait FRR is higher for elderly users. Mouse FRR is higher for tremor patients. What does the fusion head do to disparity?</>}
+        options={[
+          {key:"a", text:"It can amplify OR mitigate, depending on the fusion. If demographic groups have UNCORRELATED weak modalities (a non-native typist has poor keystroke but normal mouse), late fusion mitigates — other modalities compensate. If a demographic has CORRELATED weak modalities (elderly users have poor keystroke AND poor mouse AND poor gait), late fusion amplifies — all signals agree 'anomalous' for the same person. The senior fix: per-segment FRR audit + per-modality data augmentation for under-represented groups + per-segment threshold or fallback to non-biometric risk for the high-amplification segments.", correct:true},
+          {key:"b", text:"Fusion always reduces disparity by averaging."},
+          {key:"c", text:"Fusion always amplifies disparity."},
+          {key:"d", text:"Fusion is demographic-neutral."},
+        ]}
+        trap={<>(b)(c)(d) are absolutes; the truth depends on demographic-correlation structure across modalities.</>}
+        lens={<><em>Discriminating insight:</em> the fairness behavior of late fusion is governed by whether weakness is correlated across modalities within a demographic group. Per-segment audit is the only way to know.</>}
+        stretch={<>What metric would you report to model-risk to demonstrate this audit?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p15"
+        difficulty="medium"
+        title="P15 — The gait scorer service is down for 6 hours. How should the fusion head behave?"
+        scenario={<>Gait scorer returns errors for 6 hours during an oncall incident. Fusion head needs to keep scoring without it.</>}
+        options={[
+          {key:"a", text:"The coverage mask flips gait to 'absent' for the outage window. The fusion head — IF it was trained on sessions with gait absence — handles it natively. If it was trained only on sessions with all four modalities present, you need a backup head trained on the leave-one-modality-out distribution. Operational rule: train fusion variants for each leave-one-out and route at serving time based on observed coverage. This is the production-hardening tax of late fusion.", correct:true},
+          {key:"b", text:"Refuse all sessions until gait comes back."},
+          {key:"c", text:"Use the last-known gait score for every session."},
+          {key:"d", text:"Drop the gait dimension and renormalize the head."},
+        ]}
+        trap={<>(b) is too friction-heavy. (c) corrupts. (d) requires architecture support not present in a plain MLP / GBM.</>}
+        lens={<><em>Discriminating insight:</em> leave-one-modality-out backup heads are the late-fusion equivalent of distributed-systems graceful degradation. Single-modality systems don't have this problem; they just go down.</>}
+        stretch={<>How many backup heads do you need for 4 modalities?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p16"
+        difficulty="hard"
+        title="P16 — Keystroke scorer ships v2 (different embedding dim, different score distribution) but mouse, swipe, and gait stay on v1. What breaks?"
+        scenario={<>Per-modality teams ship independently. Keystroke v2 arrives; the fusion head was trained against keystroke v1.</>}
+        options={[
+          {key:"a", text:"Everything downstream of the fusion head breaks silently — the head receives a v2 keystroke score with a shifted distribution and (if the head consumes the embedding too) a different dimensionality. Score-only consumers will degrade calibration; embedding consumers will hard-fail. Fix: ENFORCE per-modality contracts (score range, dim, calibration target) AND require fusion-head retraining + holdback A/B before any per-modality version upgrade reaches the head. This versioning discipline is the operational cost most ensembles underestimate.", correct:true},
+          {key:"b", text:"Nothing — the head is robust to per-modality versioning."},
+          {key:"c", text:"FAR drops because the new scorer is better."},
+          {key:"d", text:"FRR drops because the new scorer is better."},
+        ]}
+        trap={<>(b) is the bug. (c)(d) confuse local improvement with joint behavior.</>}
+        lens={<><em>Discriminating insight:</em> late-fusion ensembles must own a per-modality contract + dependency-graph CI. Per-modality teams cannot ship blindly.</>}
+        stretch={<>What field in the contract would you check in CI?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p17"
+        difficulty="hard"
+        multiSelect
+        title="P17 — Privacy concerns specific to the ENSEMBLE (over and above each modality alone)"
+        scenario={<>Pick the privacy concerns that the ensemble has ON TOP OF the single-modality concerns.</>}
+        options={[
+          {key:"a", text:"Joint multi-modal profile is more uniquely identifying than any single modality; re-identification risk is higher.", correct:true},
+          {key:"b", text:"Cross-signal consistency features can leak co-occurrence patterns (e.g., user types AND walks at the same time) that no single modality reveals.", correct:true},
+          {key:"c", text:"Storing per-modality embeddings increases stored PII surface; a breach exposes more.", correct:true},
+          {key:"d", text:"Keystroke timing leaks typed content via timing side channels.", correct:false},
+          {key:"e", text:"Mouse trajectories can identify a user across sites if fingerprints are shared.", correct:false},
+          {key:"f", text:"The fusion head's score is a derived biometric identifier under GDPR's special-category-data rules.", correct:true},
+        ]}
+        trap={<>(d) and (e) are single-modality concerns — they exist whether or not you fuse.</>}
+        lens={<><em>Discriminating insight:</em> the ensemble's privacy delta is the JOINT profile + the consistency features. Both are uniquely-identifying in ways no single modality is.</>}
+        stretch={<>What DP-epsilon would you target for the joint profile vs each marginal?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p18"
+        difficulty="medium"
+        title="P18 — Bot detection (is this a human?) vs ATO (is this the right human?): which problem does each modality solve?"
+        scenario={<>Each modality can answer one or both questions. Match modality to question.</>}
+        options={[
+          {key:"a", text:"Keystroke, mouse, swipe, gait each support BOTH questions — population-level (is this a human?) at the encoder level, and identity-level (is this user X?) at the centroid level. The ensemble fuses both signals; the fusion head can be configured to emit two scores: P(bot) from population-level features and P(ATO) from identity-level features. Most production systems care about ATO but a strong bot score is a cheap free win for credential-stuffing defense.", correct:true},
+          {key:"b", text:"Keystroke only does ATO; mouse only does bots."},
+          {key:"c", text:"Only gait does bots."},
+          {key:"d", text:"They are the same problem."},
+        ]}
+        trap={<>(b)(c) carve up the modalities wrong. (d) is a category error — bot detection has different label structure (no per-user centroid needed).</>}
+        lens={<><em>Discriminating insight:</em> the ensemble can emit BOTH a bot score and an ATO score from the same per-modality encoders; the fusion head just has two outputs.</>}
+        stretch={<>Why is the bot head's training-data noise structure different from the ATO head's?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p19"
+        difficulty="medium"
+        title="P19 — Population shifts from desktop to mobile over 6 months. What happens to fusion head performance?"
+        scenario={<>Web traffic share drops from 70% to 30%; mobile-app share rises correspondingly. Per-modality scorers are unchanged.</>}
+        options={[
+          {key:"a", text:"Fusion-head input distribution shifts: coverage histogram moves toward 'swipe + gait present, keystroke + mouse absent', and the conditional input distribution for swipe and gait shifts (mobile-only users are not the same population as users on both). The head trained on the old joint distribution under-performs without re-training. The fix is delayed-feedback survival modeling for the joint distribution AND continuous monitoring of the coverage histogram week-over-week. Per-modality scorers don't need re-training; the head does.", correct:true},
+          {key:"b", text:"Nothing — the fusion head is invariant."},
+          {key:"c", text:"Per-modality scorers need re-training; the head is fine."},
+          {key:"d", text:"FAR drops because mobile is harder for fraudsters."},
+        ]}
+        trap={<>(b) misses the joint distribution shift. (c) reverses the actual fix. (d) is unsupported.</>}
+        lens={<><em>Discriminating insight:</em> in late fusion, "concept drift" happens at the JOINT input layer of the fusion head, not at the per-modality level. Drift detection must monitor the joint.</>}
+        stretch={<>What KS-test on what feature would catch this earliest?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p20"
+        difficulty="hard"
+        title="P20 — Pitch the ensemble to a director who already funds TypeNet"
+        scenario={<>"You already fund the keystroke biometric. Make the case for a 4-modality ensemble over keeping TypeNet alone."</>}
+        options={[
+          {key:"a", text:"TypeNet wins on its own benchmark but covers a fraction of real sessions — many are keystroke-free (swipe-only mobile, voice flows). The ensemble does three things TypeNet alone cannot: (1) COVERAGE on no-keystroke sessions via mouse / swipe / gait scorers; (2) REDUNDANCY when keystroke is compromised by replay malware or soft-keyboard quantization; (3) the cross-signal CONSISTENCY check — keystroke says 'normal' but mouse says 'anomalous' is itself a strong ATO signal that no single modality emits. The cost is a fusion head + per-modality calibration discipline + delayed-feedback labeling — manageable engineering tax for a step-change in mimicry-resistance.", correct:true},
+          {key:"b", text:"More models is better."},
+          {key:"c", text:"TypeNet is too slow alone."},
+          {key:"d", text:"The ensemble is impossible to spoof."},
+        ]}
+        trap={<>(b)(c)(d) are weak. (d) is false — see P7, P11.</>}
+        lens={<><em>Discriminating insight:</em> the pitch names COVERAGE + REDUNDANCY + CROSS-SIGNAL CONSISTENCY (the unique mechanism), AND owns the operational cost honestly (per-modality calibration drift + delayed labels).</>}
+        stretch={<>How would you sequence rollout to get value before all 4 modalities are live?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p21"
+        difficulty="hard"
+        title="P21 — Attacker captures a full session (keystroke + mouse + swipe) via malware and replays it as-is. Does the ensemble catch it?"
+        scenario={<>The malware records and replays one of the legitimate user's earlier sessions verbatim. All per-modality scorers see exactly the enrolled user's signature.</>}
+        options={[
+          {key:"a", text:"Per-modality scorers cannot catch this — the timings ARE the user's. The ensemble catches it via consistency features that look at WHEN the replay arrives relative to other context: device fingerprint mismatch, IP geo, session-level context (typing 'transfer $10000' twice within a minute is improbable), and a liveness challenge that asks the user to type a novel phrase or perform a touch gesture not present in the recorded session. The cross-signal consistency check alone is insufficient against a coherent full-session replay; you need orthogonal liveness AND non-biometric risk in the fusion.", correct:true},
+          {key:"b", text:"Yes — the per-modality scorers detect the replay."},
+          {key:"c", text:"No — biometrics cannot defeat replay, period."},
+          {key:"d", text:"Yes — gait is impossible to replay."},
+        ]}
+        trap={<>(b) overstates per-modality. (c) overstates failure. (d) is wrong — an accelerometer trace is just numbers and can be replayed.</>}
+        lens={<><em>Discriminating insight:</em> against a full-session replay, the ensemble alone is insufficient — liveness + orthogonal context (device, IP, behavior pacing) carry the load. Knowing the limit of consistency-based defense is the senior move.</>}
+        stretch={<>What liveness challenge is cheapest for the user but hardest to replay?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p22"
+        difficulty="medium"
+        title="P22 — Analyst reviewing a fusion-head-flagged session wants to know WHY. What do you show?"
+        scenario={<>An analyst opens the queue and sees session #12345 flagged at score 0.87. What does the UI need to support an actionable review?</>}
+        options={[
+          {key:"a", text:"Per-modality contributions (keystroke 0.4, mouse 0.9, swipe N/A, gait 0.6), per-feature consistency contributions (keystroke-mouse disagreement 0.7), the coverage mask (mouse and keystroke present, swipe and gait absent), the user's enrolled centroids and current session embedding visualized in a per-modality embedding plot. Plus context: device fingerprint, IP, time of day. A SHAP-style decomposition of the fusion-head decision tells the analyst 'mouse is the strongest driver, plus the keystroke-mouse disagreement.'", correct:true},
+          {key:"b", text:"Just the final score."},
+          {key:"c", text:"Just the per-modality scores."},
+          {key:"d", text:"A free-text LLM explanation."},
+        ]}
+        trap={<>(b)(c) miss the consistency feature attribution. (d) is unverifiable.</>}
+        lens={<><em>Discriminating insight:</em> analyst UX in an ensemble is per-modality + consistency-feature attribution, NOT just per-modality scores. This separates a usable from an unusable ensemble in operations.</>}
+        stretch={<>How would you validate the SHAP attributions are honest in the fusion head?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p23"
+        difficulty="hard"
+        title="P23 — End-to-end: design the ensemble for a brokerage with web + iOS + Android, ~10M sessions/day"
+        scenario={<>You inherit a TypeNet deployment and need to build the ensemble around it for a brokerage at 10M sessions/day.</>}
+        options={[
+          {key:"a", text:"Architecture: TypeNet (keystroke) + mouse-TCN + swipe-CNN + accelerometer-gait. All four run in parallel on a per-session event stream. Fusion head is a LightGBM over (4 per-modality scores + ~10 consistency features + coverage mask + non-biometric risk: device, IP, velocity). Train fusion on session-level (features &rarr; delayed-chargeback-label) pairs with PU-correction; cadence is monthly. Operate at low FAR (~0.1%) on web; treat mobile-only sessions as soft signal in fusion. Leave-one-modality-out backup heads for outages. Per-modality contract enforced in CI: any version bump triggers fusion retrain + holdback A/B before promotion. Analyst UI surfaces per-modality + consistency-feature SHAP. Kill-switch: revert to TypeNet-alone if fusion FAR exceeds 2x baseline for 24h.", correct:true},
+          {key:"b", text:"Single global model over concatenated raw events."},
+          {key:"c", text:"OR-of-flags across the 4 scorers."},
+          {key:"d", text:"Run TypeNet alone everywhere."},
+        ]}
+        trap={<>(b) is early-fusion brittleness. (c) misses cross-signal consistency. (d) is the position the ensemble exists to surpass.</>}
+        lens={<><em>Discriminating insight:</em> the senior design is per-modality contracts + late-fusion head + leave-one-out backups + delayed-feedback training + SHAP analyst UI + kill-switch. Every piece exists because of a real production failure mode.</>}
+        stretch={<>Sequence: which two modalities ship first if you can only afford two this quarter?</>}
+      />
+
+      <VIS.TrapProblem
+        id="bio-ens-p24"
+        difficulty="hard"
+        title="P24 — Model-risk asks: 'is the ensemble auditable per SR 11-7?'"
+        scenario={<>Bank model-risk requires per-decision auditability. The ensemble is 4 deep encoders + a GBM fusion head. Defend it.</>}
+        options={[
+          {key:"a", text:"Each per-modality encoder is auditable as a separate, frozen model with its own validation report, known EER on a held-out set, and a documented signal-quality boundary (TypeNet degrades on iOS soft-keyboards, etc.). The fusion head is a LightGBM with SHAP attribution per decision — fully explainable. Joint behavior is documented through leave-one-modality-out ablations + per-segment fairness audit. The ensemble is auditable AS a tree of auditable components plus an auditable fusion head. The deep encoders are the locally-opaque layer; their black-box risk is bounded by per-modality validation and the fusion head's interpretable decomposition.", correct:true},
+          {key:"b", text:"No — it is a deep-learning ensemble, fundamentally unauditable."},
+          {key:"c", text:"Yes — every deep model is auditable with attention maps."},
+          {key:"d", text:"Yes — we just need a model card per modality."},
+        ]}
+        trap={<>(b) overstates. (c) is wishful. (d) misses the joint behavior + fairness audit + ablation requirements.</>}
+        lens={<><em>Discriminating insight:</em> auditability in a late-fusion ensemble is COMPOSITIONAL — each piece is auditable + the fusion head is interpretable + joint behavior is documented through ablation. This is the governance-friendly architecture choice.</>}
+        stretch={<>Which artifact is hardest to produce: per-modality validation, fairness audit, or leave-one-out ablation?</>}
       />
     </VIS.Section>
 
@@ -1711,38 +1920,38 @@ flowchart TB
       <ul>
         <li>
           <a href="https://www.biocatch.com/resources" target="_blank" rel="noopener">
-            <strong>BioCatch — Behavioral Biometrics Research Resources</strong>
+            <strong>BioCatch — Behavioral Biometrics Resource Library</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(vendor whitepapers)</span>
-          <br/>Vendor library on keystroke + mouse signals. Discount the marketing; the technical sections on per-user vs population modeling are useful.
+          <br/>Commercial-vendor view of multi-modality behavioral biometrics. Useful for the operational vocabulary (session-risk, behavioral profile) and threat-model framing.
         </li>
         <li>
-          <a href="https://link.springer.com/article/10.1007/s10462-022-10301-2" target="_blank" rel="noopener">
-            <strong>Stragapede et al. — A survey on behavioral biometrics for authentication on smartphones</strong>
+          <a href="https://arxiv.org/abs/1611.09539" target="_blank" rel="noopener">
+            <strong>Atallah &amp; Vetro — Multi-Modal Biometric Fusion: A Survey</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(survey, Artificial Intelligence Review 2023)</span>
-          <br/>Recent comprehensive survey covering touch dynamics, keystroke, sensor signals, and fusion methods. Good for grounding the channel taxonomy.
+          <span style={{color:"#64748b", fontSize:14}}>(survey)</span>
+          <br/>Canonical survey of fusion strategies (early / score / decision / late) with the trade-offs that determine when late fusion is right.
         </li>
         <li>
-          <a href="https://dl.acm.org/doi/10.1145/3530787" target="_blank" rel="noopener">
-            <strong>Wolpert — Stacked Generalization</strong>
+          <a href="https://lilianweng.github.io/posts/2021-05-31-contrastive/" target="_blank" rel="noopener">
+            <strong>Lilian Weng — Contrastive Representation Learning</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, Neural Networks 1992)</span>
-          <br/>The original stacking paper. Section 4 specifies the out-of-fold scheme that prevents the leakage trap in P2.
+          <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
+          <br/>Metric-learning backbone for per-modality encoders. Build the per-modality scorers on these intuitions, fuse at the head.
         </li>
         <li>
-          <a href="https://gdpr.eu/article-9-processing-special-categories-of-personal-data-prohibited/" target="_blank" rel="noopener">
-            <strong>GDPR Article 9 — Processing of special categories of personal data</strong>
+          <a href="https://www.federalreserve.gov/supervisionreg/srletters/sr1107.htm" target="_blank" rel="noopener">
+            <strong>Federal Reserve — SR 11-7: Guidance on Model Risk Management</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(regulation text)</span>
-          <br/>The text that constrains EU behavioral-biometrics deployment. Read alongside Art. 22 on automated individual decisions.
+          <span style={{color:"#64748b", fontSize:14}}>(regulation)</span>
+          <br/>The reason your ensemble must be compositionally auditable in a banking context. Read sections 5-7.
         </li>
         <li>
-          <a href="https://www.fidoalliance.org/" target="_blank" rel="noopener">
-            <strong>FIDO Alliance — passwordless and behavioral standards</strong>
+          <a href="https://christophm.github.io/interpretable-ml-book/shap.html" target="_blank" rel="noopener">
+            <strong>Christoph Molnar — Interpretable ML Book, Chapter on SHAP</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(industry consortium)</span>
-          <br/>The standards body shaping how behavioral signals interoperate with WebAuthn and passkeys. Useful for understanding where this fits in the post-password stack.
+          <span style={{color:"#64748b", fontSize:14}}>(book chapter, free)</span>
+          <br/>The interpretability machinery for the GBM fusion head. Read to understand what an analyst's "why did we flag this?" view should contain.
         </li>
       </ul>
     </VIS.Section>
