@@ -1414,276 +1414,856 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// RQ-VAE Semantic IDs — the foundation under TIGER and OneRec.
+// RQ-VAE Semantic IDs (Lee et al. CVPR 2022; recsys handbook 2025)
+// v2 redo — 40+ trap problems spanning A-F taxonomy axes.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Generative recommendation (HSTU family)"
+      pill="RecSys SOTA · Content tokenization"
       title="RQ-VAE Semantic IDs"
-      subtitle="Residual-quantize a content embedding into K codebooks of D codes each; the K-tuple is a hierarchical, content-derived item ID."
+      subtitle="Residually quantize content embeddings into K-tuple discrete codes. Hierarchical prefix structure. The vocabulary that powers TIGER and OneRec."
       byline={[
-        {label: "Paper", value: "Lee et al. CVPR 2022; recsys practitioner's handbook 2025"},
-        {label: "Year", value: "2025"},
-        {label: "Domain", value: "Discrete content representations"},
+        {label: "Origin paper", value: "Lee et al., CVPR 2022 (RQ-VAE for image gen)"},
+        {label: "Recsys application", value: "TIGER 2023, OneRec 2025, handbook 2025"},
+        {label: "Domain", value: "Discrete content tokenization for generative recsys"},
       ]}/>
 
     <VIS.TLDR>
-      Unlike random hashed item IDs, <VIS.Term def="Semantic IDs — tuples of discrete codes where the prefix encodes coarse semantics and later codes refine; two semantically similar items share an ID prefix.">Semantic IDs</VIS.Term> let new items inherit useful embeddings via shared prefixes; unlike <VIS.Term def="Vector-Quantized VAE — encode to a continuous vector, then snap to the nearest of D codebook entries. One codebook = one discrete level.">single-codebook VQ-VAE</VIS.Term>, <VIS.Term def="Residual-Quantized VAE — apply VQ K times; each stage quantizes the residual from the previous stage. K codebooks of D entries each capture exponentially more semantic detail with linear codebook size.">RQ-VAE</VIS.Term> captures much finer-grained semantics with reasonable codebook size. Source: <a href="https://arxiv.org/abs/2507.22224" target="_blank" rel="noopener">arXiv:2507.22224</a>.
+      <VIS.Term def="Residual-Quantized Variational AutoEncoder — a hierarchical discrete-quantization model. Each input embedding is encoded as K codes from K codebooks, where each codebook quantizes the residual after the previous code is subtracted.">RQ-VAE</VIS.Term> quantizes a content embedding into K codebooks of D codes each, producing a K-tuple discrete ID. First codebook captures coarse semantics; later ones capture finer residuals. <strong>Similar items share prefix codes</strong> — the property that makes generative retrieval (TIGER) work and that enables cold-start without ANN. Source: <a href="https://arxiv.org/abs/2507.22224" target="_blank" rel="noopener">Practitioner handbook 2025</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        RQ-VAE turns a continuous content embedding (e.g. a 768-dim CLIP vector for an item) into a tuple of K discrete codes <code>(c1, c2, ..., cK)</code> by repeatedly quantizing the residual. Stage 1 picks the nearest entry from codebook 1; subtract that to get a residual; stage 2 picks the nearest entry from codebook 2 for that residual; repeat. Codebooks and the encoder are <em>jointly trained</em> via a reconstruction loss plus codebook commitment losses.
+        Take a content embedding (from Sentence-T5, CLIP, whatever). Quantize it to the nearest entry in codebook 1 → first code c₁. Compute the residual (embedding - code_1). Quantize the residual to codebook 2 → c₂. Repeat K times. The Semantic ID is the K-tuple (c₁, c₂, ..., c_K). To reconstruct: sum of all K codes.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  X["Content embedding x (768-d)"] --> E["Encoder f"]
-  E --> Z["Latent z"]
-  Z --> Q1["Codebook 1 lookup"]
-  Q1 --> R1["Residual = z - c1"]
-  R1 --> Q2["Codebook 2 lookup"]
-  Q2 --> R2["Residual = r1 - c2"]
-  R2 --> Q3["Codebook 3 lookup"]
-  Q3 --> SID["Semantic ID (c1, c2, c3)"]
-  style SID fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+  E["Content embedding (768-d)"]
+  E --> Q1["Quantize: codebook 1 (256 codes) -> c1"]
+  Q1 --> R1["Residual: e - c1"]
+  R1 --> Q2["Quantize: codebook 2 -> c2"]
+  Q2 --> R2["Residual: e - c1 - c2"]
+  R2 --> Q3["...continue K times"]
+  Q3 --> S["Semantic ID: (c1, c2, c3, c4)"]
+  style S fill:#dbeafe,stroke:#1e40af,stroke-width:2px
       `} />
+    </VIS.Section>
+
+    <VIS.Section id="sec-diff" title="Beat 2 — vs random IDs, vs single-codebook VQ, vs continuous embeddings">
       <p>
-        The result: K codes from K codebooks of size D give D^K possible IDs — a few thousand codebook entries per stage cover billions of items. Prefix structure means similar items share the early codes.
+        <strong>vs random hashed item IDs.</strong> Hashed IDs are arbitrary — similar items get unrelated hashes. Semantic IDs are content-derived; similar items share prefix codes, enabling prefix-based retrieval and cold-start generalization.
+      </p>
+      <p>
+        <strong>vs single-codebook VQ-VAE.</strong> A single codebook of equivalent capacity would need D^K codes (intractable). RQ-VAE's residual scheme captures hierarchical detail with K·D codes (linear in K).
+      </p>
+      <p>
+        <strong>vs continuous content embeddings + ANN.</strong> Continuous embeddings work but require an ANN index. Semantic IDs are discrete and fit into the vocabulary of any autoregressive model (transformer, sequence model) directly.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick RQ-VAE Semantic IDs">
       <p>
-        <strong>Random item ID embedding tables (the baseline).</strong> Each item gets a row in a learned embedding matrix indexed by a hashed integer ID. New items get a fresh row that starts at random initialization — they have to accumulate interactions before downstream models learn anything useful about them. Items with similar content but different IDs share nothing.
-      </p>
-      <p>
-        <strong>VQ-VAE (a closer baseline).</strong> A single codebook of D entries. Item ID = one code. Coarse — D entries can only carve content space into D buckets, which is far too few for billion-item catalogs. Increasing D linearly increases codebook size but only linearly increases resolution.
-      </p>
-      <p>
-        <strong>RQ-VAE (the delta).</strong> K codebooks, each of size D, give D^K possible IDs while only storing K·D codebook entries. The hierarchical structure means the prefix encodes coarse semantics ("kitchen items") and the suffix refines ("specifically: stainless-steel mixing bowls"). New items inherit prefix-level behaviour from existing items the moment they are encoded.
+        Pick when (a) you have items with content features (text/image/attributes), (b) you want generative retrieval (TIGER), generative ranking (OneRec), or want to replace random-ID embedding tables, (c) cold-start matters, (d) you can afford ~2× a vanilla embedding-table lookup latency (K decode steps).
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick it / where it wins">
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
       <p>
-        Pick RQ-VAE Semantic IDs anywhere you would otherwise use a random item-ID embedding table AND have content features (text, image, audio) to encode. The cold-start win compounds with catalog churn — fast-moving catalogs (e-commerce, news, short video) benefit most. It is the wrong choice when items have no content (pure interaction-only items) or when the catalog is small and stable enough that random IDs accumulate enough interactions quickly.
-      </p>
-    </VIS.Section>
-
-    <VIS.Section id="sec-gotchas" title="Limitations & gotchas">
-      <p>
-        Two failure modes dominate: <strong>codebook collapse</strong> during training (a few codes get all the assignments, the rest go unused — fix with EMA codebook updates, codebook reset, or commitment loss tuning) and <strong>online codebook updates</strong> are hard (every downstream model that learned dependencies on specific codes breaks when the codebook re-trains; rollout requires dual-vocabulary periods). Add a third: <strong>collision rate</strong> at large catalogs sets a floor on retrieval precision.
+        Biggest risks: <strong>codebook collapse</strong> (most codes unused), <strong>codebook drift</strong> (Semantic IDs shift on retraining, breaking downstream), <strong>collisions</strong> (two distinct items map to the same K-tuple), <strong>encoder dependence</strong> (codebook quality depends on the content encoder).
       </p>
     </VIS.Section>
 
     <VIS.Section id="sec-drill" title="Drill — trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Twelve scenarios on RQ-VAE design and rollout — collapse signatures, vocab versioning, K vs D tradeoffs, and the migration plan that distinguishes seniors from juniors.</p>
+        40+ problems. Each must require knowing RQ-VAE specifically (residual quantization, three losses, codebook collapse, prefix structure) to answer.
+      </p>
 
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity & comparison</h3>
+
+      {/* A1 */}
       <VIS.TrapProblem
-        id="rqvae-p1"
+        id="rqvae-a1"
         difficulty="hard"
+        title="A1 — RQ-VAE vs single-codebook VQ-VAE"
+        scenario={<>Both produce discrete codes from continuous embeddings. Pick the actual discriminator.</>}
+        options={[
+          {key:"a", text:"RQ-VAE applies K successive quantizations on the residual, capturing hierarchical detail with K·D codes total; single-codebook VQ-VAE applies one quantization step and needs D codes to cover the same expressiveness — to match RQ-VAE's effective vocabulary (D^K), single VQ would need D^K codes, which is intractable.", correct:true},
+          {key:"b", text:"RQ-VAE has more codes total."},
+          {key:"c", text:"VQ-VAE is faster."},
+          {key:"d", text:"They're identical."},
+        ]}
+        trap={<>(b) is incidental; (c) is irrelevant; (d) is false.</>}
+        lens={<>The residual structure is the entire RQ-VAE contribution. It's a compute/memory hack that lets you grow effective vocabulary exponentially in K while paying linearly.</>}
+        stretch={<>What's the residual structure analog in transformer attention?</>}
+      />
+
+      {/* A2 */}
+      <VIS.TrapProblem
+        id="rqvae-a2"
+        difficulty="hard"
+        title="A2 — RQ-VAE vs product quantization (PQ)"
+        scenario={<>Both produce K codes per vector. Pick the difference.</>}
+        options={[
+          {key:"a", text:"PQ splits the vector into K disjoint sub-vectors and quantizes each independently (parallel codes, no hierarchy). RQ-VAE quantizes the SAME vector K times, each time on the residual — codes encode the same dimensions hierarchically. PQ is for compression+retrieval; RQ-VAE is for autoregressive token vocabulary.", correct:true},
+          {key:"b", text:"They're identical."},
+          {key:"c", text:"PQ doesn't use codebooks."},
+          {key:"d", text:"RQ-VAE is for images only."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>PQ ≠ RQ-VAE. PQ codes are independent (parallel); RQ codes are dependent (residual). Hierarchical structure is what makes RQ-VAE's prefix-sharing work.</>}
+        stretch={<>Could you replace TIGER's RQ-VAE with PQ? What breaks?</>}
+      />
+
+      {/* A3 */}
+      <VIS.TrapProblem
+        id="rqvae-a3"
+        difficulty="hard"
+        title="A3 — Without RQ-VAE, what's the fallback for TIGER?"
+        scenario={<>TIGER needs a discrete tokenization of items. If RQ-VAE didn't exist, what's the fallback?</>}
+        options={[
+          {key:"a", text:"Single-codebook VQ-VAE — works but loses the prefix-sharing TIGER depends on for cold-start. Cold-start generalization would degrade significantly; you'd be back to learned random-ID embeddings for new items.", correct:true},
+          {key:"b", text:"Random hashing."},
+          {key:"c", text:"PQ."},
+          {key:"d", text:"LSH."},
+        ]}
+        trap={<>(b) loses everything semantic. (c), (d) don't fit the autoregressive decoding requirement.</>}
+        lens={<>RQ-VAE is the load-bearing piece that gives TIGER its cold-start story.</>}
+        stretch={<>How would TIGER+VQ-VAE compare to TIGER+RQ-VAE empirically?</>}
+      />
+
+      {/* A4 */}
+      <VIS.TrapProblem
+        id="rqvae-a4"
+        difficulty="hard"
+        title="A4 — Stack RQ-VAE inside HSTU"
+        scenario={<>You use RQ-VAE Semantic IDs as the item-token vocabulary in HSTU. What happens?</>}
         multiSelect
-        title="P1 — Rollout plan from random IDs to Semantic IDs"
-        scenario={<>Production retrieval model uses random item-ID embedding tables. You want to migrate to RQ-VAE Semantic IDs. Catalog: 80M items, churning at 200k new / day. Downstream: one retrieval model, one ranker, one ad-quality classifier — each has its own learned representation over item IDs. Which of these are <em>real</em> risks you must plan for? Select all that apply.</>}
         options={[
-          {key:"a", text:"Codebook collapse during RQ-VAE training — a few codes attract all items, most go unused.", correct:true},
-          {key:"b", text:"Downstream models break when the codebook changes; you need a dual-vocabulary period during the swap.", correct:true},
-          {key:"c", text:"Initial collision rate on a fresh codebook is unpredictable; you need an offline collision audit before serving.", correct:true},
-          {key:"d", text:"Random IDs are always faster to serve than Semantic IDs."},
-          {key:"e", text:"Semantic IDs eliminate the need for any cold-start handling."},
+          {key:"a", text:"Cold-start improves: new items get content-derived prefixes, inherit useful sequence behavior.", correct:true},
+          {key:"b", text:"Vocabulary explodes: HSTU's softmax now over (action × Semantic-ID K-tuple) is much larger; factorized softmax + negative sampling becomes essential.", correct:true},
+          {key:"c", text:"HSTU's pointwise+aggregated norm becomes more important: Semantic-ID tokens have different scale than action tokens.", correct:true},
+          {key:"d", text:"Calibration becomes trivial."},
+          {key:"e", text:"HSTU paper recommends this combo."},
         ]}
-        trap={<>(d) is wrong — Semantic IDs are usually no slower (small constant-time lookup). (e) overstates the cold-start win — prefix sharing helps but doesn't eliminate cold-start; a brand-new item still needs SOME interactions to fine-tune.</>}
-        lens={<>The three big risks are collapse (training-time), vocab versioning (rollout-time), and collision rate (serving-time). Each requires its own mitigation: EMA + reset for collapse; dual-vocab for versioning; collision audits + K/D tuning for collisions.</>}
-        stretch={<>Which of the three risks is hardest to detect before going live?</>}
+        trap={<>(d), (e) misread.</>}
+        lens={<>RQ-VAE composes with HSTU but is non-trivial. The combination of large vocab + heterogeneous norm makes existing HSTU tricks more load-bearing, not less.</>}
+        stretch={<>What additional design would you need to make this stack work at scale?</>}
       />
 
+      {/* A5 */}
       <VIS.TrapProblem
-        id="rqvae-p2"
+        id="rqvae-a5"
         difficulty="hard"
-        title="P2 — Diagnosing codebook collapse"
-        scenario={<>RQ-VAE training: reconstruction loss decreasing, but you notice the perplexity of codebook 1 is <strong>~12</strong> (out of 1024 entries). What does this signal?</>}
+        title="A5 — Boundary: where prefix-sharing stops being useful"
+        scenario={<>Prefix-sharing is RQ-VAE's value-add. Where does it stop helping?</>}
         options={[
-          {key:"a", text:"Training is healthy — low perplexity means the model is confident."},
-          {key:"b", text:"Codebook collapse — only ~12 of 1024 entries are being used effectively; the codebook is wasted capacity.", correct:true},
-          {key:"c", text:"Reconstruction loss is the only metric that matters."},
-          {key:"d", text:"Codebook 1 is too small."},
+          {key:"a", text:"Catalogs with very uniform content (all items have near-identical descriptions, e.g. generic-brand catalogs): codebooks collapse, prefix-sharing carries no discriminating signal.", correct:true},
+          {key:"b", text:"Large catalogs."},
+          {key:"c", text:"Multilingual catalogs."},
+          {key:"d", text:"Catalogs with lots of training data."},
         ]}
-        trap={<>(a) confuses model perplexity with codebook usage perplexity (where higher = more entries actively used). (c) is the trap of optimizing the wrong metric — recon loss can fall while diversity collapses.</>}
-        lens={<>Codebook perplexity = exp(entropy of code-usage distribution). At 12 of 1024, you're using ~1% of the codebook. Fixes: EMA updates with a slow decay, dead-code reset, k-means warm initialization, commitment loss tuning. Reconstruction loss can keep falling because the model adapts around the collapsed codes — perplexity is the real diagnostic.</>}
-        stretch={<>What target perplexity would you aim for as a healthy floor?</>}
+        trap={<>(b) is opposite (larger usually helps); (c) hurts encoder consistency but not prefix-sharing per se; (d) is unrelated.</>}
+        lens={<>Prefix-sharing works when content provides discriminating signal. Uniform content → no prefix variance → no value.</>}
+        stretch={<>What's the empirical signal that prefix-sharing is no longer useful?</>}
       />
 
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      {/* B1 */}
       <VIS.TrapProblem
-        id="rqvae-p3"
+        id="rqvae-b1"
         difficulty="hard"
-        title="P3 — K vs D tradeoff"
-        scenario={<>Fixed total codebook storage budget = 4096 entries. Two configurations: (i) K=1, D=4096 (one big codebook). (ii) K=4, D=1024 (four smaller codebooks). Which gives better retrieval downstream and why?</>}
+        title="B1 — Replace random-ID embedding table for warm items"
+        scenario={<>You have a learned random-ID embedding table for 50M items in production (DLRM-v2-style). Should you replace with RQ-VAE Semantic IDs?</>}
         options={[
-          {key:"a", text:"(i) — single codebook is simpler."},
-          {key:"b", text:"(ii) — D^K = 1024^4 ≈ 10^12 possible IDs vs 4096 for (i); hierarchical structure also provides cold-start sharing via prefixes.", correct:true},
-          {key:"c", text:"Equivalent — same total storage."},
-          {key:"d", text:"(i) — fewer codebooks mean less collapse risk."},
+          {key:"a", text:"Only if (a) you're moving to a generative architecture (TIGER / OneRec) that needs discrete tokens, OR (b) cold-start is a major pain. For pure two-tower + ANN with stable catalog, learned random IDs are simpler and may perform better on warm items.", correct:true},
+          {key:"b", text:"Always replace."},
+          {key:"c", text:"Never replace."},
+          {key:"d", text:"Random IDs are deprecated."},
         ]}
-        trap={<>(c) ignores the combinatorial vs linear scaling of unique IDs. (d) is half-true (more codebooks = more places to collapse) but the resolution win dwarfs it.</>}
-        lens={<>RQ-VAE's headline win is exponential resolution per linear storage. K=4, D=1024 covers a trillion possible IDs and gives prefix-based generalization. The right baseline isn't "single codebook of same total size" — it's "single codebook giving same resolution," which would need 10^12 entries.</>}
-        stretch={<>At what K does the law of diminishing returns kick in?</>}
+        trap={<>(b), (d) over-claim. (c) under-claims.</>}
+        lens={<>RQ-VAE is justified when you're consuming Semantic IDs downstream (generative model) or when cold-start dominates. Otherwise it's overhead.</>}
+        stretch={<>What's the cold-start rate threshold where Semantic IDs become worth it?</>}
       />
 
+      {/* B2 */}
       <VIS.TrapProblem
-        id="rqvae-p4"
+        id="rqvae-b2"
         difficulty="hard"
-        title="P4 — Codebook drift after retraining"
-        scenario={<>Six months in, content distribution shifted. You retrain RQ-VAE. New codebook has different code-to-item assignments than the old one. Your retrieval model, trained on the old codebook, suddenly performs poorly. What's the structural reason?</>}
+        title="B2 — 'RQ-VAE is just dimensionality reduction'"
+        scenario={<>A teammate dismisses RQ-VAE as "just PCA on embeddings." Defeat.</>}
         options={[
-          {key:"a", text:"The new codebook is worse."},
-          {key:"b", text:"The retrieval model's learned dependencies on specific codes (e.g. 'code 47 means kitchen items') no longer hold; the retrieval model needs retraining or a vocabulary alignment.", correct:true},
-          {key:"c", text:"Inference cost increased."},
-          {key:"d", text:"The encoder forgot its weights."},
+          {key:"a", text:"PCA produces continuous low-dim vectors; RQ-VAE produces a DISCRETE K-tuple. The discreteness is the entire point — it fits into autoregressive vocabulary. PCA outputs can't be the vocabulary of a transformer; Semantic IDs can.", correct:true},
+          {key:"b", text:"It's true."},
+          {key:"c", text:"PCA is faster."},
+          {key:"d", text:"RQ-VAE has no encoder."},
         ]}
-        trap={<>(a) blames the new codebook when the problem is the dependency contract. (c) and (d) are unrelated.</>}
-        lens={<>Codebooks are a shared vocabulary; downstream models learn dependencies on specific entries. Re-training the codebook breaks those dependencies regardless of whether the new codebook is "better." The fix is dual-vocabulary periods or vocabulary-alignment objectives (force new code k to behave like old code k') during retraining.</>}
-        stretch={<>What signal lets you know vocab alignment is working?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>Discreteness is RQ-VAE's contract with downstream autoregressive models. Continuous PCA can't fulfill it.</>}
+        stretch={<>What's the closest continuous analog with similar autoregressive compatibility?</>}
       />
 
+      {/* B3 */}
       <VIS.TrapProblem
-        id="rqvae-p5"
+        id="rqvae-b3"
         difficulty="medium"
-        title="P5 — Content encoder choice"
-        scenario={<>You're choosing the content encoder that feeds RQ-VAE for a recipe app. Options: (a) Text-only BERT on recipe titles. (b) CLIP image+text on the recipe photo + title. (c) Random initialization. Which gives the cold-start property real teeth?</>}
+        title="B3 — Pitch RQ-VAE to a Director"
+        scenario={<>"Why RQ-VAE Semantic IDs over random IDs?"</>}
         options={[
-          {key:"a", text:"(a) — text is sufficient."},
-          {key:"b", text:"(b) — recipes are visually-driven; image+text encoder captures the semantic axes users actually browse along.", correct:true},
-          {key:"c", text:"(c) — RQ-VAE smooths over encoder choice."},
-          {key:"d", text:"Doesn't matter."},
+          {key:"a", text:"'Cold-start works zero-shot for content-rich items; downstream generative models (TIGER, OneRec) work out of the box; one shared tokenization across retrieval + ranking; retire one custom ID-management system.'", correct:true},
+          {key:"b", text:"'It uses VAEs.'"},
+          {key:"c", text:"'Fewer parameters.'"},
+          {key:"d", text:"'NDCG up 2%.'"},
         ]}
-        trap={<>(c) badly underestimates how much downstream depends on encoder quality. (a) is plausible but misses the visual axis of discovery.</>}
-        lens={<>RQ-VAE quantizes whatever signal the encoder provides. Garbage in → garbage Semantic IDs. For visually-driven discovery (recipes, fashion, video thumbnails), an image+text encoder captures axes a text-only model misses. Encoder choice is the most important single decision.</>}
-        stretch={<>For a podcast app, would the same recommendation hold?</>}
+        trap={<>(b), (c) miss the consumer-model story.</>}
+        lens={<>RQ-VAE's value is leveraged via downstream consumers. The pitch is "enable a whole class of architectures" not "improve metric X."</>}
+        stretch={<>What's the org cost of switching tokenization?</>}
       />
 
+      {/* B4 */}
       <VIS.TrapProblem
-        id="rqvae-p6"
+        id="rqvae-b4"
         difficulty="hard"
+        title="B4 — When NOT to use RQ-VAE"
+        scenario={<>Pick the case where RQ-VAE is the wrong tool.</>}
+        options={[
+          {key:"a", text:"Pure embedding-table use case (DLRM-style cross-feature MLPs) on a stable catalog with no cold-start — the prefix-sharing carries no value because MLPs don't use prefix structure; you'd just have added training complexity for nothing.", correct:true},
+          {key:"b", text:"TIGER."},
+          {key:"c", text:"OneRec."},
+          {key:"d", text:"HSTU."},
+        ]}
+        trap={<>(b), (c) are RQ-VAE's primary consumers; (d) is a possible consumer.</>}
+        lens={<>RQ-VAE is leveraged via downstream consumers. If your consumer doesn't use prefix structure, you don't benefit.</>}
+        stretch={<>What's the smallest catalog where RQ-VAE is worth the engineering effort?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      {/* C1 */}
+      <VIS.TrapProblem
+        id="rqvae-c1"
+        difficulty="hard"
+        title="C1 — Why residual quantization specifically?"
+        scenario={<>What property does the residual structure give that parallel (independent) quantization does not?</>}
+        options={[
+          {key:"a", text:"Hierarchical structure: codebook k captures information NOT captured by codebooks 1..k-1; the K-tuple is naturally a coarse-to-fine description. Parallel codebooks (PQ) split the vector into pieces — codes are about different parts of the embedding, not different levels of detail.", correct:true},
+          {key:"b", text:"Residual is faster."},
+          {key:"c", text:"Parallel doesn't work."},
+          {key:"d", text:"They're identical."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The coarse-to-fine semantics enables prefix-sharing. The first code defines the coarse cluster; subsequent codes refine.</>}
+        stretch={<>What's the failure mode if codebook 1 captures fine-grained details?</>}
+      />
+
+      {/* C2 */}
+      <VIS.TrapProblem
+        id="rqvae-c2"
+        difficulty="hard"
+        title="C2 — Why three losses?"
+        scenario={<>RQ-VAE has reconstruction + commitment + codebook losses. Why need all three?</>}
+        options={[
+          {key:"a", text:"Reconstruction drives the encoder to produce useful embeddings AND ensures the decoded codes match input. Commitment loss prevents encoder from drifting away from chosen codes. Codebook loss moves codes toward encoder outputs. Without commitment, encoder ignores codes; without codebook loss, codes stale; without reconstruction, you have no signal.", correct:true},
+          {key:"b", text:"Reconstruction alone suffices."},
+          {key:"c", text:"Codebook loss is optional."},
+          {key:"d", text:"More losses = more bugs."},
+        ]}
+        trap={<>(b), (c), (d) miss the bidirectional encoder-codebook coupling.</>}
+        lens={<>The three losses solve the chicken-and-egg between encoder and codebook. Drop any and training fails in a specific way.</>}
+        stretch={<>Which of the three has the most tunable hyperparameter?</>}
+      />
+
+      {/* C3 */}
+      <VIS.TrapProblem
+        id="rqvae-c3"
+        difficulty="hard"
+        title="C3 — What's dropped vs continuous embeddings"
+        scenario={<>Moving from continuous content embeddings to RQ-VAE Semantic IDs, what's intentionally given up?</>}
         multiSelect
-        title="P6 — Fixes for collapse"
-        scenario={<>You confirm codebook 1 is collapsed (perplexity 8 of 512). Which interventions are sound? Select all that apply.</>}
         options={[
-          {key:"a", text:"Switch from straight-through estimator updates to EMA codebook updates.", correct:true},
-          {key:"b", text:"Reset 'dead' codes (those with usage below a threshold) to random encoder outputs from the current batch.", correct:true},
-          {key:"c", text:"Reduce the commitment loss weight to let codes drift more.", correct:true},
-          {key:"d", text:"Make the codebook bigger (D=512 → 4096)."},
-          {key:"e", text:"Train the codebook for 10× longer with the same hyperparameters."},
+          {key:"a", text:"Fine-grained distance structure — Semantic IDs at the same prefix are 'similar,' but exact distances within a cluster are lost.", correct:true},
+          {key:"b", text:"Direct dot-product retrievability — Semantic IDs aren't vectors; need an autoregressive decoder to use them.", correct:true},
+          {key:"c", text:"Differentiability for downstream gradients — Semantic IDs are discrete; gradients can't flow through them without straight-through estimators.", correct:true},
+          {key:"d", text:"Content information entirely."},
+          {key:"e", text:"Item uniqueness."},
         ]}
-        trap={<>(d) makes collapse WORSE — more codes per layer with the same training signal compounds the problem. (e) burns compute without addressing the structural issue.</>}
-        lens={<>Three correct: EMA updates (smoother gradients into the codebook), dead-code reset (gives unused codes a chance), commitment loss tuning (over-strong commitment locks codes into bad assignments). The wrong moves all add capacity without addressing the optimization dynamics.</>}
-        stretch={<>Which of the three correct fixes is easiest to roll back if it makes things worse?</>}
+        trap={<>(d) is wrong — content info is preserved (reconstructable). (e) is wrong — uniqueness is preserved with tiebreakers.</>}
+        lens={<>Three real losses: distance structure, dot-product compatibility, differentiability. The gain is discreteness for autoregressive models.</>}
+        stretch={<>Could a continuous-discrete hybrid recover any of these?</>}
       />
 
+      {/* C4 */}
       <VIS.TrapProblem
-        id="rqvae-p7"
+        id="rqvae-c4"
         difficulty="hard"
-        title="P7 — Online codebook updates"
-        scenario={<>Product asks "can we update the codebook continuously as new items arrive?" Three downstream models depend on the codebook. What's the right answer?</>}
+        title="C4 — Commitment weight β at the boundary"
+        scenario={<>You set β to 0.001, 0.25 (default), and 5.0. Compare.</>}
         options={[
-          {key:"a", text:"Yes — RQ-VAE is online-friendly."},
-          {key:"b", text:"No — continuous codebook updates break downstream dependencies; the safe pattern is periodic (e.g. quarterly) re-training with dual-vocabulary rollout, and incremental encoding of new items against the FROZEN codebook in between.", correct:true},
-          {key:"c", text:"Yes, if you update slowly."},
-          {key:"d", text:"Only if downstream models are also continuously updated."},
+          {key:"a", text:"β=0.001: encoder drifts freely → codes stale → train-time recon looks great but decode-time quantization (force-snap to nearest code) distorts heavily. β=0.25: balanced. β=5.0: encoder constrained too hard → can't move → embeddings squash → reconstruction loss high.", correct:true},
+          {key:"b", text:"β doesn't matter."},
+          {key:"c", text:"Higher β always faster."},
+          {key:"d", text:"Use β=0 for stability."},
         ]}
-        trap={<>(a) and (c) trade away downstream stability. (d) is operationally infeasible at scale (synchronously updating 3+ models hourly).</>}
-        lens={<>RQ-VAE's serving pattern is "frozen codebook, encode new items as they arrive." Codebook re-training is an event, not a continuous process. Mistaking this is the #1 source of "the model regressed overnight and nobody knows why" incidents.</>}
-        stretch={<>What's the trigger you'd use to schedule a codebook retraining?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>β controls encoder–codebook tug-of-war. 0.25 is the canonical VQ-VAE default.</>}
+        stretch={<>How would you detect "β too low" in training logs?</>}
       />
 
+      {/* C5 */}
       <VIS.TrapProblem
-        id="rqvae-p8"
+        id="rqvae-c5"
         difficulty="hard"
-        title="P8 — Collision rate diagnosis"
-        scenario={<>Catalog 200M items, K=3, D=512. Audit shows collision rate <strong>14%</strong> — that many distinct items quantize to the same Semantic ID. Downstream retrieval is suffering. Where does the fix go?</>}
+        title="C5 — Items with no content"
+        scenario={<>You apply RQ-VAE to a catalog where items have only an ID and one numeric attribute. What happens?</>}
         options={[
-          {key:"a", text:"Increase K from 3 to 4.", correct:true},
-          {key:"b", text:"Increase D from 512 to 8192."},
-          {key:"c", text:"Train longer."},
-          {key:"d", text:"Drop colliding items from the catalog."},
+          {key:"a", text:"RQ-VAE has near-zero signal to encode → codebooks collapse to a single dominant code → Semantic IDs all start with the same code → prefix-sharing meaningless. Better to use random IDs or a simple discretization of the numeric attribute.", correct:true},
+          {key:"b", text:"Works fine."},
+          {key:"c", text:"More codebooks fix it."},
+          {key:"d", text:"Larger β fixes it."},
         ]}
-        trap={<>(b) helps but the math favors (a) — D^K grows faster in K than in D. (c) doesn't address the structural capacity limit. (d) defeats the purpose of having a catalog.</>}
-        lens={<>Possible IDs = D^K. Going K=3, D=512 → K=4, D=512 multiplies capacity by 512×. Going K=3, D=512 → K=3, D=8192 multiplies by 16×. Adding K is the higher-leverage knob. Practical caveat: adding K also adds a decoding step at serving, so it's a tradeoff against latency.</>}
-        stretch={<>At what catalog size does going from K=4 to K=5 become worthwhile?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>RQ-VAE's value requires content with at least some discriminating structure. No structure → no useful codebook.</>}
+        stretch={<>What's the minimum content set that makes RQ-VAE worth using?</>}
       />
 
+      {/* C1b */}
       <VIS.TrapProblem
-        id="rqvae-p9"
+        id="rqvae-c1b"
         difficulty="hard"
-        title="P9 — Why hierarchical prefixes matter for cold-start"
-        scenario={<>A new item is encoded to Semantic ID (47, 113, 8, 2). Existing items with prefix (47, 113, *, *) get well-recommended for cooking queries. The new item starts getting impressions on cooking queries despite zero interaction history. Why does this work?</>}
+        title="C1b — Why K=4 codebooks?"
+        scenario={<>TIGER uses K=4. Why not K=2 or K=8?</>}
         options={[
-          {key:"a", text:"The downstream model learns from the prefix as a feature; items sharing a prefix share part of the learned representation.", correct:true},
-          {key:"b", text:"Magic."},
-          {key:"c", text:"The downstream model treats all 4-tuples independently."},
-          {key:"d", text:"Item embeddings are tied to interactions, not codes."},
+          {key:"a", text:"K=2: collisions explode at large catalogs (2-tuple of 256 codes = 65K combos, too few for a 1M-item catalog). K=8: each additional codebook beyond 4 sees vanishing residuals (the residual gets too small to quantize meaningfully) AND adds decode latency. K=4 is the empirical sweet spot.", correct:true},
+          {key:"b", text:"K=4 is arbitrary."},
+          {key:"c", text:"K=8 always better."},
+          {key:"d", text:"K=2 always better."},
         ]}
-        trap={<>(c) describes the random-ID world, not Semantic IDs. (d) misunderstands what Semantic IDs are for.</>}
-        lens={<>The downstream model learns embeddings over the codebook entries, not over (catalog item, ID) pairs. A new item sharing the (47, 113) prefix inherits whatever the model has learned about that prefix — same as a new product in a known category inherits brand-prior. This is the entire engineering rationale for Semantic IDs.</>}
-        stretch={<>How would you test that downstream models actually USE the prefix structure (vs treating IDs atomically)?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>K trades capacity vs latency vs codebook utilization. 4 balances all three.</>}
+        stretch={<>For a 10B-item catalog, would K=5 be necessary?</>}
       />
 
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      {/* D1 */}
       <VIS.TrapProblem
-        id="rqvae-p10"
+        id="rqvae-d1"
+        difficulty="hard"
+        title="D1 — 'Reconstruction loss is the right metric'"
+        scenario={<>You tune RQ-VAE for lowest reconstruction loss. Downstream retrieval recall drops. Why?</>}
+        options={[
+          {key:"a", text:"Reconstruction loss rewards codebooks that encode any unique signal in the content, including noise. Better retrieval recall comes from codebooks that group SEMANTICALLY similar items together (prefix-sharing). Low recon loss + bad recall = codebooks over-fit to content idiosyncrasies, fragmenting prefix-sharing.", correct:true},
+          {key:"b", text:"Reconstruction loss is broken."},
+          {key:"c", text:"Need higher β."},
+          {key:"d", text:"Use BCE."},
+        ]}
+        trap={<>(b), (c), (d) miss the metric-mismatch.</>}
+        lens={<>Reconstruction is a proxy. The real metric is downstream retrieval recall (or whatever your consumer uses). Tune against the downstream metric, not reconstruction.</>}
+        stretch={<>What's the cheap proxy for retrieval recall during RQ-VAE training?</>}
+      />
+
+      {/* D1b */}
+      <VIS.TrapProblem
+        id="rqvae-d1b"
+        difficulty="hard"
+        title="D1b — 'Bigger codebook = better compression'"
+        scenario={<>Going from |codebook|=256 → 4096 improves reconstruction but hurts cold-start. Why?</>}
+        options={[
+          {key:"a", text:"Larger codebooks let each code memorize more idiosyncratic content; items that previously shared prefix codes now diverge into separate codes; cold-start items in a previously well-populated prefix region find no neighbors. Prefix-sharing fragments.", correct:true},
+          {key:"b", text:"Larger codebooks have less capacity."},
+          {key:"c", text:"Larger codebooks train slower."},
+          {key:"d", text:"Smaller is always better."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>RQ-VAE's value chain prizes prefix-sharing over reconstruction fidelity. Smaller codebooks share more; larger ones share less.</>}
+        stretch={<>What's the right way to choose codebook size?</>}
+      />
+
+      {/* D2 */}
+      <VIS.TrapProblem
+        id="rqvae-d2"
+        difficulty="hard"
+        title="D2 — 'RQ-VAE = VQ-VAE + more codebooks' cascade"
+        scenario={<>This framing hides what?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Hierarchical prefix structure: residual quantization gives coarse-to-fine semantics; parallel codebooks don't.", correct:true},
+          {key:"b", text:"Codebook utilization is differently distributed: in RQ-VAE, later codebooks see smaller residuals; need staircase-aware code-balance regularization.", correct:true},
+          {key:"c", text:"Decode is sequential (K steps), not parallel.", correct:true},
+          {key:"d", text:"VQ-VAE doesn't exist."},
+        ]}
+        trap={<>(d) is wrong.</>}
+        lens={<>RQ-VAE inherits VQ-VAE's training tricks but adds structure (residual) + ordering (decode sequence).</>}
+        stretch={<>Why does the residual structure create the codebook-utilization staircase?</>}
+      />
+
+      {/* D3 */}
+      <VIS.TrapProblem
+        id="rqvae-d3"
+        difficulty="hard"
+        title="D3 — Junior fix: increase codebook size"
+        scenario={<>RQ-VAE recall drops. Junior says "increase codebook size from 256 → 1024." Senior reaches for what?</>}
+        options={[
+          {key:"a", text:"Audit codebook utilization first: if utilization is low (most codes unused), adding more codes makes it worse; fix utilization (EMA updates, code-balance loss, re-init unused codes). If utilization is high (>80%), THEN consider larger codebooks.", correct:true},
+          {key:"b", text:"Larger codebook is always the fix."},
+          {key:"c", text:"Retrain from scratch."},
+          {key:"d", text:"Switch to PQ."},
+        ]}
+        trap={<>(b), (c), (d) are reflex or escalation.</>}
+        lens={<>Codebook utilization is the first diagnosis. Cardinality changes don't fix utilization problems.</>}
+        stretch={<>What utilization threshold is acceptable for production?</>}
+      />
+
+      {/* D4 */}
+      <VIS.TrapProblem
+        id="rqvae-d4"
+        difficulty="hard"
+        title="D4 — Different items, same Semantic ID"
+        scenario={<>Two distinct items map to the same K-tuple Semantic ID. Three causes: (1) collision (rare), (2) codebook collapse (frequent), (3) RQ-VAE bug. Most likely?</>}
+        options={[
+          {key:"a", text:"(2) most often: when codebooks collapse, large groups of items get mapped to the same few prefixes; collision rate spikes dramatically. (1) is paper-flagged at ~0.3% on healthy codebooks. (3) is rare.", correct:true},
+          {key:"b", text:"(1)."},
+          {key:"c", text:"(3)."},
+          {key:"d", text:"All three equally."},
+        ]}
+        trap={<>(b) is the textbook reading but ignores collapse frequency.</>}
+        lens={<>Collisions on healthy codebooks are rare; on collapsed codebooks, common. Diagnose codebook health first.</>}
+        stretch={<>What's the collision rate threshold that indicates collapse?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      {/* E1 */}
+      <VIS.TrapProblem
+        id="rqvae-e1"
+        difficulty="hard"
+        title="E1 — Codebook collapse: detection and fix"
+        scenario={<>RQ-VAE training: most codes never assigned. Fix?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"EMA codebook updates (gradient-free, slow update of code entries based on assigned encoder outputs).", correct:true},
+          {key:"b", text:"Code-balance / entropy regularization in the loss (penalizes low-entropy code-distribution).", correct:true},
+          {key:"c", text:"Periodic re-init of unused codes (randomly resample dead codes).", correct:true},
+          {key:"d", text:"Larger batch size."},
+          {key:"e", text:"Bigger β."},
+        ]}
+        trap={<>(d) is incidental; (e) makes things worse (constrains encoder more).</>}
+        lens={<>The three canonical anti-collapse remedies. Usually you need at least two.</>}
+        stretch={<>What detection metric tells you collapse is happening early?</>}
+      />
+
+      {/* E2 */}
+      <VIS.TrapProblem
+        id="rqvae-e2"
+        difficulty="hard"
+        title="E2 — Friday: codebook drift breaks downstream"
+        scenario={<>RQ-VAE retrains nightly. Saturday: downstream model that consumed Semantic IDs regresses. Diagnose.</>}
+        options={[
+          {key:"a", text:"Codebook drift: some codebook entries shifted slightly during retraining, causing some items' Semantic IDs to change. Downstream model learned dependencies on old IDs; new IDs break those dependencies.", correct:true},
+          {key:"b", text:"Random."},
+          {key:"c", text:"GPU."},
+          {key:"d", text:"User behavior."},
+        ]}
+        trap={<>(b), (c), (d) miss the drift story.</>}
+        lens={<>Codebook drift is the canonical RQ-VAE ops failure. Fixes: freeze codebooks across incremental updates, only ADD new codes, version Semantic IDs and retrain downstream when version bumps.</>}
+        stretch={<>What's the codebook-update policy you'd recommend?</>}
+      />
+
+      {/* E3 */}
+      <VIS.TrapProblem
+        id="rqvae-e3"
+        difficulty="hard"
+        title="E3 — Content encoder choice impacts everything"
+        scenario={<>You swap Sentence-T5 for a smaller MiniLM in your RQ-VAE training. What changes?</>}
+        options={[
+          {key:"a", text:"The starting space for residual quantization changes — items that clustered together in Sentence-T5 space may not cluster in MiniLM space; codebooks learn different boundaries; Semantic IDs are completely different; everything downstream needs retraining.", correct:true},
+          {key:"b", text:"No impact — RQ-VAE handles it."},
+          {key:"c", text:"Faster training, same output."},
+          {key:"d", text:"Use any encoder."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The content encoder is a load-bearing dependency. Picking it carelessly cascades through the entire stack.</>}
+        stretch={<>How would you A/B test encoders before committing?</>}
+      />
+
+      {/* E4 */}
+      <VIS.TrapProblem
+        id="rqvae-e4"
+        difficulty="hard"
+        mode="ordered"
+        title="E4 — RQ-VAE rollout"
+        scenario={<>Replacing random-ID embeddings with RQ-VAE Semantic IDs. Phase.</>}
+        options={[
+          {key:"a", text:"Train RQ-VAE offline; validate codebook utilization > 70% and collision rate < 1%.", order:1},
+          {key:"b", text:"Validate Semantic-ID similarity matches business-intuitive similarity (qualitative + quantitative spot checks).", order:2},
+          {key:"c", text:"Train consumer model (TIGER, OneRec, HSTU) with Semantic IDs; shadow-test against baseline.", order:3},
+          {key:"d", text:"Production rollout with codebook freezing and Semantic-ID versioning.", order:4},
+          {key:"e", text:"Ship straight to production."},
+          {key:"f", text:"Skip codebook validation."},
+        ]}
+        trap={<>(e), (f) skip the steps that catch silent failure modes.</>}
+        lens={<>The codebook-quality validation must happen BEFORE any downstream consumer is built.</>}
+        stretch={<>What's the validation criterion for codebook quality?</>}
+      />
+
+      {/* E5 */}
+      <VIS.TrapProblem
+        id="rqvae-e5"
+        difficulty="hard"
+        title="E5 — Reproducing the handbook's published numbers"
+        scenario={<>The 2025 Semantic-ID handbook reports specific recall numbers. To reproduce, what must you match?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Content encoder (Sentence-T5 vs CLIP vs custom).", correct:true},
+          {key:"b", text:"Codebook size (256, 512, etc.) and K (number of codebooks).", correct:true},
+          {key:"c", text:"Catalog content distribution (uniform vs long-tail, content density).", correct:true},
+          {key:"d", text:"GPU model."},
+          {key:"e", text:"Random seed."},
+        ]}
+        trap={<>(d), (e) are 2nd-order.</>}
+        lens={<>The first three are load-bearing. Mismatch on any cascades.</>}
+        stretch={<>If you match all three, what variance should you still expect?</>}
+      />
+
+      {/* E6 */}
+      <VIS.TrapProblem
+        id="rqvae-e6"
+        difficulty="hard"
+        title="E6 — Eval contamination"
+        scenario={<>RQ-VAE benchmarks privilege what?</>}
+        options={[
+          {key:"a", text:"Catalogs with rich, clean content (MovieLens with plot summaries; Amazon with full descriptions) — Sentence-T5 produces well-separated embeddings on this content; RQ-VAE's codebooks find clean clusters; metrics overstate what you'll see on messier real-world content (multilingual, sparse-text).", correct:true},
+          {key:"b", text:"Synthetic catalogs."},
+          {key:"c", text:"Datasets without content."},
+          {key:"d", text:"Streaming benchmarks."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The content quality of the benchmark catalogs is the silent confounder. Always validate on your actual catalog.</>}
+        stretch={<>What benchmark would you create to surface messy-content weakness?</>}
+      />
+
+      {/* E1b */}
+      <VIS.TrapProblem
+        id="rqvae-e1b"
+        difficulty="hard"
+        title="E1b — Streaming RQ-VAE updates"
+        scenario={<>You want RQ-VAE to absorb new items every hour without breaking downstream. How?</>}
+        options={[
+          {key:"a", text:"Freeze existing codebooks; for new items, assign them their nearest existing code (no new codes added). When unused-code rate or item-distribution shift exceeds a threshold, schedule a full retrain with codebook versioning + downstream model retraining.", correct:true},
+          {key:"b", text:"Retrain RQ-VAE hourly."},
+          {key:"c", text:"Add new codes hourly."},
+          {key:"d", text:"Just don't update."},
+        ]}
+        trap={<>(b), (c) cause continuous drift. (d) misses new content.</>}
+        lens={<>Freeze + nearest-assign is the standard incremental update for RQ-VAE in production. Full retraining is a versioned event.</>}
+        stretch={<>What's the threshold that triggers a full retrain?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      {/* F1 */}
+      <VIS.TrapProblem
+        id="rqvae-f1"
+        difficulty="hard"
+        title="F1 — Homogeneous catalog edge case"
+        scenario={<>Generic-brand toiletries catalog: 1M items, nearly-identical descriptions. What breaks first?</>}
+        options={[
+          {key:"a", text:"Codebook collapse: items cluster too tightly in content-embedding space; RQ-VAE's first codebook assigns most items to one or two codes; subsequent codebooks see vanishing residuals; effective vocabulary collapses to a tiny set of prefixes; recall drops to near-random.", correct:true},
+          {key:"b", text:"Decode latency."},
+          {key:"c", text:"GPU memory."},
+          {key:"d", text:"Constrained decoding."},
+        ]}
+        trap={<>(b), (c), (d) are secondary.</>}
+        lens={<>Content uniformity → codebook collapse → recall crash. Fix: augment content with additional features (price, supplier, region), or fall back to learned random-ID embeddings within colliding clusters.</>}
+        stretch={<>What's the test for catalog homogeneity before training?</>}
+      />
+
+      {/* F2 */}
+      <VIS.TrapProblem
+        id="rqvae-f2"
+        difficulty="hard"
+        title="F2 — Adversarial: paraphrased content"
+        scenario={<>A vendor creates 1000 paraphrased copies of a hot item. What happens?</>}
+        options={[
+          {key:"a", text:"All paraphrases get nearly-identical Semantic IDs (content embeddings are similar; quantization snaps them to the same K-tuple); downstream prefix-based retrieval treats them as one item; original hot item's traffic is diluted; recall and revenue both crash.", correct:true},
+          {key:"b", text:"RQ-VAE detects paraphrases."},
+          {key:"c", text:"No effect."},
+          {key:"d", text:"RQ-VAE blocks the spam."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>Semantic-ID similarity is a feature normally but an attack surface under content-clone abuse. Mitigation: upstream content deduplication, anomaly detection on Semantic-ID density.</>}
+        stretch={<>How would you detect this attack at scale?</>}
+      />
+
+      {/* F3 */}
+      <VIS.TrapProblem
+        id="rqvae-f3"
+        difficulty="hard"
+        title="F3 — Reverse engineering: 'recall good for popular, poor for tail'"
+        scenario={<>RQ-VAE-based retrieval: recall@10 great for popular items, poor for tail items. Which property drives this?</>}
+        options={[
+          {key:"a", text:"Codebook training is dominated by popular items (more occurrences in training data) → codes specialize for popular content; tail content lands in poorly-fit code regions → tail items cluster awkwardly; tail recall suffers. Fix: oversample tail content during RQ-VAE training, or apply content-frequency-aware code-balance loss.", correct:true},
+          {key:"b", text:"Random."},
+          {key:"c", text:"Decoder issue."},
+          {key:"d", text:"Tail items don't have content."},
+        ]}
+        trap={<>(b), (c), (d) miss the popularity-bias-in-codebook story.</>}
+        lens={<>RQ-VAE inherits the popularity bias of its training data. Mitigation: sampling + reweighting at the codebook-training stage.</>}
+        stretch={<>How would you measure popularity-bias in codebooks?</>}
+      />
+
+      {/* F4 */}
+      <VIS.TrapProblem
+        id="rqvae-f4"
+        difficulty="hard"
+        title="F4 — VQ-VAE-lineage paper-named failures"
+        scenario={<>Which failure modes does the VQ-VAE / RQ-VAE literature explicitly flag?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Codebook collapse (most codes unused).", correct:true},
+          {key:"b", text:"Posterior collapse (encoder ignores codebook entirely).", correct:true},
+          {key:"c", text:"Training instability (oscillation, especially in early epochs).", correct:true},
+          {key:"d", text:"GPU thermal."},
+          {key:"e", text:"Random seed dependence."},
+        ]}
+        trap={<>(d), (e) aren't paper-flagged failures.</>}
+        lens={<>The three are the canonical VQ-VAE family failure modes. Each has a standard fix (EMA, KL annealing, careful init).</>}
+        stretch={<>Posterior collapse is more common in continuous VAE — does it really happen in RQ-VAE?</>}
+      />
+
+      {/* F5 */}
+      <VIS.TrapProblem
+        id="rqvae-f5"
+        difficulty="hard"
+        title="F5 — Community-found: multilingual encoder inconsistency"
+        scenario={<>The 2025 handbook explicitly flags a specific RQ-VAE weakness on multilingual catalogs. What?</>}
+        options={[
+          {key:"a", text:"A single content encoder produces inconsistent embeddings across languages → items with the same product but different-language descriptions get different Semantic IDs → prefix structure fragments by language → cross-language transfer fails.", correct:true},
+          {key:"b", text:"Multilingual codebooks are unstable."},
+          {key:"c", text:"RQ-VAE doesn't work multilingually."},
+          {key:"d", text:"Pretrained encoders are too small."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The fix is multilingual pretrained encoder (mT5, multilingual CLIP). Translation-equivalent items then get nearby embeddings, hence shared Semantic-ID prefixes.</>}
+        stretch={<>How would you measure cross-language prefix quality?</>}
+      />
+
+      {/* F1b */}
+      <VIS.TrapProblem
+        id="rqvae-f1b"
+        difficulty="hard"
+        title="F1b — Items with very long content (e.g. 10K-word descriptions)"
+        scenario={<>Items have 10K-word descriptions (e.g. long-form articles). What's the RQ-VAE pre-step?</>}
+        options={[
+          {key:"a", text:"Truncate or summarize content to encoder's context length before producing the embedding. Sentence-T5 typically handles ~512 tokens; longer content needs chunking + pooling or a different encoder. Truncation is lossy but standard.", correct:true},
+          {key:"b", text:"RQ-VAE handles any length."},
+          {key:"c", text:"Sentence-T5 accepts 10K tokens."},
+          {key:"d", text:"Long content gives better Semantic IDs."},
+        ]}
+        trap={<>(b), (c), (d) misread encoder limits.</>}
+        lens={<>The encoder's context length is a hard constraint. Long content is a preprocessing problem.</>}
+        stretch={<>How would you chunk + pool? What does it lose?</>}
+      />
+
+      {/* F3b */}
+      <VIS.TrapProblem
+        id="rqvae-f3b"
+        difficulty="hard"
+        title="F3b — Codebook utilization metric"
+        scenario={<>You measure codebook utilization: 70% of codebook 1 codes used, 30% of codebook 4 codes used. Healthy or unhealthy?</>}
+        options={[
+          {key:"a", text:"The staircase (later codebooks less utilized) is EXPECTED in healthy RQ-VAE — residuals get smaller after each layer; later codes are inherently less common. The pattern is healthy. Unhealthy would be: <40% utilization at codebook 1 (collapse) or zero codes used at codebook 4 (vanishing).", correct:true},
+          {key:"b", text:"Unhealthy."},
+          {key:"c", text:"Need more training."},
+          {key:"d", text:"Codebook 4 should also be 70%."},
+        ]}
+        trap={<>(b), (c), (d) misread the staircase.</>}
+        lens={<>Utilization decreases by codebook depth in healthy RQ-VAE. The metric must be tier-aware.</>}
+        stretch={<>What utilization rate at codebook 1 would alarm you?</>}
+      />
+
+      {/* D2b */}
+      <VIS.TrapProblem
+        id="rqvae-d2b"
         difficulty="medium"
-        title="P10 — Reconstruction loss is misleading"
-        scenario={<>RQ-VAE training: reconstruction MSE is dropping steadily, codebook perplexity stable at 700 (out of 1024). Junior eng says "great, ship it." What's worth checking before agreeing?</>}
+        title="D2b — 'Semantic IDs are forever'"
+        scenario={<>A teammate thinks Semantic IDs are immutable once trained. What's wrong?</>}
         options={[
-          {key:"a", text:"Nothing — MSE down + perplexity stable is the success condition."},
-          {key:"b", text:"Check that the discrete IDs (not just the reconstructed continuous embeddings) actually carry the semantic structure you need — e.g. that a held-out item retrieves its near-neighbours by prefix similarity.", correct:true},
-          {key:"c", text:"Train 10× longer."},
-          {key:"d", text:"Check inference latency."},
+          {key:"a", text:"Semantic IDs change on every RQ-VAE retrain. Catalog updates often force retraining; downstream systems must treat Semantic IDs as versioned data, not stable keys. Operational implication: any downstream system needs a (Semantic-ID, version) tuple as its actual key.", correct:true},
+          {key:"b", text:"They are forever."},
+          {key:"c", text:"Only the encoder changes."},
+          {key:"d", text:"Only the decoder changes."},
         ]}
-        trap={<>(a) optimizes the proxy. (c) is unmotivated. (d) is a separate concern.</>}
-        lens={<>Reconstruction MSE measures continuous fidelity, not discrete utility. The downstream property that matters is whether prefix similarity → semantic similarity. Always evaluate on a held-out semantic-retrieval task before declaring RQ-VAE done.</>}
-        stretch={<>What's a cheap eval task for prefix-semantic-correspondence?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>Treat Semantic IDs as versioned. Downstream contracts need to handle version bumps gracefully.</>}
+        stretch={<>What's the migration cost when versions bump?</>}
       />
 
+      {/* A4b */}
       <VIS.TrapProblem
-        id="rqvae-p11"
+        id="rqvae-a4b"
         difficulty="hard"
-        title="P11 — Versioning the codebook in storage"
-        scenario={<>Your codebook gets re-trained quarterly. Downstream models cache Semantic IDs in feature stores. Without versioning, a stale cache will serve old IDs against a new codebook. What's the right schema?</>}
+        title="A4b — RQ-VAE for non-content items (e.g. user IDs)"
+        scenario={<>Could you use RQ-VAE to quantize USER embeddings (instead of item content)?</>}
         options={[
-          {key:"a", text:"One canonical Semantic ID per item, overwritten on retraining."},
-          {key:"b", text:"Semantic ID keyed by (item_id, codebook_version); downstream consumers declare which version they expect.", correct:true},
-          {key:"c", text:"Drop the cache on retraining."},
-          {key:"d", text:"Never retrain."},
+          {key:"a", text:"Yes — same machinery, but the input is now a user embedding (e.g. average of their interaction history); output is a Semantic-ID for the user. Useful when downstream consumer needs discrete user tokens. Less common in practice; usually item tokenization carries more leverage.", correct:true},
+          {key:"b", text:"Impossible."},
+          {key:"c", text:"Trivially better than item tokenization."},
+          {key:"d", text:"Same as random hashing."},
         ]}
-        trap={<>(a) is the root cause of post-retraining incidents. (c) is a heavy-handed workaround. (d) is unsustainable.</>}
-        lens={<>Versioned vocabularies are a basic data-engineering invariant any time the vocabulary is a shared dependency. Skipping versioning is what causes the "downstream model regressed mysteriously" post-mortems. Pay this cost up front.</>}
-        stretch={<>How long do you keep deprecated codebook versions available?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>RQ-VAE is a general quantization tool. Applying it to users is research-explored, niche in production.</>}
+        stretch={<>What's the consumer model that benefits from user Semantic IDs?</>}
       />
 
+      {/* E2b */}
       <VIS.TrapProblem
-        id="rqvae-p12"
+        id="rqvae-e2b"
         difficulty="hard"
-        title="P12 — When to skip RQ-VAE entirely"
-        scenario={<>Four scenarios. (a) E-commerce catalog 100M items, rich text + image, 200k new items/day. (b) A music recommender with 50M tracks, audio embeddings available, slow catalog growth. (c) An internal-tools recommender with 5k items, no content features. (d) An ad ranker where item identity is opaque (creative_id only). Where is RQ-VAE NOT the right call?</>}
+        title="E2b — Online learning of codebooks"
+        scenario={<>You want to continually update codebooks online. Practical?</>}
         options={[
-          {key:"a", text:"All four should use RQ-VAE."},
-          {key:"b", text:"(c) and (d) — (c) has no content to encode, (d) has no content available to encode; in both, RQ-VAE has nothing to quantize so prefix structure is meaningless.", correct:true},
-          {key:"c", text:"(b) — slow catalogs don't need RQ-VAE."},
-          {key:"d", text:"(a) — too big."},
+          {key:"a", text:"Risky: every codebook update changes existing Semantic IDs for some items; downstream consumers see constant drift. The standard production pattern is FROZEN codebooks + scheduled retraining events (every few weeks), not online learning. Online updates are research-frontier; not production-ready.", correct:true},
+          {key:"b", text:"Always practical."},
+          {key:"c", text:"Hourly updates fine."},
+          {key:"d", text:"Daily updates fine."},
         ]}
-        trap={<>(a) is maximalist. (c) misses that slow catalogs still benefit from prefix-based generalization. (d) ignores the scaling success of RQ-VAE at exactly that scale.</>}
-        lens={<>RQ-VAE Semantic IDs depend on the existence of meaningful content embeddings. Without content (or with opaque IDs), Semantic IDs degenerate to fancy hashing — all cost, no cold-start win. The principled question is always "do I have content the encoder can extract semantic axes from?"</>}
-        stretch={<>What's the cheapest experiment to validate that content carries useful signal before investing in RQ-VAE?</>}
+        trap={<>(b), (c), (d) under-account for drift.</>}
+        lens={<>Codebook stability is a contract with downstream. Update frequency = how often you can break that contract.</>}
+        stretch={<>What's the right retraining cadence in your environment?</>}
       />
+
+      {/* C5b */}
+      <VIS.TrapProblem
+        id="rqvae-c5b"
+        difficulty="hard"
+        title="C5b — Joint training with downstream consumer"
+        scenario={<>Can you jointly train RQ-VAE end-to-end with the consumer model (e.g. TIGER) using a single loss?</>}
+        options={[
+          {key:"a", text:"Risky: the consumer's gradient passes through the quantization step (non-differentiable); you need a straight-through estimator; codebooks then get gradient pressure from BOTH reconstruction (forwards) and consumer loss (backwards), often causing codebook collapse. The TIGER paper uses two-stage training for stability.", correct:true},
+          {key:"b", text:"Always better than two-stage."},
+          {key:"c", text:"Impossible."},
+          {key:"d", text:"Trivial."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>Two-stage is the production default. Joint training is research-frontier; needs careful gradient management.</>}
+        stretch={<>How does straight-through estimator handle the discrete step?</>}
+      />
+
+      {/* D4b */}
+      <VIS.TrapProblem
+        id="rqvae-d4b"
+        difficulty="hard"
+        title="D4b — Cold-start: rich content but no training history"
+        scenario={<>New item: rich content, zero interactions. RQ-VAE → Semantic ID. Then what?</>}
+        options={[
+          {key:"a", text:"The new item's Semantic ID inherits structure from similar trained items via shared codebooks; if a similar warm item exists, downstream retrieval will surface the new item via shared prefix. Zero-shot retrieval without any training on the new item.", correct:true},
+          {key:"b", text:"Doesn't work for cold-start."},
+          {key:"c", text:"Need to retrain RQ-VAE for each new item."},
+          {key:"d", text:"Use random embeddings instead."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>This is exactly the cold-start story RQ-VAE Semantic IDs enable. Inheriting prefix structure from neighbors gives zero-shot retrievability.</>}
+        stretch={<>What's the recall gap vs warm items for cold-start?</>}
+      />
+
+      {/* F4b */}
+      <VIS.TrapProblem
+        id="rqvae-f4b"
+        difficulty="medium"
+        title="F4b — EMA decay rate"
+        scenario={<>What EMA decay rate is typical for RQ-VAE codebook updates?</>}
+        options={[
+          {key:"a", text:"0.99 or 0.999 — slow enough to smooth out per-batch noise but responsive to systematic encoder shifts. Too low (e.g. 0.9) → noisy codebooks; too high (e.g. 0.9999) → codebooks lag too much.", correct:true},
+          {key:"b", text:"0.5."},
+          {key:"c", text:"1.0 (no update)."},
+          {key:"d", text:"0.0 (full replace)."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>0.99 / 0.999 is the canonical range. Same as BatchNorm running stats.</>}
+        stretch={<>When would you lower the decay?</>}
+      />
+
+      {/* E5b */}
+      <VIS.TrapProblem
+        id="rqvae-e5b"
+        difficulty="hard"
+        title="E5b — Reproducing TIGER via RQ-VAE on your catalog"
+        scenario={<>You build TIGER on your catalog. Recall is 30% lower than the paper. Most likely cause?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Content quality on your catalog is lower than the paper's benchmark (sparser descriptions, multilingual mix).", correct:true},
+          {key:"b", text:"Different content encoder choice (Sentence-T5 vs other).", correct:true},
+          {key:"c", text:"Catalog scale (paper's 1M items vs your 100M).", correct:true},
+          {key:"d", text:"GPU brand."},
+          {key:"e", text:"Random seed."},
+        ]}
+        trap={<>(d), (e) are 2nd-order.</>}
+        lens={<>The three RQ-VAE inputs (content quality, encoder, scale) cascade. Reproduction failures usually trace to one of these.</>}
+        stretch={<>What's the cheapest of the three to validate first?</>}
+      />
+
+      {/* A5b */}
+      <VIS.TrapProblem
+        id="rqvae-a5b"
+        difficulty="hard"
+        title="A5b — RQ-VAE vs LSH"
+        scenario={<>Both produce discrete codes. Which discriminator matters?</>}
+        options={[
+          {key:"a", text:"LSH produces probabilistically-distance-preserving codes for ANN search; the codes are useful as bucket assignments but lack hierarchical semantics. RQ-VAE codes are jointly trained with the encoder and have explicit hierarchical structure (residual). LSH is useful for retrieval; RQ-VAE for autoregressive generation.", correct:true},
+          {key:"b", text:"They're identical."},
+          {key:"c", text:"LSH is hierarchical."},
+          {key:"d", text:"RQ-VAE is just LSH."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>LSH and RQ-VAE serve different downstream consumers. LSH → ANN; RQ-VAE → autoregressive.</>}
+        stretch={<>Could you combine them?</>}
+      />
+
+      {/* C1c */}
+      <VIS.TrapProblem
+        id="rqvae-c1c"
+        difficulty="hard"
+        title="C1c — RQ-VAE for embedding compression"
+        scenario={<>Could you use RQ-VAE just to compress 768-d embeddings to a tiny K-tuple ID?</>}
+        options={[
+          {key:"a", text:"Yes — that's exactly the use case. The discrete K-tuple is ~K·log2(D) bits vs 768·32 bits for the original float32 embedding. Massive storage win. Loss of fidelity is the trade.", correct:true},
+          {key:"b", text:"RQ-VAE is not for compression."},
+          {key:"c", text:"Embeddings can't be compressed."},
+          {key:"d", text:"Compression doesn't matter."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>Compression is a real use case orthogonal to the autoregressive-vocabulary use case. Both leverage discrete codes.</>}
+        stretch={<>What's the compression ratio at K=4, D=256, dim=768?</>}
+      />
+
+      {/* D1c */}
+      <VIS.TrapProblem
+        id="rqvae-d1c"
+        difficulty="medium"
+        title="D1c — 'RQ-VAE solves cold-start, period'"
+        scenario={<>An evangelist says RQ-VAE solves cold-start. Defeat.</>}
+        options={[
+          {key:"a", text:"Only for items in the RQ-VAE training distribution. New CATEGORIES of items (out-of-distribution content) still cold-start poorly — codebooks don't have codes for that region of embedding space. The fix requires periodic RQ-VAE retraining as the distribution evolves.", correct:true},
+          {key:"b", text:"RQ-VAE solves it forever."},
+          {key:"c", text:"Cold-start is unsolvable."},
+          {key:"d", text:"Use random hashing."},
+        ]}
+        trap={<>(b), (d) over-claim. (c) under-claims.</>}
+        lens={<>RQ-VAE handles in-distribution cold-start (new items in known categories). Out-of-distribution cold-start (new categories) needs additional machinery.</>}
+        stretch={<>How would you detect OOD content shift?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/2507.22224" target="_blank" rel="noopener"><strong>Generative Recommendation with Semantic IDs: A Practitioner's Handbook (2025)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>Best single read on how Semantic IDs are deployed in practice — collapse mitigations, versioning, encoder choice.</li>
-        <li><a href="https://arxiv.org/abs/2203.01941" target="_blank" rel="noopener"><strong>Lee et al. — Residual Quantization (CVPR 2022)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, foundation)</span><br/>The original RQ-VAE paper. Read for the math behind residual quantization.</li>
-        <li><a href="https://arxiv.org/abs/1711.00937" target="_blank" rel="noopener"><strong>van den Oord et al. — Neural Discrete Representation Learning (VQ-VAE)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>The single-codebook predecessor. Helps you see why residualization was a step change.</li>
-        <li><a href="https://eugeneyan.com/writing/recsys-llm/" target="_blank" rel="noopener"><strong>Eugene Yan — generative recommenders</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Survey blog with practical lessons on Semantic ID rollouts.</li>
+        <li><a href="https://arxiv.org/abs/2107.10832" target="_blank" rel="noopener"><strong>Lee et al. — RQ-VAE for image generation (CVPR 2022)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>The original residual quantization paper. Originally for image gen; adapted to recsys later.</li>
+        <li><a href="https://arxiv.org/abs/2507.22224" target="_blank" rel="noopener"><strong>Generative Recommendation with Semantic IDs: A Practitioner's Handbook (2025)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(handbook)</span><br/>Production lessons + LC-Rec + multilingual encoder consistency.</li>
+        <li><a href="https://arxiv.org/abs/1711.00937" target="_blank" rel="noopener"><strong>van den Oord et al. — VQ-VAE</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, NIPS 2017)</span><br/>The ancestor of RQ-VAE. Commitment loss, EMA codebook updates.</li>
+        <li><a href="https://arxiv.org/abs/2305.05065" target="_blank" rel="noopener"><strong>Rajput et al. — TIGER</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2023)</span><br/>The first major recsys application of RQ-VAE.</li>
+        <li><a href="https://arxiv.org/abs/2502.18965" target="_blank" rel="noopener"><strong>Cai et al. — OneRec</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, Kuaishou 2025)</span><br/>OneRec uses RQ-VAE Semantic IDs as its decoding vocabulary.</li>
       </ul>
     </VIS.Section>
   </main>

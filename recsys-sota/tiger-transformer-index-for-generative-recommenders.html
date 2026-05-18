@@ -1414,274 +1414,866 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// TIGER — Transformer Index for Generative Recommenders.
-// Rajput et al. NeurIPS 2023; productionized 2024. Replaces ANN retrieval with autoregressive Semantic ID generation.
+// TIGER — Transformer Index for Generative Recommenders (Rajput et al., NeurIPS 2023)
+// v2 redo — 40+ trap problems spanning A-F taxonomy axes.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Generative recommendation (HSTU family)"
+      pill="RecSys SOTA · Generative recommendation"
       title="TIGER — Transformer Index for Generative Recommenders"
-      subtitle="Quantize item content with RQ-VAE into discrete Semantic IDs, then autoregressively generate the next item's ID. Generation IS the retrieval — no ANN index."
+      subtitle="Replace ANN retrieval with autoregressive Semantic-ID decoding. Generation IS retrieval."
       byline={[
         {label: "Paper", value: "Rajput et al., NeurIPS 2023"},
-        {label: "Year", value: "2024"},
+        {label: "Year", value: "2023-2024"},
         {label: "Domain", value: "Generative retrieval"},
       ]}/>
 
     <VIS.TLDR>
-      Unlike <VIS.Term def="Two-tower retrieval: user-tower and item-tower each produce an embedding; nearest neighbours of the user embedding under an ANN index (HNSW, IVF-PQ, ScaNN) form the candidate set.">two-tower + HNSW retrieval</VIS.Term>, TIGER has <strong>no ANN index</strong> — a seq2seq transformer autoregressively generates the next item's <VIS.Term def="A tuple of discrete codebook indices produced by Residual-Quantized VAE (RQ-VAE) on a content embedding. Two semantically similar items share a Semantic ID prefix.">Semantic ID</VIS.Term>. Items with similar semantics share ID prefixes, giving generalization a random-ID embedding table cannot. Source: <a href="https://arxiv.org/abs/2305.05065" target="_blank" rel="noopener">arXiv:2305.05065</a>.
+      TIGER quantizes content embeddings (text/image) with <VIS.Term def="Residual-Quantized Variational AutoEncoder: residually quantizes an embedding via K codebooks of D codes each, producing a K-tuple discrete code. Captures hierarchical semantics; similar items share prefixes.">RQ-VAE</VIS.Term> into K-tuple <VIS.Term def="A short discrete tuple (e.g. 4 codes × 256 entries) that encodes an item's content hierarchically — first code = coarse category, later codes = finer residual semantics. Replaces random item IDs.">Semantic IDs</VIS.Term>, then trains a seq2seq transformer to autoregressively generate the next item's Semantic ID. <strong>No ANN index. No HNSW.</strong> Items with similar content share ID prefixes, giving cold-start generalization that random-ID embeddings cannot. Source: <a href="https://arxiv.org/abs/2305.05065" target="_blank" rel="noopener">arXiv:2305.05065</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        TIGER converts every item in the catalog into a short tuple of discrete tokens (typically K=3–4 codes from codebooks of size 256–4096 each) via <VIS.Term def="Residual-Quantized VAE — encode a content embedding, quantize to the nearest codebook entry, subtract, quantize the residual against a second codebook, repeat K times. Each stage adds resolution.">RQ-VAE</VIS.Term> applied to a content embedding (text, image, or both). A transformer is then trained to take the user's history (also tokenized) and emit the Semantic ID of the next item, one code at a time, via standard auto-regressive decoding.
+        Two stages: (1) train an RQ-VAE on item content to produce a K-tuple Semantic ID per item; (2) train a seq2seq transformer that encodes user history (as a sequence of Semantic IDs) and autoregressively decodes the K-tuple Semantic ID of the next item. At serving time, you don't look up candidates in an index — you generate the ID directly, then map back via a trie.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  C["Item content (text/image)"] --> CE["Content embedding"]
-  CE --> RQ["RQ-VAE encode"]
-  RQ --> SID["Semantic ID (c1, c2, c3, c4)"]
-  H["User history (tokenized)"] --> T["Seq2seq transformer"]
-  SID -.codebook.-> T
-  T --> Y["Generated next ID c1, c2, c3, c4"]
-  style T fill:#dbeafe,stroke:#1e40af,stroke-width:2px
+  C["Item content (text / image)"]
+  C --> E["Content encoder"]
+  E --> R["RQ-VAE: residual quantization"]
+  R --> S["Semantic ID (e.g. 4-tuple)"]
+  S --> T["Seq2seq transformer over user history"]
+  T --> O["Autoregressive decode of next item's Semantic ID"]
+  style R fill:#dbeafe,stroke:#1e40af,stroke-width:2px
+  style O fill:#dcfce7,stroke:#16a34a,stroke-width:2px
       `} />
+    </VIS.Section>
+
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from two-tower + HNSW">
       <p>
-        At serving time, beam search (with a <VIS.Term def="A decoding constraint that masks any token that would not extend a prefix to a valid catalog item — prevents the model from emitting a Semantic ID that no item has.">trie-constrained decoder</VIS.Term>) walks down the codebook tree, restricting candidates to actually-existing items.
+        <strong>Two-tower + HNSW.</strong> User and item towers learn dense embeddings; an HNSW index over item embeddings supports approximate-NN retrieval. Index maintenance is operational overhead; cold-start items get random initial embeddings; updates require periodic re-indexing.
+      </p>
+      <p>
+        <strong>TIGER.</strong> No index. Items with similar content share Semantic-ID prefixes. At serve time, the transformer decodes the K-tuple — items along the decoded prefix are naturally similar. <strong>Cold-start works zero-shot</strong> because a new item's Semantic ID is computed from its content, inheriting the structure of similar trained items.
+      </p>
+      <p>
+        <strong>vs HSTU.</strong> TIGER replaces retrieval; HSTU replaces ranking. They compose.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick it">
       <p>
-        <strong>Two-tower + ANN (the baseline).</strong> User-tower and item-tower each map to a continuous embedding; the item embeddings are indexed in HNSW / ScaNN / IVF-PQ; retrieval = approximate nearest neighbour search. The index must be rebuilt or updated as the catalog churns; cold-start items get random IDs and must be back-filled.
-      </p>
-      <p>
-        <strong>TIGER (the delta).</strong> No index. Retrieval is generation: the decoder emits codes one at a time. Because Semantic IDs are <em>content-derived</em>, two semantically similar items have similar prefixes — a brand-new item inherits useful behaviour from the existing items that share its prefix. This is the cold-start property a random-ID embedding table fundamentally cannot offer.
-      </p>
-      <p>
-        <strong>What changes operationally.</strong> Index maintenance becomes codebook maintenance: when content distributions shift, you re-train RQ-VAE, which produces a new codebook — and now <em>every</em> downstream model that learned dependencies on specific codes is suddenly miscalibrated. The maintenance burden moves rather than disappears.
+        Pick TIGER when (a) catalog has strong content signal (text/image descriptions), (b) cold-start is a recurring pain (frequent catalog churn, ephemeral items), (c) ANN index maintenance has operational cost you'd like to retire, (d) latency budget tolerates K-step autoregressive decode (K≈4 typically adds ~2× a two-tower lookup).
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick it / where it wins">
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
       <p>
-        TIGER wins when (a) you have rich <strong>content signal</strong> (text descriptions, images) to encode, (b) you face severe <strong>cold-start</strong> (e.g. fast-moving e-commerce catalogs, fresh news), and (c) ANN index maintenance is already a pain point. It is the wrong tool when items are ID-only (no content), when catalog is small enough that an HNSW rebuild is trivial, or when generation latency is unacceptable for your QPS.
-      </p>
-    </VIS.Section>
-
-    <VIS.Section id="sec-gotchas" title="Limitations & gotchas">
-      <p>
-        Three persistent failure modes. <strong>Semantic ID collisions</strong> — when two distinct items quantize to the same tuple, the decoder cannot disambiguate them. <strong>Hallucinated items</strong> — without constrained decoding, the model happily emits Semantic IDs that no item carries; constrained decoding is mandatory, not optional. <strong>Codebook drift</strong> — re-training RQ-VAE produces a new codebook, breaking learned dependencies; rolling out a new codebook requires either dual-running both vocabularies during a migration window or back-fitting the new codes through transfer learning.
+        TIGER's biggest risks: <strong>Semantic-ID collisions</strong> (two items map to the same tuple), <strong>codebook collapse</strong> during RQ-VAE training (most codes unused), <strong>hallucination</strong> (decoded ID matches no real item — requires constrained decoding), and <strong>codebook drift</strong> on catalog updates (re-training shifts IDs; downstream models break).
       </p>
     </VIS.Section>
 
     <VIS.Section id="sec-drill" title="Drill — trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Twelve scenarios on TIGER's discriminating signals: when generative retrieval wins, when ANN still wins, and the specific failure modes that distinguish the three "wrong items got served" causes in production.</p>
+        40+ scenario-rooted problems. Every option must defeat the redaction test (replace "TIGER" / "Semantic ID" with "Model X" / "discrete tuple" — does the answer still require knowing the technique?).
+      </p>
 
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity & comparison</h3>
+
+      {/* axis: A1 */}
       <VIS.TrapProblem
-        id="tiger-p1"
+        id="tiger-a1"
         difficulty="hard"
-        title="P1 — Hallucinated item triage"
-        scenario={<>Your TIGER recommender returns an item ID that <strong>does not exist</strong> in the catalog. The on-call eng asks for a one-line cause. Constrained decoding IS enabled. The catalog was last refreshed <strong>4 hours ago</strong>; an inventory deletion fired then. What's the most likely cause?</>}
+        title="A1 — TIGER vs two-tower + HNSW: pick the actual discriminator"
+        scenario={<>Your CTO says "TIGER is just a fancier two-tower." What's the architectural discriminator that matters in production?</>}
         options={[
-          {key:"a", text:"The model hallucinated a Semantic ID — constrained decoding has a bug."},
-          {key:"b", text:"The Semantic ID was valid 4 hours ago but the underlying item was deleted; the decoder's trie is stale.", correct:true},
-          {key:"c", text:"Beam search returned a low-probability path; raise temperature."},
-          {key:"d", text:"The user's history embedding is corrupt."},
+          {key:"a", text:"TIGER eliminates the ANN index entirely — the transformer's autoregressive decode IS the retrieval; two-tower requires HNSW (or IVF-PQ) as a separate service with re-index pipelines and consistency challenges.", correct:true},
+          {key:"b", text:"TIGER uses transformers; two-tower uses MLPs."},
+          {key:"c", text:"TIGER works only on movies; two-tower works on everything."},
+          {key:"d", text:"TIGER has no embeddings."},
         ]}
-        trap={<>(a) is the panic answer — the question stipulates constrained decoding is on. (c) and (d) are red herrings. The clue is "inventory deletion 4 hours ago"; the trie that backs constrained decoding is a state artifact and must be refreshed in lockstep with the catalog.</>}
-        lens={<>Constrained decoding only constrains to whatever the trie was built from. Trie freshness ≤ ID validity. The fix is either tightening trie refresh cadence or adding a post-decode existence check.</>}
-        stretch={<>How would you distinguish this from a true hallucination if the trie's freshness signal is missing?</>}
+        trap={<>(b) is superficial. (c), (d) are wrong.</>}
+        lens={<>The operational consequence — no ANN service — is the real discriminator. It changes deployment architecture, retraining cadence, and cold-start story all at once.</>}
+        stretch={<>What does HNSW give you that TIGER doesn't?</>}
       />
 
+      {/* axis: A2 */}
       <VIS.TrapProblem
-        id="tiger-p2"
+        id="tiger-a2"
         difficulty="hard"
+        title="A2 — Semantic IDs vs hashed item IDs"
+        scenario={<>A peer says "Semantic IDs are just hashed item IDs." Pick the statement that captures the actual difference.</>}
+        options={[
+          {key:"a", text:"Hashed IDs are arbitrary — similar items get unrelated hashes. Semantic IDs are content-derived and hierarchical — similar items share prefix codes, so prefix-decoding naturally surfaces similar items without an ANN search.", correct:true},
+          {key:"b", text:"Hashed IDs are larger."},
+          {key:"c", text:"Semantic IDs are random."},
+          {key:"d", text:"They're identical."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The prefix structure is the central property. It enables generative retrieval (no ANN), cold-start (new item inherits prefix), and zero-shot generalization.</>}
+        stretch={<>What property of RQ-VAE specifically produces the hierarchical prefix structure?</>}
+      />
+
+      {/* axis: A3 */}
+      <VIS.TrapProblem
+        id="tiger-a3"
+        difficulty="hard"
+        title="A3 — Without TIGER, what does the fallback look like?"
+        scenario={<>If TIGER didn't exist, you'd build cold-start retrieval the traditional way. Pick the most accurate fallback architecture.</>}
+        options={[
+          {key:"a", text:"Two-tower with content-tower-derived item embeddings, HNSW index re-built nightly to absorb new items; for ultra-cold items, fall back to a content-only retrieval path (e.g. text-embedding lookup) before learned embeddings stabilize.", correct:true},
+          {key:"b", text:"Random embeddings for new items, retrain monthly."},
+          {key:"c", text:"Skip cold-start entirely; only recommend warm items."},
+          {key:"d", text:"Use a separate LLM for each new item."},
+        ]}
+        trap={<>(b) is what causes cold-start regression. (c) is operationally unacceptable. (d) is expensive theater.</>}
+        lens={<>The traditional fallback is content-tower + index re-build + content-only path. TIGER unifies this stack into one model + decode.</>}
+        stretch={<>At what catalog-churn rate does the TIGER simplification dominate?</>}
+      />
+
+      {/* axis: A4 */}
+      <VIS.TrapProblem
+        id="tiger-a4"
+        difficulty="hard"
+        title="A4 — Stack TIGER (retrieval) + HSTU (ranking)"
+        scenario={<>You compose TIGER (retrieval) with HSTU (ranking). TIGER decodes K candidate Semantic IDs; HSTU re-ranks. What's a non-obvious interaction?</>}
         multiSelect
-        title="P2 — Hallucinated vs cold-start vs collision"
-        scenario={<>Three production incidents over two weeks. (1) TIGER returns an item not in the catalog. (2) A brand-new item shows up frequently in recommendations despite zero interaction history. (3) Two distinct items appear interchangeably for the same query, even though their content differs substantially. Match each incident to its likely cause. Select all true statements.</>}
         options={[
-          {key:"a", text:"(1) is hallucination — fix with constrained decoding + trie freshness checks.", correct:true},
-          {key:"b", text:"(2) is the cold-start advantage working correctly — the new item inherited useful behaviour from the prefix of similar items.", correct:true},
-          {key:"c", text:"(3) is a Semantic ID collision — two items quantized to the same tuple.", correct:true},
-          {key:"d", text:"All three incidents are the same root cause: codebook drift."},
-          {key:"e", text:"(2) is a bug — new items with no history should never be recommended."},
+          {key:"a", text:"HSTU was trained on item-ID embeddings; TIGER hands it Semantic IDs. The item-ID embedding lookup HSTU expects doesn't trivially accept the K-tuple — must map back to item-ID first or modify HSTU's input layer.", correct:true},
+          {key:"b", text:"TIGER's prefix-similarity means HSTU's diversity reranker becomes redundant — TIGER's decode already diversifies via prefix sampling.", correct:true},
+          {key:"c", text:"Latency adds up: TIGER's K-step decode + HSTU's auto-regressive ranking. Need precompute + cache to fit p99.", correct:true},
+          {key:"d", text:"HSTU automatically learns to ignore TIGER's output."},
+          {key:"e", text:"TIGER's content signal makes HSTU obsolete."},
         ]}
-        trap={<>(d) is the lazy "one cause to rule them all" answer; the three failure modes are structurally distinct. (e) is the engineering reflex that misses TIGER's headline feature — cold-start generalization via shared prefixes is intentional and is a primary reason to pick TIGER over two-tower.</>}
-        lens={<>Three distinct failures: hallucination (decoder produces invalid ID), cold-start generalization (new item gets useful behaviour from prefix — feature, not bug), collision (two items share an ID — fix by increasing K or codebook size). Diagnosing the wrong one wastes engineering time and can lead to "fixing" the feature.</>}
-        stretch={<>What single metric would distinguish (2) from (3) at scale?</>}
+        trap={<>(d), (e) misread.</>}
+        lens={<>Three real composition effects: interface mismatch, diversity overlap, latency stacking. Each must be addressed deliberately.</>}
+        stretch={<>How would you modify HSTU's input layer to consume Semantic IDs directly?</>}
       />
 
+      {/* axis: A5 */}
       <VIS.TrapProblem
-        id="tiger-p3"
+        id="tiger-a5"
         difficulty="hard"
-        title="P3 — Codebook drift rollout"
-        scenario={<>Eight months in, content distribution has shifted (new product categories launched). You retrain RQ-VAE and get a new codebook with different code-to-item assignments. The downstream sequence model has learned dependencies on the old codes. What's the safest rollout?</>}
+        title="A5 — When does prefix-sharing stop helping?"
+        scenario={<>Semantic-ID prefix-sharing helps cold-start. At what catalog property does prefix-sharing stop being useful?</>}
         options={[
-          {key:"a", text:"Hot-swap the codebook; the downstream model will adapt within a few epochs of online learning."},
-          {key:"b", text:"Dual-vocabulary period: serve both old and new codes in parallel, retrain the seq model with both, then deprecate old.", correct:true},
-          {key:"c", text:"Freeze the codebook forever; never retrain RQ-VAE."},
-          {key:"d", text:"Hash old codes to new codes by content similarity at swap time."},
+          {key:"a", text:"When the catalog is homogeneous (e.g. all items are similar — single-category niche): every item shares the same prefix, prefix-sharing carries no discriminating signal.", correct:true},
+          {key:"b", text:"When the catalog grows past 10M items."},
+          {key:"c", text:"When you have lots of training data."},
+          {key:"d", text:"Never; prefix-sharing always helps."},
         ]}
-        trap={<>(a) catastrophically breaks downstream the moment of swap. (c) is brittle as the catalog shifts. (d) sounds clever but content-similarity hashing introduces silent errors at every collision.</>}
-        lens={<>Vocabulary changes are migrations, not config flips. The standard pattern is dual-vocabulary for one training cycle, validate that the new-vocab model matches old-vocab quality, then deprecate. Skipping this step is the #1 source of "the model is suddenly bad and we don't know why" post-mortems in generative-retrieval shops.</>}
-        stretch={<>What's the minimum overlap period if you control retraining cadence?</>}
+        trap={<>(b) is size-based but TIGER scales fine. (c) confuses warm vs cold-start. (d) over-generalizes.</>}
+        lens={<>Prefix-sharing carries information only when prefixes vary meaningfully. In a homogeneous catalog, all RQ-VAE codes converge → no discrimination.</>}
+        stretch={<>What's the empirical signal that your codebook is collapsing?</>}
       />
 
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      {/* axis: B1 */}
       <VIS.TrapProblem
-        id="tiger-p4"
+        id="tiger-b1"
+        difficulty="hard"
+        title="B1 — Pick retrieval architecture for fashion e-commerce"
+        scenario={<>Fashion retailer. <strong>30% catalog churn every season</strong> (~600K new items every 3 months). Rich text + image descriptions. Latency budget 50ms p99 for retrieval. Choose: TIGER, two-tower+HNSW, or HSTU.</>}
+        options={[
+          {key:"a", text:"TIGER — content-driven Semantic IDs handle seasonal churn zero-shot; eliminate HNSW re-index pipelines that would otherwise run continuously.", correct:true},
+          {key:"b", text:"Two-tower + HNSW with nightly re-index."},
+          {key:"c", text:"HSTU — generative is generative."},
+          {key:"d", text:"Random embeddings with retraining."},
+        ]}
+        trap={<>(b) works but is exactly the operational pain TIGER eliminates. (c) confuses TIGER (retrieval) with HSTU (ranking). (d) regresses on cold-start.</>}
+        lens={<>The triad — content-rich + high churn + latency tolerant — is TIGER's sweet spot. The decision is operations-led, not just metric-led.</>}
+        stretch={<>At what churn rate does TIGER stop being worth the re-architecture?</>}
+      />
+
+      {/* axis: B2 */}
+      <VIS.TrapProblem
+        id="tiger-b2"
+        difficulty="hard"
+        title="B2 — 'Just use raw content embeddings, skip the codebook'"
+        scenario={<>An engineer asks why TIGER bothers with RQ-VAE quantization. Why does skipping it lose TIGER's key benefit?</>}
+        options={[
+          {key:"a", text:"Without the discrete codebook, you lose the prefix-sharing that makes generative retrieval possible — you're back to an ANN search over continuous vectors, which is exactly what TIGER is designed to replace.", correct:true},
+          {key:"b", text:"Continuous embeddings don't fit in transformers."},
+          {key:"c", text:"RQ-VAE makes embeddings smaller."},
+          {key:"d", text:"Embeddings are random."},
+        ]}
+        trap={<>(b) is false. (c) is incidental. (d) is wrong.</>}
+        lens={<>The discrete codebook is not a compression trick — it enables the transformer to autoregressively generate retrievable IDs.</>}
+        stretch={<>Is there a version of TIGER that uses continuous embeddings + nearest-code lookup at decode?</>}
+      />
+
+      {/* axis: B3 */}
+      <VIS.TrapProblem
+        id="tiger-b3"
         difficulty="medium"
-        title="P4 — Codebook sizing"
-        scenario={<>You're tuning RQ-VAE codebook size. Catalog size <strong>50M items</strong>. K=4 codebooks. At codebook size <strong>256</strong> per level, you observe collision rate 6.2%. At <strong>1024</strong>, 0.4%. At <strong>4096</strong>, 0.02% — but the seq model's perplexity is HIGHER at 4096 than 1024. Why?</>}
+        title="B3 — Pitch TIGER to a Director of Eng"
+        scenario={<>Director asks: "Why TIGER over the two-tower + HNSW we already have?" Pick the operational pitch.</>}
         options={[
-          {key:"a", text:"Bug — bigger vocab should always improve perplexity."},
-          {key:"b", text:"Larger codebooks mean each code is seen less frequently in training; the seq model's embeddings are under-fit.", correct:true},
-          {key:"c", text:"4096 codes exceed the transformer's softmax capacity."},
-          {key:"d", text:"Collision rate has no relationship to perplexity."},
+          {key:"a", text:"'Retire one production system (HNSW re-index pipeline + ANN service), eliminate cold-start retraining cycles, gain content-aware generalization to new items for free.'", correct:true},
+          {key:"b", text:"'Use transformers like ChatGPT.'"},
+          {key:"c", text:"'It's a generative model.'"},
+          {key:"d", text:"'NDCG goes up 2%.'"},
         ]}
-        trap={<>(a) misreads how vocab size interacts with data sparsity. (c) confuses parameter count with a real capacity bound. (d) is wrong — both are functions of the vocabulary design.</>}
-        lens={<>Vocabulary size trades off collision rate against per-code training signal. The sweet spot is the smallest codebook that drives collisions below your tolerance — beyond that, codes go under-trained and downstream perplexity rises. 1024 is a common landing point for catalogs in the 10–100M range.</>}
-        stretch={<>If catalog grew to 500M, would the sweet spot scale linearly?</>}
+        trap={<>(b), (c) are buzz. (d) doesn't move directors.</>}
+        lens={<>Directors fund infrastructure simplification + cold-start solutions, not 2% NDCG.</>}
+        stretch={<>What's the cost side of the pitch?</>}
       />
 
+      {/* axis: B4 */}
       <VIS.TrapProblem
-        id="tiger-p5"
+        id="tiger-b4"
         difficulty="hard"
+        title="B4 — When NOT to use TIGER"
+        scenario={<>Pick the surface where TIGER is NOT a good fit.</>}
+        options={[
+          {key:"a", text:"Stock-ticker recommender — items have no rich content (just symbols and prices); content embeddings degenerate; prefix-sharing carries no signal.", correct:true},
+          {key:"b", text:"Fashion e-commerce."},
+          {key:"c", text:"Movie recommendations."},
+          {key:"d", text:"News articles."},
+        ]}
+        trap={<>(b), (c), (d) all have rich content.</>}
+        lens={<>TIGER requires content worth quantizing. Items defined by metadata only (stock symbols, raw SKUs) provide no signal for RQ-VAE.</>}
+        stretch={<>What's the minimum content per item needed for TIGER to outperform random embeddings?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      {/* axis: C1 */}
+      <VIS.TrapProblem
+        id="tiger-c1"
+        difficulty="hard"
+        title="C1 — Why residual quantization, not single-codebook VQ?"
+        scenario={<>RQ-VAE uses K residual codebooks. Why not a single huge codebook with K·D codes?</>}
+        options={[
+          {key:"a", text:"A single codebook would need D^K codes to match RQ-VAE's expressiveness, which is computationally and statistically intractable. Residual quantization captures hierarchical detail with K·D codes (linear in K) by encoding the residual after each step.", correct:true},
+          {key:"b", text:"Single-codebook VQ doesn't work."},
+          {key:"c", text:"Residual quantization is faster at decode."},
+          {key:"d", text:"VQ requires more training data."},
+        ]}
+        trap={<>(b) is false. (c), (d) are partial truths but not the central reason.</>}
+        lens={<>K residual codebooks of D codes each represent D^K effective tuples. A single 4^256-code codebook would never be learnable.</>}
+        stretch={<>Why is "residual" the right structure, not "parallel"?</>}
+      />
+
+      {/* axis: C2 */}
+      <VIS.TrapProblem
+        id="tiger-c2"
+        difficulty="hard"
+        title="C2 — Why RQ-VAE has THREE losses"
+        scenario={<>RQ-VAE training has reconstruction, commitment, and codebook losses. Why do you need all three?</>}
+        options={[
+          {key:"a", text:"Reconstruction drives the encoder; commitment loss prevents the encoder from drifting from chosen codes (encoder ≈ code); codebook loss moves codes toward encoder outputs (code ≈ encoder). Without all three: codebooks collapse, or encoder ignores codes.", correct:true},
+          {key:"b", text:"More losses always train better."},
+          {key:"c", text:"Reconstruction is enough."},
+          {key:"d", text:"Codebook loss is optional."},
+        ]}
+        trap={<>(b), (c), (d) miss the dual-direction constraint.</>}
+        lens={<>The three losses solve the chicken-and-egg between encoder and codebook. Drop any one and training fails characteristically.</>}
+        stretch={<>What's the failure mode when commitment loss weight is too high?</>}
+      />
+
+      {/* axis: C3 */}
+      <VIS.TrapProblem
+        id="tiger-c3"
+        difficulty="hard"
+        title="C3 — What's dropped vs two-tower?"
+        scenario={<>TIGER drops something that two-tower has by construction. What?</>}
+        options={[
+          {key:"a", text:"Independent per-item scoring — TIGER's autoregressive decode couples scores across decode steps; two-tower scores each candidate independently via dot-product.", correct:true},
+          {key:"b", text:"Item embeddings."},
+          {key:"c", text:"User histories."},
+          {key:"d", text:"GPU usage."},
+        ]}
+        trap={<>(b), (c), (d) are still present.</>}
+        lens={<>Independent scoring matters for shardability — you can score 1M candidates in parallel with two-tower; TIGER's coupled decode requires sequential autoregression.</>}
+        stretch={<>How would you parallelize TIGER's K decode steps across candidates?</>}
+      />
+
+      {/* axis: C4 */}
+      <VIS.TrapProblem
+        id="tiger-c4"
+        difficulty="hard"
+        title="C4 — K=2 vs K=4 vs K=16 codebooks"
+        scenario={<>RQ-VAE has K codebooks. The paper uses K=4. What goes wrong with K=2 vs K=16?</>}
         multiSelect
-        title="P5 — When NOT to use TIGER"
-        scenario={<>Four product surfaces. (i) A 5k-item premium streaming catalog with rich text + image. (ii) A 200M-item marketplace with extreme catalog churn (50% daily turnover). (iii) An ads ranker with strong query × creative × geo signal and short user history. (iv) A long-form video feed with ~10k weekly-active items and dense engagement. Which of (i)-(iv) is TIGER NOT well-suited for? Select all that apply.</>}
         options={[
-          {key:"a", text:"(i) — catalog too small; an HNSW index over 5k items rebuilds in seconds; TIGER's content-generalization advantage is wasted.", correct:true},
-          {key:"b", text:"(ii) — codebook drift becomes intolerable at 50% daily turnover.", correct:true},
-          {key:"c", text:"(iii) — short history + cross-dominated signal is HSTU/DLRM territory, not generative retrieval.", correct:true},
-          {key:"d", text:"(iv) — engagement loops at moderate catalog size are the cleanest TIGER fit."},
+          {key:"a", text:"K=2: not enough representational capacity — many items collide at the same 2-tuple; collision rate becomes unacceptable.", correct:true},
+          {key:"b", text:"K=16: decode latency 4× worse (16 sequential steps); deeper codebooks tend to collapse (residuals get too small to quantize meaningfully).", correct:true},
+          {key:"c", text:"K=2 always works."},
+          {key:"d", text:"K=16 always works better."},
         ]}
-        trap={<>The naïve read picks ONLY (i) ("small catalog → don't bother"); the harder cases (ii) and (iii) are also TIGER mismatches for different reasons. (d) is the trap option pretending to be wrong — it's actually a GOOD TIGER fit.</>}
-        lens={<>Three real TIGER mismatches: tiny catalogs (no maintenance pain), extreme churn (codebook drift kills you), and short-history / cross-dominated surfaces (different architecture wins). The cleanest TIGER fit is moderate-to-large catalog with strong content + cold-start pain.</>}
-        stretch={<>What single signal moves (ii) from "wrong" to "right" for TIGER?</>}
+        trap={<>(c), (d) are extremes.</>}
+        lens={<>K trades representational capacity (more = better) vs decode latency (more = slower) vs codebook utilization (more = worse — later codebooks see vanishing residuals).</>}
+        stretch={<>Could you use a non-uniform K (deeper for popular items only)?</>}
       />
 
+      {/* axis: C5 */}
       <VIS.TrapProblem
-        id="tiger-p6"
+        id="tiger-c5"
         difficulty="hard"
-        title="P6 — Latency at 10k QPS"
-        scenario={<>Spec: 10k QPS, p99 retrieval latency budget <strong>50ms</strong>, beam width 50, K=4 codebooks. Single A100 currently does ~280 inferences/sec at this beam width. What's the cleanest path to budget?</>}
+        title="C5 — Catalog with no text/image content"
+        scenario={<>You apply TIGER to a catalog where items have only an ID and a price. What happens?</>}
         options={[
-          {key:"a", text:"Shrink the model 10×; quality regression is acceptable."},
-          {key:"b", text:"Batch requests in the decoder + KV-cache the user-history encoding across the beam; both compound and typically buy 5-10× throughput.", correct:true},
-          {key:"c", text:"Reduce K from 4 to 1 — single-code Semantic IDs decode in one step."},
-          {key:"d", text:"Replace TIGER with two-tower; the latency budget is unachievable."},
+          {key:"a", text:"RQ-VAE has nothing to encode → codebooks collapse to trivial codes → Semantic IDs carry no signal → TIGER degenerates to a sequence model over random tokens, worse than a learned-ID two-tower because it lacks the inductive bias of random-ID embedding tables.", correct:true},
+          {key:"b", text:"TIGER works fine."},
+          {key:"c", text:"Use only price as content."},
+          {key:"d", text:"Skip RQ-VAE."},
         ]}
-        trap={<>(a) gives up quality without trying engineering. (c) destroys the hierarchical-semantic property that makes TIGER worth using. (d) is premature surrender.</>}
-        lens={<>Beam decoding is inherently batchable across the beam; the user-history encoding is the same for all beams and reusable. These two optimizations together are how production TIGER deployments hit latency budgets without quality sacrifice.</>}
-        stretch={<>At what catalog size does batching stop being enough?</>}
+        trap={<>(b) misreads. (c) only works if price alone has signal. (d) means no TIGER.</>}
+        lens={<>TIGER's value chain begins with content embeddings. Items must have something to encode.</>}
+        stretch={<>What's the minimum item attribute set that makes TIGER worth trying?</>}
       />
 
+      {/* axis: C1b */}
       <VIS.TrapProblem
-        id="tiger-p7"
+        id="tiger-c1b"
         difficulty="hard"
-        title="P7 — Content embedding choice"
-        scenario={<>You're choosing the content encoder feeding RQ-VAE. Options: (a) CLIP image+text, (b) a domain-fine-tuned BERT, (c) raw catalog metadata (title + category + price) one-hot. Catalog is fashion e-commerce. Which choice does TIGER's cold-start property depend on most?</>}
+        title="C1b — Commitment loss weight β"
+        scenario={<>You set β (commitment loss weight) to 0.01 vs 0.25 (paper default). What changes?</>}
         options={[
-          {key:"a", text:"(c) — domain-specific metadata is most stable and predictable."},
-          {key:"b", text:"(a) — CLIP captures visual similarity that drives fashion discovery; prefixes will cluster by visual category, giving the cold-start property real teeth.", correct:true},
-          {key:"c", text:"(b) — fine-tuned BERT always beats CLIP for retrieval."},
-          {key:"d", text:"Doesn't matter — RQ-VAE's quantization smooths over encoder choice."},
+          {key:"a", text:"β=0.01: encoder drifts freely from codes → codes go stale → reconstruction looks great in training but decode-time quantization (force-snap to nearest code) introduces catastrophic distortion. β=0.25: encoder stays close to codes.", correct:true},
+          {key:"b", text:"Higher β trains faster."},
+          {key:"c", text:"β has no effect."},
+          {key:"d", text:"Lower β prevents collapse."},
         ]}
-        trap={<>(a) gives up the generalization story. (c) is a recency bias on language models. (d) badly underestimates how much downstream depends on encoder quality.</>}
-        lens={<>TIGER's cold-start magic is entirely downstream of the content embedding's semantic structure. For fashion (visual-driven discovery), CLIP-style image+text dramatically outperforms text-only. Garbage in, garbage out — RQ-VAE faithfully quantizes whatever signal you give it, including the absence of signal.</>}
-        stretch={<>For news headlines, would the same recommendation hold?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>β is exactly the encoder–codebook tug-of-war. The default 0.25 is from the original VQ-VAE.</>}
+        stretch={<>How would you detect commitment-loss imbalance from training logs?</>}
       />
 
+      {/* axis: C2b */}
       <VIS.TrapProblem
-        id="tiger-p8"
+        id="tiger-c2b"
         difficulty="medium"
-        title="P8 — Constrained decoding implementation"
-        scenario={<>Engineering review: a junior eng's TIGER decoder enforces validity by generating freely, then filtering invalid IDs from the beam. Beam width 50, K=4 codes. What's the principled objection?</>}
+        title="C2b — Pretrained text encoder vs train-from-scratch"
+        scenario={<>For the RQ-VAE encoder over item descriptions, pretrained (Sentence-T5) or scratch?</>}
         options={[
-          {key:"a", text:"None — filter-after-generate is mathematically equivalent to constraining."},
-          {key:"b", text:"Most of the beam collapses to invalid IDs at deep codebooks; you exhaust the budget without finding valid completions. Constrain at each step instead.", correct:true},
-          {key:"c", text:"Filtering increases memory usage."},
-          {key:"d", text:"It violates the chain rule of probability."},
+          {key:"a", text:"Use pretrained: starts in a semantic space where similar items already cluster, RQ-VAE converges faster and learns more meaningful codebooks; scratch needs orders of magnitude more interactions to discover the same structure.", correct:true},
+          {key:"b", text:"Train from scratch is always better."},
+          {key:"c", text:"Pretrained encoders don't work in RQ-VAE."},
+          {key:"d", text:"It doesn't matter."},
         ]}
-        trap={<>(a) ignores that early codebook positions have huge branching; filtering after the fact wastes 90%+ of beam compute on dead branches. (d) is mathematically nonsensical.</>}
-        lens={<>Constrained decoding must be applied per-step — masking invalid extensions at each codebook position — not after-the-fact. The standard implementation walks a prefix trie of valid Semantic IDs; the decoder's softmax is masked to legal extensions only.</>}
-        stretch={<>How does the trie's memory cost scale with catalog size?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The TIGER paper uses Sentence-T5 explicitly. Pretrained embeddings give the RQ-VAE a useful starting space.</>}
+        stretch={<>What pretrained encoder would you pick for an image catalog?</>}
       />
 
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      {/* axis: D1 */}
       <VIS.TrapProblem
-        id="tiger-p9"
+        id="tiger-d1"
         difficulty="hard"
-        title="P9 — Diversity collapse"
-        scenario={<>Live A/B: TIGER ships, NDCG +3.1%, but user satisfaction surveys flag <strong>"too similar items in feed"</strong>. Logs show top-50 recommendations share the first two Semantic ID codes 78% of the time. What's the structural cause?</>}
+        title="D1 — 'Bigger codebook always helps'"
+        scenario={<>You enlarge codebook size from 256 → 4096 (16× more codes per level). Reconstruction loss improves slightly but online retrieval recall drops 8%. Diagnose.</>}
         options={[
-          {key:"a", text:"Beam search is deterministic; switch to sampling to add diversity."},
-          {key:"b", text:"Semantic ID prefixes ARE semantic clusters; high prefix overlap = high content similarity. Diversity has to be enforced explicitly at beam-time via prefix-diversity penalties or MMR.", correct:true},
-          {key:"c", text:"Catalog has too few items; expand inventory."},
-          {key:"d", text:"User history is too narrow; broaden it."},
+          {key:"a", text:"Larger codebooks fragment the prefix-sharing — items that previously shared a prefix now diverge into separate codes; cold-start generalization weakens; codebook utilization drops (most codes rarely used → poor gradient signal).", correct:true},
+          {key:"b", text:"Reconstruction loss is the wrong metric."},
+          {key:"c", text:"Training broke."},
+          {key:"d", text:"Latency increased."},
         ]}
-        trap={<>(a) helps marginally but doesn't fix the cause. (c) and (d) shift blame to data when the cause is decoding.</>}
-        lens={<>The very property that gives TIGER its cold-start power (similar items share prefixes) makes naïve beam search converge to a single semantic cluster. Production deployments add explicit diversity at decoding — prefix-diversity penalty, MMR-style re-ranking, or first-code constraints across the beam.</>}
-        stretch={<>How does a prefix-diversity penalty interact with the cold-start property?</>}
+        trap={<>(b), (c), (d) miss the prefix-fragmentation story.</>}
+        lens={<>Codebook size trades representational fidelity vs prefix-sharing. The retrieval-generalization metric is what TIGER optimizes for, not reconstruction.</>}
+        stretch={<>What's the right metric to tune codebook size against?</>}
       />
 
+      {/* axis: D1b */}
       <VIS.TrapProblem
-        id="tiger-p10"
+        id="tiger-d1b"
         difficulty="hard"
-        title="P10 — Catalog churn refresh strategy"
-        scenario={<>Your catalog adds ~50k new items / day and removes ~30k. The RQ-VAE codebook is fixed (re-trained quarterly). How do you handle new items between codebook refreshes?</>}
+        title="D1b — 'Zero collisions is the right target'"
+        scenario={<>A teammate proposes a 5th codebook so collision rate drops from 0.3% to ~0%. Why is this the wrong target?</>}
         options={[
-          {key:"a", text:"Block new items until next codebook refresh."},
-          {key:"b", text:"Encode new items with the existing RQ-VAE encoder and assign Semantic IDs from existing codebooks; this is the entire point of having content-derived IDs.", correct:true},
-          {key:"c", text:"Hash new items to random Semantic IDs."},
-          {key:"d", text:"Train a separate model for new items only."},
+          {key:"a", text:"At 0.3% collision rate, you only need a per-item disambiguation token (1 extra log_2(N_collisions)-bit code) to break ties; adding a full 5th codebook of 256 codes is overkill and adds 25% to decode latency.", correct:true},
+          {key:"b", text:"Zero collisions doesn't matter."},
+          {key:"c", text:"Collisions help generalization."},
+          {key:"d", text:"More codebooks always better."},
         ]}
-        trap={<>(a) defeats the cold-start advantage. (c) breaks the semantic-prefix property that makes generalization work. (d) doubles infra without solving the integration problem.</>}
-        lens={<>RQ-VAE's encoder is reusable: you encode a new item's content embedding through the existing codebooks and get a valid Semantic ID. This is what makes TIGER cold-start-friendly — new items inherit useful behaviour via shared prefixes the moment they're encoded.</>}
-        stretch={<>What QUALITY of the cold-start ID degrades as the catalog drifts away from the codebook's training distribution?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The TIGER paper proposes a small tiebreaker token, cheaper than another full codebook layer.</>}
+        stretch={<>How big does the tiebreaker token need to be?</>}
       />
 
+      {/* axis: D2 */}
       <VIS.TrapProblem
-        id="tiger-p11"
+        id="tiger-d2"
         difficulty="hard"
-        title="P11 — Cold-start vs hallucination signal"
-        scenario={<>You build a single online monitor to alert on "wrong items in results." False-positive rate is too high — the alert fires constantly on cold-start items doing exactly what TIGER is designed to do. How do you fix the monitor?</>}
+        title="D2 — 'TIGER = transformer + ANN replacement' cascade"
+        scenario={<>A teammate thinks TIGER is just "transformer + ditch the ANN service." What downstream wrong assumptions does this hide?</>}
+        multiSelect
         options={[
-          {key:"a", text:"Lower the alert threshold."},
-          {key:"b", text:"Split the monitor into two: (1) ID-not-in-catalog (hallucination / trie-stale), (2) ID-in-catalog-but-item-has-low-history (cold-start). Only (1) is a true bug.", correct:true},
-          {key:"c", text:"Disable the monitor."},
-          {key:"d", text:"Treat all unfamiliar items as hallucinations."},
+          {key:"a", text:"Assumes item-IDs unchanged → wrong: Semantic IDs replace item-IDs in the transformer's vocab; downstream pipelines need a translation layer.", correct:true},
+          {key:"b", text:"Assumes hallucination doesn't happen → wrong: unconstrained decode produces ~5-10% invalid IDs; need constrained decoding.", correct:true},
+          {key:"c", text:"Assumes catalog updates are free → wrong: adding new items may require RQ-VAE retraining; Semantic IDs may shift for existing items.", correct:true},
+          {key:"d", text:"Assumes GPU usage same → fine, both run on GPU."},
         ]}
-        trap={<>(a) and (c) trade one problem for another. (d) is the bug that motivated the question.</>}
-        lens={<>The two failure modes have orthogonal signatures: hallucination produces IDs that don't resolve to a catalog row; cold-start produces valid IDs of recently-added items. Conflating them either swamps on-call with noise or hides real bugs. Split the alert.</>}
-        stretch={<>What's a third signature that would deserve its own alert?</>}
+        trap={<>(d) is the only one unchanged.</>}
+        lens={<>Three downstream effects: ID-pipeline translation, hallucination handling, codebook-drift policy.</>}
+        stretch={<>Which can be deferred to v2?</>}
       />
 
+      {/* axis: D3 */}
       <VIS.TrapProblem
-        id="tiger-p12"
+        id="tiger-d3"
         difficulty="hard"
-        title="P12 — Generation IS retrieval — but what about ranking?"
-        scenario={<>A peer asks: "TIGER generates an item. Why do we still need a ranker?" In a production stack with TIGER for retrieval and a separate DLRM ranker, why hasn't the ranker been deprecated?</>}
+        title="D3 — TIGER recall drops 5%. Junior fix vs senior fix"
+        scenario={<>TIGER's recall@100 drops 5% a week after launch. Junior says "retrain on more data." Senior reaches for what?</>}
         options={[
-          {key:"a", text:"It should be deprecated; TIGER's likelihood IS a ranking score."},
-          {key:"b", text:"TIGER ranks under a generative likelihood that's not aligned with the business objective (e.g. monetization, calibrated CTR for an auction); the ranker reshapes the candidate set under the business loss.", correct:true},
-          {key:"c", text:"The ranker handles edge cases TIGER can't."},
-          {key:"d", text:"Latency reasons."},
+          {key:"a", text:"Audit codebook utilization and collision rate — recall drops often reflect codebook collapse or rising collisions (especially after catalog updates), not training-data scarcity.", correct:true},
+          {key:"b", text:"More data always works."},
+          {key:"c", text:"Switch to ANN."},
+          {key:"d", text:"Increase K."},
         ]}
-        trap={<>(a) is the maximalist generative-retrieval take; it's wrong because likelihood ≠ business objective. (c) and (d) are vague.</>}
-        lens={<>TIGER's score is P(next item | history) under the training corpus. Business value (calibrated CTR, watch-time, revenue) is a different objective. The ranker exists to align candidates with the business loss — and to do calibration that the generative model can't easily produce. OneRec is the architecture that tries to absorb both into one model.</>}
-        stretch={<>What about TIGER would have to change to make a separate ranker truly unnecessary?</>}
+        trap={<>(b) is reflex. (c), (d) are escalations without diagnosis.</>}
+        lens={<>TIGER's failure modes are codebook-side first (collapse, drift, collisions), data-side second.</>}
+        stretch={<>What logs would you look at first?</>}
       />
+
+      {/* axis: D4 */}
+      <VIS.TrapProblem
+        id="tiger-d4"
+        difficulty="hard"
+        title="D4 — Hallucinated items vs cold-start items"
+        scenario={<>8% of TIGER's decoded Semantic IDs don't correspond to recent successful sales. Hallucination or cold-start?</>}
+        options={[
+          {key:"a", text:"Hallucinated: decoded Semantic ID has no entry in the item-ID lookup trie. Cold-start: decoded ID maps to a real (newly-added) item that hasn't accumulated sales yet. Check: 'is the decoded ID present in the catalog?' If no → hallucination; if yes but no sales → cold-start.", correct:true},
+          {key:"b", text:"They're the same."},
+          {key:"c", text:"Hallucinations don't happen."},
+          {key:"d", text:"Cold-start items are always hallucinated."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The discrimination is catalog presence. Constrained decoding eliminates hallucinations entirely.</>}
+        stretch={<>How would constrained decoding affect decode latency?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      {/* axis: E1 */}
+      <VIS.TrapProblem
+        id="tiger-e1"
+        difficulty="hard"
+        title="E1 — Unconstrained decode in production"
+        scenario={<>You forget to enable constrained decoding. TIGER returns Semantic IDs; ~7% don't match real items. What does the user see?</>}
+        options={[
+          {key:"a", text:"Hallucinated 'items' that map to nothing in the catalog → the impression pipeline either drops them silently (user sees a thinner feed) or shows empty cards (broken UX). Recall metrics underreport because hallucinated IDs aren't counted as items.", correct:true},
+          {key:"b", text:"Hallucinated items show up correctly."},
+          {key:"c", text:"Nothing — TIGER never hallucinates."},
+          {key:"d", text:"The transformer crashes."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The fix is a trie / lookup mask that restricts decoding to valid Semantic IDs.</>}
+        stretch={<>Sketch the trie data structure.</>}
+      />
+
+      {/* axis: E2 */}
+      <VIS.TrapProblem
+        id="tiger-e2"
+        difficulty="hard"
+        title="E2 — Friday: catalog update breaks downstream"
+        scenario={<>Friday afternoon, catalog team adds 50K new items. TIGER auto-runs incremental RQ-VAE update overnight. Saturday morning: downstream personalization model regresses 4%. Why?</>}
+        options={[
+          {key:"a", text:"RQ-VAE retraining drifted some codebook entries → some existing items now have different Semantic IDs → the downstream model's learned dependencies (which keyed off the old Semantic IDs) no longer match. This is 'codebook drift' — a TIGER-specific ops failure.", correct:true},
+          {key:"b", text:"Random failure."},
+          {key:"c", text:"GPU memory issue."},
+          {key:"d", text:"User behavior shifted Friday night."},
+        ]}
+        trap={<>(b), (c), (d) miss the codebook-drift story.</>}
+        lens={<>Fix: freeze codebooks across incremental updates, or version Semantic IDs + retrain downstream.</>}
+        stretch={<>What's the codebook-update policy you'd recommend?</>}
+      />
+
+      {/* axis: E3 */}
+      <VIS.TrapProblem
+        id="tiger-e3"
+        difficulty="hard"
+        title="E3 — Decode beam search vs greedy"
+        scenario={<>Beam search (top-B at each step) or greedy decode for TIGER serving?</>}
+        options={[
+          {key:"a", text:"Beam search increases recall (multiple candidate prefixes explored) but generates ~B^K candidates and latency ~B× greedy. Greedy returns one candidate fast. For retrieval (recall@K), beam search essential; for single-pick, greedy suffices.", correct:true},
+          {key:"b", text:"Beam search is always faster."},
+          {key:"c", text:"Greedy is more accurate."},
+          {key:"d", text:"Both are identical."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>TIGER as retrieval = beam search. TIGER as final-pick = greedy.</>}
+        stretch={<>How would you pick B in production?</>}
+      />
+
+      {/* axis: E4 */}
+      <VIS.TrapProblem
+        id="tiger-e4"
+        difficulty="hard"
+        mode="ordered"
+        title="E4 — Order the TIGER rollout"
+        scenario={<>Migrating from two-tower+HNSW to TIGER. Order the phases.</>}
+        options={[
+          {key:"a", text:"Train RQ-VAE offline on full catalog. Validate codebook utilization + collision rate.", order:1},
+          {key:"b", text:"Shadow TIGER decode alongside HNSW. Compare retrieval overlap; tune K, codebook size.", order:2},
+          {key:"c", text:"Traffic ramp with constrained decoding + content fallback for ultra-cold items.", order:3},
+          {key:"d", text:"Retire HNSW + content fallback only after recall + cold-start metrics match.", order:4},
+          {key:"e", text:"Skip RQ-VAE validation; ship the transformer directly."},
+          {key:"f", text:"Retire HNSW first to free infra."},
+        ]}
+        trap={<>(e), (f) skip the codebook validation that's the single biggest TIGER risk.</>}
+        lens={<>The TIGER-specific phase is RQ-VAE validation before any serving. Codebook collapse is silent at training time.</>}
+        stretch={<>What's your rollback criterion at the ramp phase?</>}
+      />
+
+      {/* axis: E5 */}
+      <VIS.TrapProblem
+        id="tiger-e5"
+        difficulty="hard"
+        title="E5 — Reproducing TIGER's NDCG"
+        scenario={<>You try to reproduce TIGER's MovieLens-1M NDCG@10. You miss it by 3 points. Most likely cause?</>}
+        options={[
+          {key:"a", text:"Choice of content encoder (paper uses Sentence-T5; using a smaller / different pretrained encoder shifts the RQ-VAE starting space → different codebooks → different retrieval).", correct:true},
+          {key:"b", text:"GPU model."},
+          {key:"c", text:"Batch size."},
+          {key:"d", text:"Random seed."},
+        ]}
+        trap={<>(b), (c), (d) are usually 2nd-order.</>}
+        lens={<>The content encoder choice cascades into codebook geometry. Many practitioners skim the Sentence-T5 detail.</>}
+        stretch={<>What if you use a much LARGER encoder than Sentence-T5?</>}
+      />
+
+      {/* axis: E6 */}
+      <VIS.TrapProblem
+        id="tiger-e6"
+        difficulty="hard"
+        title="E6 — Why MovieLens makes TIGER look better than it is"
+        scenario={<>TIGER beats two-tower+HNSW on MovieLens-1M. Why might this overstate production gains?</>}
+        options={[
+          {key:"a", text:"MovieLens has rich, clean text titles + plot summaries — exactly the content TIGER needs to build informative Semantic IDs. Real production catalogs often have sparse / messy / multilingual content, hurting RQ-VAE quality.", correct:true},
+          {key:"b", text:"MovieLens is too small."},
+          {key:"c", text:"MovieLens uses ratings, not clicks."},
+          {key:"d", text:"MovieLens has too many items."},
+        ]}
+        trap={<>(b), (c), (d) are real differences but not the TIGER-specific bias.</>}
+        lens={<>TIGER's offline benchmarks privilege clean content. First reproduction step: check content quality.</>}
+        stretch={<>What's your benchmark equivalent for messy real-world content?</>}
+      />
+
+      {/* axis: E1b */}
+      <VIS.TrapProblem
+        id="tiger-e1b"
+        difficulty="hard"
+        title="E1b — EMA codebook update"
+        scenario={<>RQ-VAE codebook entries change rapidly across training steps, destabilizing prefix structure. Fix?</>}
+        options={[
+          {key:"a", text:"EMA (exponential moving average) codebook updates: each entry is updated as a slow EMA of the encoder outputs assigned to it, rather than gradient-direct. Reduces high-frequency noise, prevents code thrashing.", correct:true},
+          {key:"b", text:"Smaller batch."},
+          {key:"c", text:"More dropout."},
+          {key:"d", text:"Larger learning rate."},
+        ]}
+        trap={<>(b), (c), (d) miss the standard VQ-VAE/RQ-VAE recipe.</>}
+        lens={<>EMA codebook updates are the canonical stabilization trick from VQ-VAE.</>}
+        stretch={<>What EMA decay rate is typical?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      {/* axis: F1 */}
+      <VIS.TrapProblem
+        id="tiger-f1"
+        difficulty="hard"
+        title="F1 — Catalog of 1M near-identical items"
+        scenario={<>You're recommending generic-brand toiletries (1M items, near-identical descriptions). What breaks first?</>}
+        options={[
+          {key:"a", text:"Semantic-ID collisions explode — most items map to the same 4-tuple because content is nearly identical; retrieval becomes effectively random within colliding clusters; recall@10 drops dramatically.", correct:true},
+          {key:"b", text:"Decode latency."},
+          {key:"c", text:"GPU OOM."},
+          {key:"d", text:"Constrained decoding fails."},
+        ]}
+        trap={<>(b), (c), (d) are secondary.</>}
+        lens={<>TIGER assumes content provides distinguishing signal. When items are nearly identical, RQ-VAE collapses items into few code-tuples.</>}
+        stretch={<>Could you fix this with a deeper codebook?</>}
+      />
+
+      {/* axis: F2 */}
+      <VIS.TrapProblem
+        id="tiger-f2"
+        difficulty="hard"
+        title="F2 — Adversarial item duplication"
+        scenario={<>A vendor floods the catalog with 1000 items whose descriptions are paraphrases of a hot-selling item. What happens?</>}
+        options={[
+          {key:"a", text:"All 1000 paraphrased items get nearly-identical Semantic IDs (RQ-VAE encodes content similarity); TIGER's decoded prefix matches all of them; the hot item's traffic gets diluted across spam duplicates; retrieval quality crashes.", correct:true},
+          {key:"b", text:"TIGER ignores duplicates."},
+          {key:"c", text:"DLRM would handle this fine."},
+          {key:"d", text:"No effect on TIGER."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>Semantic-ID similarity is a feature in normal operation but an attack surface for content-clone abuse.</>}
+        stretch={<>How would you detect this attack at scale?</>}
+      />
+
+      {/* axis: F3 */}
+      <VIS.TrapProblem
+        id="tiger-f3"
+        difficulty="hard"
+        title="F3 — Recall@10 high, NDCG@10 low"
+        scenario={<>TIGER's recall@10 is great but NDCG@10 is poor. Which TIGER-specific design choice drives this?</>}
+        options={[
+          {key:"a", text:"Beam search decode finds candidates by prefix matching, but prefix-order doesn't reflect posterior probability over items — within a prefix, ranking is degenerate. NDCG@10 needs in-bucket ordering that TIGER's decode doesn't naturally provide.", correct:true},
+          {key:"b", text:"Random."},
+          {key:"c", text:"NDCG bug."},
+          {key:"d", text:"Recall is wrong."},
+        ]}
+        trap={<>(b), (c), (d) miss the within-bucket ranking issue.</>}
+        lens={<>TIGER is a retrieval model; ranking within retrieved candidates is a separate problem. Add a re-ranker (HSTU, cross-encoder).</>}
+        stretch={<>Could you train TIGER to also rank, not just retrieve?</>}
+      />
+
+      {/* axis: F4 */}
+      <VIS.TrapProblem
+        id="tiger-f4"
+        difficulty="hard"
+        title="F4 — What the TIGER paper itself flags"
+        scenario={<>Which failure mode does the TIGER paper explicitly call out?</>}
+        options={[
+          {key:"a", text:"Codebook collisions producing distinct items with the same Semantic ID — paper proposes a residual disambiguation token.", correct:true},
+          {key:"b", text:"GPU memory issues."},
+          {key:"c", text:"Slow training."},
+          {key:"d", text:"Multilingual data."},
+        ]}
+        trap={<>(b), (c), (d) aren't paper-flagged failures.</>}
+        lens={<>The paper is direct: collisions are unavoidable and need a small tiebreaker token.</>}
+        stretch={<>How big does the tiebreaker need to be at 50M-item catalog scale?</>}
+      />
+
+      {/* axis: F5 */}
+      <VIS.TrapProblem
+        id="tiger-f5"
+        difficulty="hard"
+        title="F5 — Community follow-up: multilingual weakness"
+        scenario={<>A 2025 practitioner handbook on Semantic-ID generative recsys identifies a specific TIGER weakness on multilingual catalogs. What's the failure?</>}
+        options={[
+          {key:"a", text:"A single content encoder produces inconsistent embeddings across languages; items with the same product but different-language descriptions get different Semantic IDs, fragmenting the prefix structure and hurting cross-language transfer.", correct:true},
+          {key:"b", text:"Codebook explosion in multilingual catalogs."},
+          {key:"c", text:"Constrained decoding fails."},
+          {key:"d", text:"Pretrained encoders don't work multilingually."},
+        ]}
+        trap={<>(b), (c), (d) are partial but not the specific failure.</>}
+        lens={<>Fix: multilingual pretrained encoder (mT5, multilingual CLIP).</>}
+        stretch={<>How would you measure cross-language prefix-sharing quality?</>}
+      />
+
+      {/* axis: F1b */}
+      <VIS.TrapProblem
+        id="tiger-f1b"
+        difficulty="hard"
+        title="F1b — Sparse-text items (1-3 word titles)"
+        scenario={<>Used-goods marketplace. Items: "blue jacket", "white shoes" — 1-3 words. TIGER vs random-ID embeddings?</>}
+        options={[
+          {key:"a", text:"TIGER's RQ-VAE has too little signal per item to build distinctive codes; many items collapse to a few prefix buckets; random-ID two-tower might still learn useful representations from collaborative-filtering signal that TIGER can't access.", correct:true},
+          {key:"b", text:"TIGER always wins."},
+          {key:"c", text:"Random IDs always win."},
+          {key:"d", text:"No difference."},
+        ]}
+        trap={<>(b), (c), (d) over-generalize.</>}
+        lens={<>If average item content has ≤5-10 unique tokens, TIGER's advantage compresses.</>}
+        stretch={<>Could you augment content with auto-generated descriptions from a VLM?</>}
+      />
+
+      {/* axis: F3b */}
+      <VIS.TrapProblem
+        id="tiger-f3b"
+        difficulty="hard"
+        title="F3b — Codebook utilization 12% — what's broken?"
+        scenario={<>You inspect the trained RQ-VAE and find <strong>only 12% of codebook entries are used by any item</strong>. Most likely causes?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Commitment loss weight β too low → encoder drifts away from rarely-used codes, abandoning them rather than nudging them to be useful.", correct:true},
+          {key:"b", text:"Initial codebook clustering biased toward dense regions of the embedding space → codes elsewhere never get assigned.", correct:true},
+          {key:"c", text:"No code-balance / entropy regularization in the loss.", correct:true},
+          {key:"d", text:"Random seed."},
+          {key:"e", text:"GPU memory."},
+        ]}
+        trap={<>(d), (e) are seldom the root cause.</>}
+        lens={<>Codebook collapse is the canonical RQ-VAE training failure. Fixes: EMA codebook updates, code-balance loss, periodic re-init of unused codes.</>}
+        stretch={<>How would you reinitialize an unused code mid-training?</>}
+      />
+
+      {/* axis: D1c */}
+      <VIS.TrapProblem
+        id="tiger-d1c"
+        difficulty="medium"
+        title="D1c — 'Generative retrieval > all retrieval'"
+        scenario={<>An ML evangelist says generative retrieval is strictly better than ANN. Defeat the claim.</>}
+        options={[
+          {key:"a", text:"Cold-start items with zero content (e.g. live-stream events tagged only with timestamp) — no content for RQ-VAE; ANN can still use collaborative-filtering signals; TIGER cannot.", correct:true},
+          {key:"b", text:"Generative is always better."},
+          {key:"c", text:"ANN is always better."},
+          {key:"d", text:"They're identical."},
+        ]}
+        trap={<>(b), (c), (d) are over-generalizations.</>}
+        lens={<>TIGER requires content. There's always a content-poor surface where ANN wins.</>}
+        stretch={<>Could you fold both strategies into one model?</>}
+      />
+
+      {/* axis: C5b */}
+      <VIS.TrapProblem
+        id="tiger-c5b"
+        difficulty="hard"
+        title="C5b — TIGER with short user histories"
+        scenario={<>User histories are short (median 3 events). Does TIGER still work?</>}
+        options={[
+          {key:"a", text:"Yes — TIGER's value is in item representation (Semantic IDs), not user-history length; short histories just mean a short prompt, but the decoder's autoregressive Semantic-ID generation still benefits from prefix-sharing.", correct:true},
+          {key:"b", text:"No — short histories break TIGER."},
+          {key:"c", text:"Only HSTU works with long histories."},
+          {key:"d", text:"Need to use random IDs instead."},
+        ]}
+        trap={<>(b), (c), (d) confuse TIGER's value chain with HSTU's.</>}
+        lens={<>HSTU's value comes from long sequences; TIGER's comes from content-derived Semantic IDs. Independent levers.</>}
+        stretch={<>How short is too short for TIGER?</>}
+      />
+
+      {/* axis: E3b */}
+      <VIS.TrapProblem
+        id="tiger-e3b"
+        difficulty="hard"
+        title="E3b — How does constrained decoding work?"
+        scenario={<>You implement constrained decoding. The trie maps prefixes to valid continuations. What's the latency impact?</>}
+        options={[
+          {key:"a", text:"Minimal at inference: the trie is consulted at each decode step to mask invalid logits before softmax; cost is O(B·D) per step (B beam, D codes). Trie itself can be a single GPU-resident sparse mask refreshed at codebook updates.", correct:true},
+          {key:"b", text:"Doubles decode time."},
+          {key:"c", text:"Requires CPU."},
+          {key:"d", text:"Eliminates beam search."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>Constrained decoding is cheap when implemented as a logit mask; expensive as post-hoc rejection sampling.</>}
+        stretch={<>How often must you refresh the trie?</>}
+      />
+
+      {/* axis: F4b */}
+      <VIS.TrapProblem
+        id="tiger-f4b"
+        difficulty="medium"
+        title="F4b — TIGER paper's reported collision rate"
+        scenario={<>What collision rate does the TIGER paper empirically report?</>}
+        options={[
+          {key:"a", text:"~0.3% at K=4, |codebook|=256 — small enough that a single tiebreaker token suffices for production.", correct:true},
+          {key:"b", text:"~10%."},
+          {key:"c", text:"0%."},
+          {key:"d", text:"The paper doesn't measure it."},
+        ]}
+        trap={<>(b) is too high. (c) is impossible without tiebreaker. (d) is false.</>}
+        lens={<>The 0.3% figure is the empirical TIGER fingerprint. If your reproduction shows ~5%, codebook collapse is likely.</>}
+        stretch={<>What collision rate would you flag as unsafe to ship?</>}
+      />
+
+      {/* axis: A4b */}
+      <VIS.TrapProblem
+        id="tiger-a4b"
+        difficulty="hard"
+        title="A4b — TIGER + diffusion models"
+        scenario={<>You add a small diffusion head over TIGER's beam outputs to generate diverse candidate Semantic IDs. Does this help?</>}
+        options={[
+          {key:"a", text:"Yes for diversity, no for relevance: diffusion broadens the candidate distribution (good for exploration) but doesn't change the underlying decode probability. Net: better novelty metrics, marginal recall change. Constrain output to valid IDs.", correct:true},
+          {key:"b", text:"Yes, always better."},
+          {key:"c", text:"No, hurts always."},
+          {key:"d", text:"Not possible to combine."},
+        ]}
+        trap={<>(b), (c), (d) over-generalize.</>}
+        lens={<>Diffusion adds diversity but doesn't fix underlying TIGER metrics.</>}
+        stretch={<>How would you measure the novelty/recall tradeoff?</>}
+      />
+
+      {/* axis: E2b */}
+      <VIS.TrapProblem
+        id="tiger-e2b"
+        difficulty="hard"
+        title="E2b — Hallucinations slip past constrained decoding"
+        scenario={<>You're using constrained decoding via a trie; still seeing 1% hallucinations. Root cause?</>}
+        options={[
+          {key:"a", text:"Trie is stale — built from an older catalog snapshot; items added since aren't in the trie, but they ARE in the production catalog. Refresh cadence too slow.", correct:true},
+          {key:"b", text:"Constrained decoding is buggy."},
+          {key:"c", text:"Beam search is wrong."},
+          {key:"d", text:"GPU corruption."},
+        ]}
+        trap={<>(b), (c), (d) are 2nd-order.</>}
+        lens={<>The trie must track the live catalog. Stale tries are the canonical 1% hallucination source.</>}
+        stretch={<>How would you set the trie-refresh cadence?</>}
+      />
+
+      {/* axis: C2c */}
+      <VIS.TrapProblem
+        id="tiger-c2c"
+        difficulty="hard"
+        title="C2c — Train RQ-VAE and seq2seq jointly or separately?"
+        scenario={<>Pick a training strategy.</>}
+        options={[
+          {key:"a", text:"Two-stage: train RQ-VAE first to convergence, freeze codebooks, then train seq2seq. Joint training is unstable because seq2seq gradients tend to collapse codebooks. TIGER paper uses two-stage.", correct:true},
+          {key:"b", text:"Joint always better."},
+          {key:"c", text:"Train seq2seq first, then RQ-VAE."},
+          {key:"d", text:"Doesn't matter."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>Two-stage training stabilizes codebooks. Joint training is research-frontier, not the production default.</>}
+        stretch={<>How frequently should you refresh the RQ-VAE stage?</>}
+      />
+
+      {/* axis: D2b */}
+      <VIS.TrapProblem
+        id="tiger-d2b"
+        difficulty="medium"
+        title="D2b — 'Semantic IDs give free generalization'"
+        scenario={<>A teammate claims Semantic IDs give "free generalization to new items." What's the catch?</>}
+        options={[
+          {key:"a", text:"Only generalization to items whose content is well-covered by the RQ-VAE training distribution. Items from a wholly new category (content-distribution shift) still cold-start poorly — the RQ-VAE never learned codes for that region.", correct:true},
+          {key:"b", text:"There's no catch."},
+          {key:"c", text:"Generalization is fake."},
+          {key:"d", text:"Requires GPU."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>TIGER generalizes within the content distribution it was trained on.</>}
+        stretch={<>How would you detect a content-distribution shift in production?</>}
+      />
+
+      {/* axis: E5b */}
+      <VIS.TrapProblem
+        id="tiger-e5b"
+        difficulty="hard"
+        title="E5b — Why production gains differ from paper"
+        scenario={<>You implement TIGER as described; production NDCG gain is half the paper's. Most likely cause?</>}
+        options={[
+          {key:"a", text:"Production catalog is ~100× larger than the paper's benchmark, with longer tail of low-content items; RQ-VAE codebooks struggle to cover the tail; recall on tail items underperforms.", correct:true},
+          {key:"b", text:"Wrong learning rate."},
+          {key:"c", text:"Wrong batch size."},
+          {key:"d", text:"Random seed."},
+        ]}
+        trap={<>(b), (c), (d) are 2nd-order.</>}
+        lens={<>Catalog-scale gap is the most common reason TIGER underperforms its paper.</>}
+        stretch={<>What's the right scaling rule for K and codebook size?</>}
+      />
+
+      {/* axis: D4b */}
+      <VIS.TrapProblem
+        id="tiger-d4b"
+        difficulty="hard"
+        title="D4b — Cold-start: new item, zero interactions"
+        scenario={<>A new item is added. Rich content. TIGER serves it. How well does it perform vs the same item in two-tower+HNSW?</>}
+        options={[
+          {key:"a", text:"TIGER: new item gets a Semantic ID from content alone; if a similar warm item exists, it inherits useful prefix structure and may be retrieved zero-shot. Two-tower: new item gets a randomly-initialized embedding that's effectively random in the ANN space until trained.", correct:true},
+          {key:"b", text:"Both perform identically."},
+          {key:"c", text:"Two-tower wins always."},
+          {key:"d", text:"Neither works."},
+        ]}
+        trap={<>(b), (c), (d) miss TIGER's primary cold-start argument.</>}
+        lens={<>Cold-start retrieval is TIGER's headline benefit.</>}
+        stretch={<>How big can the cold-start gap be (recall@10 delta)?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/2305.05065" target="_blank" rel="noopener"><strong>Rajput et al. — Recommender Systems with Generative Retrieval (NeurIPS 2023)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>The TIGER paper. Read the cold-start and ablation sections — they motivate every production decision.</li>
-        <li><a href="https://eugeneyan.com/writing/recsys-llm/" target="_blank" rel="noopener"><strong>Eugene Yan — Generative recommenders survey</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Best practitioner overview of where TIGER fits among HSTU, OneRec, and Semantic ID variants.</li>
-        <li><a href="https://arxiv.org/abs/2203.01941" target="_blank" rel="noopener"><strong>Tay et al. — Differentiable Search Index (DSI)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>The IR precursor — generative retrieval over docids, the idea TIGER ports to items.</li>
-        <li><a href="https://github.com/EdoardoBotta/RQ-VAE-Recommender" target="_blank" rel="noopener"><strong>Open-source RQ-VAE recommender</strong></a> <span style={{color:"#64748b", fontSize:14}}>(code)</span><br/>One of the cleanest community reimplementations; useful for understanding constrained decoding.</li>
+        <li><a href="https://arxiv.org/abs/2305.05065" target="_blank" rel="noopener"><strong>Rajput et al. — TIGER paper (NeurIPS 2023)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>The original. Focus on sections 3 (RQ-VAE), 4 (seq2seq), 5 (experiments including collision rates).</li>
+        <li><a href="https://arxiv.org/abs/2507.22224" target="_blank" rel="noopener"><strong>Generative Recommendation with Semantic IDs: A Practitioner's Handbook (2025)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(handbook)</span><br/>Production lessons + LC-Rec details.</li>
+        <li><a href="https://arxiv.org/abs/2107.10832" target="_blank" rel="noopener"><strong>Lee et al. — RQ-VAE original (CVPR 2022)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>Residual quantization foundations.</li>
+        <li><a href="https://eugeneyan.com/writing/recsys-llm/" target="_blank" rel="noopener"><strong>Eugene Yan — Generative recsys landscape</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Pragmatic engineering lens.</li>
+        <li><a href="https://arxiv.org/abs/1711.00937" target="_blank" rel="noopener"><strong>van den Oord et al. — VQ-VAE</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>The codebook-quantization ancestor. Commitment loss and EMA updates.</li>
       </ul>
     </VIS.Section>
   </main>

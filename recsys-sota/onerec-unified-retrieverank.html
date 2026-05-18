@@ -1414,272 +1414,868 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// OneRec — Kuaishou 2025. Unifies retrieval and ranking into a single generative encoder-decoder over Semantic IDs.
+// OneRec — Unifying Retrieve and Rank (Kuaishou 2025; V2 Aug 2025)
+// v2 redo — 40+ trap problems spanning A-F taxonomy axes.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Generative recommendation (HSTU family)"
-      title="OneRec — Unified Retrieve + Rank"
-      subtitle="End-to-end encoder-decoder that decodes Semantic IDs for the next list of videos, collapsing the L0/L1/L2 funnel into one model with iterative DPO alignment."
+      pill="RecSys SOTA · Unified retrieve+rank"
+      title="OneRec — Unifying Retrieve and Rank with Generative Recommender"
+      subtitle="End-to-end encoder-decoder + iterative DPO over watch-time. Collapses L0/L1/L2 funnel into one model. V2 cuts compute 94%."
       byline={[
-        {label: "Paper", value: "Cai et al., Kuaishou 2025; OneRec-V2 (Aug 2025)"},
+        {label: "Paper", value: "Cai et al., Kuaishou 2025; V2 Aug 2025"},
         {label: "Year", value: "2025"},
-        {label: "Domain", value: "Unified generative recommendation"},
+        {label: "Domain", value: "End-to-end generative recsys"},
       ]}/>
 
     <VIS.TLDR>
-      Unlike <VIS.Term def="TIGER autoregressively decodes a Semantic ID for the next item, replacing only the retrieval stage; downstream ranker is still separate.">TIGER</VIS.Term> which only does retrieval, OneRec absorbs ranking too via iterative <VIS.Term def="Direct Preference Optimization — a way to align a generative model to preferences without an explicit reward model by training on pairs (preferred, dispreferred) drawn from logged feedback.">DPO</VIS.Term>-style preference alignment on watch-time signals. Deployed in main Kuaishou feed: +1.6% watch-time, 10.6% the cost of the cascaded stack. Source: <a href="https://arxiv.org/abs/2502.18965" target="_blank" rel="noopener">arXiv:2502.18965</a>.
+      OneRec generates a LIST of next items (not one item) via encoder-decoder over user history → autoregressive list decode of Semantic IDs. <VIS.Term def="Direct Preference Optimization — fine-tunes a generative model on (preferred, dispreferred) pairs without a separate value function. Common in RLHF.">Iterative DPO</VIS.Term> aligns the generator to maximize watch-time. Replaces a 3-stage cascade (retrieval → coarse rank → fine rank) with a single model. Deployed in Kuaishou's main feed: +1.6% watch-time at 10.6% the cost. V2's <VIS.Term def="Encoder-free design where the decoder lazily cross-attends to user context — cuts compute 94% vs encoder-decoder baseline.">Lazy Decoder-Only</VIS.Term> reduces compute 94%. Source: <a href="https://arxiv.org/abs/2502.18965" target="_blank" rel="noopener">arXiv:2502.18965</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        OneRec is an encoder-decoder transformer where the encoder reads the user's history (tokenized to <VIS.Term def="Tuple of discrete codes per item, produced by RQ-VAE on the item's content embedding. Shared with TIGER.">Semantic IDs</VIS.Term>) and the decoder auto-regressively emits the Semantic IDs of the next K items as a list — a single forward pass replaces the entire <VIS.Term def="The classic recommender funnel: L0 candidate generation (often ANN over millions), L1 light ranking (thousands → hundreds), L2 heavy ranking (hundreds → tens). Each stage has its own model + infra.">L0/L1/L2 cascaded retrieve-then-rank funnel</VIS.Term>.
+        OneRec is one model. Input: user history. Output: a list of K next items (Semantic IDs decoded autoregressively). No separate retrieval, coarse rank, fine rank — the generative decode IS all three. Trained in two stages: (1) supervised CE on next-item prediction, (2) iterative DPO using watch-time as the preference signal.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  H["User history (Semantic IDs)"] --> ENC["Encoder"]
-  ENC --> DEC["Decoder (lazy decoder-only in V2)"]
-  DEC --> L["List of next K Semantic IDs"]
-  R["Watch-time reward model"] -.DPO pairs.-> DEC
-  style DEC fill:#dbeafe,stroke:#1e40af,stroke-width:2px
+  H["User history"]
+  H --> M["OneRec encoder-decoder"]
+  M --> L["List of K Semantic IDs"]
+  L --> U["User feed"]
+  M -.->|"realized watch-time"| R["Reward model"]
+  R -.->|"DPO iterations"| M
+  style M fill:#dbeafe,stroke:#1e40af,stroke-width:2px
       `} />
+    </VIS.Section>
+
+    <VIS.Section id="sec-diff" title="Beat 2 — Cascade vs OneRec vs HSTU vs TIGER">
       <p>
-        V2 (Aug 2025) introduces a <VIS.Term def="A decoder-only variant that skips encoder activations when the user's history hasn't changed since the last request, cutting compute 94% in steady-state serving.">Lazy Decoder-Only</VIS.Term> design that cuts compute by 94%, making the unified model competitive with the cascaded baseline on serving cost while keeping the quality wins.
+        <strong>Cascade (traditional).</strong> Retrieval (two-tower + HNSW over 100M items → top 10K) → coarse rank (light DLRM on 10K → top 500) → fine rank (heavy DLRM on 500 → top 100). Three models, three teams, three deploys, three monitors.
+      </p>
+      <p>
+        <strong>OneRec.</strong> One model. End-to-end from history → final list of K items. Watch-time-driven DPO collapses the entire optimization onto a single objective.
+      </p>
+      <p>
+        <strong>vs HSTU.</strong> HSTU is the ranker step only; OneRec absorbs retrieval and ranking together. OneRec is the more aggressive unification.
+      </p>
+      <p>
+        <strong>vs TIGER.</strong> TIGER is the retrieval step only (one item at a time). OneRec generates a LIST and adds preference alignment.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick OneRec">
       <p>
-        <strong>Cascaded retrieve→rank (the baseline).</strong> Three or four models trained independently, glued by feature pipelines. L0 optimizes recall, L2 optimizes calibrated CTR or watch-time. The pipeline accumulates leakage points (label definitions diverge between stages), and the cascade's worst stage caps overall quality.
-      </p>
-      <p>
-        <strong>OneRec (the delta).</strong> One model. End-to-end loss on the actual business objective (watch-time). Iterative DPO uses logged user feedback as preference pairs — for each session, items the user watched longer become "chosen," items skipped become "rejected." The decoder learns to emit lists ordered by preference, not just likelihood.
-      </p>
-      <p>
-        <strong>What's lost.</strong> Independent control of each stage. In the cascade you could tweak L0 recall without touching L2 calibration; in OneRec, any change retrains the whole stack. You also lose the ability to plug in business overrides at intermediate stages (e.g. "always include one boosted-creator item in L1's output before ranking").
+        Pick OneRec when (a) you own the whole stack (no team boundaries forcing modularity), (b) watch-time / DPO-able preference signal is available, (c) you can absorb auto-regressive list decode latency (or precompute user vectors), (d) the cascade has accumulated operational debt worth paying off.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick it / where it wins">
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
       <p>
-        Pick OneRec when you control the <strong>entire serving stack</strong>, your latency budget tolerates auto-regressive list decoding (or you can cache aggressively), and you have rich preference signal (watch-time, dwell, completion). It pays off most on engagement-loop surfaces with stable user behaviour. It is the wrong tool when retrieval and ranking are owned by different teams with independent release cadences, when stage-level overrides are a hard product requirement, or when latency budgets are sub-30ms.
-      </p>
-    </VIS.Section>
-
-    <VIS.Section id="sec-gotchas" title="Limitations & gotchas">
-      <p>
-        Auto-regressive list decoding is harder to keep under p99 latency than a two-tower dot product — Lazy Decoder-Only mitigates but doesn't eliminate. DPO needs a reward model, and that reward model has its own biases (popularity bias, position bias) that propagate into the policy. Debugging "why was item X served to user Y" becomes opaque — there's no intermediate stage you can probe. And you lose the operational lever of independently tuning recall vs precision per stage.
+        OneRec's biggest risks: <strong>reward model bias</strong> (DPO chases whatever the reward model encodes, including position/popularity biases), <strong>cold-start regression</strong> (no preference signal for DPO on new items/users), <strong>auto-regressive decode latency</strong>, <strong>list-wise eval mismatch</strong> (standard NDCG@10 doesn't directly map to mean-watch-time over a generated list).
       </p>
     </VIS.Section>
 
     <VIS.Section id="sec-drill" title="Drill — trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Twelve problems on the unification tradeoffs — capabilities lost by collapsing the cascade, DPO failure modes, latency mechanics, and the business overrides that get harder to express.</p>
+        40+ trap problems. Each must require knowing OneRec's specific design (unified retrieve+rank + iterative DPO over watch-time + Lazy Decoder-Only) to answer.
+      </p>
 
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity & comparison</h3>
+
+      {/* axis: A1 */}
       <VIS.TrapProblem
-        id="onerec-p1"
+        id="onerec-a1"
         difficulty="hard"
-        multiSelect
-        title="P1 — Capabilities you lose by collapsing the funnel"
-        scenario={<>The product council green-lights migrating from a 4-stage cascade (L0 ANN + L1 light ranker + L2 heavy ranker + business-rules layer) to OneRec. Three weeks later, partner teams flag broken capabilities. Which of these are <em>real</em> losses caused by the migration? Select all that apply.</>}
+        title="A1 — OneRec vs HSTU: what's actually different?"
+        scenario={<>Both are generative recsys. Pick the actual architectural delta.</>}
         options={[
-          {key:"a", text:"Per-stage A/B testing — you can no longer isolate L1 vs L2 quality changes.", correct:true},
-          {key:"b", text:"Business-rule overrides at intermediate stages (e.g. 'boost creator X into L1 output').", correct:true},
-          {key:"c", text:"Independent ownership: retrieval and ranking teams now must release together.", correct:true},
-          {key:"d", text:"Ability to learn from watch-time signals."},
-          {key:"e", text:"Ability to handle cold-start items."},
+          {key:"a", text:"HSTU is a ranker that scores a candidate set produced by upstream retrieval; OneRec generates the entire candidate list end-to-end, absorbing both retrieval and ranking via DPO over watch-time.", correct:true},
+          {key:"b", text:"OneRec is faster than HSTU."},
+          {key:"c", text:"HSTU is for ads, OneRec for video."},
+          {key:"d", text:"OneRec doesn't use transformers."},
         ]}
-        trap={<>(d) and (e) are non-losses — OneRec actually does both better than the cascade. The trap is the diff-the-everything mindset that treats unification as universally lossy. Real losses are operational and organizational: you trade architectural simplicity for less surgical control.</>}
-        lens={<>Three real losses: stage-level A/B, intermediate overrides, independent ownership. Mitigations: post-decode re-ranking layer for overrides; canary deployments instead of stage-level A/B; consolidated ownership team.</>}
-        stretch={<>Which of the three losses is hardest to recover via post-decode logic?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>HSTU stays inside the cascade (replaces the heavy ranker). OneRec collapses the cascade. The org-level cost/benefit shifts: HSTU keeps separate teams; OneRec forces a re-org.</>}
+        stretch={<>Could you wrap HSTU inside OneRec? What would it look like?</>}
       />
 
+      {/* A2 */}
       <VIS.TrapProblem
-        id="onerec-p2"
+        id="onerec-a2"
         difficulty="hard"
-        title="P2 — DPO reward model biases"
-        scenario={<>Your watch-time reward model exhibits a strong popularity bias: items in the top 1% popularity bucket are predicted as preferred 4× more often than the data warrants. After 3 weeks of OneRec serving with DPO using this reward, what's the most likely failure mode?</>}
+        title="A2 — OneRec vs TIGER"
+        scenario={<>OneRec and TIGER both decode Semantic IDs autoregressively. Discriminator?</>}
         options={[
-          {key:"a", text:"The model converges to recommending only popular items, killing exploration and starving the long tail.", correct:true},
-          {key:"b", text:"DPO eventually corrects for it on its own."},
-          {key:"c", text:"Watch-time will fall because popular items are over-saturated."},
-          {key:"d", text:"No effect — DPO uses pairs, not absolute rewards."},
+          {key:"a", text:"TIGER decodes ONE Semantic ID per query (retrieval); OneRec decodes a LIST of K Semantic IDs per query (full feed). OneRec's training adds iterative DPO over watch-time; TIGER trains supervised CE only.", correct:true},
+          {key:"b", text:"They're identical."},
+          {key:"c", text:"TIGER uses transformers; OneRec doesn't."},
+          {key:"d", text:"OneRec is for one item; TIGER for a list."},
         ]}
-        trap={<>(b) is wishful thinking — DPO has no self-correction mechanism for systematic reward-model bias. (c) is partly true but misses the structural failure. (d) misunderstands DPO: even though pairs are used, biased pair selection biases the policy.</>}
-        lens={<>DPO faithfully follows whatever signal the reward model provides. A biased reward → a biased policy. Fixes are upstream: debias the reward (popularity de-bias, IPS weighting on logged data) BEFORE generating DPO pairs. Treating DPO as a black-box fix is the textbook mistake.</>}
-        stretch={<>What signal in serving logs would tip you off to this collapse early?</>}
+        trap={<>(b), (c), (d) misread; (d) inverts the truth.</>}
+        lens={<>OneRec inherits TIGER's Semantic-ID trick AND adds list-wise generation + preference alignment. TIGER could be seen as a OneRec ablation (no DPO, single-item decode).</>}
+        stretch={<>Why is list-wise generation harder than per-item retrieval?</>}
       />
 
+      {/* A3 counterfactual */}
       <VIS.TrapProblem
-        id="onerec-p3"
+        id="onerec-a3"
         difficulty="hard"
-        title="P3 — Lazy Decoder-Only mechanics"
-        scenario={<>V2's Lazy Decoder-Only claims 94% compute reduction in steady state. A skeptic asks why this is principled and not a corner-cutting hack. What's the right explanation?</>}
+        title="A3 — Without OneRec, the fallback"
+        scenario={<>If OneRec didn't exist, you'd build a cascade. Pick the most accurate description of what it'd cost.</>}
         options={[
-          {key:"a", text:"Beam search caching makes the encoder unnecessary."},
-          {key:"b", text:"Most requests within a session share user history; encoder activations can be cached at session granularity, and only the decoder's auto-regressive step needs to run per request.", correct:true},
-          {key:"c", text:"V2 distilled the encoder into the decoder weights."},
-          {key:"d", text:"V2 dropped attention from the encoder."},
+          {key:"a", text:"Three models (retrieval + coarse + fine rank), three deploys, three monitoring stacks, three on-call rotations, ~3× the cost OneRec reports. Each ranker stage independently calibrated; cross-stage debug requires tracing requests through all three.", correct:true},
+          {key:"b", text:"One DLRM does everything fine."},
+          {key:"c", text:"Cost is the same."},
+          {key:"d", text:"Two-tower replaces all three."},
         ]}
-        trap={<>(a) confuses encoder-caching with beam-search. (c) and (d) are speculation about architectural changes that didn't happen.</>}
-        lens={<>The lazy decoder leverages the temporal locality of user sessions — within a session, history evolves slowly, so encoder output can be cached and only refreshed on history-deltas. This is a principled application of memoization, not a quality compromise.</>}
-        stretch={<>When does the lazy decoder's caching strategy FAIL to amortize?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The cascade is real architecture in every large-scale recsys. OneRec's headline 10.6% cost is measured against this specific 3-stage cascade.</>}
+        stretch={<>What does the cascade still do better than OneRec?</>}
       />
 
+      {/* A4 */}
       <VIS.TrapProblem
-        id="onerec-p4"
+        id="onerec-a4"
         difficulty="hard"
-        multiSelect
-        title="P4 — Debugging 'why this item'"
-        scenario={<>A creator complains their videos are no longer reaching their followers after the OneRec rollout. With the cascade, you could check L0 recall, L1 score, L2 score, and business-rules state. With OneRec, that pipeline is gone. Which of these are <em>real</em> ways to attribute the regression? Select all that apply.</>}
+        title="A4 — OneRec + HSTU?"
+        scenario={<>Does it make sense to stack OneRec and HSTU?</>}
         options={[
-          {key:"a", text:"Inspect the encoder's attention map over the user history for relevant signals.", correct:true},
-          {key:"b", text:"Compare the creator's items' Semantic ID distribution against the historical 'reaches followers' baseline.", correct:true},
-          {key:"c", text:"Run counterfactual rollouts swapping in the creator's items at decode-time and measure score deltas.", correct:true},
-          {key:"d", text:"Check L1 score logs."},
-          {key:"e", text:"Read the model weights directly."},
+          {key:"a", text:"No — they target the same stage (full pipeline collapse). Stacking would re-introduce the cascade OneRec is designed to eliminate.", correct:true},
+          {key:"b", text:"Yes — always better."},
+          {key:"c", text:"Yes — HSTU does retrieval, OneRec does ranking."},
+          {key:"d", text:"Yes — OneRec does retrieval, HSTU does ranking."},
         ]}
-        trap={<>(d) is the obsolete cascade-era answer. (e) is theoretically possible but operationally useless at scale.</>}
-        lens={<>Generative models need new debugging primitives: attention-rollout, Semantic-ID-distribution diffs, counterfactual rollouts. Teams that don't invest in these tools become blind operators of black boxes. This is one of the genuine costs of unification.</>}
-        stretch={<>Of (a)-(c), which scales best to thousands of creator complaints / day?</>}
+        trap={<>(c), (d) reverse the truth — HSTU is the ranker; OneRec is the full pipeline.</>}
+        lens={<>OneRec subsumes HSTU. The composition that makes sense: TIGER (retrieval) + HSTU (ranking) as cascade, OR OneRec alone.</>}
+        stretch={<>What component of OneRec is HSTU-like internally?</>}
       />
 
+      {/* A5 */}
       <VIS.TrapProblem
-        id="onerec-p5"
+        id="onerec-a5"
         difficulty="hard"
-        title="P5 — Latency budget for list decoding"
-        scenario={<>Spec: serve a feed of 10 items in <strong>p99 60ms</strong>. Naïve auto-regressive list decode for K=10 items, K=4 codes per item = 40 decode steps. At ~3ms / step that's 120ms — over budget. Which strategy actually achieves 60ms?</>}
+        title="A5 — Where does OneRec's advantage end?"
+        scenario={<>OneRec gains shrink in which surface profile?</>}
         options={[
-          {key:"a", text:"Decode each item in parallel (10 parallel beams of 4 steps each)."},
-          {key:"b", text:"Lazy decoder caching of encoder + speculative decoding on the codebook positions; both compound to deliver the budget without sacrificing list quality.", correct:true},
-          {key:"c", text:"Reduce K from 4 to 1."},
-          {key:"d", text:"Cut feed size from 10 to 5."},
+          {key:"a", text:"Multi-objective surfaces where retrieval and ranking optimize different objectives (e.g., retrieval optimizes recall + diversity; ranking optimizes CTR) — collapsing into one DPO objective forces one trade-off that may not match what either stage would have chosen.", correct:true},
+          {key:"b", text:"Small catalogs."},
+          {key:"c", text:"Long histories."},
+          {key:"d", text:"Surfaces with GPU budget."},
         ]}
-        trap={<>(a) breaks list coherence — independent decodes produce duplicate or correlated picks because items aren't chosen against each other. (c) destroys the semantic hierarchy. (d) is a product regression.</>}
-        lens={<>The principled latency moves preserve the model: lazy encoder caching (V2's headline), speculative decoding (draft model emits codebook positions, target model verifies), and continuous batching across requests. Parallel decoding seems to help but breaks list-level coherence — the model can't avoid duplicates if items are chosen independently.</>}
-        stretch={<>How would speculative decoding handle the trie-constraint mask?</>}
+        trap={<>(b), (c), (d) are conditions under which OneRec wins more, not less.</>}
+        lens={<>Multi-objective optimization is the place where the cascade's modularity actually helps. OneRec's single DPO objective is the cleanest win when there's one dominant objective (watch-time).</>}
+        stretch={<>How would you extend OneRec to multi-objective?</>}
       />
 
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      {/* B1 */}
       <VIS.TrapProblem
-        id="onerec-p6"
+        id="onerec-b1"
         difficulty="hard"
-        title="P6 — Why DPO over RLHF/PPO"
-        scenario={<>An engineer asks: "Why DPO instead of full RLHF with PPO?" In the OneRec deployment context, what's the principled answer?</>}
+        title="B1 — Greenfield startup vs FAANG-scale incumbent"
+        scenario={<>You're CTO of a 50-person video startup. Your competitor is a FAANG-scale incumbent with 200 ranker engineers. Should you build OneRec or a cascade?</>}
         options={[
-          {key:"a", text:"PPO requires online environment rollouts at training time; logged user data only supports offline preference learning, which DPO handles natively without a separate policy gradient loop.", correct:true},
-          {key:"b", text:"DPO is always strictly better than PPO."},
-          {key:"c", text:"PPO is too slow."},
-          {key:"d", text:"DPO produces sparser policies."},
+          {key:"a", text:"OneRec — you DON'T have legacy cascade investments to protect, and a single team can own a single model. The incumbent's 200 engineers are exactly why they CAN'T cleanly adopt OneRec (org friction).", correct:true},
+          {key:"b", text:"Cascade — easier."},
+          {key:"c", text:"DLRM — proven."},
+          {key:"d", text:"Doesn't matter."},
         ]}
-        trap={<>(b) over-generalizes — DPO is not universally better; it's better-suited <em>here</em>. (c) and (d) are unsupported claims.</>}
-        lens={<>RecSys deployments train on logged user feedback — there is no live environment to roll out against. DPO turns logged feedback into pairwise preferences and optimizes directly; PPO would need an offline policy gradient estimator with the usual variance pain. The choice is dictated by data shape, not model preference.</>}
-        stretch={<>Under what condition would a live-rollout RL approach beat DPO for OneRec?</>}
+        trap={<>(b), (c), (d) ignore the org dynamics — OneRec's adoption is org-shaped, not just tech-shaped.</>}
+        lens={<>OneRec is a greenfield-friendly architecture. Incumbents have committed costs in cascades + team specializations that make migration politically harder than technically.</>}
+        stretch={<>What's the *incumbent's* path to OneRec? Phased? Skunkworks?</>}
       />
 
+      {/* B2 */}
       <VIS.TrapProblem
-        id="onerec-p7"
+        id="onerec-b2"
+        difficulty="hard"
+        title="B2 — 'DPO automatically calibrates'"
+        scenario={<>An ML lead says "Since we use DPO, the model is calibrated by construction." True or false?</>}
+        options={[
+          {key:"a", text:"False — DPO aligns ranking preferences (which item is better than which), not absolute probability calibration. The model's softmax outputs are still uncalibrated; you'd need a separate calibration head for any downstream system needing P(click).", correct:true},
+          {key:"b", text:"True — DPO calibrates."},
+          {key:"c", text:"True if you use enough iterations."},
+          {key:"d", text:"True for video surfaces."},
+        ]}
+        trap={<>(b), (c), (d) misread DPO's mechanism.</>}
+        lens={<>DPO is a *ranking* optimization, not a calibration. The output probabilities are still on an arbitrary scale; calibration is orthogonal.</>}
+        stretch={<>How would you calibrate OneRec's output for an auction?</>}
+      />
+
+      {/* B3 */}
+      <VIS.TrapProblem
+        id="onerec-b3"
         difficulty="medium"
-        title="P7 — Calibration in a generative ranker"
-        scenario={<>OneRec emits a list; downstream auction needs <strong>calibrated</strong> per-item CTR scores. The generative likelihood of each item is the wrong quantity. What's the cleanest way to bolt calibration onto OneRec?</>}
+        title="B3 — Pitch OneRec to a VP"
+        scenario={<>VP asks: "Why OneRec over the cascade we already run?" Pick the strongest pitch.</>}
         options={[
-          {key:"a", text:"Use the decoder's per-token likelihood as the CTR estimate."},
-          {key:"b", text:"Train a light calibration head on logged (impression, click) pairs that maps OneRec score + user features to a calibrated CTR.", correct:true},
-          {key:"c", text:"Re-run DPO with CTR as the reward."},
-          {key:"d", text:"Drop the auction; serve OneRec's list directly."},
+          {key:"a", text:"'Retire 2 of 3 ranker stages, eliminate cross-stage debug burden, single optimization target tied directly to watch-time, ~10× cost reduction at Kuaishou's measured deployment.'", correct:true},
+          {key:"b", text:"'It uses transformers.'"},
+          {key:"c", text:"'NDCG up 2%.'"},
+          {key:"d", text:"'It's a Kuaishou paper.'"},
         ]}
-        trap={<>(a) confuses likelihood with calibrated probability. (c) is expensive and doesn't address the structural issue. (d) is a product fight, not a technical answer.</>}
-        lens={<>Calibration is a re-mapping problem: take whatever score OneRec produces and learn the mapping to realized CTR on held-out data. This is the same pattern used to calibrate any generative ranker (incl. HSTU). The auction stays auction-shaped; the generative model produces inputs to it.</>}
-        stretch={<>Why isn't temperature scaling enough here?</>}
+        trap={<>(b), (c), (d) miss the org-cost story.</>}
+        lens={<>VPs fund retirements, not features. The pitch is cost + simplicity, not capability.</>}
+        stretch={<>What's the risk side of the pitch?</>}
       />
 
+      {/* B4 */}
       <VIS.TrapProblem
-        id="onerec-p8"
+        id="onerec-b4"
         difficulty="hard"
-        title="P8 — Cost claim of 10.6%"
-        scenario={<>OneRec's paper claims serving cost is 10.6% of the cascaded stack. An infra eng is skeptical — "decoder-only inference is more expensive per request than a dot-product retrieval." How can both statements be true?</>}
+        title="B4 — Surface where OneRec is the WRONG choice"
+        scenario={<>Pick the surface where OneRec is NOT a good fit.</>}
         options={[
-          {key:"a", text:"They're not — the paper is wrong."},
-          {key:"b", text:"The cascade's TOTAL cost (4 models + 4 feature pipelines + 4 GPU clusters + cross-stage routing) is what shrinks; OneRec replaces ALL of that with a single (lazy-decoder) inference path, even if that single inference is more expensive per request than any one cascade stage.", correct:true},
-          {key:"c", text:"OneRec runs on cheaper hardware."},
-          {key:"d", text:"OneRec uses 8-bit quantization throughout."},
+          {key:"a", text:"Ads ranking where downstream auction logic needs calibrated CTR and the optimization metric is bid-CTR, not watch-time — OneRec's DPO over watch-time misaligns with the business metric.", correct:true},
+          {key:"b", text:"Short-form video feed."},
+          {key:"c", text:"Long-form video."},
+          {key:"d", text:"Music recs."},
         ]}
-        trap={<>(a) is dismissive. (c) and (d) are guesses at implementation details rather than the structural argument.</>}
-        lens={<>The right baseline is end-to-end serving cost, not per-model cost. Cascades hide cost in feature pipelines, glue layers, and per-stage infra. Collapsing to a single model removes most of that overhead — the per-request inference can be more expensive and still win on totals.</>}
-        stretch={<>What feature of the cascade would NOT show up in OneRec's cost?</>}
+        trap={<>(b), (c), (d) all have watch-time-friendly metrics.</>}
+        lens={<>OneRec's DPO objective is fixed at training time. Surfaces where the business metric is dynamic (ads bids, multi-tenant) need more flexible alignment.</>}
+        stretch={<>Could you re-train OneRec daily to track shifting objectives?</>}
       />
 
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      {/* C1 */}
       <VIS.TrapProblem
-        id="onerec-p9"
+        id="onerec-c1"
         difficulty="hard"
-        title="P9 — Position bias in DPO pairs"
-        scenario={<>You build DPO pairs from session logs: items at positions 1-3 with high watch-time → "chosen," items at positions 8-10 with low watch-time → "rejected." After training, the model loves what was already at the top. Why?</>}
+        title="C1 — Why iterative DPO, not one-shot?"
+        scenario={<>Why does OneRec use *iterative* DPO (multiple rounds of preference data → DPO → reward model update → repeat)?</>}
         options={[
-          {key:"a", text:"DPO is broken."},
-          {key:"b", text:"Position bias — items at higher positions get more engagement BY VIRTUE of position, not preference. DPO learns to mimic the production policy that surfaced them, not user preference.", correct:true},
-          {key:"c", text:"Watch-time is the wrong signal."},
-          {key:"d", text:"Need bigger model."},
+          {key:"a", text:"After each DPO round, the policy shifts and starts sampling different items, generating different watch-time observations; iterating refreshes the preference dataset to match the new policy's behavior. Single-shot DPO would over-fit to the initial dataset.", correct:true},
+          {key:"b", text:"Iterative is faster."},
+          {key:"c", text:"DPO never converges in one shot."},
+          {key:"d", text:"Doesn't matter."},
         ]}
-        trap={<>(a) is non-explanatory. (c) is the wrong layer of fix. (d) makes the problem worse — bigger models more faithfully memorize the position-biased reward.</>}
-        lens={<>Pair construction must counter position bias: use IPS weighting on positions, or rank-aware pair selection (compare items at similar positions), or counterfactual exposure modeling. Untreated, you have a feedback-loop amplifier rather than a recommender.</>}
-        stretch={<>What's the cheapest practical position-bias correction?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>This is the same iterative-RLHF logic as in LLMs. On-policy preference data is more useful than off-policy as the model evolves.</>}
+        stretch={<>How many iterations did OneRec use? When do you stop?</>}
       />
 
+      {/* C2 */}
       <VIS.TrapProblem
-        id="onerec-p10"
+        id="onerec-c2"
+        difficulty="hard"
+        title="C2 — Why watch-time as the reward signal?"
+        scenario={<>OneRec uses watch-time, not CTR, as the reward signal for DPO. What does this give up vs CTR?</>}
+        options={[
+          {key:"a", text:"Watch-time is denser, harder to spoof, aligns better with engagement — BUT it confounds 'good content' with 'manipulative content' (cliffhangers, addictive loops). DPO can't tell the two apart; if your moderation policy fails, OneRec amplifies engagement-bait.", correct:true},
+          {key:"b", text:"Watch-time has higher variance."},
+          {key:"c", text:"Watch-time isn't observable."},
+          {key:"d", text:"CTR is always better."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The reward signal IS the alignment target. Bad reward signal → bad model. Watch-time has trade-offs; OneRec needs separate moderation policy as a guardrail.</>}
+        stretch={<>What reward signal would you use for a kids' content surface?</>}
+      />
+
+      {/* C3 */}
+      <VIS.TrapProblem
+        id="onerec-c3"
+        difficulty="hard"
+        title="C3 — What does OneRec drop vs cascade?"
+        scenario={<>OneRec drops things the cascade has. Pick all real drops.</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Per-stage observability — cascade lets you check 'what came out of retrieval, what got pruned by coarse rank, what won fine rank'; OneRec is a black-box single decode.", correct:true},
+          {key:"b", text:"Per-stage A/B testing — cascade lets you A/B test ranker swaps without touching retrieval; OneRec changes are model-wide.", correct:true},
+          {key:"c", text:"Per-stage SLA — cascade gives each stage a separate latency budget; OneRec is one budget for the whole list decode.", correct:true},
+          {key:"d", text:"Item embeddings — OneRec has none."},
+          {key:"e", text:"Watch-time signals — OneRec doesn't use them."},
+        ]}
+        trap={<>(d) is wrong — OneRec uses Semantic IDs (item embeddings). (e) inverts: OneRec uses watch-time prominently.</>}
+        lens={<>The three real drops are operational. Cascade's modularity has value precisely as separation of concerns. OneRec trades that for cost + simplicity.</>}
+        stretch={<>Which of these drops can be recovered with logging tricks?</>}
+      />
+
+      {/* C4 */}
+      <VIS.TrapProblem
+        id="onerec-c4"
+        difficulty="hard"
+        title="C4 — DPO temperature β"
+        scenario={<>DPO has a temperature β that controls how aggressively the policy diverges from the SFT prior. What goes wrong with β → 0 or β → ∞?</>}
+        options={[
+          {key:"a", text:"β → 0: policy diverges arbitrarily from SFT prior to chase reward (high reward but degenerate generations, e.g. all-the-same-popular-item list). β → ∞: policy can't move from SFT prior (no preference alignment happens at all).", correct:true},
+          {key:"b", text:"Both are fine."},
+          {key:"c", text:"β doesn't apply to OneRec."},
+          {key:"d", text:"β = 0 is paper default."},
+        ]}
+        trap={<>(b), (c), (d) misread DPO.</>}
+        lens={<>β tunes prior-vs-reward balance. The classic DPO failure is β too low → reward hacking; β too high → no learning.</>}
+        stretch={<>How would you pick β empirically for OneRec?</>}
+      />
+
+      {/* C5 */}
+      <VIS.TrapProblem
+        id="onerec-c5"
+        difficulty="hard"
+        title="C5 — Lazy Decoder-Only architecture"
+        scenario={<>V2's Lazy Decoder-Only design cuts compute 94%. What's "lazy" about it?</>}
+        options={[
+          {key:"a", text:"The decoder cross-attends to user context only at the layers / steps where it's needed (lazily), instead of every layer recomputing cross-attention over the full user history. Many decode steps reuse cached context summaries.", correct:true},
+          {key:"b", text:"It uses fewer parameters."},
+          {key:"c", text:"It uses FP4."},
+          {key:"d", text:"It runs once a day."},
+        ]}
+        trap={<>(b), (c), (d) miss the architectural innovation.</>}
+        lens={<>Lazy = on-demand cross-attention. This is an architectural change, not a quantization or sparsity trick. The 94% saving comes from skipping redundant cross-attention compute that the dense encoder-decoder paid for.</>}
+        stretch={<>What does Lazy Decoder give up vs full cross-attention?</>}
+      />
+
+      {/* C1b */}
+      <VIS.TrapProblem
+        id="onerec-c1b"
+        difficulty="hard"
+        title="C1b — Why DPO, not PPO/RLHF?"
+        scenario={<>OneRec uses DPO, not PPO/standard RLHF. Why?</>}
+        options={[
+          {key:"a", text:"DPO trains directly on (preferred, dispreferred) pairs without an explicit reward model; this avoids the reward-model overfitting that plagues PPO in recsys (where the reward model is derived from sparse watch-time signals). Simpler pipeline, fewer moving parts.", correct:true},
+          {key:"b", text:"DPO is always better than PPO."},
+          {key:"c", text:"PPO doesn't work in recsys."},
+          {key:"d", text:"DPO uses less memory."},
+        ]}
+        trap={<>(b), (c), (d) over-generalize.</>}
+        lens={<>DPO is reward-model-free at the optimization step (the reward is implicit in the pair preference). For recsys, where reward modeling itself is noisy, this is a real simplification.</>}
+        stretch={<>Could PPO outperform DPO on OneRec with a strong reward model?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      {/* D1 */}
+      <VIS.TrapProblem
+        id="onerec-d1"
+        difficulty="hard"
+        title="D1 — 'Collapsing retrieval + ranking is strictly better'"
+        scenario={<>Why is "fewer stages is always better" wrong as a general rule for OneRec?</>}
+        options={[
+          {key:"a", text:"Cascade's modularity lets retrieval optimize for recall, ranking for precision — different objectives with different metrics. Collapsing into one DPO objective forces a single trade-off; surfaces where retrieval and ranking should optimize different things lose.", correct:true},
+          {key:"b", text:"Cascade is always better."},
+          {key:"c", text:"Both are identical."},
+          {key:"d", text:"Latency."},
+        ]}
+        trap={<>(b), (c), (d) are over-generalizations.</>}
+        lens={<>OneRec wins when one objective dominates. Cascade wins when stages have legitimately different optimization targets.</>}
+        stretch={<>Which Kuaishou surface property makes OneRec the right call there specifically?</>}
+      />
+
+      {/* D1b */}
+      <VIS.TrapProblem
+        id="onerec-d1b"
+        difficulty="hard"
+        title="D1b — 'Iterative DPO is just RLHF'"
+        scenario={<>A teammate says iterative DPO is just RLHF rebranded for recsys. What's the recsys-specific subtlety?</>}
+        options={[
+          {key:"a", text:"In LLM RLHF, preferences are human-labeled (~10K pairs). In OneRec, preferences are derived FROM realized watch-time at production scale (millions of pairs). The data volume is the win; the failure mode (reward hacking via engagement-bait) is also recsys-specific.", correct:true},
+          {key:"b", text:"They're identical."},
+          {key:"c", text:"Recsys uses no human feedback."},
+          {key:"d", text:"DPO doesn't apply to LLMs."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>Implicit feedback (watch-time) is plentiful but noisy; explicit feedback (human labels) is scarce but cleaner. OneRec's contribution is making implicit-feedback DPO work at production scale.</>}
+        stretch={<>How would you debias watch-time before using it for DPO?</>}
+      />
+
+      {/* D2 */}
+      <VIS.TrapProblem
+        id="onerec-d2"
+        difficulty="hard"
+        title="D2 — 'OneRec = bigger model' cascade"
+        scenario={<>A teammate dismisses OneRec as "just a bigger model" or "Transformers everywhere." What downstream wrong assumptions does this hide?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Assumes per-stage debug pipelines still work → wrong: cascade-aware debug tools don't apply.", correct:true},
+          {key:"b", text:"Assumes per-stage A/B framework still works → wrong: OneRec is single-deploy.", correct:true},
+          {key:"c", text:"Assumes calibration is automatic → wrong: DPO doesn't calibrate.", correct:true},
+          {key:"d", text:"Assumes GPU usage same → fine, both use GPU."},
+        ]}
+        trap={<>(d) is the only unchanged.</>}
+        lens={<>"Bigger model" framing under-counts the operational re-architecture cost.</>}
+        stretch={<>Which is the most expensive of the three real wrong-assumptions to fix?</>}
+      />
+
+      {/* D3 */}
+      <VIS.TrapProblem
+        id="onerec-d3"
+        difficulty="hard"
+        title="D3 — Watch-time regresses post-DPO. Junior vs senior."
+        scenario={<>You run OneRec for one DPO round. Offline preference-AUC up. Online watch-time DOWN 0.3%. Junior says "more DPO iterations." Senior reaches for what?</>}
+        options={[
+          {key:"a", text:"Audit reward-model bias — DPO is only as good as the preference signal; if the reward model learned to value cliffhangers / clickbait, DPO amplifies them at the expense of true engagement. Senior checks for popularity/position-bias amplification before adding iterations.", correct:true},
+          {key:"b", text:"More DPO iterations."},
+          {key:"c", text:"Roll back."},
+          {key:"d", text:"Larger model."},
+        ]}
+        trap={<>(b) is reflex. (c), (d) are coarse escalations.</>}
+        lens={<>Reward-model audit is the OneRec-specific first move. Adding iterations to a biased reward model amplifies the bias.</>}
+        stretch={<>What's the test that distinguishes reward-bias from over-DPO?</>}
+      />
+
+      {/* D4 */}
+      <VIS.TrapProblem
+        id="onerec-d4"
+        difficulty="hard"
+        title="D4 — OneRec recommends only popular items"
+        scenario={<>OneRec's generated lists are dominated by top-100 popular items. Three plausible causes: (1) DPO collapsed to popularity, (2) reward-model bias, (3) decode temperature too low. Which is most likely?</>}
+        options={[
+          {key:"a", text:"Most likely (2): reward model trained on watch-time inherits the popularity-bias of the existing platform — popular items get more impressions, hence more watch-time, hence higher reward. DPO then amplifies. Audit reward model first.", correct:true},
+          {key:"b", text:"Most likely (3): just raise temperature."},
+          {key:"c", text:"Most likely (1)."},
+          {key:"d", text:"They're equally likely."},
+        ]}
+        trap={<>(b), (c), (d) miss the bias-cascade story.</>}
+        lens={<>Reward-bias amplification through DPO is a known failure mode (well-studied in RLHF). The OneRec mitigation: debias the reward model (IPS, popularity calibration) before DPO.</>}
+        stretch={<>Sketch the IPS reweighting for the reward model.</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      {/* E1 */}
+      <VIS.TrapProblem
+        id="onerec-e1"
+        difficulty="hard"
+        title="E1 — Auto-regressive list decode at p99"
+        scenario={<>OneRec must decode 100-item lists. K=4 codebook → 400 sequential decode steps. p99 latency budget = 200ms. What does production look like?</>}
+        options={[
+          {key:"a", text:"Precompute user vectors offline (last-hour batch), serve only the decoder online; cache short-history user vectors; use V2's Lazy Decoder-Only architecture for the 94% compute cut. Without precomputation, p99 is impossible at this scale.", correct:true},
+          {key:"b", text:"GPU is fast enough."},
+          {key:"c", text:"Decode in parallel."},
+          {key:"d", text:"Truncate to 10-item list."},
+        ]}
+        trap={<>(b) ignores the actual math. (c) is impossible for autoregressive decode. (d) defeats the purpose.</>}
+        lens={<>The Lazy Decoder-Only design exists precisely because production list decode is expensive. Precomputation + caching + lazy attention is the standard recipe.</>}
+        stretch={<>What's the staleness budget on the cached user vector?</>}
+      />
+
+      {/* E2 */}
+      <VIS.TrapProblem
+        id="onerec-e2"
+        difficulty="hard"
+        title="E2 — Friday: reward-model collapse"
+        scenario={<>Friday afternoon, a viral trend hits the platform. Watch-time on viral content spikes. OneRec auto-runs DPO iteration overnight. Saturday morning: long-tail content is now invisible in generated lists. Diagnose.</>}
+        options={[
+          {key:"a", text:"Reward model trained on yesterday's watch-time learned to value viral content; DPO over the resulting reward shifts the policy to concentrate on that content. Long-tail items get no impressions → no watch-time → no reward → invisible. This is a 'preference loop' failure mode unique to OneRec's iterative DPO design.", correct:true},
+          {key:"b", text:"Random."},
+          {key:"c", text:"Latency."},
+          {key:"d", text:"User shift."},
+        ]}
+        trap={<>(b), (c), (d) miss the preference-loop dynamics.</>}
+        lens={<>Iterative DPO can collapse onto whatever spikes the reward model. Mitigation: regularize the policy toward the SFT prior (β), or freeze reward model updates during volatile traffic periods.</>}
+        stretch={<>How would you detect this in offline metrics before launch?</>}
+      />
+
+      {/* E3 */}
+      <VIS.TrapProblem
+        id="onerec-e3"
+        difficulty="hard"
+        title="E3 — Reward model implementation"
+        scenario={<>The reward model that drives OneRec's DPO is itself a model. What goes wrong if you use a single-tower architecture for the reward model?</>}
+        options={[
+          {key:"a", text:"Single-tower reward model conflates user features and item features into one representation; it can't isolate position bias (where in the feed the item appeared) from item quality. The reward signal becomes 'position score × item score' which biases DPO toward top-positioned items.", correct:true},
+          {key:"b", text:"Single-tower is faster."},
+          {key:"c", text:"Single-tower works fine."},
+          {key:"d", text:"No difference."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>Reward-model architecture matters as much as the OneRec architecture. Position-bias-aware reward model (e.g., adding position as a separate feature with debias training) is essential.</>}
+        stretch={<>Sketch a position-bias-aware reward model.</>}
+      />
+
+      {/* E4 */}
+      <VIS.TrapProblem
+        id="onerec-e4"
+        difficulty="hard"
+        mode="ordered"
+        title="E4 — OneRec rollout from cascade"
+        scenario={<>Phase the migration from cascade to OneRec.</>}
+        options={[
+          {key:"a", text:"Pre-train OneRec offline; validate it matches cascade on top-100 retrieval recall.", order:1},
+          {key:"b", text:"Run iterative DPO; validate reward-model bias is bounded.", order:2},
+          {key:"c", text:"Shadow OneRec (cascade still serves); compare list-wise watch-time prediction offline.", order:3},
+          {key:"d", text:"Traffic ramp with hybrid (cascade fallback if OneRec list-decode latency exceeds budget).", order:4},
+          {key:"e", text:"Skip DPO; just supervised CE."},
+          {key:"f", text:"Retire cascade Monday."},
+        ]}
+        trap={<>(e), (f) skip the riskiest phases.</>}
+        lens={<>Reward-model bias audit before DPO is the critical phase. Many OneRec deployments fail here.</>}
+        stretch={<>What's the rollback trigger?</>}
+      />
+
+      {/* E5 */}
+      <VIS.TrapProblem
+        id="onerec-e5"
+        difficulty="hard"
+        title="E5 — 10.6% cost claim: what to match to reproduce"
+        scenario={<>OneRec V2 claims 10.6% cost vs Kuaishou's previous cascade. Which experimental conditions must you match to even attempt to reproduce this number for your platform?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Cascade composition (which models in retrieval, coarse, fine rank; how heavy each is).", correct:true},
+          {key:"b", text:"List size K (Kuaishou serves ~100-item lists; smaller lists change the math).", correct:true},
+          {key:"c", text:"User-history length (Kuaishou's heavy users → larger user-side compute).", correct:true},
+          {key:"d", text:"Random seed."},
+          {key:"e", text:"Color of the GPU."},
+        ]}
+        trap={<>(d), (e) are not the issue.</>}
+        lens={<>The 10.6% claim is platform-specific. Reproducing it requires either reproducing Kuaishou's exact stack or recomputing the analog for yours.</>}
+        stretch={<>What stack property would change the 10.6% to e.g. 30%?</>}
+      />
+
+      {/* E6 */}
+      <VIS.TrapProblem
+        id="onerec-e6"
+        difficulty="hard"
+        title="E6 — Why standard NDCG@10 fails for OneRec"
+        scenario={<>You evaluate OneRec offline with NDCG@10 (the standard recsys metric). Why is this not enough?</>}
+        options={[
+          {key:"a", text:"NDCG@10 evaluates per-query, single-item ranking. OneRec generates a LIST — diversity and order within the list matter. Use list-wise mean-watch-time, or ranked-list mean reward, as the primary offline metric.", correct:true},
+          {key:"b", text:"NDCG@10 doesn't exist."},
+          {key:"c", text:"NDCG is too noisy."},
+          {key:"d", text:"Need to use AUC."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>OneRec's output shape is list-wise; metric must match. Per-item metrics undersell OneRec's list-wise gains.</>}
+        stretch={<>Sketch a list-wise eval that's still cheap to compute.</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      {/* F1 */}
+      <VIS.TrapProblem
+        id="onerec-f1"
+        difficulty="hard"
+        title="F1 — Cold-start surface (new user)"
+        scenario={<>A new user with zero history hits OneRec. What happens?</>}
+        options={[
+          {key:"a", text:"Encoder gets an empty history → falls back to position/cold-start tokens → decode is essentially marginal (popular items). DPO over watch-time was trained on warm users; cold-start preferences are unreliable. OneRec degenerates to popularity recs.", correct:true},
+          {key:"b", text:"Works fine."},
+          {key:"c", text:"GPU OOM."},
+          {key:"d", text:"Cascade works better here."},
+        ]}
+        trap={<>(b) misreads. (c) is wrong. (d) is true but lacks reason.</>}
+        lens={<>OneRec's value depends on history + preference signal; both fail for cold-start. Hybrid: cascade for cold-start, OneRec for warm — or content-tower fallback.</>}
+        stretch={<>What user-history length triggers the switch from fallback to OneRec?</>}
+      />
+
+      {/* F2 */}
+      <VIS.TrapProblem
+        id="onerec-f2"
+        difficulty="hard"
+        title="F2 — Adversarial: cliffhanger content"
+        scenario={<>A vendor floods the platform with cliffhanger / engagement-bait content that scores high on watch-time. What happens to OneRec?</>}
+        options={[
+          {key:"a", text:"DPO chases the watch-time signal; cliffhanger content gets promoted; user satisfaction may drop (high engagement, low quality). OneRec amplifies whatever the reward signal rewards — it has no concept of quality beyond watch-time.", correct:true},
+          {key:"b", text:"OneRec detects bait."},
+          {key:"c", text:"DPO ignores it."},
+          {key:"d", text:"No effect."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The reward signal is the model's worldview. Adversarial content-optimization is an attack on the reward signal. Mitigation: multi-objective reward (watch-time + content-quality classifier).</>}
+        stretch={<>How would you fold a content-quality classifier into DPO?</>}
+      />
+
+      {/* F3 */}
+      <VIS.TrapProblem
+        id="onerec-f3"
+        difficulty="hard"
+        title="F3 — Offline preference-AUC up, online watch-time flat"
+        scenario={<>OneRec's offline preference-AUC keeps climbing each DPO iteration. Online watch-time is flat. Which OneRec-specific design choice drives this divergence?</>}
+        options={[
+          {key:"a", text:"Reward-model overfitting — the reward model learned spurious correlations in historical watch-time data; offline preference-AUC measures fit to the reward model, not actual online watch-time. DPO over an overfitting reward model produces offline gains that don't transfer.", correct:true},
+          {key:"b", text:"Latency."},
+          {key:"c", text:"Random."},
+          {key:"d", text:"Calibration drift."},
+        ]}
+        trap={<>(b), (c), (d) miss the reward-model overfitting story.</>}
+        lens={<>The offline/online gap in OneRec is driven by reward-model quality. Fix: hold-out reward-model eval, regularize reward model, periodic reward-model refresh on fresh data.</>}
+        stretch={<>How would you detect reward-model overfitting?</>}
+      />
+
+      {/* F4 */}
+      <VIS.TrapProblem
+        id="onerec-f4"
+        difficulty="hard"
+        title="F4 — Paper-named failure mode: list decode latency"
+        scenario={<>OneRec V1 had a specific failure mode that motivated V2's Lazy Decoder-Only. What was it?</>}
+        options={[
+          {key:"a", text:"List decode latency at production scale was prohibitive (full encoder-decoder cross-attention at every step). V2's Lazy Decoder-Only addresses this with on-demand cross-attention.", correct:true},
+          {key:"b", text:"Memory."},
+          {key:"c", text:"Training instability."},
+          {key:"d", text:"Cold-start."},
+        ]}
+        trap={<>(b), (c), (d) aren't paper-flagged.</>}
+        lens={<>The architectural progression V1 → V2 is driven by latency, not quality. Quality was fine; cost wasn't.</>}
+        stretch={<>What other architecture innovations achieve similar compute cuts?</>}
+      />
+
+      {/* F5 */}
+      <VIS.TrapProblem
+        id="onerec-f5"
+        difficulty="hard"
+        title="F5 — Community-found: reward-model bias amplification"
+        scenario={<>Multiple 2025 papers (notably on debiased RLHF and recsys preference learning) flag a specific OneRec-relevant failure pattern. What is it?</>}
+        options={[
+          {key:"a", text:"DPO over a reward model trained on biased data amplifies the bias in the policy. Specifically: if popular items are over-impressed in training data, the reward model values popularity; DPO then concentrates more on popular items; future training data is even more popularity-biased.", correct:true},
+          {key:"b", text:"DPO doesn't converge."},
+          {key:"c", text:"DPO causes GPU memory issues."},
+          {key:"d", text:"DPO requires labeled data."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The bias-amplification feedback loop is the most-cited OneRec critique. Mitigations: IPS-debiased reward, regularization toward uniform prior, periodic intervention sampling.</>}
+        stretch={<>What's the steady-state bias under unbounded DPO iterations?</>}
+      />
+
+      {/* F1b */}
+      <VIS.TrapProblem
+        id="onerec-f1b"
+        difficulty="hard"
+        title="F1b — Sparse positive feedback"
+        scenario={<>A long-tail surface where most items get 0 watch-time. Does OneRec's DPO work?</>}
+        options={[
+          {key:"a", text:"DPO requires pair preferences (item A preferred to item B). On a surface where most items get 0 watch-time, almost every pair has the same reward (0 = 0), giving DPO no signal. Either use sparse positives only (compare each positive to a few uniformly-sampled negatives) or fall back to supervised CE.", correct:true},
+          {key:"b", text:"DPO works fine."},
+          {key:"c", text:"Need bigger model."},
+          {key:"d", text:"Need more iterations."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>DPO degrades gracefully on dense feedback (Kuaishou main feed). It fails silently on sparse feedback (long-tail surfaces).</>}
+        stretch={<>What's the minimum positive-rate for DPO to work?</>}
+      />
+
+      {/* F3b */}
+      <VIS.TrapProblem
+        id="onerec-f3b"
+        difficulty="hard"
+        title="F3b — Lists are too homogeneous"
+        scenario={<>OneRec's generated lists are all similar (low diversity within the list). Which OneRec-specific knob fixes this?</>}
+        options={[
+          {key:"a", text:"List decode temperature / nucleus sampling — autoregressive list decode tends to repeat patterns; raising sampling temperature or using nucleus sampling at decode time diversifies the list without retraining.", correct:true},
+          {key:"b", text:"Retrain from scratch."},
+          {key:"c", text:"Add MMR re-ranker."},
+          {key:"d", text:"More iterations of DPO."},
+        ]}
+        trap={<>(c) can work but is the cascade move; (d) typically reduces diversity further.</>}
+        lens={<>OneRec's list-wise output is sensitive to decode-time sampling. Tune sampling before architectural changes.</>}
+        stretch={<>How would you trade off list-diversity vs predicted watch-time?</>}
+      />
+
+      {/* D2b */}
+      <VIS.TrapProblem
+        id="onerec-d2b"
+        difficulty="hard"
+        title="D2b — 'OneRec is just RLHF for recsys' cascade"
+        scenario={<>This framing hides what OneRec-specific failure modes?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Watch-time-driven reward is implicit; doesn't isolate quality from engagement-bait → DPO can amplify clickbait.", correct:true},
+          {key:"b", text:"List-wise output: standard RLHF is single-output; list interactions (diversity, order) need separate handling.", correct:true},
+          {key:"c", text:"Production scale: implicit-feedback DPO at billions of pairs has different stability than LLM-RLHF at 10K human pairs.", correct:true},
+          {key:"d", text:"Same model architecture as ChatGPT."},
+        ]}
+        trap={<>(d) is irrelevant to the failure modes.</>}
+        lens={<>The "RLHF for recsys" framing under-counts the implicit-feedback, list-wise, and production-scale specifics that make OneRec hard.</>}
+        stretch={<>Which of these failure modes was hardest for the OneRec team?</>}
+      />
+
+      {/* A4b */}
+      <VIS.TrapProblem
+        id="onerec-a4b"
+        difficulty="hard"
+        title="A4b — OneRec + Semantic IDs from RQ-VAE"
+        scenario={<>OneRec uses Semantic IDs as its output vocabulary. Where do they come from?</>}
+        options={[
+          {key:"a", text:"From an RQ-VAE trained on item content (TIGER's recipe). OneRec inherits TIGER's content tokenization but adds list-wise generation + DPO on top.", correct:true},
+          {key:"b", text:"From random hashing."},
+          {key:"c", text:"From manual category labels."},
+          {key:"d", text:"From a separate Bert."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>OneRec composes TIGER's content tokenization with its own list-wise generation + DPO. The Semantic-ID layer is shared.</>}
+        stretch={<>What if you swap Semantic IDs for random IDs in OneRec? What breaks?</>}
+      />
+
+      {/* E1b */}
+      <VIS.TrapProblem
+        id="onerec-e1b"
+        difficulty="hard"
+        title="E1b — User-vector cache staleness"
+        scenario={<>You cache user vectors hourly for OneRec serving. What's the staleness impact?</>}
+        options={[
+          {key:"a", text:"Items the user interacted with in the last hour don't appear in the user vector; OneRec recommends as if those interactions didn't happen — including recommending items the user just consumed. Mitigation: append fresh interactions to the cached vector at decode time.", correct:true},
+          {key:"b", text:"No impact."},
+          {key:"c", text:"User vectors are deterministic."},
+          {key:"d", text:"Latency goes up."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>Cache freshness vs serving latency is a classic OneRec tradeoff. The mitigation (append-fresh) recovers most of the gap cheaply.</>}
+        stretch={<>What's the right cache refresh cadence?</>}
+      />
+
+      {/* C2b */}
+      <VIS.TrapProblem
+        id="onerec-c2b"
+        difficulty="hard"
+        title="C2b — DPO's KL constraint"
+        scenario={<>DPO contains an implicit KL constraint between the trained policy and the SFT prior. What happens if you make the KL constraint weight too small?</>}
+        options={[
+          {key:"a", text:"Policy diverges arbitrarily from the SFT prior to chase reward → reward hacking (high reward, degenerate outputs); recommendations look weird; offline preference-AUC looks great but online watch-time crashes.", correct:true},
+          {key:"b", text:"Faster training."},
+          {key:"c", text:"No impact."},
+          {key:"d", text:"More accurate."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The KL constraint is the safety belt. Reward hacking is the canonical sign of constraint too loose.</>}
+        stretch={<>How would you tune the KL weight?</>}
+      />
+
+      {/* D4b */}
+      <VIS.TrapProblem
+        id="onerec-d4b"
+        difficulty="hard"
+        title="D4b — Watch-time goes up 1.6% but novelty drops"
+        scenario={<>OneRec ships. Watch-time up 1.6%. But novelty metrics (unique items shown / user / day) drop 20%. Diagnose.</>}
+        options={[
+          {key:"a", text:"DPO over watch-time concentrates the policy on a smaller set of high-watch-time items (filter bubble). Watch-time wins per item but variety drops. The fix is either a multi-objective reward (watch-time + novelty) or a downstream diversification reranker.", correct:true},
+          {key:"b", text:"Random."},
+          {key:"c", text:"GPU issue."},
+          {key:"d", text:"Bug."},
+        ]}
+        trap={<>(b), (c), (d) miss the filter-bubble logic.</>}
+        lens={<>OneRec optimizes whatever the reward says. Reward = watch-time alone → narrow recommendations. Multi-objective reward is the production move.</>}
+        stretch={<>What weights would you give watch-time vs novelty?</>}
+      />
+
+      {/* F4b */}
+      <VIS.TrapProblem
+        id="onerec-f4b"
         difficulty="medium"
-        title="P10 — Listwise coherence"
-        scenario={<>An ablation removes the auto-regressive structure: instead of decoding items one-at-a-time conditioned on previously-decoded items, the model emits all K items independently in parallel. NDCG drops only slightly but user dwell on the feed drops <strong>11%</strong>. Why?</>}
+        title="F4b — V2 Lazy Decoder-Only specifics"
+        scenario={<>Lazy Decoder-Only cuts compute 94% from V1. What does it sacrifice?</>}
         options={[
-          {key:"a", text:"Bug in the ablation."},
-          {key:"b", text:"Auto-regressive decoding lets the model enforce list-level properties (diversity, narrative flow, avoiding duplicates). Independent decoding produces locally-good but jointly-incoherent lists that users browse less.", correct:true},
-          {key:"c", text:"NDCG is a poor metric."},
-          {key:"d", text:"The model is overfitting."},
+          {key:"a", text:"Some cross-attention expressiveness — Lazy means cross-attention runs only at some layers/steps, not all. For very long user histories with strong recent-history dependence, quality may drop slightly vs full cross-attention; V2 paper claims the trade is favorable in practice.", correct:true},
+          {key:"b", text:"Nothing."},
+          {key:"c", text:"Latency."},
+          {key:"d", text:"Memory."},
         ]}
-        trap={<>(a) explains nothing. (c) is partial — NDCG is fine but doesn't capture listwise coherence. (d) is unmotivated.</>}
-        lens={<>The list IS the product; users browse it as a sequence. Auto-regressive decoding is what lets OneRec generate coherent lists (avoid duplicates, mix genres, build narrative). NDCG is item-wise and misses this; dwell catches it because users disengage from incoherent feeds.</>}
-        stretch={<>What item-wise metric correlates best with listwise coherence?</>}
+        trap={<>(b) is the marketing reading. (c), (d) are improved, not sacrificed.</>}
+        lens={<>Lazy attention is an approximation. The paper validates the trade empirically, but for surfaces where the assumption breaks, a hybrid (lazy + full attention at key layers) is the move.</>}
+        stretch={<>Which layer would you mark as 'always full attention'?</>}
       />
 
+      {/* C5b */}
       <VIS.TrapProblem
-        id="onerec-p11"
+        id="onerec-c5b"
         difficulty="hard"
-        title="P11 — When the cascade wins"
-        scenario={<>Three surfaces. (a) An ads marketplace with hard SLA: latency p99 25ms, distinct retrieval / pacing / ranking owners, strict calibration. (b) A long-form video feed, 80M DAU, single team owns the stack, watch-time is the objective. (c) A search-on-an-e-commerce app with rich query intent and 12M items. Where does the cascade still beat OneRec?</>}
+        title="C5b — Multi-task heads in OneRec"
+        scenario={<>You want OneRec to predict both watch-time AND completion-rate. How?</>}
         options={[
-          {key:"a", text:"All three should migrate to OneRec."},
-          {key:"b", text:"(a) — the cascade's stage independence and tight latency make OneRec a poor fit there.", correct:true},
-          {key:"c", text:"(b) — feed surfaces are too dynamic."},
-          {key:"d", text:"(c) — search needs ANN."},
+          {key:"a", text:"Multi-objective reward model: train two reward heads (watch-time, completion-rate), combine via weighted sum or Pareto frontier; DPO then optimizes the combined objective. The OneRec backbone is unchanged.", correct:true},
+          {key:"b", text:"Train two OneRecs."},
+          {key:"c", text:"Pick one objective."},
+          {key:"d", text:"Use cascade."},
         ]}
-        trap={<>(a) is the maximalist generative-recsys take. (c) and (d) misdiagnose where OneRec's tradeoffs hurt.</>}
-        lens={<>OneRec excels on (b)-style surfaces: single owner, watch-time objective, long sessions. The ads marketplace (a) violates every assumption: independent owners, hard latency, strict calibration. Picking architectures by surface shape, not hype, is the senior judgment.</>}
-        stretch={<>What single change to (a) would tip it toward OneRec?</>}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>OneRec's flexibility comes from the reward-model layer. Adding objectives = adding reward heads, not retraining the backbone.</>}
+        stretch={<>How would you tune the weighting?</>}
       />
 
+      {/* A5b */}
       <VIS.TrapProblem
-        id="onerec-p12"
+        id="onerec-a5b"
         difficulty="hard"
-        title="P12 — Re-introducing business overrides"
-        scenario={<>Product demands: certain creators must always have a chance to be ranked in the top 10. With the cascade, this was a business-rule injection at L1. OneRec has no L1. Cleanest way to express the override?</>}
+        title="A5b — Sub-second freshness requirements"
+        scenario={<>You're recommending news on a breaking-news surface. Items go stale within minutes. Does OneRec work?</>}
         options={[
-          {key:"a", text:"Retrain OneRec with the override as part of the loss."},
-          {key:"b", text:"Add a thin post-decode re-ranker that operates on OneRec's emitted list and applies guarantees (must-include, diversity floors, dedup) before serving.", correct:true},
-          {key:"c", text:"Drop the override; let the model decide."},
-          {key:"d", text:"Bypass OneRec for the affected creators."},
+          {key:"a", text:"Poorly — OneRec relies on a reward model fit on historical watch-time; breaking news has no history. The cached user vectors also lag the actual breaking-news interest. Cascade with content-fresh retrieval + light scoring is more appropriate.", correct:true},
+          {key:"b", text:"Works fine."},
+          {key:"c", text:"Just retrain hourly."},
+          {key:"d", text:"OneRec is faster."},
         ]}
-        trap={<>(a) couples business policy to model training cycles — slow, brittle. (c) is a non-answer to a product requirement. (d) creates a parallel stack and re-introduces all the cascade costs.</>}
-        lens={<>The mature production pattern is OneRec → thin post-decode re-ranker. The re-ranker is where business rules, guarantees, deduplication, and diversity floors live — close to serving, easy to iterate without retraining. This is the lightweight echo of the cascade that good OneRec deployments keep.</>}
-        stretch={<>How thin is "thin"? What's the boundary between this and a full L2 ranker?</>}
+        trap={<>(b), (c) underestimate the freshness lag. (d) is irrelevant.</>}
+        lens={<>OneRec is a long-cycle architecture (train on historical, deploy daily). Sub-second freshness mismatches the training cadence.</>}
+        stretch={<>Could you train a 'breaking-news-only' OneRec on hourly data?</>}
       />
+
+      {/* E5b */}
+      <VIS.TrapProblem
+        id="onerec-e5b"
+        difficulty="hard"
+        title="E5b — Comparing OneRec to your team's cascade"
+        scenario={<>Your team's cascade is different from Kuaishou's. How do you estimate OneRec's expected gain for your surface?</>}
+        options={[
+          {key:"a", text:"Run an offline simulation: predict watch-time with OneRec-style list decode vs current cascade's predicted list. Compare on a held-out historical week. The headline gain depends on your cascade's per-stage efficiency.", correct:true},
+          {key:"b", text:"Trust the paper's 1.6% gain."},
+          {key:"c", text:"Just A/B test."},
+          {key:"d", text:"Use the 10.6% cost as the only metric."},
+        ]}
+        trap={<>(b), (d) over-trust the paper. (c) is expensive to do for an unknown gain.</>}
+        lens={<>Paper gains are platform-specific. Offline simulation is the right way to estimate.</>}
+        stretch={<>What's the cheap-and-imperfect proxy if simulation is too expensive?</>}
+      />
+
+      {/* D1c */}
+      <VIS.TrapProblem
+        id="onerec-d1c"
+        difficulty="medium"
+        title="D1c — 'OneRec is the future, cascade is dead'"
+        scenario={<>A blog declares the cascade dead post-OneRec. Defeat the claim with a single counter.</>}
+        options={[
+          {key:"a", text:"Cascade still wins on multi-team surfaces (different teams own different stages, with different optimization objectives), regulatory surfaces (each stage has different audit requirements), and ads surfaces (each stage has different calibration requirements).", correct:true},
+          {key:"b", text:"OneRec is just hype."},
+          {key:"c", text:"Cascade is faster."},
+          {key:"d", text:"They're identical."},
+        ]}
+        trap={<>(b), (c), (d) are over-generalizations.</>}
+        lens={<>OneRec is the right architecture for certain surfaces. Cascade survives where its modularity has real value.</>}
+        stretch={<>Will hybrids (OneRec inside cascade) be the steady state?</>}
+      />
+
+      {/* E3b */}
+      <VIS.TrapProblem
+        id="onerec-e3b"
+        difficulty="hard"
+        title="E3b — Reward model staleness"
+        scenario={<>Your reward model was trained 30 days ago. Watch-time distribution has shifted. What's the OneRec-specific consequence?</>}
+        options={[
+          {key:"a", text:"DPO is optimizing against an outdated reward landscape; gains evaporate; offline preference-AUC may even climb (relative to old reward) while online watch-time drops. Refresh reward model on rolling-30-day data.", correct:true},
+          {key:"b", text:"No impact."},
+          {key:"c", text:"Random."},
+          {key:"d", text:"Need more DPO."},
+        ]}
+        trap={<>(d) makes things worse.</>}
+        lens={<>Reward model staleness is OneRec's silent killer. Refresh cadence policy is a critical part of the production runbook.</>}
+        stretch={<>What's the right reward-model refresh cadence?</>}
+      />
+
+      {/* C3b */}
+      <VIS.TrapProblem
+        id="onerec-c3b"
+        difficulty="hard"
+        title="C3b — OneRec's training signal vs HSTU's"
+        scenario={<>Both train on user interactions. What's the actual difference in training signal?</>}
+        options={[
+          {key:"a", text:"HSTU: next-action cross-entropy over the action vocabulary (predict what the user does next). OneRec: list-wise CE + iterative DPO with watch-time as reward (predict what list maximizes watch-time). HSTU's signal is per-event; OneRec's is per-list-outcome.", correct:true},
+          {key:"b", text:"Identical."},
+          {key:"c", text:"OneRec uses BCE."},
+          {key:"d", text:"HSTU uses watch-time."},
+        ]}
+        trap={<>(b), (c), (d) misread.</>}
+        lens={<>The training-signal difference is the OneRec discriminator. List-wise + outcome-aligned vs token-wise + next-token.</>}
+        stretch={<>Could you train HSTU with watch-time DPO?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/2502.18965" target="_blank" rel="noopener"><strong>Cai et al. — OneRec (Kuaishou 2025)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>The original OneRec paper. Read the iterative DPO section; that's the contribution.</li>
-        <li><a href="https://arxiv.org/abs/2305.18290" target="_blank" rel="noopener"><strong>Rafailov et al. — Direct Preference Optimization (NeurIPS 2023)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>The DPO foundation. Understand this before reading OneRec's alignment section.</li>
-        <li><a href="https://eugeneyan.com/writing/recsys-llm/" target="_blank" rel="noopener"><strong>Eugene Yan — generative recommenders</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Survey that situates OneRec vs TIGER vs HSTU; helpful for the "which architecture for which surface" question.</li>
-        <li><a href="https://applied-llms.org/" target="_blank" rel="noopener"><strong>What we learned from a year of building with LLMs</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Operational lessons on serving and aligning generative models; many lessons port directly to OneRec-style stacks.</li>
+        <li><a href="https://arxiv.org/abs/2502.18965" target="_blank" rel="noopener"><strong>Cai et al. — OneRec paper (Kuaishou 2025)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>The original. Focus on sections on DPO + watch-time signal + deployment results.</li>
+        <li><a href="https://arxiv.org/abs/2305.18290" target="_blank" rel="noopener"><strong>Rafailov et al. — DPO original</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2023)</span><br/>Direct Preference Optimization foundations. Read before OneRec.</li>
+        <li><a href="https://arxiv.org/abs/2305.05065" target="_blank" rel="noopener"><strong>Rajput et al. — TIGER (NeurIPS 2023)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>OneRec uses TIGER's Semantic-ID tokenization.</li>
+        <li><a href="https://arxiv.org/abs/2402.17152" target="_blank" rel="noopener"><strong>Zhai et al. — HSTU (ICML 2024)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>Sibling architecture for ranking. OneRec absorbs the ranking step.</li>
+        <li><a href="https://eugeneyan.com/writing/recsys-llm/" target="_blank" rel="noopener"><strong>Eugene Yan — Generative recsys landscape</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>OneRec in the broader pipeline-collapse taxonomy.</li>
       </ul>
     </VIS.Section>
   </main>
