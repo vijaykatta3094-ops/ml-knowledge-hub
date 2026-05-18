@@ -1414,271 +1414,457 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 14
+// HoME — Hierarchy of Multi-Gate Experts (Kuaishou, multi-task)
+// Unique mechanism: HIERARCHICAL gate structure on top of MMoE. Experts are
+// organized into GROUPS; a COARSE gate per task first selects which expert
+// group to attend to; a FINE gate then mixes experts WITHIN that group. The
+// hierarchy makes related tasks share an intermediate group while preserving
+// task-specific specialization in the leaves. Reduces gate collapse and the
+// seesaw effect that plagues flat MMoE with many tasks.
+// Anchor that survives §2a redaction: "multi-LEVEL gates — coarse gate
+// selects expert GROUP per task, fine gate mixes experts WITHIN the group.
+// Hierarchy lets related tasks share intermediate group while specialization
+// happens lower."  This is NOT flat MMoE and NOT PLE (PLE is depth-wise
+// shared+specific blocks; HoME is BREADTH-wise hierarchy across groups).
+// Multi-task trio caution:
+//   HoME = HIERARCHY across expert GROUPS (group-level gating)
+//   PLE  = PROGRESSIVE shared+specific at EACH LAYER (depth-wise stacking)
+//   AESM2= AUTOMATIC per-input expert selection (input-conditioned, Gumbel)
+// Do NOT collapse into generic "shared+task-specific experts mitigate
+// negative transfer."
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Multi-task learning"
+      pill="RecSys SOTA · Multi-task learning · Kuaishou"
       title="HoME — Hierarchy of Multi-Gate Experts"
-      subtitle="Hierarchical MMoE for production-scale multi-task ranking: coarse gates pick expert groups, fine gates pick within. Reduces gate competition and seesaw effects when 6+ tasks fight for shared capacity."
+      subtitle="Two-level gating on top of MMoE: a COARSE gate per task picks an expert GROUP, a FINE gate mixes experts within the group. Hierarchy lets related tasks share intermediate group while task-specific specialization happens in the leaves — reducing gate collapse and seesaw at 6+ tasks."
       byline={[
-        {label: "Source", value: "Wang et al., Kuaishou, arXiv 2408.05430 (2024)"},
-        {label: "Domain", value: "Multi-task ranking in feed recommenders"},
+        {label: "Sources", value: "Wang et al., 'HoME: Hierarchy of Multi-Gate Experts for Multi-Task Learning at Kuaishou' (arXiv 2408.05430, 2024)"},
+        {label: "Surface", value: "Production multi-task recsys with 6+ heterogeneous tasks (CTR, watch-time, like, share, follow, complete)"},
+        {label: "Anchor that survives redaction", value: "Multi-level gates: coarse gate per task selects expert GROUP, fine gate mixes experts WITHIN group; related tasks share groups, task-specific stays in leaves"},
       ]}/>
 
     <VIS.TLDR>
-      With 6+ ranking tasks (CTR, like, share, follow, watch-time, comment...), MMoE and PLE flatten everything into one gate landscape: tasks compete for the same experts, and small gradient conflicts produce the{" "}
-      <VIS.Term def="A pathology in multi-task learning where improving one task systematically degrades another, so the metrics oscillate up-and-down like a seesaw across training runs.">seesaw effect</VIS.Term>.
-      <strong> HoME</strong> adds a hierarchy: a coarse gate picks an expert <em>group</em> (related tasks share a group), then a fine gate picks experts within that group. Related tasks share intermediate capacity; task-specific specialization happens at the leaf.
+      MMoE works for 2-4 tasks but breaks down at 6+ where pairwise interference dominates: every gate competes for every expert, gates collapse onto a few popular experts, and the <VIS.Term def="When optimizing one task degrades another in multi-task learning. Sharing too much capacity causes gradient interference; isolating completely loses transfer benefits.">seesaw effect</VIS.Term> shows up as task-A gains paired with task-B losses. HoME adds a HIERARCHY: experts are grouped (e.g., interaction-group, content-group, social-group); each task has a COARSE gate that picks a group and a FINE gate that mixes experts WITHIN that group. Related tasks share the intermediate group; task-specific specialization happens at the leaves. The senior trap: HoME is NOT PLE (PLE stacks shared+specific blocks DEPTH-wise; HoME organizes experts in GROUPS BREADTH-wise) and NOT just &ldquo;more experts&rdquo; (number of leaf experts can be the same as MMoE — the win is the gate STRUCTURE, not the count). Hierarchy design is manual and adds 2x more knobs than MMoE.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        HoME is a two-level hierarchical mixture-of-experts gating architecture:
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  IN["Shared input embedding"] --> CG["Coarse gate per task"]
-  CG --> G1["Expert group 1 — engagement tasks"]
-  CG --> G2["Expert group 2 — consumption tasks"]
-  CG --> G3["Expert group 3 — social tasks"]
-  G1 --> FG1["Fine gate"]
-  G2 --> FG2["Fine gate"]
-  G3 --> FG3["Fine gate"]
-  FG1 --> E1["Task experts CTR like"]
-  FG2 --> E2["Task experts watch comment"]
-  FG3 --> E3["Task experts share follow"]
-      `} />
+    <VIS.Section id="sec-what" title="What it is — two-level (coarse + fine) gating across expert groups">
+      <VIS.Mermaid chart={`flowchart TB
+  X["Input features"]
+  CGA["Coarse gate task A"]
+  CGB["Coarse gate task B"]
+  G1["Expert group 1"]
+  G2["Expert group 2"]
+  G3["Expert group 3"]
+  E1["Expert 1.1"]
+  E2["Expert 1.2"]
+  E3["Expert 2.1"]
+  E4["Expert 2.2"]
+  E5["Expert 3.1"]
+  E6["Expert 3.2"]
+  FGA["Fine gate task A"]
+  FGB["Fine gate task B"]
+  HA["Task A head"]
+  HB["Task B head"]
+  X --> CGA
+  X --> CGB
+  CGA --> G1
+  CGA --> G2
+  CGB --> G2
+  CGB --> G3
+  G1 --> E1
+  G1 --> E2
+  G2 --> E3
+  G2 --> E4
+  G3 --> E5
+  G3 --> E6
+  E1 --> FGA
+  E2 --> FGA
+  E3 --> FGA
+  E3 --> FGB
+  E4 --> FGB
+  E5 --> FGB
+  E6 --> FGB
+  FGA --> HA
+  FGB --> HB`} />
       <ul>
-        <li><strong>Coarse gate</strong> — per task, decides which expert group to route to. Output: weights over groups, not over individual experts.</li>
-        <li><strong>Expert groups</strong> — clusters of related tasks (engagement vs consumption vs social).</li>
-        <li><strong>Fine gate</strong> — within a group, decides which leaf experts to use. Output: weights over experts.</li>
-        <li><strong>Leaf experts</strong> — small MLPs producing the task tower input.</li>
+        <li><strong>Coarse gate per task</strong> — first chooses which expert GROUP the task should attend to. Related tasks (e.g., A and B both share group 2) can route to the same intermediate group.</li>
+        <li><strong>Expert groups</strong> — semantic clusters of experts (e.g., interaction group, content group, social group). Group design is manual but often follows business taxonomy.</li>
+        <li><strong>Fine gate per task</strong> — mixes experts WITHIN the selected group(s) for that task. Task-specific specialization lives here.</li>
+        <li><strong>Task heads</strong> — receive the fine-gate output and compute the task-specific prediction.</li>
       </ul>
-      <p>
-        The architectural bet: gradient conflict between distant tasks (CTR vs follow) is real, but conflict between related tasks (CTR vs like) is manageable inside a shared group.
-      </p>
+      <p>The hierarchy reduces gate competition: each fine gate only mixes a small number of experts from its routed group, instead of all experts as in flat MMoE.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from MMoE / PLE">
+    <VIS.Section id="sec-diff" title="How it differs from MMoE, PLE, and CGC">
       <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
-        <thead><tr style={{background:"#f1f5f9"}}>
-          <th style={{textAlign:"left",padding:8}}>Property</th>
-          <th style={{textAlign:"left",padding:8}}>MMoE</th>
-          <th style={{textAlign:"left",padding:8}}>PLE / CGC</th>
-          <th style={{textAlign:"left",padding:8}}>HoME</th>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Gate structure</th>
+          <th style={{textAlign:"left", padding:8}}>Sharing pattern</th>
+          <th style={{textAlign:"left", padding:8}}>Scales to 6+ tasks?</th>
         </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Gate landscape</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Flat (all experts shared)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Flat with shared+specific split</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Hierarchical (group + leaf)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Seesaw at 6+ tasks</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Severe</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Reduced but still present</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Mostly absorbed by groups</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Hyperparameters</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Fewest</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>~2x MMoE</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>~2x PLE (hierarchy design)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Best at task count</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>2-3 tasks</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>2-4 tasks</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>6+ tasks</td></tr>
+          <tr><td style={{padding:8}}>MMoE</td><td style={{padding:8}}>Flat per-task gate</td><td style={{padding:8}}>All experts shared</td><td style={{padding:8}}>Poorly — gate collapse</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>CGC (PLE building block)</td><td style={{padding:8}}>Flat, with shared+specific</td><td style={{padding:8}}>Shared+task-specific</td><td style={{padding:8}}>Better than MMoE</td></tr>
+          <tr><td style={{padding:8}}>PLE</td><td style={{padding:8}}>Stacked CGC blocks</td><td style={{padding:8}}>Depth-wise progressive</td><td style={{padding:8}}>Good to ~4-5 tasks</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>HoME</strong></td><td style={{padding:8}}><strong>Coarse + fine, hierarchical</strong></td><td style={{padding:8}}><strong>Group-level (breadth-wise)</strong></td><td style={{padding:8}}><strong>Designed for 6+ tasks</strong></td></tr>
         </tbody>
       </table>
-      <p style={{marginTop:12}}>
-        The hierarchy is the cost: 2x knobs to tune (group structure, group count, leaf expert count per group). For 2-3 tasks, this cost is not earned. For 6+, the seesaw reduction wins.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li><strong>6+ tasks</strong> where pairwise gradient conflict has become a measurable production problem.</li>
-        <li>Production-scale feed ranking stacks (Kuaishou, TikTok-class) where task heads outnumber backbone experts.</li>
-        <li>Teams with offline infra to A/B between hierarchy designs — HoME is not a plug-and-play replacement.</li>
-        <li>When task relationships have an obvious natural grouping (engagement vs consumption vs social).</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the discriminating insight, then asks for the pick.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Manual hierarchy design</strong> — choosing groups and assignments is currently human-driven. Wrong grouping is worse than flat MMoE.</li>
-        <li><strong>2x hyperparameter cost</strong> — group count, leaf experts per group, gate temperatures, etc. Search space is large.</li>
-        <li><strong>Cold task</strong> — adding a new task means deciding which group it belongs to; the design choice is high-stakes.</li>
-        <li><strong>Diminishing returns at 2-3 tasks</strong> — at small task count, PLE is simpler and equivalent.</li>
-        <li><strong>Routing collapse</strong> — coarse gates can degenerate (all tasks route to one group); needs entropy regularization.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick the right move(s); reveal trap and lens after committing.</p>
-
-      <VIS.TrapProblem
-        id="home-p1" difficulty="hard"
-        title="P1 — Why does HoME beat PLE on 6 tasks but not on 2?"
-        scenario={<>A team reports HoME wins by 0.5% on a 6-task setup but ties (or slightly loses) PLE on a 2-task A/B. Pick the strongest explanation.</>}
+      <VIS.TrapProblem id="home-p1" difficulty="hard"
+        title="P1 — HoME vs flat MMoE: load-bearing difference?"
+        scenario={<><em>Discriminating insight: flat MMoE gives each task ONE gate that mixes ALL experts; with many tasks the gates compete for the same experts, collapse onto a few popular ones, and seesaw appears. HoME inserts a COARSE gate that first picks an expert GROUP, so each fine gate only mixes a small number of experts within that group. Gate competition is reduced at the leaf level.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"The hierarchy buys you cross-task isolation; with only 2 tasks, there is nothing to isolate FROM, so the extra structure adds parameters without payoff.", correct:true},
-          {key:"b", text:"PLE is strictly better than HoME — the paper&apos;s results are noise."},
-          {key:"c", text:"HoME needs more data to train; 2 tasks have less data."},
-          {key:"d", text:"PLE has fewer parameters."},
+          {key:"a", text:"HoME inserts a coarse gate that first selects an expert GROUP per task; the fine gate then mixes only the experts inside that group. Gate competition at the leaf is reduced from O(all experts) to O(experts per group). Flat MMoE has only the leaf-level gate and suffers gate collapse and seesaw at 6+ tasks.", correct:true},
+          {key:"b", text:"They are mathematically equivalent."},
+          {key:"c", text:"HoME removes gates entirely."},
+          {key:"d", text:"HoME uses fewer total experts than MMoE."},
         ]}
-        trap={<>(b) over-generalizes. (c) is data-volume thinking that does not fit. (d) is true but irrelevant to why HoME loses — it loses because there is no problem to solve.</>}
-        lens={<>HoME&apos;s payoff is gradient-conflict isolation across many tasks. At 2 tasks, conflict is small and PLE&apos;s shared-vs-specific split is enough. At 6+, the conflict graph has many edges and a flat gate landscape cannot represent them; hierarchy buys structure. Always match architecture cost to problem complexity.</>}
-        stretch={<>At what task count does HoME typically start to win measurably?</>}
+        trap={<>(b)(c)(d) miss the hierarchical gate anchor.</>}
+        lens={<>Two-level gates reduce leaf-level competition; that is the structural win.</>}
+        stretch={<>What is the asymptotic gate-competition complexity gain?</>}
       />
 
-      <VIS.TrapProblem
-        id="home-p2" difficulty="hard" multiSelect
-        title="P2 — Coarse gate degenerates (all tasks route to one group)"
-        scenario={<>You launch HoME. Offline metrics are healthy but inspection reveals: 95% of routing weight goes to expert group 1 for ALL tasks. The other two groups are barely used. Which actions help?</>}
+      <VIS.TrapProblem id="home-p2" difficulty="hard"
+        title="P2 — HoME vs PLE: hierarchy vs progressive depth"
+        scenario={<><em>Discriminating insight: PLE stacks CGC blocks DEPTH-wise; at each layer it splits experts into shared and task-specific, and the progressive layers refine task specialization across DEPTH. HoME organizes experts BREADTH-wise into groups at the SAME LEVEL and uses a hierarchical gate. PLE&apos;s axis is depth; HoME&apos;s axis is breadth.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Add an entropy regularizer to the coarse gate to encourage spread.", correct:true},
-          {key:"b", text:"Reinitialize the coarse gate weights and re-train.", correct:true},
-          {key:"c", text:"Inspect whether group 1 happens to have more expert capacity than the others (count + size).", correct:true},
-          {key:"d", text:"Disable HoME and revert to MMoE."},
-          {key:"e", text:"Add more groups."},
+          {key:"a", text:"PLE separates shared and task-specific experts DEPTH-wise (stacked CGC blocks across layers); HoME organizes experts BREADTH-wise (expert groups at the same level) and uses a coarse + fine gate. Different axis of organization.", correct:true},
+          {key:"b", text:"They are the same architecture."},
+          {key:"c", text:"PLE is breadth-wise; HoME is depth-wise."},
+          {key:"d", text:"Both forbid task-specific experts."},
         ]}
-        trap={<>(d) is destructive. (e) compounds the problem — more groups, same collapse. The trap: candidates often pick (e) because "more capacity" sounds right; routing collapse is about distributional health, not capacity.</>}
-        lens={<>Routing collapse is a known MoE failure mode. Three mitigations: entropy regularization on the coarse gate (a), capacity balance across groups (c), and warm-start with a non-degenerate prior (b). HoME&apos;s hierarchy makes collapse more visible because you can inspect both gate layers separately.</>}
-        stretch={<>What single metric tells you the coarse gate is collapsing?</>}
+        trap={<>(b)(c)(d) collapse the depth/breadth distinction.</>}
+        lens={<>PLE = depth-wise (stacked CGC); HoME = breadth-wise (group hierarchy).</>}
+        stretch={<>Can PLE and HoME be combined?</>}
       />
 
-      <VIS.TrapProblem
-        id="home-p3" difficulty="medium"
-        title="P3 — Group design: engagement vs consumption vs social"
-        scenario={<>You have CTR, like, share, follow, watch-time, comment. Pick the grouping HoME papers suggest.</>}
+      <VIS.TrapProblem id="home-p3" difficulty="hard"
+        title="P3 — Without HoME, what is the realistic fallback at 6+ tasks?"
+        scenario={<><em>Discriminating insight: fallbacks at 6+ tasks are (i) deeper PLE — adds layers but eventually saturates; (ii) more MMoE experts — does not solve gate competition, just inflates capacity; (iii) sharded tower per task — kills parameter sharing; (iv) drop low-priority tasks — political. HoME explicitly addresses gate competition.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Engagement (CTR, like), Consumption (watch-time, comment), Social (share, follow) — each group bundles tasks with similar gradient signal.", correct:true},
-          {key:"b", text:"Random grouping — let the model figure it out."},
-          {key:"c", text:"One task per group."},
-          {key:"d", text:"All in one group."},
+          {key:"a", text:"Deeper PLE (adds layers but saturates), more MMoE experts (inflates capacity without solving gate competition), or per-task towers (no sharing). HoME explicitly targets gate competition at scale.", correct:true},
+          {key:"b", text:"Disable multi-task entirely."},
+          {key:"c", text:"Use a single-task model for the most important task."},
+          {key:"d", text:"There is no alternative."},
         ]}
-        trap={<>(b) defeats the design — bad groups can hurt more than help. (c) collapses to per-task experts (no group sharing). (d) collapses to flat MMoE.</>}
-        lens={<>The grouping should bundle tasks whose gradient directions correlate. Engagement tasks (CTR, like) often share signal; consumption (watch-time, comment) does too. Social tasks (share, follow) are typically a separate cluster. Practitioners eyeball this via gradient correlation matrices before designing the hierarchy.</>}
-        stretch={<>How would you measure gradient correlation across tasks empirically?</>}
+        trap={<>(b)(c) violate the multi-task requirement.</>}
+        lens={<>HoME wins where gate competition (not capacity) is the bottleneck.</>}
+        stretch={<>How would you tell whether capacity or gate competition is the bottleneck?</>}
       />
 
-      <VIS.TrapProblem
-        id="home-p4" difficulty="hard"
-        title="P4 — Adding a 7th task: which group?"
-        scenario={<>You have HoME deployed with 6 tasks in 3 groups. You want to add a new "save-to-collection" task. Pick the strongest approach.</>}
+      <VIS.TrapProblem id="home-p4" difficulty="hard"
+        title="P4 — Compose HoME with PLE (or AESM2)"
+        scenario={<><em>Discriminating insight: HoME structures breadth (groups); PLE structures depth (stacked CGC); AESM2 chooses experts per-input automatically. They are orthogonal axes. A production stack could be PLE blocks WHOSE expert-set inside each block is organized via HoME groups (PLE-over-HoME).</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"Measure gradient correlation of save-to-collection with existing tasks during a warmup phase, then assign to the group with highest mean correlation.", correct:true},
-          {key:"b", text:"Always add to the smallest group for balance."},
-          {key:"c", text:"Create a new group with just save-to-collection."},
-          {key:"d", text:"Disable HoME and switch to MMoE for the new setup."},
+          {key:"a", text:"HoME (breadth-wise group hierarchy) and PLE (depth-wise progressive shared+specific) are orthogonal — PLE blocks can host HoME-organized expert groups. AESM2 (input-conditioned routing) is also orthogonal: it would replace HoME&apos;s hand-designed group structure with learned routing.", correct:true},
+          {key:"b", text:"They conflict — pick one."},
+          {key:"c", text:"They are identical."},
+          {key:"d", text:"Combining doubles inference latency."},
         ]}
-        trap={<>(b) ignores semantics. (c) is a degenerate group (single task). (d) is destructive.</>}
-        lens={<>Group assignment should be signal-driven, not balance-driven. Warmup with the new task as a sibling of EVERY group, measure gradient correlation, then pin it to the best group. Most production HoME deployments treat group assignment as a hyperparameter set per task.</>}
-        stretch={<>How long should the warmup phase be?</>}
+        trap={<>(b)(c)(d) deny composition.</>}
+        lens={<>Breadth (HoME) and depth (PLE) and input-conditioning (AESM2) are three different axes.</>}
+        stretch={<>Why does Kuaishou pick HoME over PLE specifically?</>}
       />
 
-      <VIS.TrapProblem
-        id="home-p5" difficulty="hard" multiSelect
-        title="P5 — When the seesaw effect appears in HoME"
-        scenario={<>You believe HoME eliminates seesaw. But during launch, CTR and watch-time still oscillate across training runs. Which causes are possible?</>}
+      <VIS.TrapProblem id="home-p5" difficulty="medium"
+        title="P5 — What is an expert GROUP?"
+        scenario={<><em>Discriminating insight: a group is a semantic cluster of experts sharing the type of signal they specialize in — e.g., interaction-group experts process click/dwell features, content-group experts process item attributes, social-group experts process friend/follow signals. The group label IS the structural prior HoME imposes.</em><br/>How are groups defined?</>}
         options={[
-          {key:"a", text:"CTR and watch-time were assigned to the SAME group — gradient conflict still happens within a group.", correct:true},
-          {key:"b", text:"The leaf-expert capacity inside one group is too small for both tasks.", correct:true},
-          {key:"c", text:"Coarse gate is collapsing as in P2 — tasks share a group involuntarily.", correct:true},
-          {key:"d", text:"HoME does not eliminate seesaw across groups; it reduces intra-group seesaw — and these tasks may be in the same group."},
-          {key:"e", text:"HoME always eliminates all seesaw."},
+          {key:"a", text:"Semantic clusters of experts that share signal type (interaction, content, social) — typically defined by business taxonomy or by clustering expert activations during a pilot run. The grouping is the structural prior HoME imposes.", correct:true},
+          {key:"b", text:"Random partitions of experts."},
+          {key:"c", text:"All experts in one group."},
+          {key:"d", text:"One expert per group."},
         ]}
-        trap={<>(e) overstates the claim. The hierarchy reduces inter-group conflict but does NOT eliminate intra-group conflict.</>}
-        lens={<>HoME isolates conflicts BETWEEN groups; within a group, the same conflict mechanics apply as in PLE. The candidate move is to confirm group assignment, inspect intra-group capacity, and check for routing collapse. (a, b, c) are all real diagnostics; (d) is the more honest restatement of the architecture.</>}
-        stretch={<>How do you decide whether two seesawing tasks should be in the same group or different groups?</>}
+        trap={<>(b)(c) defeat the structural prior. (d) is per-task tower.</>}
+        lens={<>Groups are semantic clusters; their definition IS the design knob.</>}
+        stretch={<>How would you discover groups without business taxonomy?</>}
       />
 
-      <VIS.TrapProblem
-        id="home-p6" difficulty="medium"
-        title="P6 — Hyperparameter explosion"
-        scenario={<>HoME has 2x more knobs than PLE. Which knob is most important to tune first?</>}
+      <VIS.TrapProblem id="home-p6" difficulty="hard"
+        title="P6 — Pick the multi-task architecture"
+        scenario={<><em>Discriminating insight: a short-video platform predicts 8 tasks (watch-time, complete, like, share, comment, follow, skip, profile-click). Two flat MMoE retrains showed task-A gains pair with task-B losses (clear seesaw). The team has the engineering budget to design expert groups. HoME is purpose-built.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Number of expert groups — wrong group count caps everything downstream.", correct:true},
-          {key:"b", text:"Coarse gate temperature."},
-          {key:"c", text:"Fine gate temperature."},
-          {key:"d", text:"Leaf-expert width."},
+          {key:"a", text:"HoME — hierarchical gates with breadth-wise expert groups (interaction, content, social). Coarse gate per task picks a group; fine gate mixes within. Reduces gate competition and seesaw at 8 tasks.", correct:true},
+          {key:"b", text:"More MMoE experts — does not solve gate collapse."},
+          {key:"c", text:"Per-task towers — no parameter sharing."},
+          {key:"d", text:"Drop tasks until 4 remain — political; HoME exists to scale."},
         ]}
-        trap={<>(b), (c), (d) are second-order. The group count IS the central design choice.</>}
-        lens={<>The hierarchy is defined first by the number of groups. Wrong group count (too few collapses to PLE; too many is over-isolated and loses cross-task sharing) caps every other tuning. Lock in group count via gradient-correlation analysis BEFORE tuning gate temperatures.</>}
-        stretch={<>How would you decide between 3 groups and 4 groups for 6 tasks?</>}
+        trap={<>(b)(c)(d) miss the gate-structure win.</>}
+        lens={<>6+ tasks with seesaw + engineering budget = HoME.</>}
+        stretch={<>How many tasks until HoME beats PLE empirically?</>}
       />
 
-      <VIS.TrapProblem
-        id="home-p7" difficulty="hard" mode="ordered"
-        title="P7 — Order your tuning sequence for a fresh HoME launch"
-        scenario={<>You are launching HoME for 8 tasks. Order your tuning steps. Wrong moves do not get a number.</>}
+      <VIS.TrapProblem id="home-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just add more experts to MMoE&rdquo;"
+        scenario={<><em>Discriminating insight: more experts inflate capacity but do NOT change gate competition — each task gate still mixes ALL experts. Gate collapse (all tasks attend to the same few popular experts) gets WORSE with more experts because the long tail is harder to learn. HoME&apos;s coarse gate solves the structural problem.</em><br/>Why is &ldquo;more experts&rdquo; insufficient?</>}
         options={[
-          {key:"a", text:"Measure gradient correlation across tasks to decide group structure.", order:1},
-          {key:"b", text:"Choose group count and assign tasks via correlation clustering.", order:2},
-          {key:"c", text:"Sweep group count blindly across {2, 4, 6}."},
-          {key:"d", text:"Tune leaf-expert count per group based on within-group task count.", order:3},
-          {key:"e", text:"Tune gate temperatures and entropy regularization.", order:4},
-          {key:"f", text:"Ship without offline validation."},
+          {key:"a", text:"More experts add capacity but every task gate still mixes ALL experts; gate collapse onto a few popular experts persists and arguably worsens. HoME&apos;s coarse gate structurally restricts each fine gate to a group, eliminating the all-experts competition.", correct:true},
+          {key:"b", text:"More experts solve gate collapse."},
+          {key:"c", text:"Gate collapse is a myth."},
+          {key:"d", text:"Capacity is unrelated to multi-task."},
         ]}
-        trap={<>(c) is a brute-force sweep that wastes compute. (f) is reckless.</>}
-        lens={<>The tuning ladder is: structure (gradient correlation → group count → assignments), then capacity (leaf experts), then routing dynamics (gate temperature, entropy). Skipping structure means you tune downstream knobs against a wrong architecture.</>}
-        stretch={<>How long does this full tuning cycle typically take?</>}
+        trap={<>(b)(c)(d) miss the structural vs capacity distinction.</>}
+        lens={<>Gate structure is the load-bearing knob, not expert count.</>}
+        stretch={<>What metric exposes gate collapse?</>}
       />
 
-      <VIS.TrapProblem
-        id="home-p8" difficulty="medium"
-        title="P8 — HoME vs single-task models"
-        scenario={<>Some teams just train one model per task. Why would they ever pick HoME?</>}
+      <VIS.TrapProblem id="home-p8" difficulty="hard"
+        title="P8 — HoME anchor (hierarchical gates + expert groups): pitch it"
+        scenario={<><em>Discriminating insight: anchor is &ldquo;coarse gate per task picks an expert GROUP; fine gate mixes experts WITHIN the group; experts are organized into semantic groups breadth-wise.&rdquo; The pitch must name both gate levels and the group structure.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Shared backbone learns from cross-task signal; single-task models lose this and need more data per task to reach the same quality.", correct:true},
-          {key:"b", text:"HoME is cheaper to serve than 8 single-task models."},
-          {key:"c", text:"HoME has fewer parameters than 8 single-task models."},
-          {key:"d", text:"All of the above are valid."},
+          {key:"a", text:"Experts are partitioned into semantic groups (interaction, content, social). Each task has a coarse gate that picks a group and a fine gate that mixes experts within the group. The hierarchy reduces leaf-level gate competition and lets related tasks share intermediate groups.", correct:true},
+          {key:"b", text:"We stack CGC blocks across layers."},
+          {key:"c", text:"We run a soft Gumbel router per input."},
+          {key:"d", text:"We have a single gate that mixes all experts."},
         ]}
-        trap={<>(d) is the trap — (b) and (c) are also technically true, but the PRIMARY win is signal sharing.</>}
-        lens={<>The strongest argument for HoME (or any multi-task setup) is signal transfer across tasks. Serving cost and parameter count are secondary wins. If signal does not transfer between your tasks, single-task models are simpler and often perform as well.</>}
-        stretch={<>How would you measure cross-task signal transfer empirically?</>}
+        trap={<>(b) is PLE. (c) is AESM2. (d) is MMoE.</>}
+        lens={<>Coarse + fine gates + expert groups are inseparable.</>}
+        stretch={<>What goes wrong if you keep coarse gates but remove fine gates?</>}
       />
 
-      <VIS.TrapProblem
-        id="home-p9" difficulty="hard" multiSelect
-        title="P9 — Failure modes specific to HoME (not generic MoE)"
-        scenario={<>Select all that apply.</>}
+      <VIS.TrapProblem id="home-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use HoME. Select all that apply."
+        scenario={<><em>Discriminating insight: HoME needs (i) 6+ tasks where seesaw appears, (ii) engineering budget to design groups, (iii) heterogeneous feature/task structure that maps to natural groups. Wrong when tasks are few, when grouping is arbitrary, or when latency is the binding constraint (extra gating adds ms).</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Bad group design — wrong grouping is worse than flat MMoE.", correct:true},
-          {key:"b", text:"Coarse gate collapse — all tasks route to one group.", correct:true},
-          {key:"c", text:"Hyperparameter explosion — 2x more knobs than PLE.", correct:true},
-          {key:"d", text:"Standard MoE load imbalance across experts.", correct:false},
-          {key:"e", text:"Random init failures."},
+          {key:"a", text:"2-3 tasks where flat MMoE has no seesaw — hierarchy is overkill.", correct:true},
+          {key:"b", text:"Tasks with no natural semantic clustering — groups would be arbitrary.", correct:true},
+          {key:"c", text:"Sub-10ms latency budget where coarse + fine gates add too much compute.", correct:true},
+          {key:"d", text:"Short-video platform with 8 tasks showing clear seesaw (sweet spot)."},
+          {key:"e", text:"No engineering budget to design and maintain expert groups.", correct:true},
         ]}
-        trap={<>(d) afflicts any MoE; not HoME-specific. (e) afflicts any model.</>}
-        lens={<>HoME-specific risks all trace to the hierarchy: design risk (a), collapse risk (b), tuning risk (c). Standard MoE concerns (load imbalance, init) are inherited but not differentiating.</>}
-        stretch={<>Which of these is hardest to diagnose post-launch?</>}
+        trap={<>(d) sweet spot.</>}
+        lens={<>HoME needs many tasks, natural groups, and engineering budget.</>}
+        stretch={<>How does latency compare to MMoE at production traffic?</>}
       />
 
-      <VIS.TrapProblem
-        id="home-p10" difficulty="hard"
-        title="P10 — When NOT to use HoME"
-        scenario={<>Pick the strongest case AGAINST HoME.</>}
+      <VIS.TrapProblem id="home-p10" difficulty="hard"
+        title="P10 — How does HoME mitigate gate collapse?"
+        scenario={<><em>Discriminating insight: in flat MMoE, all tasks compete for all experts; gates collapse onto a few popular experts. HoME&apos;s coarse gate forces each task into a smaller group; fine gates within a group have fewer experts to choose from, so collapse is bounded by the group size. Furthermore, related tasks share the group so transfer is preserved.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"A small recommender with 2-3 tasks and no observed seesaw — HoME&apos;s hierarchy adds knobs and parameters with no measurable payoff.", correct:true},
-          {key:"b", text:"Production-scale feed with 8+ tasks."},
-          {key:"c", text:"E-commerce ranking with engagement + conversion + revenue tasks."},
-          {key:"d", text:"Video feed with watch-time and engagement tasks."},
+          {key:"a", text:"By restricting each fine gate to experts within a single coarse-selected group, the gate&apos;s competition surface is bounded by group size (typically 3-4 experts) instead of total expert count. Related tasks share groups so transfer is preserved.", correct:true},
+          {key:"b", text:"HoME does not mitigate gate collapse."},
+          {key:"c", text:"HoME forces all gates to uniform mixing."},
+          {key:"d", text:"HoME removes gates entirely."},
         ]}
-        trap={<>(b), (c), (d) all have enough tasks to benefit from HoME.</>}
-        lens={<>HoME&apos;s win condition is task count and observed seesaw. Without these, simpler architectures (MMoE, PLE) are sufficient. Always validate the seesaw problem exists BEFORE adopting HoME.</>}
-        stretch={<>How would you prove your seesaw is real and not training noise?</>}
+        trap={<>(b)(c)(d) miss the collapse-mitigation mechanism.</>}
+        lens={<>Bounded competition per fine gate is the structural mitigation.</>}
+        stretch={<>What is the residual collapse risk at the COARSE gate?</>}
       />
 
-      <VIS.TrapProblem
-        id="home-p11" difficulty="medium"
-        title="P11 — Auto-learning the hierarchy"
-        scenario={<>HoME requires manual group design. AESM2 and similar try to learn it. Why might manual still be the right choice?</>}
+      <VIS.TrapProblem id="home-p11" difficulty="hard"
+        title="P11 — HoME forward pass mechanics"
+        scenario={<><em>Discriminating insight: for each task, input x flows through (i) coarse gate, producing a distribution over groups, (ii) selected group(s)&apos; experts compute outputs, (iii) fine gate within the group produces a distribution over the group&apos;s experts, (iv) weighted sum feeds the task head. The coarse gate can be soft (weight groups) or hard (top-1 group).</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Learned routing can collapse or get stuck; manual hierarchy gives stable, debuggable structure that production engineers can reason about.", correct:true},
-          {key:"b", text:"Learned routing is illegal."},
-          {key:"c", text:"Learned routing is always worse."},
-          {key:"d", text:"Manual is faster to train."},
+          {key:"a", text:"x -> coarse gate (distribution over groups) -> selected group experts compute outputs -> fine gate (distribution over the group&apos;s experts) -> weighted sum -> task head. Coarse gate can be soft or hard top-k.", correct:true},
+          {key:"b", text:"One gate over all experts."},
+          {key:"c", text:"No gates, average all experts."},
+          {key:"d", text:"Gumbel routing only."},
         ]}
-        trap={<>(b), (c), (d) overstate. Learned routing has real value; manual&apos;s value is operational.</>}
-        lens={<>Manual hierarchies trade learned expressiveness for operational tractability. When you can explain the architecture to a stakeholder ("CTR and like share an expert group because their gradients correlate"), you can debug it. Learned routing systems often work but are hard to reason about when they break.</>}
-        stretch={<>What hybrid would let learned routing INFORM manual design?</>}
+        trap={<>(b) is MMoE. (c) destroys multi-task. (d) is AESM2.</>}
+        lens={<>Coarse -> fine -> head; two gate levels.</>}
+        stretch={<>What is the compute cost of soft coarse gates?</>}
       />
+
+      <VIS.TrapProblem id="home-p12" difficulty="hard"
+        title="P12 — What does HoME deliberately drop vs MMoE?"
+        scenario={<><em>Discriminating insight: MMoE lets every task mix every expert — maximal flexibility, vulnerable to gate collapse and seesaw. HoME forfeits that flexibility for structured sharing; a task cannot access an expert in a group its coarse gate did not pick. The trade is flexibility for stability at scale.</em><br/>What is dropped?</>}
+        options={[
+          {key:"a", text:"Cross-group expert access for a task. In MMoE every task can mix every expert; in HoME a task can only access experts in groups its coarse gate selected. The trade is flexibility for structured sharing and reduced gate competition.", correct:true},
+          {key:"b", text:"HoME forfeits multi-task entirely."},
+          {key:"c", text:"HoME forfeits gradient descent."},
+          {key:"d", text:"HoME forfeits expert sharing."},
+        ]}
+        trap={<>(b)(c)(d) miss the dropped property.</>}
+        lens={<>Cross-group flexibility is the deliberate cost.</>}
+        stretch={<>When would you want cross-group access?</>}
+      />
+
+      <VIS.TrapProblem id="home-p13" difficulty="hard"
+        title="P13 — Most fragile knob in HoME"
+        scenario={<><em>Discriminating insight: GROUP DESIGN (number of groups, which experts go where) is the structural foundation; mis-designed groups make the coarse gate useless. Number of experts per group next; coarse-gate temperature after; LR last.</em><br/>Rank.</>}
+        options={[
+          {key:"a", text:"Group design is most fragile — wrong groups make the coarse gate useless. Experts per group next; coarse-gate temperature/top-k after; LR last.", correct:true},
+          {key:"b", text:"Optimizer choice is most fragile."},
+          {key:"c", text:"Batch size is most fragile."},
+          {key:"d", text:"Number of tasks is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) miss the HoME-specific structural knob.</>}
+        lens={<>Group design is the structural prior; everything else is tuning.</>}
+        stretch={<>How would you validate a group design before full training?</>}
+      />
+
+      <VIS.TrapProblem id="home-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: HoME assumes tasks naturally cluster into groups that share signal type. If every task is heterogeneous (e.g., one watch-time task plus one revenue task plus one moderation task), the &ldquo;group&rdquo; abstraction is forced and the coarse gate cannot find useful structure.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Tasks have no natural semantic grouping (every task uses different signals); the coarse gate cannot find useful structure and HoME degenerates into flat MMoE with extra latency. Use PLE or flat MMoE instead.", correct:true},
+          {key:"b", text:"Off-by-one in task IDs."},
+          {key:"c", text:"GPU OOM during gating."},
+          {key:"d", text:"Tokenizer mismatch."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>HoME needs natural task groupings; without them, hierarchy buys nothing.</>}
+        stretch={<>How would you measure &ldquo;natural groupings exist&rdquo;?</>}
+      />
+
+      <VIS.TrapProblem id="home-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;HoME is just deeper MMoE&rdquo;"
+        scenario={<><em>Discriminating insight: depth (more layers) and hierarchy (more gate levels) are orthogonal. Deeper MMoE adds layers of mixing but each layer still has flat gates. HoME adds a STRUCTURAL prior on gate organization; the layer count can be unchanged.</em><br/>Why is &ldquo;deeper MMoE&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"Depth and hierarchy are orthogonal. Deeper MMoE adds layers of mixing but each layer still has flat gates. HoME adds gate STRUCTURE (coarse + fine) at the same depth; the layer count can be identical.", correct:true},
+          {key:"b", text:"HoME is just deeper MMoE."},
+          {key:"c", text:"Depth and hierarchy are the same."},
+          {key:"d", text:"HoME removes layers."},
+        ]}
+        trap={<>(b)(c)(d) collapse the structural vs depth distinction.</>}
+        lens={<>Hierarchy is a structural prior on gates, not a depth choice.</>}
+        stretch={<>What ablation isolates hierarchy from depth?</>}
+      />
+
+      <VIS.TrapProblem id="home-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;HoME is just MMoE with more gates&rdquo; cascades into (i) flat gate organization (defeats hierarchy), (ii) random expert grouping (defeats the structural prior), (iii) no coarse gate (loses competition reduction). Each piece is load-bearing.</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: flat gates (no hierarchy), random groups (no structural prior), no coarse gate (gate competition returns). HoME needs structured groups + coarse gate + fine gate together.", correct:true},
+          {key:"b", text:"Only the gate count."},
+          {key:"c", text:"Only the group count."},
+          {key:"d", text:"Nothing — HoME really is just MMoE with more gates."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Structured groups + coarse + fine gates — all three load-bearing.</>}
+        stretch={<>What ablation table isolates each?</>}
+      />
+
+      <VIS.TrapProblem id="home-p17" difficulty="medium"
+        title="P17 — Senior vs junior diagnostic"
+        scenario={<><em>Discriminating insight: when task seesaw persists in HoME, a junior bumps expert count. A senior measures gate ENTROPY at coarse and fine levels — low coarse entropy means a single group dominates (group design too narrow); low fine entropy means a single expert dominates (group too homogeneous).</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Measure gate entropy at coarse and fine levels. Low coarse entropy -> revisit group design (likely too narrow). Low fine entropy -> revisit experts-per-group (likely too homogeneous). Expert count is the last knob.", correct:true},
+          {key:"b", text:"Add more experts blindly."},
+          {key:"c", text:"Drop HoME entirely."},
+          {key:"d", text:"Increase model depth."},
+        ]}
+        trap={<>(b)(c)(d) miss the entropy diagnostic.</>}
+        lens={<>Gate entropy at both levels is the HoME-specific diagnostic.</>}
+        stretch={<>What dashboard panel shows coarse vs fine entropy per task?</>}
+      />
+
+      <VIS.TrapProblem id="home-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: task-set change broke HoME"
+        scenario={<><em>Discriminating insight: a new task (e.g., &ldquo;profile-view&rdquo;) is added; multi-task metrics drop across the board. Team blames HoME&apos;s hierarchy. Real cause: the new task does not fit any existing group cleanly; its coarse gate is undertrained and spreads weight uniformly, dragging down the well-grouped tasks via the shared backbone. Fix is to add the task to an appropriate group (or create a new group), not to abandon HoME.</em><br/>Most likely cause?</>}
+        options={[
+          {key:"a", text:"The new task does not fit existing groups; its coarse gate is undertrained and spreads weight uniformly, perturbing shared parameters. Fix is to add the task to an appropriate group or define a new group; do not abandon HoME.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Disk full."},
+          {key:"d", text:"Random seed changed."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Group design must be updated when new tasks are added.</>}
+        stretch={<>What CI gate enforces group assignment for new tasks?</>}
+      />
+
+      <VIS.TrapProblem id="home-p19" difficulty="hard"
+        title="P19 — Production gotcha: imbalanced group sizes"
+        scenario={<><em>Discriminating insight: one group has 8 experts while others have 2; the coarse gate biases toward the big group (more options to choose from yields higher expected fine-gate output magnitude); other groups starve. Discipline: balance groups by expert count and by total parameter mass, not just count.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Balance groups by expert count AND total parameter mass. Large groups attract the coarse gate disproportionately and starve smaller groups. Renormalize coarse-gate scores by group size if balancing structurally is hard.", correct:true},
+          {key:"b", text:"Group size is irrelevant."},
+          {key:"c", text:"Always one expert per group."},
+          {key:"d", text:"Always all experts in one group."},
+        ]}
+        trap={<>(b) denies the bias. (c)(d) collapse to per-task or MMoE.</>}
+        lens={<>Group balance matters; size imbalance biases coarse gates.</>}
+        stretch={<>What renormalization formula avoids the bias?</>}
+      />
+
+      <VIS.TrapProblem id="home-p20" difficulty="hard"
+        title="P20 — Failure on Friday: watch-time metric tanks after HoME deploy"
+        scenario={<><em>Discriminating insight: watch-time task was assigned to a content-group but its coarse gate weight on the interaction-group was clipped to zero by an accidentally aggressive sparsity regularizer; the task lost access to interaction features that were load-bearing. Diagnosis is sparsity reg on coarse gates, not a HoME design flaw.</em><br/>3am page. Diagnose.</>}
+        options={[
+          {key:"a", text:"Sparsity regularization on coarse gates was too aggressive; the watch-time task lost access to the interaction group. Loosen the sparsity penalty or whitelist required group access per task.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Disk full."},
+        ]}
+        trap={<>(b)(c)(d) miss the coarse-gate diagnostic.</>}
+        lens={<>Coarse-gate sparsity is a load-bearing knob; over-aggressive regularization starves tasks.</>}
+        stretch={<>How would you whitelist required group access per task safely?</>}
+      />
+
+      <VIS.TrapProblem id="home-p21" difficulty="medium"
+        title="P21 — Library default that bites: gate softmax temperature"
+        scenario={<><em>Discriminating insight: many gating libraries default softmax temperature 1, which produces near-argmax gate distributions for multi-task gating — gates collapse early. HoME&apos;s coarse gate especially needs a higher temperature (or entropy regularization) to keep group access soft until the model finds useful structure.</em><br/>What is the gotcha?</>}
+        options={[
+          {key:"a", text:"Default softmax temperature 1 collapses gates to near-argmax early; HoME&apos;s coarse gate especially benefits from higher temperature or entropy regularization so group access stays soft long enough to learn structure.", correct:true},
+          {key:"b", text:"Default LR is too high."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Gate temperature controls competition softness; defaults are too sharp.</>}
+        stretch={<>How does temperature interact with the seesaw effect?</>}
+      />
+
+      <VIS.TrapProblem id="home-p22" difficulty="hard" ordered
+        title="P22 — Order the HoME rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) audit task seesaw to confirm HoME is needed, (2) design expert groups via taxonomy or activation clustering, (3) initialize coarse and fine gates, (4) train with entropy regularization on coarse gate, (5) validate task balance + gate entropy + seesaw metric, (6) ramp. Skipping the seesaw audit is the classic mistake — HoME&apos;s engineering cost is wasted if seesaw is mild.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Audit seesaw -> design expert groups -> initialize gates -> train with entropy reg on coarse gates -> validate balance and entropy -> ramp.", correct:true},
+          {key:"b", text:"Train HoME before auditing seesaw."},
+          {key:"c", text:"Skip gate-entropy validation."},
+          {key:"d", text:"Ramp before validation."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Audit -> groups -> gates -> entropy-regularized training -> validate -> ramp.</>}
+        stretch={<>Why audit seesaw FIRST?</>}
+      />
+
+      <VIS.TrapProblem id="home-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks HoME&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: a 2-task setup where the tasks are highly aligned (e.g., CTR and conversion-CTR). MMoE has no seesaw; HoME&apos;s hierarchy adds latency and group-design effort for no gain.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"2-task model with highly aligned tasks (CTR + conversion-CTR). MMoE has no seesaw; HoME&apos;s hierarchy is wasted latency and engineering effort.", correct:true},
+          {key:"b", text:"8-task short-video model (sweet spot)."},
+          {key:"c", text:"6-task feed model with clear seesaw (sweet spot)."},
+          {key:"d", text:"Production multi-task system with heterogeneous signals (sweet spot)."},
+        ]}
+        trap={<>(b)(c)(d) sweet spots.</>}
+        lens={<>HoME needs many tasks AND seesaw.</>}
+        stretch={<>What is the breakeven task count vs MMoE?</>}
+      />
+
+      <VIS.TrapProblem id="home-p24" difficulty="hard"
+        title="P24 — Named failure: coarse-gate collapse"
+        scenario={<><em>Discriminating insight: even with HoME, the coarse gate can itself collapse if entropy regularization is absent — all tasks attend to one popular group, and the hierarchy degenerates. The fix is entropy regularization on coarse gate, importance-balanced sampling across groups, or hard top-k routing with a re-balancing loss.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Coarse-gate collapse — without entropy regularization, all tasks may attend to one popular group. Mitigate via entropy regularization on the coarse gate, importance-balancing across groups, or hard top-k routing with a re-balancing loss.", correct:true},
+          {key:"b", text:"HoME is immune to gate collapse."},
+          {key:"c", text:"Increase expert count."},
+          {key:"d", text:"Disable the coarse gate."},
+        ]}
+        trap={<>(b) denies the failure. (c)(d) miss the fix.</>}
+        lens={<>Coarse gates need their own entropy discipline.</>}
+        stretch={<>What entropy regularization weight is typical?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/html/2408.05430v1" target="_blank" rel="noopener"><strong>Wang et al. — HoME: Hierarchy of Multi-Gate Experts for Multi-Task Learning at Kuaishou</strong></a> <span style={{color:"#64748b", fontSize:14}}>(arXiv 2408.05430, 2024)</span><br/>The original HoME paper. Read the ablation on group design choices.</li>
-        <li><a href="https://blog.reachsumit.com/posts/2024/06/multi-task-video-recsys-p1/" target="_blank" rel="noopener"><strong>Sumit&apos;s blog — Multi-task learning in video recsys</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Walks through MMoE, PLE, HoME side by side with practitioner notes on where each wins. Best single read to compare the family.</li>
-        <li><a href="https://research.google/pubs/modeling-task-relationships-in-multi-task-learning-with-multi-gate-mixture-of-experts/" target="_blank" rel="noopener"><strong>Ma et al. — Modeling Task Relationships with Multi-Gate Mixture-of-Experts (MMoE)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(KDD 2018, paper)</span><br/>The original MMoE paper. Required background — explains the gate-per-task primitive HoME extends.</li>
-        <li><a href="https://dl.acm.org/doi/10.1145/3383313.3412236" target="_blank" rel="noopener"><strong>Tang et al. — PLE: Progressive Layered Extraction</strong></a> <span style={{color:"#64748b", fontSize:14}}>(RecSys 2020, paper)</span><br/>The immediate predecessor. Read to understand the shared-vs-specific expert split HoME re-organizes hierarchically.</li>
-        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener"><strong>Eugene Yan — System Design for Discovery</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Practitioner context on where multi-task ranking sits in the broader recsys stack.</li>
+        <li><a href="https://arxiv.org/html/2408.05430v1" target="_blank" rel="noopener">Wang et al., <em>HoME: Hierarchy of Multi-Gate Experts for Multi-Task Learning at Kuaishou</em> (arXiv 2408.05430, 2024)</a> — the source paper.</li>
+        <li><a href="https://research.google/pubs/pub46193/" target="_blank" rel="noopener">Ma et al., <em>Modeling Task Relationships in Multi-task Learning with Multi-gate Mixture-of-Experts</em> (KDD 2018)</a> — canonical MMoE paper that HoME extends.</li>
+        <li><a href="https://dl.acm.org/doi/10.1145/3383313.3412236" target="_blank" rel="noopener">Tang et al., <em>Progressive Layered Extraction (PLE): A Novel Multi-Task Learning Model</em> (RecSys 2020, Best Paper)</a> — depth-wise multi-task baseline; contrast with HoME&apos;s breadth-wise hierarchy.</li>
+        <li><a href="https://blog.reachsumit.com/posts/2024/06/multi-task-video-recsys-p1/" target="_blank" rel="noopener">Sumit Kumar — <em>Multi-task Video Recommendation Systems</em> (blog, 2024)</a> — practitioner walkthrough that situates HoME, PLE, and AESM2.</li>
+        <li><a href="https://eugeneyan.com/writing/multitask-models/" target="_blank" rel="noopener">Eugene Yan — <em>Multi-task models in production</em> (blog)</a> — engineering trade-offs of multi-task architectures (gate competition, seesaw, capacity vs sharing).</li>
+        <li><a href="https://ruder.io/multi-task/" target="_blank" rel="noopener">Sebastian Ruder — <em>An Overview of Multi-Task Learning in Deep Neural Networks</em> (blog)</a> — broader MTL background; helps anchor why HoME&apos;s structural prior matters.</li>
       </ul>
     </VIS.Section>
   </main>

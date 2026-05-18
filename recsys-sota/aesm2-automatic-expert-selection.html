@@ -1414,267 +1414,443 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 14
+// AESM2 — Automatic Expert Selection (WWW 2024)
+// Unique mechanism: learns expert selection via GUMBEL-SOFTMAX routing PER
+// INPUT, not by a hand-designed gate topology. The gate is INPUT-CONDITIONED
+// — for each request, the model picks which experts to use rather than the
+// engineer pre-specifying shared/specific or hierarchical structure. Replaces
+// PLE's manual shared/specific split and HoME's manual expert groups.
+// Anchor that survives §2a redaction: "input-conditioned expert selection
+// via Gumbel-softmax routing; the data decides which experts to use for each
+// request and each task — no hand-designed shared/specific or hierarchical
+// structure." This is NOT MMoE (which uses soft mixing of all experts, not
+// selection) and NOT PLE/HoME (which both impose manual structural priors).
+// Multi-task trio caution:
+//   HoME  = HIERARCHY across expert GROUPS (group-level gating, breadth)
+//   PLE   = PROGRESSIVE shared+specific at EACH LAYER (depth-wise stacking)
+//   AESM2 = AUTOMATIC per-input expert selection (input-conditioned, Gumbel)
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Multi-task learning"
-      title="AESM² — Automatic Expert Selection"
-      subtitle="Replaces hand-designed shared-vs-specific expert topology with a learned routing via Gumbel-softmax. Let data decide which experts each task uses."
+      pill="RecSys SOTA · Multi-task learning · MoE"
+      title="AESM² — Automatic Expert Selection Module"
+      subtitle="Input-conditioned expert selection via Gumbel-softmax routing — the data decides which experts each request uses, instead of the engineer hand-designing the gate topology (PLE&apos;s shared/specific split, HoME&apos;s groups). Lets the model learn the optimal expert configuration when task relationships are unknown."
       byline={[
-        {label: "Source", value: "WWW 2024"},
-        {label: "Domain", value: "Learned expert routing for multi-task ranking"},
+        {label: "Sources", value: "AESM2 (WWW 2024); summary at blog.reachsumit.com/posts/2024/06/multi-task-video-recsys-p1/"},
+        {label: "Surface", value: "Multi-task recsys where task relationships are unknown or shift, and hand-designed gate topology would be brittle"},
+        {label: "Anchor that survives redaction", value: "Input-conditioned expert selection via Gumbel-softmax; no hand-designed shared/specific or hierarchical structure; topology is LEARNED per-input per-task"},
       ]}/>
 
     <VIS.TLDR>
-      PLE requires you to MANUALLY choose how many shared and task-specific experts to allocate. <strong>AESM²</strong> drops the manual choice: every expert can be claimed by any task, but a <em>learned</em>{" "}
-      <VIS.Term def="A reparameterization trick that lets you backprop through discrete categorical samples. Adds Gumbel-distributed noise then takes a soft argmax with temperature — making the discrete choice differentiable.">Gumbel-softmax</VIS.Term>{" "}
-      gate decides per task which subset to use. Data picks the topology; you just pick the budget.
+      PLE and HoME both work, but they both require the engineer to PRE-DECIDE the gate topology — PLE&apos;s shared/specific split, HoME&apos;s expert groups. If the task relationships are unknown, shift over time, or simply differ across input slices, those hand-designed priors are wrong somewhere. AESM² uses <VIS.Term def="A reparameterization trick that lets you sample discrete categorical decisions while still passing gradients. Approximates argmax with a temperature-controlled soft distribution that converges to one-hot.">Gumbel-softmax</VIS.Term> routing to LET THE DATA DECIDE which experts each request uses, per task. The gate is conditioned on the INPUT — different requests may use different experts even for the same task. The senior trap: AESM² is NOT just MMoE with a fancier gate (MMoE softly mixes ALL experts; AESM² SELECTS a subset), is NOT PLE/HoME (which both impose manual structural priors), and is NOT a simple top-k router (Gumbel-softmax differentiably approximates the discrete selection so gradients flow). Routing INSTABILITY is the failure mode: weak regularization lets the router collapse to a few popular experts or oscillate, learning the WORST topology.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        AESM² is a one-pool MoE where the shared-vs-specific split is learned, not designed:
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  IN["Shared input"] --> P["Pool of N experts"]
-  IN --> RA["Routing net for task A"]
-  IN --> RB["Routing net for task B"]
-  RA --> GA["Gumbel-softmax selector A"]
-  RB --> GB["Gumbel-softmax selector B"]
-  GA --> P
-  GB --> P
-  P --> OA["Task A tower"]
-  P --> OB["Task B tower"]
-      `} />
+    <VIS.Section id="sec-what" title="What it is — Gumbel-softmax expert selection per input per task">
+      <VIS.Mermaid chart={`flowchart TB
+  X["Input features"]
+  RA["Router task A (input-conditioned)"]
+  RB["Router task B (input-conditioned)"]
+  E1["Expert 1"]
+  E2["Expert 2"]
+  E3["Expert 3"]
+  E4["Expert 4"]
+  E5["Expert 5"]
+  GA["Gumbel-softmax selection task A"]
+  GB["Gumbel-softmax selection task B"]
+  HA["Task A head"]
+  HB["Task B head"]
+  X --> RA
+  X --> RB
+  RA --> GA
+  RB --> GB
+  GA --> E1
+  GA --> E2
+  GB --> E2
+  GB --> E4
+  GB --> E5
+  E1 --> HA
+  E2 --> HA
+  E2 --> HB
+  E4 --> HB
+  E5 --> HB`} />
       <ul>
-        <li><strong>Pool of N experts</strong> — all experts share one pool. No predefined shared-or-specific labels.</li>
-        <li><strong>Per-task routing network</strong> — for each task, a small network scores every expert in the pool.</li>
-        <li><strong>Gumbel-softmax selector</strong> — turns scores into a (nearly) discrete subset selection. Differentiable, so the selector trains via backprop on the task loss.</li>
-        <li><strong>Emergent topology</strong> — over training, some experts become de-facto shared (both routers select them), some become de-facto specific (only one router selects).</li>
+        <li><strong>Input-conditioned router per task</strong> — for each request, the router reads the input features and produces a distribution over experts. Different requests get different routing even for the same task.</li>
+        <li><strong>Gumbel-softmax selection</strong> — the soft distribution is converted into a near-discrete selection via Gumbel noise + temperature; lower temperature -&gt; sharper selection. Gradients flow back through the soft surrogate.</li>
+        <li><strong>No hand-designed structure</strong> — the engineer does not pre-specify shared vs task-specific experts (PLE) or expert groups (HoME). The router learns the topology from data.</li>
+        <li><strong>Risk: routing collapse</strong> — without entropy regularization or load-balancing loss, the router learns to use a few popular experts and the rest atrophy.</li>
       </ul>
+      <p>AESM² is closest in spirit to a sparse MoE for multi-task: each request takes a thin slice through the expert pool, learned per-task per-input.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from PLE / MMoE">
+    <VIS.Section id="sec-diff" title="How it differs from MMoE, PLE, and HoME">
       <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
-        <thead><tr style={{background:"#f1f5f9"}}>
-          <th style={{textAlign:"left",padding:8}}>Property</th>
-          <th style={{textAlign:"left",padding:8}}>MMoE</th>
-          <th style={{textAlign:"left",padding:8}}>PLE</th>
-          <th style={{textAlign:"left",padding:8}}>AESM²</th>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Routing</th>
+          <th style={{textAlign:"left", padding:8}}>Input-conditioned?</th>
+          <th style={{textAlign:"left", padding:8}}>Topology learned or hand-designed?</th>
         </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Topology design</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>All shared</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Manual shared-vs-specific split</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Learned</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Knowledge of task relationships</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None needed</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Designer&apos;s guess</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None needed</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Routing stability</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Stable (continuous gate)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Stable (continuous gate)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Less stable (discrete via Gumbel)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Risk of collapse</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Low</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Low</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High without regularization</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Auditability</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Lower (emergent topology)</td></tr>
+          <tr><td style={{padding:8}}>MMoE</td><td style={{padding:8}}>Soft mix of all experts</td><td style={{padding:8}}>Yes (per task)</td><td style={{padding:8}}>Hand-designed (flat)</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>PLE</td><td style={{padding:8}}>Restricted soft mix</td><td style={{padding:8}}>Yes (per task)</td><td style={{padding:8}}>Hand-designed (shared/specific split)</td></tr>
+          <tr><td style={{padding:8}}>HoME</td><td style={{padding:8}}>Coarse + fine gates</td><td style={{padding:8}}>Yes (per task)</td><td style={{padding:8}}>Hand-designed (groups)</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>AESM²</strong></td><td style={{padding:8}}><strong>Gumbel-softmax selection</strong></td><td style={{padding:8}}><strong>Yes (per input per task)</strong></td><td style={{padding:8}}><strong>Learned</strong></td></tr>
         </tbody>
       </table>
-      <p style={{marginTop:12}}>
-        AESM²&apos;s pitch: when task relationships are NOT known a priori, manual PLE design is a guess that can be wrong. Letting data decide is robust to bad guesses — but introduces routing instability.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li><strong>Task relationships are not known a priori</strong> — new product area, novel objective set, exploratory phase.</li>
-        <li>Settings where rapid task addition matters — adding a new task does not require redesigning the expert split.</li>
-        <li>Research and ablation environments where you want to discover the topology rather than impose it.</li>
-        <li>Teams that can monitor routing dynamics carefully — instability is real and needs vigilance.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the discriminating insight, then asks for the pick.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Routing instability</strong> — Gumbel-softmax samples noisy categorical assignments; can flip between training steps if temperature schedule is wrong.</li>
-        <li><strong>Collapse to MMoE</strong> — if routing regularization is too weak, every task selects every expert and AESM² becomes MMoE in disguise.</li>
-        <li><strong>Worst-topology risk</strong> — AESM² learns the topology that minimizes the loss landscape it sees, which may not be the topology that minimizes long-run quality (e.g., it can learn to ignore a useful task with weak gradient).</li>
-        <li><strong>Auditability loss</strong> — emergent topology is harder to explain to stakeholders than PLE&apos;s explicit split.</li>
-        <li><strong>Temperature scheduling</strong> — Gumbel temperature needs annealing; wrong schedule leads to either collapse (too cold) or noise (too hot).</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick the right move(s); reveal trap and lens after committing.</p>
-
-      <VIS.TrapProblem
-        id="aesm-p1" difficulty="hard" multiSelect
-        title="P1 — AESM² claims to learn the optimal expert topology. List failures where it learns the WORST topology."
-        scenario={<>You launch AESM². Offline metrics look fine but production lift is disappointing. Which of the following are real "worst-topology" failure modes?</>}
+      <VIS.TrapProblem id="aesm-p1" difficulty="hard"
+        title="P1 — AESM² vs MMoE: load-bearing difference?"
+        scenario={<><em>Discriminating insight: MMoE&apos;s gate produces a SOFT distribution over ALL experts and computes a weighted sum — every expert contributes to every request. AESM² produces a near-DISCRETE selection via Gumbel-softmax — each request uses a thin slice of experts. MMoE is mixing; AESM² is selection. The discrete selection is what makes the topology &ldquo;learned&rdquo; rather than &ldquo;mixed.&rdquo;</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Routing collapses early — every task selects every expert, learned topology = MMoE.", correct:true},
-          {key:"b", text:"Routing collapses early — every task selects a DIFFERENT singleton expert, learned topology = independent single-task models with no shared signal.", correct:true},
-          {key:"c", text:"A task with weak gradient gets dropped — its routing network learns to output near-uniform garbage; the task is essentially untrained.", correct:true},
-          {key:"d", text:"Gumbel temperature stays too high; routing is noisy and changes batch to batch.", correct:true},
-          {key:"e", text:"AESM² always learns the optimal topology by definition."},
+          {key:"a", text:"MMoE softly mixes all experts per request (every expert contributes). AESM² uses Gumbel-softmax to produce a near-discrete selection (each request uses a thin slice of experts). Discrete selection is what makes the topology learned, not just mixed.", correct:true},
+          {key:"b", text:"They are mathematically equivalent."},
+          {key:"c", text:"AESM² removes gates."},
+          {key:"d", text:"MMoE uses Gumbel-softmax."},
         ]}
-        trap={<>(e) is the marketing claim, but the paper&apos;s ablations show four distinct failure modes.</>}
-        lens={<>Four real "worst-topology" failures. (a) and (b) are collapse modes (both extremes). (c) is the weak-task drop — Gumbel routing has no incentive to keep weak-gradient tasks alive. (d) is the temperature-schedule failure. Mitigations: routing regularization (entropy floor, load-balance loss), temperature annealing schedule, per-task gradient scaling.</>}
-        stretch={<>Which of these is the hardest to detect in production?</>}
+        trap={<>(b)(c)(d) miss the selection-vs-mixing distinction.</>}
+        lens={<>Selection (discrete) vs mixing (soft) is the structural difference.</>}
+        stretch={<>What temperature schedule does AESM² typically use?</>}
       />
 
-      <VIS.TrapProblem
-        id="aesm-p2" difficulty="hard"
-        title="P2 — Gumbel temperature schedule"
-        scenario={<>You set Gumbel temperature tau = 1.0 throughout training. The routing is noisy and metrics fluctuate badly. Pick the best fix.</>}
+      <VIS.TrapProblem id="aesm-p2" difficulty="hard"
+        title="P2 — AESM² vs PLE: learned vs hand-designed topology"
+        scenario={<><em>Discriminating insight: PLE requires the engineer to pre-decide shared experts vs task-specific experts at each layer. AESM² lets the ROUTER learn from data which experts each request uses; the shared/specific structure (if it exists) emerges naturally. The risk is the router learns something WORSE than a sensible hand-designed prior.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Anneal tau from ~1.0 down to ~0.1 over training — start with soft (exploratory) routing and harden to discrete selection.", correct:true},
-          {key:"b", text:"Increase tau to 10.0 for stability."},
-          {key:"c", text:"Disable Gumbel and use plain softmax."},
-          {key:"d", text:"Drop Gumbel temperature to 0.01 immediately."},
+          {key:"a", text:"PLE requires manual shared/specific allocation; AESM² learns the topology from data via the router. The risk is the router may learn a worse-than-hand-designed topology if regularization is weak (collapse or oscillation).", correct:true},
+          {key:"b", text:"They are equivalent."},
+          {key:"c", text:"AESM² uses PLE&apos;s shared/specific split internally."},
+          {key:"d", text:"PLE uses Gumbel routing."},
         ]}
-        trap={<>(b) makes routing MORE uniform, not less. (c) defeats AESM²&apos;s discrete-selection benefit. (d) is too aggressive — the routing locks in before exploration happens.</>}
-        lens={<>Temperature annealing is standard for Gumbel-softmax. Early in training, soft routing lets the model explore which experts work for which tasks. Late in training, hard routing exploits the discovered structure. A schedule (linear, cosine, or exponential decay) from ~1 to ~0.1 is the standard recipe.</>}
-        stretch={<>What single signal tells you tau decays too fast?</>}
+        trap={<>(b)(c)(d) collapse the learned vs hand-designed distinction.</>}
+        lens={<>Learned topology vs hand-designed prior; AESM² trades safety for flexibility.</>}
+        stretch={<>When does the &ldquo;worst topology&rdquo; failure actually occur?</>}
       />
 
-      <VIS.TrapProblem
-        id="aesm-p3" difficulty="medium" multiSelect
-        title="P3 — Routing regularization choices"
-        scenario={<>Which regularizers are reasonable to prevent AESM² routing collapse?</>}
+      <VIS.TrapProblem id="aesm-p3" difficulty="hard"
+        title="P3 — Without AESM², what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: fallbacks are (i) MMoE — soft mix; (ii) PLE — hand-designed shared/specific; (iii) HoME — hand-designed groups; (iv) per-task towers — no sharing. AESM² wins when task relationships are unknown or shifting and hand design would be brittle.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Entropy floor on the per-task routing distribution — penalize routes that are too peaked.", correct:true},
-          {key:"b", text:"Load-balance loss across the expert pool — penalize unused experts.", correct:true},
-          {key:"c", text:"Sparsity regularizer on routing — encourage selecting fewer experts per task.", correct:true},
-          {key:"d", text:"Force every task to pick all experts."},
-          {key:"e", text:"Disable all regularization."},
+          {key:"a", text:"MMoE (soft mix, simple), PLE (hand-designed shared/specific, stable), HoME (hand-designed groups, scales). AESM² wins when task relationships are unknown or shifting and hand design would be brittle.", correct:true},
+          {key:"b", text:"Per-task towers are the only alternative."},
+          {key:"c", text:"There is no alternative."},
+          {key:"d", text:"Single-task models always."},
         ]}
-        trap={<>(d) collapses to MMoE. (e) leads to free collapse.</>}
-        lens={<>Three valid regularizers: entropy floor (prevents peaks), load balance (prevents dead experts), sparsity (prevents pick-everything). Production AESM² typically combines (a) + (b) with small weights. (c) is task-dependent — only useful when the expert pool is large relative to tasks.</>}
-        stretch={<>How would you tune the entropy floor weight without an A/B test?</>}
+        trap={<>(b)(c)(d) miss the sweet-spot positioning.</>}
+        lens={<>AESM² wins when hand-designed priors are wrong or unknown.</>}
+        stretch={<>When is PLE strictly preferable to AESM²?</>}
       />
 
-      <VIS.TrapProblem
-        id="aesm-p4" difficulty="hard"
-        title="P4 — Auditing the learned topology"
-        scenario={<>AESM² has trained. A stakeholder asks "explain which experts each task uses." Pick the strongest answer.</>}
+      <VIS.TrapProblem id="aesm-p4" difficulty="hard"
+        title="P4 — Compose AESM² with PLE/HoME"
+        scenario={<><em>Discriminating insight: AESM² can replace PLE&apos;s manual shared/specific allocation OR HoME&apos;s manual group design. In a composed system, AESM² could pick which expert group inside a HoME stack, removing one manual step. The composition trades engineering simplicity for routing instability risk.</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"Inspect the average per-task routing distribution over a held-out validation set; build a heatmap showing task-to-expert assignment.", correct:true},
-          {key:"b", text:"The learned topology is opaque — you cannot answer."},
-          {key:"c", text:"Print the Gumbel temperature."},
-          {key:"d", text:"AESM² does not have a topology."},
+          {key:"a", text:"AESM² can REPLACE manual structural choices in PLE/HoME (shared/specific allocation, group design) — but the manual structure also has the benefit of being stable; the composition trades engineering simplicity for routing-instability risk.", correct:true},
+          {key:"b", text:"They conflict — pick one."},
+          {key:"c", text:"They are identical."},
+          {key:"d", text:"Combining doubles inference latency."},
         ]}
-        trap={<>(b), (c), (d) are dismissive. AESM² IS auditable — you just have to look at the right thing.</>}
-        lens={<>The learned topology is recoverable from routing-distribution statistics. Average the per-task routing weights across many inputs; plot the result as a task-to-expert heatmap. Shared experts show up as columns with weight from multiple tasks; specific experts as columns with weight from one task. This is the AESM² auditability story.</>}
-        stretch={<>How would you visualize TIME EVOLUTION of the topology during training?</>}
+        trap={<>(b)(c)(d) deny composition.</>}
+        lens={<>AESM² removes a manual prior; the prior itself adds stability.</>}
+        stretch={<>When would you keep PLE&apos;s manual prior AND add AESM²?</>}
       />
 
-      <VIS.TrapProblem
-        id="aesm-p5" difficulty="hard"
-        title="P5 — Task imbalance and routing"
-        scenario={<>2-task AESM². Task A has 10x more data than Task B. After training, Task A&apos;s routing is sharp (clear expert preferences); Task B&apos;s routing is near-uniform garbage. What happened?</>}
+      <VIS.TrapProblem id="aesm-p5" difficulty="medium"
+        title="P5 — Why Gumbel-softmax instead of argmax?"
+        scenario={<><em>Discriminating insight: argmax over expert scores is non-differentiable — gradients cannot flow through the selection. Gumbel-softmax with a soft temperature is a differentiable approximation that converges to one-hot as temperature -&gt; 0. The router learns via gradients through the soft surrogate; at inference the temperature can be lowered for cleaner selection.</em><br/>Why Gumbel-softmax?</>}
         options={[
-          {key:"a", text:"Task B&apos;s gradient signal was swamped by Task A&apos;s — Task B&apos;s routing net never learned a useful expert assignment; it converged to high-entropy noise.", correct:true},
-          {key:"b", text:"Task B converged faster."},
-          {key:"c", text:"Gumbel softmax does not work with imbalanced data."},
-          {key:"d", text:"Task B is intrinsically harder."},
+          {key:"a", text:"Argmax is non-differentiable; Gumbel-softmax is a differentiable approximation of categorical sampling that converges to one-hot as temperature decreases. Gradients flow back through the soft surrogate so the router can learn.", correct:true},
+          {key:"b", text:"Gumbel-softmax is faster than argmax."},
+          {key:"c", text:"Argmax provides higher accuracy."},
+          {key:"d", text:"Gumbel-softmax is equivalent to softmax."},
         ]}
-        trap={<>(b) is the inverse of what happened. (c) overstates. (d) is speculation without evidence.</>}
-        lens={<>Task imbalance is harsher on AESM² than on PLE. PLE&apos;s specific experts protect the small task; AESM² has no such guarantee — the small task&apos;s routing net is supervised by its own (small) loss signal and the dominant task drowns it out. Mitigations: per-task loss weighting, per-task gradient scaling, oversample the small task.</>}
-        stretch={<>How would you detect this failure mode automatically?</>}
+        trap={<>(b)(c)(d) miss the differentiability requirement.</>}
+        lens={<>Gumbel-softmax = differentiable categorical sampling.</>}
+        stretch={<>What does temperature -&gt; 0 do at inference time?</>}
       />
 
-      <VIS.TrapProblem
-        id="aesm-p6" difficulty="medium"
-        title="P6 — AESM² vs PLE: a decision rule"
-        scenario={<>When should you pick AESM² over PLE?</>}
+      <VIS.TrapProblem id="aesm-p6" difficulty="hard"
+        title="P6 — Pick the multi-task architecture"
+        scenario={<><em>Discriminating insight: a recsys serves 5 tasks; their relationships are known to drift seasonally. Hand-designing a PLE or HoME topology now will be wrong in 3 months. AESM² is purpose-built when the topology must adapt.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"When you do not have a strong prior on which tasks share signal and which are independent — let data decide.", correct:true},
-          {key:"b", text:"Always."},
-          {key:"c", text:"Never — PLE is strictly better."},
-          {key:"d", text:"When latency is critical."},
+          {key:"a", text:"AESM² — input-conditioned Gumbel-softmax routing that can adapt its expert-selection topology as task relationships drift. Hand-designed PLE/HoME would be wrong in 3 months.", correct:true},
+          {key:"b", text:"PLE — hand-designed will go stale."},
+          {key:"c", text:"HoME — hand-designed will go stale."},
+          {key:"d", text:"Per-task towers — no sharing."},
         ]}
-        trap={<>(b), (c) are absolutes. (d) is unrelated — AESM² is not faster.</>}
-        lens={<>The decision rule is information-theoretic: PLE encodes a prior (you know shared vs specific); AESM² encodes no prior (you do not know). If the prior is right, PLE is more sample-efficient. If wrong, PLE&apos;s misspecified split costs you. AESM² is the right hedge under prior uncertainty.</>}
-        stretch={<>How would you test whether your shared-vs-specific PLE design is "right"?</>}
+        trap={<>(b)(c)(d) miss the adaptive-topology requirement.</>}
+        lens={<>Unknown or drifting task relationships = AESM².</>}
+        stretch={<>How does the router adapt when relationships shift?</>}
       />
 
-      <VIS.TrapProblem
-        id="aesm-p7" difficulty="hard" mode="ordered"
-        title="P7 — Order your debugging when AESM² routing looks pathological"
-        scenario={<>Routing inspection shows Task B has 95% weight on a single expert from epoch 5 onwards. Order your diagnostics. Wrong moves do not get a number.</>}
+      <VIS.TrapProblem id="aesm-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just use top-k routing&rdquo;"
+        scenario={<><em>Discriminating insight: hard top-k routing (pick the k highest-scored experts and use only them) breaks gradient flow to the un-selected experts — they never receive learning signal and the router cannot learn which to use. Gumbel-softmax solves this by providing gradient through the soft selection.</em><br/>Why is &ldquo;hard top-k&rdquo; insufficient?</>}
         options={[
-          {key:"a", text:"Plot Gumbel temperature schedule and inspect the per-step decay rate.", order:1},
-          {key:"b", text:"Inspect per-task routing entropy curves across training.", order:2},
-          {key:"c", text:"Disable AESM² and revert to PLE."},
-          {key:"d", text:"Check the routing regularization weights and their gradient contributions.", order:3},
-          {key:"e", text:"Page every engineer."},
+          {key:"a", text:"Hard top-k blocks gradients to un-selected experts; the router cannot learn which to use. Gumbel-softmax provides gradient through the soft selection so the router can iterate toward the correct topology.", correct:true},
+          {key:"b", text:"Hard top-k is faster."},
+          {key:"c", text:"Hard top-k has higher accuracy."},
+          {key:"d", text:"Gumbel-softmax is equivalent to hard top-k."},
         ]}
-        trap={<>(c) is destructive without diagnosis. (e) is premature.</>}
-        lens={<>The ladder for AESM² bugs: temperature dynamics → entropy collapse → regularization balance. Most AESM² pathologies are about routing dynamics, not the experts themselves.</>}
-        stretch={<>What is the cheapest single check that catches "premature collapse"?</>}
+        trap={<>(b)(c)(d) miss the gradient-flow argument.</>}
+        lens={<>Gradient flow to un-selected experts requires Gumbel-softmax, not hard top-k.</>}
+        stretch={<>What hybrid routing schemes (e.g., switch transformer) sidestep this?</>}
       />
 
-      <VIS.TrapProblem
-        id="aesm-p8" difficulty="medium" multiSelect
-        title="P8 — AESM² production launch checklist"
-        scenario={<>You are about to launch AESM² as a replacement for PLE. Which items should be on your pre-launch checklist?</>}
+      <VIS.TrapProblem id="aesm-p8" difficulty="hard"
+        title="P8 — AESM² anchor (input-conditioned Gumbel selection + learned topology): pitch it"
+        scenario={<><em>Discriminating insight: anchor is &ldquo;the gate is INPUT-CONDITIONED and uses Gumbel-softmax to SELECT (not mix) experts; no hand-designed shared/specific or group structure.&rdquo; The pitch must name input-conditioning, Gumbel selection, and absence of hand-designed structure.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Per-task routing entropy histogram is healthy (not too peaked, not too uniform).", correct:true},
-          {key:"b", text:"Load-balance across experts is within 20% of uniform.", correct:true},
-          {key:"c", text:"Gumbel temperature has annealed to the planned final value.", correct:true},
-          {key:"d", text:"Per-task metrics match or exceed PLE baseline on held-out data.", correct:true},
-          {key:"e", text:"AESM² routing is identical across multiple training seeds."},
+          {key:"a", text:"For each request and each task, an input-conditioned router uses Gumbel-softmax to select a thin slice of experts; no hand-designed shared/specific or group structure is imposed. The router learns the topology from data.", correct:true},
+          {key:"b", text:"We softly mix all experts via per-task gates."},
+          {key:"c", text:"We hand-design shared and task-specific experts."},
+          {key:"d", text:"We use a coarse + fine hierarchy."},
         ]}
-        trap={<>(e) is unrealistic — AESM² topology is stochastic by design; multiple seeds will find different (but possibly equivalent) topologies. Demanding identical routing is a category error.</>}
-        lens={<>The valid checks are routing health, load balance, schedule completion, and baseline match. Seed-to-seed identical routing is a misconception; what you want is seed-to-seed equivalent QUALITY, not identical structure.</>}
-        stretch={<>How would you measure "equivalent quality" across seeds?</>}
+        trap={<>(b) is MMoE. (c) is PLE. (d) is HoME.</>}
+        lens={<>Input-conditioned + Gumbel selection + learned topology are inseparable.</>}
+        stretch={<>Why is input-conditioning load-bearing beyond per-task?</>}
       />
 
-      <VIS.TrapProblem
-        id="aesm-p9" difficulty="hard"
-        title="P9 — AESM² specific failure modes"
-        scenario={<>Pick the strongest single AESM²-specific failure (not generic MoE).</>}
+      <VIS.TrapProblem id="aesm-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use AESM². Select all that apply."
+        scenario={<><em>Discriminating insight: AESM² needs (i) enough data to train the router, (ii) regularization (entropy / load balancing), (iii) tasks where hand-designed topology would be wrong or unknown. Wrong when data is limited (router undertrained), when hand design is reliable, or when latency forbids Gumbel sampling overhead.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Routing instability from Gumbel-softmax sampling — discrete categorical noise can flip task-expert assignments mid-training, causing unstable optimization.", correct:true},
-          {key:"b", text:"Random init failures."},
-          {key:"c", text:"Load imbalance across experts."},
-          {key:"d", text:"Standard MoE collapse."},
+          {key:"a", text:"Limited training data — the router is undertrained and collapses or oscillates.", correct:true},
+          {key:"b", text:"Tasks where PLE&apos;s shared/specific design is known to work — manual prior is safer.", correct:true},
+          {key:"c", text:"Sub-5ms latency budget where Gumbel sampling adds too much overhead.", correct:true},
+          {key:"d", text:"5-task feed with unknown task relationships (sweet spot)."},
+          {key:"e", text:"No engineering capacity to monitor router stability and tune regularization.", correct:true},
         ]}
-        trap={<>(b), (c), (d) are generic. The AESM²-specific failure is the SAMPLING noise from Gumbel.</>}
-        lens={<>Gumbel-softmax is the AESM²-specific machinery. Its noise can destabilize routing in ways PLE&apos;s continuous gates do not. Temperature annealing and entropy regularization are the mitigations. Generic MoE issues (init, load balance, collapse) exist too but are not differentiating.</>}
-        stretch={<>Could you replace Gumbel-softmax with a learned discrete latent variable trained differently?</>}
+        trap={<>(d) sweet spot.</>}
+        lens={<>AESM² needs data, regularization, and unknown topology to win.</>}
+        stretch={<>What router accuracy does the regularization need to hit?</>}
       />
 
-      <VIS.TrapProblem
-        id="aesm-p10" difficulty="hard"
-        title="P10 — When NOT to use AESM²"
-        scenario={<>Pick the strongest case AGAINST AESM².</>}
+      <VIS.TrapProblem id="aesm-p10" difficulty="hard"
+        title="P10 — How does the router collapse?"
+        scenario={<><em>Discriminating insight: without entropy / load-balancing regularization, the router learns to use a few experts that happen to be initialized well or to receive more gradient early — those experts get better, the router picks them more, the cycle compounds. The remaining experts atrophy. Mitigations: entropy regularization on the routing distribution; load-balancing auxiliary loss; importance weighting.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"A 2-task setup with a strong prior on task relationships (e.g., CTR + watch-time on video, well-studied) — PLE&apos;s manual design is faster to converge and more interpretable.", correct:true},
-          {key:"b", text:"A novel 8-task product."},
-          {key:"c", text:"An exploratory research setup."},
-          {key:"d", text:"A multi-vertical marketplace with unknown task interactions."},
+          {key:"a", text:"The router learns to use a few popular experts that win the early-training Matthew effect; the rest atrophy. Mitigate with entropy regularization on the routing distribution, a load-balancing auxiliary loss, or importance weighting (similar to switch-transformer load-balancing).", correct:true},
+          {key:"b", text:"Routers never collapse in AESM²."},
+          {key:"c", text:"Adding more experts solves collapse."},
+          {key:"d", text:"Lower temperature solves collapse."},
         ]}
-        trap={<>(b), (c), (d) are the AESM² sweet spots.</>}
-        lens={<>AESM² shines under prior uncertainty. When you know task relationships well (CTR/watch-time on video, recommend/like), manual PLE design encodes the right prior and converges faster. AESM² pays a learning cost for flexibility you don&apos;t need.</>}
-        stretch={<>What objective signal tells you the prior is wrong enough to switch from PLE to AESM²?</>}
+        trap={<>(b) denies the failure. (c)(d) deepen the bug.</>}
+        lens={<>Routing collapse is the dominant AESM² failure mode; regularization is mandatory.</>}
+        stretch={<>What load-balancing loss is standard?</>}
       />
 
-      <VIS.TrapProblem
-        id="aesm-p11" difficulty="medium"
-        title="P11 — Hybrid: PLE topology + AESM² refinement"
-        scenario={<>Could you start with PLE&apos;s manual split as a prior and let AESM²&apos;s learned routing refine it?</>}
+      <VIS.TrapProblem id="aesm-p11" difficulty="hard"
+        title="P11 — AESM² forward pass mechanics"
+        scenario={<><em>Discriminating insight: input x flows through (i) per-task router to produce expert scores, (ii) Gumbel-softmax sampling with temperature T to produce near-discrete selection, (iii) selected experts compute outputs, (iv) weighted sum (with Gumbel weights) feeds task head. At inference T can be lowered to harden selection.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Yes — initialize routing nets such that each task starts with its PLE-style preference (specific experts high, shared experts moderate), then let Gumbel-softmax refine. Gets the best of both.", correct:true},
-          {key:"b", text:"No — PLE and AESM² are incompatible architectures."},
-          {key:"c", text:"No — Gumbel cannot be initialized from priors."},
-          {key:"d", text:"Yes but the result is always worse than pure PLE."},
+          {key:"a", text:"x -> per-task router scores experts -> Gumbel-softmax with temperature T produces near-discrete selection -> selected experts compute outputs -> weighted sum -> task head. T is annealed lower at inference for cleaner selection.", correct:true},
+          {key:"b", text:"All experts always run; no selection."},
+          {key:"c", text:"Hard argmax with no gradient."},
+          {key:"d", text:"Only shared experts run."},
         ]}
-        trap={<>(b), (c) are wrong. (d) is unsupported — the hybrid often outperforms both extremes.</>}
-        lens={<>The hybrid is a real production pattern: encode your best PLE design as initial routing weights, then let AESM² refine. Combines designer knowledge (where reliable) with data-driven adjustment (where the design is uncertain). Most modern multi-task systems in 2025 lean toward this hybrid.</>}
-        stretch={<>How would you encode PLE&apos;s shared-vs-specific split as Gumbel initial logits?</>}
+        trap={<>(b) is MMoE. (c) breaks gradients. (d) is PLE-flavored.</>}
+        lens={<>Per-task router -> Gumbel selection -> experts -> head.</>}
+        stretch={<>What inference-time T is typical?</>}
       />
+
+      <VIS.TrapProblem id="aesm-p12" difficulty="hard"
+        title="P12 — What does AESM² deliberately drop vs PLE/HoME?"
+        scenario={<><em>Discriminating insight: PLE/HoME hand-design structure that is STABLE and INTERPRETABLE — engineers can point at &ldquo;shared experts&rdquo; or &ldquo;interaction group.&rdquo; AESM² forfeits that interpretability; the routing topology is learned and may be opaque, fluid, or non-stationary.</em><br/>What is dropped?</>}
+        options={[
+          {key:"a", text:"Stability and interpretability of the topology. PLE/HoME let engineers point at a fixed structure; AESM²&apos;s topology is learned and may shift over training and across input slices. Less interpretable; harder to debug.", correct:true},
+          {key:"b", text:"AESM² forfeits gradient descent."},
+          {key:"c", text:"AESM² forfeits multi-task."},
+          {key:"d", text:"AESM² forfeits experts."},
+        ]}
+        trap={<>(b)(c)(d) miss the property.</>}
+        lens={<>Interpretability and stability are the deliberate cost.</>}
+        stretch={<>How would you visualize an AESM² topology?</>}
+      />
+
+      <VIS.TrapProblem id="aesm-p13" difficulty="hard"
+        title="P13 — Most fragile knob in AESM²"
+        scenario={<><em>Discriminating insight: ENTROPY REGULARIZATION WEIGHT and GUMBEL TEMPERATURE jointly determine whether the router converges to a stable, well-spread topology or collapses. Mis-set either and routing instability dominates. Number of experts next; expert hidden dim after; LR last.</em><br/>Rank.</>}
+        options={[
+          {key:"a", text:"Entropy regularization weight + Gumbel temperature are most fragile (mis-set either causes routing collapse or oscillation); expert count next; expert hidden dim after; LR last.", correct:true},
+          {key:"b", text:"Optimizer choice is most fragile."},
+          {key:"c", text:"Batch size is most fragile."},
+          {key:"d", text:"Number of tasks is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) miss the AESM²-specific stability knobs.</>}
+        lens={<>Routing regularization and temperature are the load-bearing knobs.</>}
+        stretch={<>What entropy schedule is typical?</>}
+      />
+
+      <VIS.TrapProblem id="aesm-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: AESM² assumes the data carries enough signal for the router to learn a useful topology. With limited data, the router&apos;s gradient is noisy and it picks experts essentially at random — the &ldquo;automatic&rdquo; selection becomes random selection.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Limited training data — the router&apos;s gradient is noisy; expert selection becomes near-random and AESM² degrades to noisy MoE. Hand-designed PLE/HoME is more robust in low-data regimes.", correct:true},
+          {key:"b", text:"Off-by-one in task IDs."},
+          {key:"c", text:"GPU OOM during routing."},
+          {key:"d", text:"Tokenizer mismatch."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>AESM² needs enough data to learn the router.</>}
+        stretch={<>What data size threshold is typical for AESM² to beat PLE?</>}
+      />
+
+      <VIS.TrapProblem id="aesm-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;AESM² learns the OPTIMAL topology&rdquo;"
+        scenario={<><em>Discriminating insight: AESM² claims &ldquo;automatic&rdquo; selection but the optimization is over a non-convex landscape with collapse modes. The router can learn the WORST topology — a single popular expert per task, no sharing, no specialization. Calling it &ldquo;optimal&rdquo; ignores the failure modes.</em><br/>Why is &ldquo;optimal&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"&ldquo;Automatic&rdquo; does not mean &ldquo;optimal.&rdquo; The optimization landscape has collapse modes (single popular expert) and oscillation modes (routes flip every cycle). Without proper regularization, AESM² can learn the WORST topology — a degenerate router that beats no baseline.", correct:true},
+          {key:"b", text:"AESM² always learns the optimum."},
+          {key:"c", text:"AESM² never collapses."},
+          {key:"d", text:"AESM² is convex."},
+        ]}
+        trap={<>(b)(c)(d) deny the failure modes.</>}
+        lens={<>Automatic != optimal; collapse modes exist.</>}
+        stretch={<>What auxiliary loss prevents collapse?</>}
+      />
+
+      <VIS.TrapProblem id="aesm-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;AESM² is just MMoE with Gumbel&rdquo; cascades into (i) skipping entropy regularization (collapse), (ii) keeping temperature high at inference (no actual selection, back to MMoE), (iii) not load-balancing (long-tail experts atrophy). Each piece is load-bearing.</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: no entropy regularization (collapse), high inference temperature (degenerates to MMoE), no load balancing (long-tail experts atrophy). AESM² needs Gumbel selection + entropy reg + load balancing + temperature annealing together.", correct:true},
+          {key:"b", text:"Only entropy regularization."},
+          {key:"c", text:"Only temperature."},
+          {key:"d", text:"Nothing — AESM² really is just MMoE with Gumbel."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Gumbel + entropy + load-balancing + temperature anneal — all four load-bearing.</>}
+        stretch={<>What ablation isolates each?</>}
+      />
+
+      <VIS.TrapProblem id="aesm-p17" difficulty="medium"
+        title="P17 — Senior vs junior diagnostic"
+        scenario={<><em>Discriminating insight: when AESM² underperforms, a junior raises capacity. A senior plots expert utilization histogram per task — if a few experts dominate, the router collapsed; if utilization oscillates over epochs, the router is unstable. Capacity is a last knob.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Plot expert utilization histogram per task. Dominant few experts -> collapse; oscillating histogram -> instability. Add entropy regularization or load-balancing loss; tune temperature schedule. Capacity is the last lever.", correct:true},
+          {key:"b", text:"Add experts blindly."},
+          {key:"c", text:"Disable AESM²."},
+          {key:"d", text:"Increase model depth."},
+        ]}
+        trap={<>(b)(c)(d) miss the utilization diagnostic.</>}
+        lens={<>Expert utilization histogram is the AESM²-specific diagnostic.</>}
+        stretch={<>What histogram shape is healthy?</>}
+      />
+
+      <VIS.TrapProblem id="aesm-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: routing oscillation broke AESM²"
+        scenario={<><em>Discriminating insight: training metrics oscillate between epochs. Team blames data. Real cause: temperature is held too high too long — the router never commits to a stable topology and Gumbel noise dominates the selection. Fix is temperature annealing schedule, not data.</em><br/>Most likely cause?</>}
+        options={[
+          {key:"a", text:"Gumbel temperature held too high too long; the router never commits to a stable topology and Gumbel noise dominates selection. Anneal temperature from high (exploration) to low (commit) over training.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Disk full."},
+          {key:"d", text:"Random seed changed."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Temperature schedule matters; constant high temperature prevents commit.</>}
+        stretch={<>What annealing curve is typical?</>}
+      />
+
+      <VIS.TrapProblem id="aesm-p19" difficulty="hard"
+        title="P19 — Production gotcha: inference latency variance"
+        scenario={<><em>Discriminating insight: per-input routing means different requests touch different experts. If routing changes which experts run, the per-request compute path differs and tail latency may spike. Discipline: enforce a cap on selected experts per request, batch by routing pattern, or use a switch-transformer style deterministic dispatch.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Per-input routing means different requests touch different experts; tail latency varies. Enforce a cap on selected experts per request, batch by routing pattern, or use switch-transformer style deterministic dispatch to stabilize latency.", correct:true},
+          {key:"b", text:"Latency is independent of routing."},
+          {key:"c", text:"Always run all experts at inference."},
+          {key:"d", text:"Skip per-input routing at inference."},
+        ]}
+        trap={<>(b) denies the cost. (c)(d) defeat the design.</>}
+        lens={<>Per-input routing causes latency variance; production needs stabilization.</>}
+        stretch={<>How does switch-transformer dispatch work in detail?</>}
+      />
+
+      <VIS.TrapProblem id="aesm-p20" difficulty="hard"
+        title="P20 — Failure on Friday: AESM² accuracy collapsed overnight"
+        scenario={<><em>Discriminating insight: the entropy regularization weight was decayed too quickly by a scheduler bug — within one cycle the router collapsed to one expert per task. Diagnosis: scheduler bug on regularization, not a routing-fundamental flaw.</em><br/>3am page. Diagnose.</>}
+        options={[
+          {key:"a", text:"Entropy regularization scheduler bug — weight decayed too quickly; router collapsed to one expert per task. Restore the regularization weight and re-train; add a guardrail that prevents the scheduler from going below a floor.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Disk full."},
+        ]}
+        trap={<>(b)(c)(d) miss the regularization-scheduler diagnostic.</>}
+        lens={<>Entropy regularization floor is a load-bearing guardrail.</>}
+        stretch={<>What floor value is typical?</>}
+      />
+
+      <VIS.TrapProblem id="aesm-p21" difficulty="medium"
+        title="P21 — Library default that bites: Gumbel temperature constant"
+        scenario={<><em>Discriminating insight: many libraries default Gumbel-softmax to a constant temperature (e.g., 1.0). For AESM² the temperature should be annealed — high at the start (exploration) to low at the end (commit). Constant temperature leads to either too much noise (high) or premature commitment (low).</em><br/>What is the gotcha?</>}
+        options={[
+          {key:"a", text:"Default Gumbel-softmax temperature is constant; AESM² needs temperature ANNEALING — high early (exploration) to low late (commit). Constant temperature gives either too much noise or premature commitment.", correct:true},
+          {key:"b", text:"Default LR is too high."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Temperature annealing is mandatory; default constant is wrong.</>}
+        stretch={<>What annealing schedule (linear, cosine, exponential) is typical?</>}
+      />
+
+      <VIS.TrapProblem id="aesm-p22" difficulty="hard" ordered
+        title="P22 — Order the AESM² rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) confirm task relationships are unknown / shifting (otherwise PLE is safer), (2) implement Gumbel router with entropy reg + load-balancing loss, (3) tune temperature schedule, (4) train with utilization histogram monitor, (5) validate routing stability and per-task accuracy, (6) ramp with latency cap. Skipping step 1 is the classic mistake — AESM² costs more than PLE if topology is known.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Confirm unknown/shifting topology -> implement Gumbel router with entropy reg + load balancing -> tune temperature schedule -> train with utilization monitor -> validate stability + per-task accuracy -> ramp with latency cap.", correct:true},
+          {key:"b", text:"Skip the topology check and ship AESM² always."},
+          {key:"c", text:"Skip the utilization monitor."},
+          {key:"d", text:"Ramp before validation."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Confirm need -> Gumbel + regs -> temp schedule -> train + monitor -> validate -> ramp.</>}
+        stretch={<>What proves &ldquo;topology is unknown&rdquo; vs &ldquo;topology is known but we want flexibility&rdquo;?</>}
+      />
+
+      <VIS.TrapProblem id="aesm-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks AESM²&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: when task relationships are known and stable (e.g., two perfectly aligned tasks), PLE or even shared-bottom is sufficient. AESM²&apos;s router has nothing to discover — it just adds variance and regularization overhead.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"Two perfectly aligned tasks (e.g., CTR + early-CTR) with stable relationship over time. PLE or shared-bottom suffices; AESM²&apos;s router adds variance and overhead for nothing.", correct:true},
+          {key:"b", text:"5-task feed with unknown task relationships (sweet spot)."},
+          {key:"c", text:"Tasks with seasonal shifts (sweet spot)."},
+          {key:"d", text:"Multi-task where manual topology design is brittle (sweet spot)."},
+        ]}
+        trap={<>(b)(c)(d) sweet spots.</>}
+        lens={<>AESM² needs unknown or shifting relationships.</>}
+        stretch={<>What test confirms task relationships are stable?</>}
+      />
+
+      <VIS.TrapProblem id="aesm-p24" difficulty="hard"
+        title="P24 — Named failure: router learns the worst topology"
+        scenario={<><em>Discriminating insight: a well-known AESM²-style failure — without load-balancing, the router learns to route ALL tasks to the SAME single expert (the &ldquo;one-hot-collapse&rdquo;); other experts atrophy; the model behaves as a single-expert MLP. This is the WORST possible topology — strictly worse than MMoE or PLE. Fix: load-balancing auxiliary loss + entropy regularization + temperature annealing.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"One-hot collapse — all tasks route to the same single expert; other experts atrophy; model degenerates to a single-expert MLP. WORST possible topology — strictly worse than MMoE or PLE. Fix with load-balancing auxiliary loss + entropy reg + temperature annealing.", correct:true},
+          {key:"b", text:"AESM² is immune to collapse."},
+          {key:"c", text:"Add more experts."},
+          {key:"d", text:"Lower temperature solves it."},
+        ]}
+        trap={<>(b) denies the failure. (c)(d) deepen it.</>}
+        lens={<>One-hot collapse is the canonical AESM² failure; load-balancing is the fix.</>}
+        stretch={<>What load-balancing auxiliary loss is standard (e.g., from switch-transformer)?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://blog.reachsumit.com/posts/2024/06/multi-task-video-recsys-p1/" target="_blank" rel="noopener"><strong>Sumit&apos;s blog — Multi-task video recsys</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Discusses AESM² alongside PLE, MMoE, HoME with practitioner notes. Best single read for the family.</li>
-        <li><a href="https://arxiv.org/abs/1611.01144" target="_blank" rel="noopener"><strong>Jang, Gu, Poole — Categorical Reparameterization with Gumbel-Softmax</strong></a> <span style={{color:"#64748b", fontSize:14}}>(ICLR 2017, paper)</span><br/>The Gumbel-softmax primer. Required background — explains how AESM² makes discrete expert selection differentiable.</li>
-        <li><a href="https://research.google/pubs/modeling-task-relationships-in-multi-task-learning-with-multi-gate-mixture-of-experts/" target="_blank" rel="noopener"><strong>Ma et al. — MMoE</strong></a> <span style={{color:"#64748b", fontSize:14}}>(KDD 2018, paper)</span><br/>Required predecessor: AESM² is essentially MMoE with learned discrete routing instead of continuous gates.</li>
-        <li><a href="https://dl.acm.org/doi/10.1145/3383313.3412236" target="_blank" rel="noopener"><strong>Tang et al. — PLE</strong></a> <span style={{color:"#64748b", fontSize:14}}>(RecSys 2020, paper)</span><br/>The manual-design baseline AESM² replaces. Read this first to understand what AESM² automates away.</li>
-        <li><a href="https://lilianweng.github.io/posts/2021-09-25-train-large/" target="_blank" rel="noopener"><strong>Lilian Weng — How to Train Really Large Models on Many GPUs</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Context on MoE training dynamics broadly. Helpful for understanding routing collapse and load-balance issues common to learned-routing MoEs.</li>
+        <li><a href="https://blog.reachsumit.com/posts/2024/06/multi-task-video-recsys-p1/" target="_blank" rel="noopener">Sumit Kumar — <em>Multi-task Video Recommendation Systems</em> (blog, 2024)</a> — practitioner contrast of AESM², PLE, HoME with diagrams; the cleanest summary of AESM²&apos;s routing.</li>
+        <li><a href="https://arxiv.org/abs/1611.01144" target="_blank" rel="noopener">Jang, Gu, Poole — <em>Categorical Reparameterization with Gumbel-Softmax</em> (ICLR 2017)</a> — canonical Gumbel-softmax paper; the math AESM²&apos;s router uses.</li>
+        <li><a href="https://arxiv.org/abs/2101.03961" target="_blank" rel="noopener">Fedus et al., <em>Switch Transformer</em> (arXiv 2021)</a> — sparse MoE with load-balancing; the load-balancing aux loss that AESM² inherits.</li>
+        <li><a href="https://eugeneyan.com/writing/multitask-models/" target="_blank" rel="noopener">Eugene Yan — <em>Multi-task models in production</em> (blog)</a> — engineering trade-offs of multi-task architectures; positions AESM² vs PLE/HoME.</li>
+        <li><a href="https://dl.acm.org/doi/10.1145/3383313.3412236" target="_blank" rel="noopener">Tang et al., <em>PLE</em> (RecSys 2020)</a> — the hand-designed baseline AESM² replaces; required background for the contrast.</li>
+        <li><a href="https://arxiv.org/html/2408.05430v1" target="_blank" rel="noopener">Wang et al., <em>HoME</em> (arXiv 2408.05430, 2024)</a> — the other hand-designed baseline; useful for understanding what AESM² automates.</li>
       </ul>
     </VIS.Section>
   </main>

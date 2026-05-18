@@ -1414,265 +1414,435 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 14
+// RAIE — Region-Aware Incremental LoRA Editing
+// Unique mechanism: continual learning via PER-REGION LoRA ADAPTERS. The
+// behavior space is partitioned into REGIONS (cohorts of users/items sharing
+// preference structure). Each region owns its own LoRA adapter on top of a
+// frozen LLM-based recommender backbone. When preferences in region R drift,
+// ONLY the LoRA for R is updated; other regions are isolated from the gradient.
+// A region router classifies incoming requests and selects which adapter to
+// merge into the backbone for the forward pass.
+// Anchor that survives §2a redaction: "frozen LLM backbone + one LoRA per
+// behavior region; updates are routed to the affected region's adapter only;
+// other regions stay frozen so drift in one cohort does not bleed across."
+// This is NOT global LoRA (which fights interference across all regions) and
+// NOT classical incremental fine-tune (which has no locality).
+// Continual pair (CCD-Rec vs RAIE): both incremental but different angles —
+// CCD-Rec preserves stable preferences via SELF-DISTILLATION over time; RAIE
+// isolates drift to a REGION via LoRA locality. Different axes (time vs space).
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Continual learning · LLM4Rec"
+      pill="RecSys SOTA · Continual learning for recs · LLM-based"
       title="RAIE — Region-Aware Incremental LoRA Editing"
-      subtitle="Continual updates to LLM-based recommenders by routing each behavior region (cohort, vertical, language) to its own LoRA adapter. Only the affected adapter trains on new data, isolating drift."
+      subtitle="A frozen LLM-based recommender backbone with one LoRA adapter per behavior region. When preferences in a region drift, only that region's LoRA is updated; other regions stay isolated. A region router picks which adapter to merge at inference."
       byline={[
-        {label: "Source", value: "arXiv 2603.00638 (2026)"},
-        {label: "Domain", value: "Continual learning in LLM-based recommendation"},
+        {label: "Sources", value: "'RAIE: Region-Aware Incremental Preference Editing with LoRA for LLM-based Recommendation' (arXiv 2603.00638, 2026)"},
+        {label: "Surface", value: "LLM-based recsys with stable cohort structure and per-cohort preference drift"},
+        {label: "Anchor that survives redaction", value: "Frozen LLM backbone + per-region LoRA adapters; updates routed to affected region only; region router selects adapter at inference"},
       ]}/>
 
     <VIS.TLDR>
-      A single global LoRA on an LLM-based recommender suffers <em>cross-region interference</em>: an update driven by US-shopping behavior leaks into JP-music ranking. <strong>RAIE</strong> partitions user-item behavior into named regions, gives each region its own LoRA adapter, and routes updates to one adapter at a time. Drift stays contained inside the affected region; the rest of the model is frozen.
+      LLM-based recommenders are expensive to retrain and even <VIS.Term def="Low-Rank Adaptation. Inject trainable low-rank matrices into frozen weights; updates require only a fraction of full fine-tuning compute.">LoRA</VIS.Term> on a global adapter suffers cross-region interference — updating LoRA for &ldquo;urban gen-Z food&rdquo; bleeds gradients into &ldquo;suburban family meals.&rdquo; RAIE partitions the behavior space into <VIS.Term def="A cohort defined by shared preference structure — e.g., users in a city + age band, or items in a category cluster. Defined upfront by clustering or business taxonomy.">regions</VIS.Term> and gives each region its own LoRA adapter on a frozen LLM backbone. When preferences in region R drift, ONLY the LoRA for R is fine-tuned — other regions are gradient-isolated by construction. At inference a region router classifies the request and merges the matching LoRA into the backbone. The senior trap: this is NOT plain LoRA (no locality), NOT classical incremental fine-tune (no region routing), and NOT mixture-of-experts at inference (the adapters are MERGED, not gated softly — region selection is hard). Region boundaries are brittle: edge cases route to the wrong adapter and silently mis-rank.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        RAIE composes three ideas:{" "}
-        <VIS.Term def="Low-Rank Adaptation. A parameter-efficient fine-tuning method that injects a small low-rank matrix delta-W = A @ B into a frozen pretrained weight W, so only A and B (a tiny fraction of params) train.">LoRA</VIS.Term>{" "}
-        for cheap parameter-efficient updates, <strong>region routing</strong> to isolate updates, and <strong>incremental editing</strong> so new behavior is layered on without overwriting old.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  Q["User request"] --> R["Region classifier"]
-  R --> A1["LoRA adapter A (region 1)"]
-  R --> A2["LoRA adapter B (region 2)"]
-  R --> A3["LoRA adapter C (region 3)"]
-  A1 --> L["Frozen LLM backbone"]
-  A2 --> L
-  A3 --> L
-  L --> O["Recommendations"]
-      `} />
+    <VIS.Section id="sec-what" title="What it is — per-region LoRA adapters with hard region routing">
+      <VIS.Mermaid chart={`flowchart TB
+  REQ["User request"]
+  RTR["Region router (classifier)"]
+  BB["Frozen LLM backbone"]
+  LA["LoRA adapter region A"]
+  LB["LoRA adapter region B"]
+  LC["LoRA adapter region C"]
+  MRG["Merge selected LoRA into backbone"]
+  OUT["Item scores"]
+  REQ --> RTR
+  RTR -->|"region A"| LA
+  RTR -->|"region B"| LB
+  RTR -->|"region C"| LC
+  LA --> MRG
+  LB --> MRG
+  LC --> MRG
+  BB --> MRG
+  MRG --> OUT`} />
       <ul>
-        <li><strong>Region classifier</strong> — a small upstream model that maps each request to one (or more) behavior regions. Regions are predefined: e.g., country, vertical, language, cohort.</li>
-        <li><strong>Per-region LoRA adapter</strong> — one rank-r delta-W per region. Stored compactly; loaded on demand.</li>
-        <li><strong>Frozen LLM backbone</strong> — the pretrained recommendation LLM stays untouched.</li>
-        <li><strong>Incremental editing protocol</strong> — when new data for region X arrives, only adapter X trains. Other regions&apos; adapters are frozen during that update.</li>
+        <li><strong>Frozen LLM backbone</strong> — the heavy parameters never move; only LoRA matrices update. Backbone capacity is reused across all regions.</li>
+        <li><strong>One LoRA per region</strong> — each region owns rank-r matrices A and B; the region&apos;s effective weight delta is the product of the two and is added to the backbone weights at inference.</li>
+        <li><strong>Region router</strong> — a lightweight classifier on request features (geo, demographic, category) decides which region to load.</li>
+        <li><strong>Hard routing, not soft gating</strong> — RAIE picks ONE adapter per request and merges it. MoE/MMoE-style soft gating across multiple experts is a different family.</li>
       </ul>
+      <p>Continual updates touch one adapter at a time; the others remain bit-identical, so a regression in one region cannot silently degrade another.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from baselines">
+    <VIS.Section id="sec-diff" title="How it differs from global LoRA, MoE, and plain incremental fine-tune">
       <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
-        <thead><tr style={{background:"#f1f5f9"}}>
-          <th style={{textAlign:"left",padding:8}}>Strategy</th>
-          <th style={{textAlign:"left",padding:8}}>Cross-region drift</th>
-          <th style={{textAlign:"left",padding:8}}>Param cost / update</th>
-          <th style={{textAlign:"left",padding:8}}>Serving cost</th>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Locality</th>
+          <th style={{textAlign:"left", padding:8}}>Routing</th>
+          <th style={{textAlign:"left", padding:8}}>Cross-region interference</th>
         </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Single global LoRA</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High — every update touches all regions</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Low (one adapter)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>One forward pass</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Full LLM fine-tune</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Highest — catastrophic forgetting</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>One forward pass</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}><strong>RAIE</strong></td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Isolated to one region</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Low (only affected adapter)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Routing + one adapter load</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>One full LLM per region</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Very high</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Highest (per-region serving)</td></tr>
+          <tr><td style={{padding:8}}>Plain fine-tune</td><td style={{padding:8}}>None</td><td style={{padding:8}}>N/A</td><td style={{padding:8}}>High — full bleed</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Global LoRA</td><td style={{padding:8}}>Low rank but global</td><td style={{padding:8}}>N/A</td><td style={{padding:8}}>Medium — still bleeds</td></tr>
+          <tr><td style={{padding:8}}>MMoE / soft MoE</td><td style={{padding:8}}>Soft gating across experts</td><td style={{padding:8}}>Soft (weighted sum)</td><td style={{padding:8}}>Medium — experts overlap</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>RAIE</strong></td><td style={{padding:8}}><strong>Per-region LoRA</strong></td><td style={{padding:8}}><strong>Hard, one adapter</strong></td><td style={{padding:8}}><strong>Zero by construction</strong></td></tr>
         </tbody>
       </table>
-      <p style={{marginTop:12}}>
-        RAIE&apos;s win condition: behavior <em>does</em> partition cleanly into regions whose preference drifts are mostly independent. If regions overlap heavily (a user buys in both US and JP markets), the isolation benefit shrinks.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>LLM-based recsys with a <strong>stable cohort structure</strong> — country, language, vertical, business line.</li>
-        <li>Frequent per-region updates where one region&apos;s changes should not move the others.</li>
-        <li>Regulatory or auditability constraints — "which update affected which users" is answerable per-adapter.</li>
-        <li>Multi-tenant settings where each tenant owns their adapter.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the discriminating insight, then asks for the pick.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Region boundary brittleness</strong> — mis-classification routes the request to the wrong adapter; the trained adapter never sees this signal, so the failure is silent.</li>
-        <li><strong>Edge users</strong> — users with behavior in two regions get inconsistent recommendations as the router flips between adapters.</li>
-        <li><strong>Adapter count explosion</strong> — too many regions and you maintain hundreds of adapters; loading overhead becomes a bottleneck.</li>
-        <li><strong>Stale adapters</strong> — a region with little traffic gets few updates; its adapter ages while neighbors evolve.</li>
-        <li><strong>Cold regions</strong> — a brand-new region needs an initial adapter. Bootstrapping is non-trivial.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick the right move(s); reveal trap and lens after committing.</p>
-
-      <VIS.TrapProblem
-        id="raie-p1" difficulty="hard"
-        title="P1 — Region classifier misroutes 8% of requests. Symptoms?"
-        scenario={<>RAIE assumes clean region boundaries. In production, your router mis-classifies 8% of users (mainly edge users who transact across regions). What happens at the edges? Pick the most likely symptom.</>}
+      <VIS.TrapProblem id="raie-p1" difficulty="hard"
+        title="P1 — RAIE vs global LoRA: load-bearing difference?"
+        scenario={<><em>Discriminating insight: global LoRA still routes ALL training gradients through the same low-rank matrices A,B. Updates for region X&apos;s preferences modify the same parameters that serve region Y, so cross-region interference persists at low rank. RAIE creates SEPARATE A,B per region; gradients are physically gradient-isolated.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Edge users see inconsistent recommendations as the router flips between adapters across sessions; their CTR is systematically worse than pure-region users.", correct:true},
-          {key:"b", text:"Edge users see better recommendations because they get exposed to multiple adapters."},
-          {key:"c", text:"Latency p99 spikes."},
-          {key:"d", text:"Catastrophic forgetting in the global model."},
+          {key:"a", text:"RAIE allocates SEPARATE LoRA matrices per region; updates for region X cannot mathematically perturb region Y&apos;s parameters. Global LoRA shares one set of matrices across regions and still suffers cross-region interference at low rank.", correct:true},
+          {key:"b", text:"They are mathematically equivalent."},
+          {key:"c", text:"Global LoRA has higher capacity than per-region LoRA."},
+          {key:"d", text:"RAIE shares LoRA across regions."},
         ]}
-        trap={<>(b) is the optimistic misread — flipping adapters is not "ensembling," it&apos;s inconsistency. (c) confuses architecture cost with routing failure mode. (d) is impossible because RAIE has no global model to forget from.</>}
-        lens={<>Hard region boundaries fail on edge users. The session-to-session adapter flip looks like a personalization regression — each session the user gets a different "expert," scores diverge, and the user adapts away. Standard mitigations: (1) soft routing (weighted mixture of top-k adapters), (2) shared backbone embeddings the adapters add onto, (3) per-user adapter pinning.</>}
-        stretch={<>How would you measure edge-user CTR vs pure-region CTR cleanly?</>}
+        trap={<>(b)(c)(d) miss the gradient-isolation anchor.</>}
+        lens={<>Per-region LoRA is gradient-isolated by construction; global LoRA is not.</>}
+        stretch={<>What rank-r ablation isolates the locality benefit from sheer capacity?</>}
       />
 
-      <VIS.TrapProblem
-        id="raie-p2" difficulty="hard" multiSelect
-        title="P2 — Region definition tradeoffs"
-        scenario={<>You are choosing how to partition users into regions. Which strategies are reasonable starting points?</>}
+      <VIS.TrapProblem id="raie-p2" difficulty="hard"
+        title="P2 — RAIE vs MMoE/soft MoE: hard routing vs soft gating?"
+        scenario={<><em>Discriminating insight: MMoE softly weights MULTIPLE experts per request and computes a weighted sum; experts overlap and a gradient at one request still touches several experts. RAIE picks ONE adapter and merges it; gradients land on that adapter only. Hard routing trades the soft-gating ensembling for clean gradient isolation.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Static partition by country plus language pair.", correct:true},
-          {key:"b", text:"Learned clustering on user-embedding space.", correct:true},
-          {key:"c", text:"One region per user (full personalization)."},
-          {key:"d", text:"Single region for all users (defeats RAIE)."},
-          {key:"e", text:"Business-line partition (apparel, electronics, grocery).", correct:true},
+          {key:"a", text:"MMoE softly mixes experts via a gating distribution; multiple experts receive gradients per request, so interference persists. RAIE hard-routes to one region and merges that adapter only — gradients are physically confined to one region.", correct:true},
+          {key:"b", text:"They are equivalent."},
+          {key:"c", text:"RAIE uses soft gating like MMoE."},
+          {key:"d", text:"MMoE uses hard routing like RAIE."},
         ]}
-        trap={<>(c) is the per-user adapter strawman — adapter count = user count is infeasible. (d) collapses to single global LoRA.</>}
-        lens={<>Three reasonable: static demographic (a), learned clustering (b), and business-line (e). The right partition depends on (1) how preferences actually cluster, (2) how often regions update, and (3) the serving overhead per adapter. Most production systems start with (a) or (e) and consider (b) for refinement.</>}
-        stretch={<>How many regions before adapter loading becomes the bottleneck?</>}
+        trap={<>(b)(c)(d) collapse the hard/soft distinction.</>}
+        lens={<>Hard routing buys gradient isolation; soft gating buys ensembling.</>}
+        stretch={<>When does soft gating&apos;s ensembling beat RAIE&apos;s isolation?</>}
       />
 
-      <VIS.TrapProblem
-        id="raie-p3" difficulty="medium"
-        title="P3 — Two-region user: pick the routing strategy"
-        scenario={<>A user with confirmed behavior in BOTH US and JP. Pick the strongest routing strategy.</>}
+      <VIS.TrapProblem id="raie-p3" difficulty="hard"
+        title="P3 — Without RAIE, what is the realistic fallback for LLM-based continual recsys?"
+        scenario={<><em>Discriminating insight: fallbacks are (i) plain full fine-tune — expensive, interferes globally; (ii) global LoRA — cheap but still bleeds; (iii) one model per region — no parameter sharing, large total footprint; (iv) freeze the model — no adaptation. RAIE is the engineering sweet spot when regions exist and parameter sharing matters.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Soft routing — return a weighted mixture of US and JP adapter outputs, weights set by user&apos;s behavior balance.", correct:true},
-          {key:"b", text:"Hard pick the region the user is currently logged in from."},
-          {key:"c", text:"Always pick US."},
-          {key:"d", text:"Round-robin between US and JP each session."},
+          {key:"a", text:"Global LoRA (cheap but still bleeds), one frozen model per region (no sharing, large footprint), or full fine-tune (expensive). RAIE wins when regions exist AND backbone sharing is desired.", correct:true},
+          {key:"b", text:"Disable refreshes entirely."},
+          {key:"c", text:"Use RL exploration only."},
+          {key:"d", text:"There is no alternative."},
         ]}
-        trap={<>(b) loses cross-region signal. (c) is arbitrary. (d) is the worst of both worlds — inconsistent and ignores user intent.</>}
-        lens={<>Soft routing is the standard mitigation for edge users. It increases inference cost (two adapter forward passes) but eliminates the session-flip inconsistency. Most RAIE production setups support soft routing for the top 5-10% of edge users and hard routing for the rest.</>}
-        stretch={<>What is the inference-cost overhead of soft-routing 5% of traffic?</>}
+        trap={<>(b)(c)(d) miss the sweet-spot positioning.</>}
+        lens={<>RAIE wins where regions exist and one-model-per-region is too expensive.</>}
+        stretch={<>When would one-model-per-region actually be cheaper?</>}
       />
 
-      <VIS.TrapProblem
-        id="raie-p4" difficulty="hard"
-        title="P4 — Stale adapter for a low-traffic region"
-        scenario={<>The JP-music region adapter has not been retrained in 4 weeks because volume is too low for daily updates. JP-music CTR is now 12% below US-music. Diagnose.</>}
+      <VIS.TrapProblem id="raie-p4" difficulty="hard"
+        title="P4 — Compose RAIE with CCD-Rec time-coupled distillation"
+        scenario={<><em>Discriminating insight: RAIE isolates drift SPATIALLY (across regions); CCD-Rec isolates forgetting TEMPORALLY (across refresh cycles via KD to previous-refresh self). They are orthogonal axes — per-region LoRA per refresh, distilled from previous-refresh region LoRA. Together you get region-local anti-forgetting.</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"Adapter staleness on a low-volume region — preferences drifted but the adapter has not seen recent data. Need a minimum-update-cadence policy regardless of volume.", correct:true},
-          {key:"b", text:"Routing bug — JP traffic is going to the US adapter."},
-          {key:"c", text:"LoRA rank is too low for JP-music."},
-          {key:"d", text:"The frozen backbone is stale."},
+          {key:"a", text:"RAIE isolates SPATIALLY (per-region LoRA); CCD-Rec isolates TEMPORALLY (KD from previous refresh). Combined, each region&apos;s LoRA is distilled from its own previous-refresh LoRA — region-local anti-forgetting.", correct:true},
+          {key:"b", text:"They conflict — pick one."},
+          {key:"c", text:"They are identical."},
+          {key:"d", text:"Combining them doubles inference cost."},
         ]}
-        trap={<>(b) is a routing-failure hypothesis but should be checked separately. (c) blames capacity when the issue is freshness. (d) is impossible — the backbone freeze is by design.</>}
-        lens={<>Per-region adapters age at per-region rates. A pure data-driven cadence under-updates low-volume regions. Mitigations: minimum-cadence policy (every region trains at least weekly even on small data), cross-region transfer (similar adjacent regions seed each other), or a "global drift" detector that flags stale adapters.</>}
-        stretch={<>How would you transfer from US-music to JP-music to bootstrap the latter?</>}
+        trap={<>(b)(c)(d) deny composition.</>}
+        lens={<>Spatial vs temporal isolation are orthogonal axes.</>}
+        stretch={<>Does inference cost actually grow with the stack? (No — only one adapter is loaded.)</>}
       />
 
-      <VIS.TrapProblem
-        id="raie-p5" difficulty="medium" multiSelect
-        title="P5 — LoRA rank choice per region"
-        scenario={<>Different regions may benefit from different LoRA ranks. Which considerations are valid?</>}
+      <VIS.TrapProblem id="raie-p5" difficulty="medium"
+        title="P5 — How are regions defined?"
+        scenario={<><em>Discriminating insight: regions can be (i) clustered from user behavior embeddings, (ii) defined by a business taxonomy (geo + age band, product category cluster), or (iii) learned jointly with the router. RAIE assumes regions are SOMEHOW well-defined and STABLE — drift in the region definition itself breaks routing.</em><br/>How are regions typically defined?</>}
         options={[
-          {key:"a", text:"Higher rank for regions with more diverse behavior (e.g., a heterogeneous US market).", correct:true},
-          {key:"b", text:"Lower rank for regions whose behavior is narrow and consistent.", correct:true},
-          {key:"c", text:"Tie rank to traffic volume to amortize compute.", correct:true},
-          {key:"d", text:"All regions must use the same rank."},
-          {key:"e", text:"Rank should always be maximal."},
+          {key:"a", text:"Either by clustering user/item behavior embeddings, by business taxonomy (geo + age + category), or jointly with the router. Whatever the method, regions must be reasonably STABLE — if the boundaries drift, the router routes to the wrong adapter.", correct:true},
+          {key:"b", text:"Random assignment."},
+          {key:"c", text:"Per-user single-cluster routing."},
+          {key:"d", text:"Always learned by the LLM itself."},
         ]}
-        trap={<>(d) and (e) are blanket rules. The point of per-region adapters is that each can be sized to its own signal.</>}
-        lens={<>Three valid: behavior diversity (a), behavior consistency (b), traffic-driven amortization (c). Rank is the per-region capacity knob — too low under-fits, too high over-fits given thin region data. Typical rank values: 8-64.</>}
-        stretch={<>How would you tune rank per region without a full sweep?</>}
+        trap={<>(b) defeats locality. (c) makes router degenerate. (d) overclaims.</>}
+        lens={<>Region definition is a precondition; RAIE assumes stable boundaries.</>}
+        stretch={<>How would you detect region boundary drift?</>}
       />
 
-      <VIS.TrapProblem
-        id="raie-p6" difficulty="hard"
-        title="P6 — Adapter loading cost at serving time"
-        scenario={<>You have 200 regions. Loading the right adapter per request adds latency. Pick the strongest mitigation.</>}
+      <VIS.TrapProblem id="raie-p6" difficulty="hard"
+        title="P6 — Pick the continual learning recipe"
+        scenario={<><em>Discriminating insight: an LLM-based recsys serves K=8 distinct user cohorts (geo + age band). Cohort A&apos;s preferences shift weekly; cohorts B-H stay stable. Global LoRA refresh ripples noise into B-H every time A drifts. RAIE is purpose-built.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Cache hot adapters in GPU memory; cold-tier ones live in CPU and are paged in on demand.", correct:true},
-          {key:"b", text:"Load all 200 adapters into GPU memory always."},
-          {key:"c", text:"Use a single global adapter."},
-          {key:"d", text:"Switch to a smaller LLM backbone."},
+          {key:"a", text:"RAIE — per-cohort LoRA adapters; updating cohort A&apos;s adapter does NOT touch B-H. Frozen LLM backbone is shared.", correct:true},
+          {key:"b", text:"Global LoRA — A updates ripple into B-H."},
+          {key:"c", text:"Full fine-tune — expensive and interferes globally."},
+          {key:"d", text:"Static model — no adaptation."},
         ]}
-        trap={<>(b) wastes GPU memory; many regions are rarely used. (c) defeats RAIE. (d) is unrelated to the loading problem.</>}
-        lens={<>Adapter cache management is the operational lever. Most production RAIE setups have a hot tier (~20-30 most-used adapters in GPU), a warm tier (CPU memory), and a cold tier (disk). LoRA adapters are small (~MB each) so the page-in cost is modest.</>}
-        stretch={<>How large can the hot tier grow before GPU memory becomes a problem?</>}
+        trap={<>(b) fails the isolation requirement. (c)(d) violate constraints.</>}
+        lens={<>Distinct stable cohorts + per-cohort drift = RAIE.</>}
+        stretch={<>What is the minimum K where RAIE&apos;s overhead is justified vs global LoRA?</>}
       />
 
-      <VIS.TrapProblem
-        id="raie-p7" difficulty="hard" mode="ordered"
-        title="P7 — Order your debugging steps when RAIE recall drops in one region"
-        scenario={<>US-electronics recall@20 drops 5%. Other regions are healthy. No deploy. Order the diagnostic steps. Wrong moves do not get ranked.</>}
+      <VIS.TrapProblem id="raie-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just lower the LoRA rank in global LoRA&rdquo;"
+        scenario={<><em>Discriminating insight: lowering the rank reduces TOTAL capacity but does NOT change WHERE that capacity is shared. Even at rank 1, the same matrices A,B serve all regions and gradients from one region still touch parameters used by another. Locality is a structural property, not a capacity property.</em><br/>Why is lower rank insufficient?</>}
         options={[
-          {key:"a", text:"Check the US-electronics adapter&apos;s last-trained timestamp.", order:1},
-          {key:"b", text:"Compare the US-electronics adapter&apos;s weight norm now vs last good checkpoint.", order:2},
-          {key:"c", text:"Disable RAIE and fall back to global LoRA."},
-          {key:"d", text:"Inspect the region classifier&apos;s confusion matrix for US-electronics vs neighbors.", order:3},
-          {key:"e", text:"Page every engineer."},
+          {key:"a", text:"Rank controls capacity; locality controls WHERE that capacity lives. Even rank-1 global LoRA still routes all regions&apos; gradients through the same matrices. RAIE&apos;s win is structural (per-region matrices) not capacity-based.", correct:true},
+          {key:"b", text:"Low rank is equivalent to per-region locality."},
+          {key:"c", text:"Rank does not affect interference."},
+          {key:"d", text:"Higher rank reduces interference."},
         ]}
-        trap={<>(c) is destructive without diagnosis. (e) is premature.</>}
-        lens={<>The natural ladder for region-isolated bugs: adapter freshness → adapter health → routing correctness. The fact that other regions are healthy isolates the problem to the affected adapter or its routing.</>}
-        stretch={<>What single monitoring signal would have caught this earlier?</>}
+        trap={<>(b)(c)(d) miss the structural vs capacity distinction.</>}
+        lens={<>Locality is structural; rank is capacity. Different knobs.</>}
+        stretch={<>How does interference scale with rank in global LoRA?</>}
       />
 
-      <VIS.TrapProblem
-        id="raie-p8" difficulty="medium"
-        title="P8 — Bootstrapping a brand-new region"
-        scenario={<>You expand to a new country. No interaction data yet. How do you create its adapter?</>}
+      <VIS.TrapProblem id="raie-p8" difficulty="hard"
+        title="P8 — RAIE anchor (per-region LoRA + hard routing): pitch it"
+        scenario={<><em>Discriminating insight: anchor is &ldquo;frozen LLM backbone + one LoRA per region + a router picks exactly one adapter at inference.&rdquo; The pitch must name all three: backbone-frozen, per-region LoRA, and hard routing. Drop any one and it collapses to global LoRA or MoE.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Initialize from the closest-neighbor region&apos;s adapter (e.g., same language or cultural cluster) and update as data arrives.", correct:true},
-          {key:"b", text:"Initialize from random."},
-          {key:"c", text:"Wait until you have 1M interactions, then train from scratch."},
-          {key:"d", text:"Use a single global adapter for the new region forever."},
+          {key:"a", text:"Frozen LLM backbone shared across all regions; one LoRA adapter per behavior region; a region router classifies the request and merges exactly ONE adapter into the backbone for inference. Gradients are confined to the routed region.", correct:true},
+          {key:"b", text:"We train a separate model per region from scratch."},
+          {key:"c", text:"We use soft gating over multiple experts."},
+          {key:"d", text:"We unfreeze the backbone every cycle."},
         ]}
-        trap={<>(b) is the cold-start trap. (c) leaves the new region under-served for weeks. (d) defeats RAIE.</>}
-        lens={<>Neighbor-initialization is the standard bootstrap. The new region inherits a working adapter and refines it as data accumulates. This is a transfer-learning move on the adapter level.</>}
-        stretch={<>How do you pick the closest-neighbor region automatically?</>}
+        trap={<>(b) loses sharing. (c) loses isolation. (d) loses the cheap-update property.</>}
+        lens={<>Backbone-frozen + per-region LoRA + hard routing are inseparable.</>}
+        stretch={<>What if the router itself is wrong on some requests?</>}
       />
 
-      <VIS.TrapProblem
-        id="raie-p9" difficulty="hard" multiSelect
-        title="P9 — Failure modes specific to RAIE (not generic LoRA)"
-        scenario={<>Select all that apply.</>}
+      <VIS.TrapProblem id="raie-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use RAIE. Select all that apply."
+        scenario={<><em>Discriminating insight: RAIE needs (i) well-defined regions, (ii) stable region boundaries, (iii) a reliable router. It is wrong when regions are fluid, when there is one big undifferentiated cohort, or when the router accuracy is low (mis-routing kills the win).</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Region classifier mis-routing — request reaches wrong adapter.", correct:true},
-          {key:"b", text:"Edge-user inconsistency from hard routing.", correct:true},
-          {key:"c", text:"Adapter staleness on low-volume regions.", correct:true},
-          {key:"d", text:"Random init failures."},
-          {key:"e", text:"Standard LoRA rank mismatches."},
+          {key:"a", text:"One big undifferentiated user cohort with no meaningful sub-structure — global LoRA is simpler and equally effective.", correct:true},
+          {key:"b", text:"Router accuracy is low (less than 80%) — most requests route to the wrong adapter; the isolation property is wasted.", correct:true},
+          {key:"c", text:"Region boundaries drift weekly — the per-region LoRA gets trained on the wrong cohort definition.", correct:true},
+          {key:"d", text:"Stable 8-region recommender on a frozen LLM backbone with cohort-specific drift (sweet spot)."},
+          {key:"e", text:"Need soft ensembling across multiple experts per request — RAIE&apos;s hard routing forbids this.", correct:true},
         ]}
-        trap={<>(d) and (e) are generic ML / LoRA concerns; not RAIE-specific.</>}
-        lens={<>Three RAIE-specific risks: mis-routing, edge-user inconsistency, per-region staleness. All trace back to the central assumption — that regions are well-defined and traffic distributes cleanly across them. Anywhere that assumption is shaky, one of these surfaces.</>}
-        stretch={<>Which of these is hardest to detect in production?</>}
+        trap={<>(d) sweet spot.</>}
+        lens={<>RAIE needs stable regions and a reliable router.</>}
+        stretch={<>What router accuracy is the break-even vs global LoRA?</>}
       />
 
-      <VIS.TrapProblem
-        id="raie-p10" difficulty="hard"
-        title="P10 — When NOT to use RAIE"
-        scenario={<>Pick the strongest case AGAINST RAIE.</>}
+      <VIS.TrapProblem id="raie-p10" difficulty="hard"
+        title="P10 — What happens at region edges?"
+        scenario={<><em>Discriminating insight: a request near the boundary between region A and region B will be routed to one of them (hard routing). If routed to A but the user truly belongs to B, the merged LoRA-A is wrong; the response is silently sub-optimal. RAIE has no graceful blend across boundaries — that is the limitation in exchange for clean gradient isolation.</em><br/>What is the cost?</>}
         options={[
-          {key:"a", text:"A small product with a homogeneous user base — no meaningful region partition exists; the overhead of routing buys nothing.", correct:true},
-          {key:"b", text:"Multi-country e-commerce."},
-          {key:"c", text:"Multi-vertical marketplace."},
-          {key:"d", text:"Multi-language chat assistant."},
+          {key:"a", text:"Hard routing means edge-of-region requests get the wrong adapter and silently mis-rank. There is no graceful soft blend; the cost is paid in exchange for gradient isolation during training. Mitigation is router calibration and overlapping region definitions, not soft gating.", correct:true},
+          {key:"b", text:"Edge cases are handled automatically."},
+          {key:"c", text:"RAIE soft-blends across boundaries."},
+          {key:"d", text:"Edge cases never occur in practice."},
         ]}
-        trap={<>(b), (c), (d) all have natural region partitions and benefit from RAIE.</>}
-        lens={<>RAIE&apos;s value comes from isolating updates across distinct regions. If no such regions exist (a homogeneous user base), routing is overhead with no payoff. Likewise, if regions overlap heavily, the isolation benefit shrinks. Always justify region structure with data before adopting RAIE.</>}
-        stretch={<>What test would prove your user base is actually homogeneous?</>}
+        trap={<>(b)(c)(d) deny the edge limitation.</>}
+        lens={<>Hard routing forfeits soft-blend at edges; that is the deliberate cost.</>}
+        stretch={<>How would you detect edge-case mis-routing in production?</>}
       />
 
-      <VIS.TrapProblem
-        id="raie-p11" difficulty="medium"
-        title="P11 — Auditability win"
-        scenario={<>A regulator asks: "what model changed for users in country X on date Y?" RAIE makes this easier than single global LoRA. Why?</>}
+      <VIS.TrapProblem id="raie-p11" difficulty="hard"
+        title="P11 — RAIE update mechanics"
+        scenario={<><em>Discriminating insight: at update time for region R, only LoRA-R&apos;s matrices A_R, B_R receive gradients; backbone is frozen; other regions&apos; A_X, B_X are not touched. The forward pass during training merges A_R B_R into the backbone for that batch. The router is typically frozen during a single region update.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Each region&apos;s adapter has its own training history; you can point at one adapter, one training run, one set of training data.", correct:true},
-          {key:"b", text:"Global LoRA is illegal."},
-          {key:"c", text:"RAIE keeps logs that global LoRA does not."},
-          {key:"d", text:"RAIE is interpretable."},
+          {key:"a", text:"Only A_R and B_R receive gradients; the frozen LLM backbone and other regions&apos; LoRA matrices are untouched. The forward pass merges A_R B_R into the backbone for the training batch. Router is usually frozen during a single region update.", correct:true},
+          {key:"b", text:"All region LoRAs are updated together."},
+          {key:"c", text:"The backbone is unfrozen."},
+          {key:"d", text:"The router is retrained every batch."},
         ]}
-        trap={<>(b), (c), (d) are tangential. The actual auditability win is structural, not logging-based.</>}
-        lens={<>Region isolation is also legal isolation: updates to country X live in adapter X with its own training data. Compliance teams can audit one adapter without entangling unrelated regions. This is increasingly a deciding factor in regulated industries (financial advice, healthcare-adjacent recs).</>}
-        stretch={<>How would you prove that an update did NOT affect users outside its region?</>}
+        trap={<>(b)(c) defeat isolation. (d) destabilizes routing.</>}
+        lens={<>Gradient confinement to the routed region; backbone and other regions frozen.</>}
+        stretch={<>When would you re-train the router?</>}
       />
+
+      <VIS.TrapProblem id="raie-p12" difficulty="hard"
+        title="P12 — What does RAIE deliberately drop vs global LoRA?"
+        scenario={<><em>Discriminating insight: global LoRA shares capacity across all regions, so a pattern that generalizes everywhere benefits all regions at once. RAIE forfeits that: a pattern that emerges in region A is not automatically propagated to region B. Cross-region generalization must come from the frozen backbone or explicit transfer.</em><br/>What is the dropped property?</>}
+        options={[
+          {key:"a", text:"Cross-region generalization in the adaptive layer. A pattern learned in region A&apos;s LoRA stays in A; it does not bleed into B. Cross-region generalization must come from the frozen backbone or via explicit transfer (e.g., periodic cross-region distillation).", correct:true},
+          {key:"b", text:"RAIE forfeits gradient descent."},
+          {key:"c", text:"RAIE forfeits the LLM backbone."},
+          {key:"d", text:"RAIE forfeits LoRA."},
+        ]}
+        trap={<>(b)(c)(d) miss the property.</>}
+        lens={<>Isolation costs cross-region generalization in the adapter.</>}
+        stretch={<>How would explicit cross-region transfer work without breaking isolation?</>}
+      />
+
+      <VIS.TrapProblem id="raie-p13" difficulty="hard"
+        title="P13 — Most fragile knob in RAIE"
+        scenario={<><em>Discriminating insight: the REGION DEFINITION and the ROUTER ACCURACY jointly determine RAIE&apos;s value. If regions are misdefined or the router is wrong, every other knob is moot. LoRA rank next; LR after; batch size last.</em><br/>Rank.</>}
+        options={[
+          {key:"a", text:"Region definition + router accuracy is most fragile (mis-defined regions or low router accuracy destroy the win); LoRA rank next; LR after; batch size last.", correct:true},
+          {key:"b", text:"Optimizer choice is most fragile."},
+          {key:"c", text:"Backbone embedding size."},
+          {key:"d", text:"Activation function choice."},
+        ]}
+        trap={<>(b)(c)(d) miss the routing-centric fragility.</>}
+        lens={<>Routing is the load-bearing system component.</>}
+        stretch={<>What router metric would you monitor in production?</>}
+      />
+
+      <VIS.TrapProblem id="raie-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: RAIE assumes region preferences are MORE INTERNALLY CONSISTENT than ACROSS regions. If a region is internally heterogeneous (e.g., &ldquo;urban gen-Z&rdquo; mixes night-owl gamers and morning runners), the per-region LoRA learns an average that satisfies neither sub-cohort.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"Within-region heterogeneity dominates between-region variance. The per-region LoRA learns a useless average; sub-cohorts are silently mis-served. Re-partition regions or accept the loss.", correct:true},
+          {key:"b", text:"GPU OOM during adapter merge."},
+          {key:"c", text:"Off-by-one in region IDs."},
+          {key:"d", text:"Tokenizer mismatch."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>RAIE needs between-region variance to exceed within-region variance.</>}
+        stretch={<>What clustering quality metric tests this?</>}
+      />
+
+      <VIS.TrapProblem id="raie-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;the router dominates inference cost&rdquo;"
+        scenario={<><em>Discriminating insight: the router is a lightweight classifier (often a small MLP on request features). Its cost is dwarfed by the LLM forward pass and the LoRA merge. The LLM backbone forward is the dominant cost; the router is rounding error.</em><br/>Why is &ldquo;router dominates&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"The router is a tiny classifier; LLM forward + LoRA merge dominate inference cost. The router&apos;s wall-clock contribution is rounding error compared to the backbone.", correct:true},
+          {key:"b", text:"The router is bigger than the LLM."},
+          {key:"c", text:"The router runs at every layer."},
+          {key:"d", text:"There is no router in RAIE."},
+        ]}
+        trap={<>(b)(c)(d) misidentify costs.</>}
+        lens={<>Router is cheap; backbone dominates.</>}
+        stretch={<>What is the realistic ms cost of router vs backbone?</>}
+      />
+
+      <VIS.TrapProblem id="raie-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;RAIE is just multi-LoRA&rdquo; cascades into (i) soft-gating multiple adapters (defeats isolation), (ii) sharing LoRA matrices across regions (defeats locality), (iii) unfreezing the backbone (defeats the cheap-update story). Each piece is load-bearing.</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: soft-gating destroys gradient isolation; shared LoRA destroys locality; unfrozen backbone destroys the cheap-update story. RAIE needs hard routing + per-region LoRA + frozen backbone together.", correct:true},
+          {key:"b", text:"Only the routing scheme."},
+          {key:"c", text:"Only the LoRA rank."},
+          {key:"d", text:"Nothing — RAIE really is just multi-LoRA."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Hard routing, per-region LoRA, frozen backbone — all three load-bearing.</>}
+        stretch={<>What ablation isolates each piece?</>}
+      />
+
+      <VIS.TrapProblem id="raie-p17" difficulty="medium"
+        title="P17 — Senior vs junior diagnostic"
+        scenario={<><em>Discriminating insight: when region A&apos;s metric drops, a junior re-trains region A&apos;s LoRA harder. A senior first checks router accuracy on region A — if router routes A&apos;s requests to B&apos;s adapter, more A training does nothing. Router calibration is the first diagnostic.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Measure router accuracy on the affected region first. If many A-requests are routed to B&apos;s adapter, fixing A&apos;s LoRA does nothing — the router is the bug. Recalibrate the router (more training data, better features) before touching the adapter.", correct:true},
+          {key:"b", text:"Just train region A&apos;s LoRA harder."},
+          {key:"c", text:"Increase the LLM backbone size."},
+          {key:"d", text:"Disable RAIE entirely."},
+        ]}
+        trap={<>(b)(c)(d) miss the routing diagnostic.</>}
+        lens={<>Router accuracy on the affected region is the first diagnostic.</>}
+        stretch={<>What dashboard panel would show per-region router accuracy?</>}
+      />
+
+      <VIS.TrapProblem id="raie-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: drift in region boundaries"
+        scenario={<><em>Discriminating insight: A/B test shows RAIE underperforms global LoRA on a previously-strong region. Team blames the adapter. Real cause: the region was DEFINED 6 months ago by geo + age, but the population in that geo + age band has changed (e.g., post-pandemic migration). The adapter is trained on the old definition; new users in that geo do not match. Fix is to re-cluster regions and retrain, not to abandon RAIE.</em><br/>Most likely cause?</>}
+        options={[
+          {key:"a", text:"Region boundaries drifted while the LoRA was held fixed. Re-cluster regions on current data and retrain affected adapters; do not abandon RAIE on the basis of a stale region definition.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Disk full."},
+        ]}
+        trap={<>(b)(c)(d) generic infra suspects.</>}
+        lens={<>Region definitions are not free; they must be revisited.</>}
+        stretch={<>How often should regions be re-clustered?</>}
+      />
+
+      <VIS.TrapProblem id="raie-p19" difficulty="hard"
+        title="P19 — Production gotcha: adapter merge vs runtime hot-swap"
+        scenario={<><em>Discriminating insight: RAIE&apos;s per-request adapter merge implies the runtime must load DIFFERENT LoRA matrices depending on the routed region. Hot-swapping LoRA at every request is slow if naively implemented. Production systems batch requests by region and merge once per batch, or precompute fused per-region weights.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Batch requests by region so the LoRA merge happens once per batch, not per request. Alternatively precompute fused per-region weights and switch between them. Naive per-request merge dominates latency for serving traffic.", correct:true},
+          {key:"b", text:"Merge every layer at every request."},
+          {key:"c", text:"Re-train the LoRA at serving time."},
+          {key:"d", text:"Skip the merge entirely."},
+        ]}
+        trap={<>(b)(c)(d) destabilize or violate the design.</>}
+        lens={<>Batch by region; merge per batch, not per request.</>}
+        stretch={<>What latency impact does per-request merge have at production QPS?</>}
+      />
+
+      <VIS.TrapProblem id="raie-p20" difficulty="hard"
+        title="P20 — Failure on Friday: region C latency spikes after a deploy"
+        scenario={<><em>Discriminating insight: the deploy added region D and bumped the adapter count to 9. Runtime adapter cache was sized for 8 adapters; every request to region C now evicts and reloads C&apos;s adapter on a cache miss. Latency on region C spikes despite no change to its adapter. Diagnosis: cache sizing, not adapter logic.</em><br/>3am page. Diagnose.</>}
+        options={[
+          {key:"a", text:"Runtime adapter cache is undersized for the new region count; cache misses on region C cause adapter reload-on-every-request. Resize the cache to at least one slot per region (or use precomputed fused weights).", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Disk full."},
+          {key:"d", text:"Random seed changed."},
+        ]}
+        trap={<>(b)(c)(d) miss the per-region cache sizing.</>}
+        lens={<>Adapter cache must scale with region count.</>}
+        stretch={<>What runtime metric would catch this earlier?</>}
+      />
+
+      <VIS.TrapProblem id="raie-p21" difficulty="medium"
+        title="P21 — Library default that bites: LoRA target modules"
+        scenario={<><em>Discriminating insight: PEFT defaults attach LoRA only to q_proj and v_proj of attention. For recsys-specific behavior in MLP/FFN layers, that default under-fits the adaptation surface — and RAIE then under-isolates regions because the discriminating behavior lives in the FFN. Extend target modules to include MLP/FFN.</em><br/>What is the gotcha?</>}
+        options={[
+          {key:"a", text:"Default PEFT LoRA target modules are q_proj and v_proj only; recsys-specific behavior often lives in MLP/FFN layers. Extend target_modules to include FFN to give the per-region LoRA enough surface to isolate region behavior.", correct:true},
+          {key:"b", text:"Default LR is too high."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>LoRA target_modules must cover the layers where region-specific behavior lives.</>}
+        stretch={<>How would you discover which layers carry region-specific signal?</>}
+      />
+
+      <VIS.TrapProblem id="raie-p22" difficulty="hard" ordered
+        title="P22 — Order the RAIE rollout"
+        scenario={<><em>Discriminating insight: rollout is (1) define regions via clustering or taxonomy, (2) train router on labeled region examples, (3) initialize per-region LoRA, (4) joint or per-region adapter training, (5) shadow-test router accuracy and per-region metric, (6) ramp. Skipping router validation before adapter training is the classic mistake.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Define regions -> train router -> validate router accuracy on holdout -> initialize per-region LoRA -> train adapters -> shadow-test per-region metric -> ramp.", correct:true},
+          {key:"b", text:"Train adapters before defining regions."},
+          {key:"c", text:"Skip router validation."},
+          {key:"d", text:"Ramp before shadow-testing."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Regions -> router -> validate router -> adapters -> shadow -> ramp.</>}
+        stretch={<>Why validate the router BEFORE training adapters?</>}
+      />
+
+      <VIS.TrapProblem id="raie-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks RAIE&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: if regions are nearly identical (low between-region preference variance), every per-region LoRA learns approximately the same matrices. RAIE then equals global LoRA but pays K-fold parameter cost for nothing.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"Regions with near-identical preference distributions — each LoRA converges to roughly the same matrices. RAIE buys nothing but pays K-fold parameter storage and a routing layer.", correct:true},
+          {key:"b", text:"8-region stable LLM recsys (sweet spot)."},
+          {key:"c", text:"Distinct cohorts with cohort-specific drift (sweet spot)."},
+          {key:"d", text:"Stable region boundaries with reliable router (sweet spot)."},
+        ]}
+        trap={<>(b)(c)(d) sweet spots.</>}
+        lens={<>RAIE needs meaningful between-region variance.</>}
+        stretch={<>What variance ratio tells you RAIE is worth it?</>}
+      />
+
+      <VIS.TrapProblem id="raie-p24" difficulty="hard"
+        title="P24 — Named failure: router-drift cascade"
+        scenario={<><em>Discriminating insight: router is initially calibrated to 95% accuracy. Over months, user behavior shifts and router accuracy decays to 70%; 30% of requests now hit the wrong adapter; per-region metrics silently drop. The fix is automated router re-calibration on a schedule (or based on a drift signal), not bigger adapters.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Router drift — the router decays from 95% to 70% accuracy as the population shifts; 30% of requests hit the wrong adapter. Add a scheduled (or drift-triggered) router re-calibration; bigger adapters do not help.", correct:true},
+          {key:"b", text:"Increase adapter rank."},
+          {key:"c", text:"Add more regions."},
+          {key:"d", text:"Disable the router."},
+        ]}
+        trap={<>(b)(c) miss the root cause. (d) defeats the design.</>}
+        lens={<>Router must be re-calibrated; it is a moving component.</>}
+        stretch={<>What router accuracy threshold should trigger recalibration?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/html/2603.00638v1" target="_blank" rel="noopener"><strong>Authors — RAIE: Region-Aware Incremental Preference Editing with LoRA for LLM-based Recommendation</strong></a> <span style={{color:"#64748b", fontSize:14}}>(arXiv 2603.00638, 2026)</span><br/>The original RAIE paper. Read the ablation section on region granularity.</li>
-        <li><a href="https://arxiv.org/abs/2106.09685" target="_blank" rel="noopener"><strong>Hu et al. — LoRA: Low-Rank Adaptation of Large Language Models</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>The original LoRA paper. Required background — explains why low-rank deltas are enough to specialize a frozen backbone.</li>
-        <li><a href="https://huggingface.co/blog/peft" target="_blank" rel="noopener"><strong>Hugging Face — Parameter-Efficient Fine-Tuning (PEFT) blog</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Practitioner intro to LoRA + adapter mixtures. Useful for the production engineering side.</li>
-        <li><a href="https://eugeneyan.com/writing/recsys-llm/" target="_blank" rel="noopener"><strong>Eugene Yan — RecSys in the LLM Era</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Context on how LLM-based recsys is deployed and updated — RAIE sits inside this ecosystem.</li>
-        <li><a href="https://arxiv.org/abs/2308.07107" target="_blank" rel="noopener"><strong>Lin et al. — Recommendation Systems in the Era of Large Language Models</strong></a> <span style={{color:"#64748b", fontSize:14}}>(survey)</span><br/>Comprehensive survey of LLM4Rec design patterns; helps place RAIE in the broader landscape.</li>
+        <li><a href="https://arxiv.org/html/2603.00638v1" target="_blank" rel="noopener">RAIE — <em>Region-Aware Incremental Preference Editing with LoRA for LLM-based Recommendation</em> (arXiv 2603.00638, 2026)</a> — the source paper.</li>
+        <li><a href="https://arxiv.org/abs/2106.09685" target="_blank" rel="noopener">Hu et al., <em>LoRA: Low-Rank Adaptation of Large Language Models</em> (ICLR 2022)</a> — canonical LoRA paper that RAIE specializes.</li>
+        <li><a href="https://huggingface.co/docs/peft/index" target="_blank" rel="noopener">HuggingFace PEFT — documentation</a> — practical LoRA/adapter library with target_modules guidance directly relevant to P21.</li>
+        <li><a href="https://magazine.sebastianraschka.com/p/practical-tips-for-finetuning-llms" target="_blank" rel="noopener">Sebastian Raschka — <em>Practical Tips for Fine-tuning LLMs Using LoRA</em> (blog)</a> — practitioner walkthrough on LoRA rank, target modules, and adapter management.</li>
+        <li><a href="https://lilianweng.github.io/posts/2023-01-10-inference-optimization/" target="_blank" rel="noopener">Lilian Weng — <em>Large Transformer Model Inference Optimization</em> (blog)</a> — adapter merge / hot-swap patterns relevant to P19.</li>
+        <li><a href="https://eugeneyan.com/writing/llm-recsys/" target="_blank" rel="noopener">Eugene Yan — <em>LLMs for Recsys</em> (blog)</a> — how LLM backbones are used in production recommenders; context for why per-region adapters matter.</li>
       </ul>
     </VIS.Section>
   </main>

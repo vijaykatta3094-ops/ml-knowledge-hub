@@ -1414,262 +1414,437 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 14
+// CCD-Rec — Continual Collaborative Distillation
+// Unique mechanism: at each incremental refresh, the PREVIOUS-VERSION model
+// becomes the TEACHER and the NEW model is the STUDENT. The student trains on
+// the new data window AND a KD loss against the old model on a SHARED ITEM
+// SET so user-stable preferences are preserved while new behavior is absorbed.
+// Selective REPLAY of informative samples narrows the KD support set.
+// Anchor that survives §2a redaction: "model at time t-1 distills into model
+// at time t over a shared/replay item set; user-stable preferences are pulled
+// forward by the KD loss while new data drives the task loss." This is NOT
+// plain incremental fine-tune (no teacher) and NOT classical KD (no time axis).
+// Continual pair (CCD-Rec vs RAIE): both incremental-learning recipes but
+// different angles — CCD-Rec is SELF-distillation across TIME (preserve stable
+// preferences); RAIE is REGION-LOCAL LoRA edits (isolate drift to a cohort).
+// Cross-batch (QAD batch 13): QAD is precision-coupled distillation (FP32->INT8);
+// CCD-Rec is time-coupled (model_t-1 -> model_t). Different coupling axis.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Continual learning"
+      pill="RecSys SOTA · Continual learning for recs"
       title="CCD-Rec — Continual Collaborative Distillation"
-      subtitle="Distill the previous-version recommender into the current one so daily/hourly updates absorb new behavior without forgetting stable user preferences."
+      subtitle="At every refresh, the PREVIOUS model becomes the TEACHER of the NEW model on a shared/replay item set. New data drives the task loss; the time-shifted KD loss preserves user-stable preferences and prevents catastrophic forgetting."
       byline={[
-        {label: "Source", value: "Wang et al., KDD 2024"},
-        {label: "Domain", value: "Incremental/online retraining of production recommenders"},
+        {label: "Sources", value: "Wang et al., 'Continual Collaborative Distillation for Recommender System' (KDD 2024)"},
+        {label: "Surface", value: "Production recsys with daily/hourly refresh cadence and limited compute budget per cycle"},
+        {label: "Anchor that survives redaction", value: "Model at time t-1 distills into model at time t over a shared replay set; KD pulls forward stable preferences while task loss absorbs new behavior"},
       ]}/>
 
     <VIS.TLDR>
-      Plain fine-tuning on the newest day of clicks catastrophically forgets stable long-term preferences; full retraining from scratch is too expensive at production cadence. <strong>CCD-Rec</strong> treats <em>last hour's</em> model as a teacher, distills its predictions into the new student, and replays only the most informative historical samples. Result: the student keeps stable preferences AND absorbs fresh data — at a fraction of full-retrain cost.
+      Production recommenders refresh constantly. Plain incremental fine-tuning on the new data window <VIS.Term def="A model trained on fresh data overwrites parameters that encoded older stable patterns; behavior on long-tail or returning users degrades because the older signal is gone from the weights.">catastrophically forgets</VIS.Term> stable user preferences; full retraining is too expensive at production cadence. CCD-Rec runs a <VIS.Term def="Knowledge Distillation. A student model is trained to match a teacher model&apos;s soft outputs (logits / embeddings / scores) in addition to the task labels.">KD</VIS.Term> loss where the TEACHER is the model from the PREVIOUS REFRESH (the &ldquo;collaborator&rdquo; across time) and the STUDENT is the new model — both evaluated on a SHARED item set with selective replay. New data drives the task loss; the time-shifted KD loss pulls user-stable preferences forward. The senior trap: this is NOT classical KD (no time axis, no self-loop) and NOT plain incremental learning (no teacher), and the &ldquo;collaborative&rdquo; word does NOT mean federated — it means the model collaborates with its own past self.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        CCD-Rec is a self-distillation framework for{" "}
-        <VIS.Term def="Training a model incrementally on freshly arriving data (e.g., the past hour or day of interactions) rather than re-running on the full historical log every time.">incremental recommender updates</VIS.Term>.
-        Three pieces compose:
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  T["Teacher = previous-version model"] --> D["Distillation loss on shared inputs"]
-  N["New interactions batch"] --> S["Student = current model"]
-  R["Selective replay buffer"] --> S
-  D --> S
-  S --> O["Updated model serving traffic"]
-      `} />
+    <VIS.Section id="sec-what" title="What it is — time-coupled self-distillation with selective replay">
+      <VIS.Mermaid chart={`flowchart TB
+  D0["Data window t-1"]
+  D1["Data window t (new)"]
+  M0["Teacher (model t-1, frozen)"]
+  M1["Student (model t)"]
+  R["Shared/replay item set"]
+  L1["KD loss on R"]
+  L2["Task loss on new window"]
+  STAR["Stable prefs preserved"]
+  NEW["New behavior absorbed"]
+  D0 --> M0
+  D1 --> M1
+  M0 --> R
+  M1 --> R
+  R --> L1
+  D1 --> L2
+  L1 --> STAR
+  L2 --> NEW
+  STAR --> M1
+  NEW --> M1`} />
       <ul>
-        <li><strong>Teacher</strong> — the previous deployed checkpoint. Frozen during the update. Its job is to remind the student of preferences learned from older data the student no longer sees.</li>
-        <li><strong>Student</strong> — current trainable model. Sees new interactions and a small replay buffer.</li>
-        <li><strong>Distillation loss</strong> — KL or MSE between teacher and student logits/scores on a shared input set (often the current batch's users with their historical items).</li>
-        <li><strong>Selective replay</strong> — only the most <em>informative</em> historical samples are kept (high disagreement, high uncertainty, or active users). Cheap proxy for full replay.</li>
+        <li><strong>Teacher = previous-refresh model</strong> — at refresh t, the frozen model from t-1 is reused as teacher. No external teacher is trained.</li>
+        <li><strong>Shared/replay set R</strong> — KD is computed on a curated item subset that covers stable popular items and a sampled tail; this narrows the KD support so it does not fight the new data.</li>
+        <li><strong>Two losses, two roles</strong> — task loss on the new window absorbs new behavior; KD loss on R pulls forward stable preferences that the new window underweights.</li>
+        <li><strong>No federation</strong> — &ldquo;collaborative&rdquo; refers to the model collaborating with its own past version, not multiple clients.</li>
       </ul>
+      <p>After training, the previous-refresh teacher is discarded (or kept one cycle as the next teacher) and only the new student serves.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from baselines">
+    <VIS.Section id="sec-diff" title="How it differs from incremental fine-tune, replay-only, and classical KD">
       <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
-        <thead><tr style={{background:"#f1f5f9"}}>
-          <th style={{textAlign:"left",padding:8}}>Strategy</th>
-          <th style={{textAlign:"left",padding:8}}>Fresh data</th>
-          <th style={{textAlign:"left",padding:8}}>Stable prefs</th>
-          <th style={{textAlign:"left",padding:8}}>Cost / update</th>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Teacher</th>
+          <th style={{textAlign:"left", padding:8}}>Forgetting protection</th>
+          <th style={{textAlign:"left", padding:8}}>Cost / cycle</th>
         </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Plain fine-tune on new day</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Yes</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Forgotten (catastrophic)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Cheap</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Full retrain every day</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Yes</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Preserved</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Expensive (hours, $$)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>EWC / weight regularization</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Partial</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Partial</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Cheap but brittle</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}><strong>CCD-Rec</strong></td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Yes</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Preserved via teacher</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Near fine-tune cost</td></tr>
+          <tr><td style={{padding:8}}>Plain incremental fine-tune</td><td style={{padding:8}}>None</td><td style={{padding:8}}>None — forgets stable prefs</td><td style={{padding:8}}>Low</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Replay only (rehearsal)</td><td style={{padding:8}}>None</td><td style={{padding:8}}>Implicit via old samples</td><td style={{padding:8}}>Low-medium</td></tr>
+          <tr><td style={{padding:8}}>Full retrain</td><td style={{padding:8}}>None</td><td style={{padding:8}}>Strong but expensive</td><td style={{padding:8}}>High</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Classical KD (offline)</td><td style={{padding:8}}>External big model</td><td style={{padding:8}}>N/A (capacity, not time)</td><td style={{padding:8}}>Teacher training cost</td></tr>
+          <tr><td style={{padding:8}}><strong>CCD-Rec</strong></td><td style={{padding:8}}><strong>Self at t-1</strong></td><td style={{padding:8}}><strong>Explicit via KD on R</strong></td><td style={{padding:8}}><strong>Low — one fwd pass on R</strong></td></tr>
         </tbody>
       </table>
-      <p style={{marginTop:12}}>
-        The key insight: when training data &lt; 1% of the history per update, the teacher is the cheapest available proxy for "everything the previous version knew." Replay alone needs to be huge to preserve stable preferences; distillation compresses that knowledge into soft targets.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li><strong>Daily or hourly model updates</strong> in production where full retrain is not affordable.</li>
-        <li>Catalogs with a long-tail of stable users — most users do not change preferences week-to-week, only a small active cohort does.</li>
-        <li>Settings where the previous-version checkpoint is reliably available and not too stale.</li>
-        <li>Two-tower or sequence recommenders where the score distribution is rich enough that soft targets carry signal.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill — 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the discriminating insight, then asks for the pick.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Teacher staleness</strong> — if the teacher is weeks behind real preferences, the student over-anchors to it and lags trends. Needs a decay schedule on the distillation weight.</li>
-        <li><strong>Replay sampling bias</strong> — informative-sample selection can systematically exclude cohorts; needs fairness audit.</li>
-        <li><strong>Catastrophic teacher</strong> — if a bad teacher ships, distillation propagates the bug forward across many generations. Need rollback path.</li>
-        <li><strong>Distillation temperature</strong> — too low (sharp) and the teacher signal is binary; too high (soft) and it&apos;s near-uniform noise. Must tune.</li>
-        <li><strong>Cold items</strong> — new items have no teacher signal; need a parallel cold-start path.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick the right move(s); reveal trap and lens after committing.</p>
-
-      <VIS.TrapProblem
-        id="ccd-p1" difficulty="hard"
-        title="P1 — Student stuck on a 2-week-stale teacher: what symptoms appear first?"
-        scenario={<>Your CCD-Rec student is being distilled against a teacher that was last refreshed 2 weeks ago (the refresh job has been silently failing). Recommendations have been "feeling off" but offline AUC looks fine. Pick the symptom most likely to surface first.</>}
+      <VIS.TrapProblem id="ccd-p1" difficulty="hard"
+        title="P1 — CCD-Rec vs plain incremental fine-tune: load-bearing difference?"
+        scenario={<><em>Discriminating insight: plain incremental fine-tune updates weights on the new window only — the model loses behavior on returning users whose patterns are NOT in the new window. CCD-Rec adds a KD loss against the previous-refresh model on a shared item set, pulling stable preferences forward even when the new window does not cover them.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"CTR on trending new items collapses while CTR on long-tail catalog stays roughly flat.", correct:true},
-          {key:"b", text:"Overall offline AUC drops by 5+ points immediately."},
-          {key:"c", text:"Latency p99 spikes because the teacher is large."},
-          {key:"d", text:"Model size grows because the teacher gets appended to the student."},
+          {key:"a", text:"CCD-Rec adds a KD loss where the previous-refresh model acts as the teacher on a shared/replay set; this explicitly preserves stable user preferences that the new data window does not cover. Plain incremental fine-tune has no teacher and forgets those preferences.", correct:true},
+          {key:"b", text:"CCD-Rec uses a bigger model architecture."},
+          {key:"c", text:"They are mathematically equivalent."},
+          {key:"d", text:"CCD-Rec disables gradient flow for the new window."},
         ]}
-        trap={<>(b) is the textbook reflex but offline AUC is computed against historical labels — which the stale teacher matches well. (c) and (d) confuse architecture with the failure mode. The trap: stale-teacher symptoms hide from offline AUC and surface only on the freshness-sensitive slice (trending items, new releases).</>}
-        lens={<>A stale teacher over-anchors the student to old preferences. New trending items get systematically under-scored because the teacher never saw them and signals "low probability" via distillation. Long-tail stable items keep their scores intact. The diagnostic is a freshness-sliced CTR or recall@K dashboard — never trust aggregate offline AUC alone for continual setups.</>}
-        stretch={<>What single online metric would have alerted you within 24 hours?</>}
+        trap={<>(b)(c)(d) miss the time-coupled KD anchor.</>}
+        lens={<>Time-shifted self-distillation is the load-bearing piece.</>}
+        stretch={<>How long does an unprotected fine-tune typically take to visibly forget on returning-user metrics?</>}
       />
 
-      <VIS.TrapProblem
-        id="ccd-p2" difficulty="hard" multiSelect
-        title="P2 — Tuning the distillation weight schedule"
-        scenario={<>You have a knob lambda that weights distillation loss vs new-data loss. Select all schedules that are reasonable starting points for production.</>}
+      <VIS.TrapProblem id="ccd-p2" difficulty="hard"
+        title="P2 — Why is the teacher the previous-refresh SELF, not a separately trained big model?"
+        scenario={<><em>Discriminating insight: classical KD distills a large external teacher into a small student to compress capacity. CCD-Rec has no capacity goal — student and teacher are the SAME architecture at different times. The teacher exists for FREE (it served yesterday) and encodes exactly the preferences we want to preserve. A separately trained big teacher solves a different problem.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Constant lambda = 0.5 — equally weight teacher and new data.", correct:true},
-          {key:"b", text:"Decay lambda over time-since-teacher-refresh so stale teachers get less weight.", correct:true},
-          {key:"c", text:"Higher lambda on long-tail users (less new data), lower lambda on active users.", correct:true},
-          {key:"d", text:"Always lambda = 1.0 — teacher dominates."},
-          {key:"e", text:"Lambda = 0 — disable distillation."},
+          {key:"a", text:"The previous-refresh model encodes the production preferences we want to preserve; it costs zero extra to use (it already exists from yesterday&apos;s deploy). A separately trained big teacher solves capacity compression, not forgetting protection.", correct:true},
+          {key:"b", text:"A bigger teacher always beats self-teaching."},
+          {key:"c", text:"Self-distillation is mathematically equivalent to classical KD."},
+          {key:"d", text:"The teacher is randomly initialized."},
         ]}
-        trap={<>(d) is plain fine-tune-from-teacher, no new learning. (e) is plain fine-tune, catastrophic forgetting. The trap: candidates often pick one schedule and miss that lambda is most useful as a per-cohort or per-time signal, not a constant.</>}
-        lens={<>Three are reasonable: a sensible default (a), a teacher-staleness decay (b), and a per-cohort schedule (c). Production typically lands on a hybrid: cohort-aware lambda with a staleness floor that decays it as the teacher ages.</>}
-        stretch={<>How would you choose the decay half-life empirically?</>}
+        trap={<>(b) conflates capacity KD with continual KD. (c)(d) deny the time axis.</>}
+        lens={<>The teacher&apos;s job is to remember yesterday, not to be smarter.</>}
+        stretch={<>What if you used yesterday&apos;s model AND a bigger external teacher together?</>}
       />
 
-      <VIS.TrapProblem
-        id="ccd-p3" difficulty="medium"
-        title="P3 — Replay buffer selection criterion"
-        scenario={<>You can keep ~5% of historical interactions in a replay buffer. Pick the strongest single criterion for selecting which to keep.</>}
+      <VIS.TrapProblem id="ccd-p3" difficulty="hard"
+        title="P3 — Without CCD-Rec, what is the realistic fallback at production refresh cadence?"
+        scenario={<><em>Discriminating insight: fallbacks are (i) plain incremental fine-tune — fast but forgets; (ii) replay buffer (rehearsal) — partially mitigates forgetting via stale samples but slower than KD on R; (iii) full retrain weekly — expensive, lags new behavior; (iv) elastic weight consolidation (EWC) — protects weights via Fisher penalty but is harder to tune than KD on R. CCD-Rec sits at the engineering sweet spot.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Samples where teacher and student disagree most (high distillation loss) — these are the highest-signal samples for retention.", correct:true},
-          {key:"b", text:"Most recent 5%."},
-          {key:"c", text:"Random uniform 5%."},
-          {key:"d", text:"5% sampled by user popularity (most active users)."},
+          {key:"a", text:"Replay-only (rehearsal of old samples), EWC (Fisher-weighted regularization), or full retrain. CCD-Rec is the engineering sweet spot when refresh is daily/hourly and full retrain budget is not available.", correct:true},
+          {key:"b", text:"Just disable refreshes and serve a static model."},
+          {key:"c", text:"Run RL exploration instead of KD."},
+          {key:"d", text:"There is no alternative."},
         ]}
-        trap={<>(b) and (c) waste budget on redundant samples. (d) ignores tail users — replay should preserve coverage, not focus on the head.</>}
-        lens={<>Selective replay&apos;s point is buying preservation per byte. The samples that matter are ones the student is about to forget — those are exactly where teacher and student diverge most. This is essentially active learning applied to replay-buffer selection.</>}
-        stretch={<>What is a cheap proxy for "samples the student is about to forget" that avoids a forward pass on the full history?</>}
+        trap={<>(b) violates production cadence. (c)(d) wrong family.</>}
+        lens={<>CCD-Rec sits between cheap-but-forgetful fine-tune and expensive-but-fresh full retrain.</>}
+        stretch={<>When is EWC preferable to KD on R?</>}
       />
 
-      <VIS.TrapProblem
-        id="ccd-p4" difficulty="hard" multiSelect
-        title="P4 — Teacher-chain drift across many generations"
-        scenario={<>CCD-Rec deploys every 6 hours. Each new student becomes next cycle&apos;s teacher. After 100 generations, you notice subtle prediction drift across the catalog. Which of the following are valid concerns?</>}
+      <VIS.TrapProblem id="ccd-p4" difficulty="hard"
+        title="P4 — Compose CCD-Rec with a replay buffer"
+        scenario={<><em>Discriminating insight: replay buffer hands the new model OLD SAMPLES; CCD-Rec gives it OLD MODEL OUTPUTS on a shared set. They are orthogonal: replay restores supervision signal on stale data; KD restores the previous decision surface on a shared support set. Together they cover both the input distribution and the output distribution of yesterday.</em><br/>What does the stack achieve?</>}
         options={[
-          {key:"a", text:"Errors in early teachers compound forward — a bad teacher 50 generations ago can still leak signal into today&apos;s student.", correct:true},
-          {key:"b", text:"Bias amplification — if teacher under-recommends an item category, distillation suppresses it further every cycle.", correct:true},
-          {key:"c", text:"Distillation loss converges to zero — student becomes identical to teacher.", correct:true},
-          {key:"d", text:"Catastrophic forgetting reappears."},
-          {key:"e", text:"Replay buffer grows without bound."},
+          {key:"a", text:"Replay restores the INPUT distribution from t-1 (so the model still sees old user-item pairs); CCD-Rec&apos;s KD restores the OUTPUT distribution (so the model still scores them like yesterday&apos;s model did). They are orthogonal and compose.", correct:true},
+          {key:"b", text:"They conflict — pick one."},
+          {key:"c", text:"They are identical."},
+          {key:"d", text:"CCD-Rec subsumes replay completely."},
         ]}
-        trap={<>(d) reverses the design — distillation is what prevents forgetting. (e) is an implementation concern, not a chain-drift concern. The real chain-drift failures (a, b, c) are subtle and only show up at long time scales.</>}
-        lens={<>Three real risks: error compounding, bias amplification, and teacher-student fixed-point collapse. The standard mitigation is a periodic "anchor retrain" — every N cycles, do a full retrain from scratch and reset the teacher chain. CCD-Rec saves cost between anchors, not forever.</>}
-        stretch={<>How often is the anchor retrain typically scheduled?</>}
+        trap={<>(b)(c)(d) deny composition.</>}
+        lens={<>Orthogonal axes: input distribution (replay) vs output distribution (KD).</>}
+        stretch={<>What share of the batch should be replay vs new data?</>}
       />
 
-      <VIS.TrapProblem
-        id="ccd-p5" difficulty="medium"
-        title="P5 — Distillation target: logits or sampled top-K?"
-        scenario={<>Distillation needs a target distribution from the teacher. For a recommender with a 10M-item catalog, what is the practical choice?</>}
+      <VIS.TrapProblem id="ccd-p5" difficulty="medium"
+        title="P5 — What is the shared/replay item set R?"
+        scenario={<><em>Discriminating insight: R is the support set on which the KD loss is computed. Too small and it cannot anchor stable preferences across the catalog; too large and KD fights the new task loss everywhere. The selective replay paper uses a mix of head items (popular, stable) plus a sampled tail to cover diversity.</em><br/>How is R chosen?</>}
         options={[
-          {key:"a", text:"Teacher&apos;s top-K scored items (K = ~100-1000) per user; ignore the long tail of low-probability items.", correct:true},
-          {key:"b", text:"Full 10M-item softmax target per user."},
-          {key:"c", text:"Random 1000 items per user with teacher scores."},
-          {key:"d", text:"Only the user&apos;s historical positives."},
+          {key:"a", text:"A curated subset of items: head items where stable preferences live + a sampled tail for coverage. Too small and KD cannot anchor the catalog; too large and KD fights the task loss everywhere.", correct:true},
+          {key:"b", text:"All items in the catalog."},
+          {key:"c", text:"Only items from the new window."},
+          {key:"d", text:"Randomly initialized embedding indices."},
         ]}
-        trap={<>(b) is computationally infeasible. (c) loses most signal — random items are mostly low-probability noise. (d) is plain fine-tune (positives only), no soft-target benefit.</>}
-        lens={<>Top-K teacher targets are the standard compromise: high-information region of the distribution is preserved, the long tail is collapsed. K is a knob — too small loses tail diversity, too large costs compute. K = 100-500 is typical.</>}
-        stretch={<>How would you sample below-top-K items to retain SOME tail signal cheaply?</>}
+        trap={<>(b) collapses to full-retrain regularization. (c) defeats the purpose. (d) nonsensical.</>}
+        lens={<>R is the KD support; sizing trades anchoring vs new-signal interference.</>}
+        stretch={<>How would you decide the size of R automatically?</>}
       />
 
-      <VIS.TrapProblem
-        id="ccd-p6" difficulty="hard"
-        title="P6 — Distillation temperature gone wrong"
-        scenario={<>You set distillation temperature T = 20 to "smooth" the teacher distribution. After deployment, the student behaves as if random. Diagnose.</>}
+      <VIS.TrapProblem id="ccd-p6" difficulty="hard"
+        title="P6 — Pick the continual learning method"
+        scenario={<><em>Discriminating insight: a production feed model must refresh hourly. The team has the previous deploy&apos;s checkpoint, a small replay buffer, and limited compute per cycle. Returning-user CTR is the gating metric. CCD-Rec is purpose-built.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"T = 20 flattens the teacher distribution to near-uniform; soft targets carry almost no preference signal.", correct:true},
-          {key:"b", text:"T = 20 sharpens the teacher distribution; student over-fits to teacher&apos;s top-1."},
-          {key:"c", text:"Temperature does not affect distillation."},
-          {key:"d", text:"The student needs a matching T at inference."},
+          {key:"a", text:"CCD-Rec — distill the previous-refresh model into the new model on a shared item set; new window drives task loss. Returning-user CTR is preserved while new behavior is absorbed.", correct:true},
+          {key:"b", text:"Plain incremental fine-tune — fails the returning-user metric."},
+          {key:"c", text:"Full retrain — violates the hourly budget."},
+          {key:"d", text:"Static model — no refresh at all."},
         ]}
-        trap={<>(b) inverts the sign of T&apos;s effect. (c) is plainly wrong. (d) confuses train-time and inference-time temperatures.</>}
-        lens={<>Temperature T &gt; 1 softens, T &lt; 1 sharpens. Too high flattens to uniform (no signal); too low collapses to one-hot (no benefit over hard labels). Typical T is 2-4 for recsys distillation. The "right" T depends on how peaky the teacher already is.</>}
-        stretch={<>How would you tune T cheaply without a full A/B?</>}
+        trap={<>(b) fails the bar. (c)(d) violate constraints.</>}
+        lens={<>Previous checkpoint + tight cadence + returning-user metric = CCD-Rec.</>}
+        stretch={<>What happens to the metric if you skip CCD-Rec for a week?</>}
       />
 
-      <VIS.TrapProblem
-        id="ccd-p7" difficulty="hard" mode="ordered"
-        title="P7 — Order your debugging steps when CCD-Rec recall regresses"
-        scenario={<>Daily recall@20 drops 4% with no obvious config change. Order your diagnostic steps. Wrong moves do not get a number.</>}
+      <VIS.TrapProblem id="ccd-p7" difficulty="hard"
+        title="P7 — Sounds reasonable: &ldquo;just lower the learning rate&rdquo;"
+        scenario={<><em>Discriminating insight: lowering LR slows ALL learning, including new-behavior absorption. It is a blunt tradeoff between staleness and forgetting and does not exploit the structural difference between stable and new patterns. CCD-Rec&apos;s KD loss applies the forgetting protection EXACTLY where stable patterns live (on R) and leaves the new data window at full LR.</em><br/>Why is lower LR insufficient?</>}
         options={[
-          {key:"a", text:"Check teacher checkpoint timestamp — is the refresh job healthy?", order:1},
-          {key:"b", text:"Compare distillation loss curves between the regressing run and the previous good run.", order:2},
-          {key:"c", text:"Disable distillation entirely (lambda = 0) and ship."},
-          {key:"d", text:"Inspect the replay buffer composition — has the informative-sample selector skewed?", order:3},
-          {key:"e", text:"Page every on-call engineer."},
+          {key:"a", text:"Low LR throttles both new-behavior learning and forgetting indiscriminately. CCD-Rec instead applies a structural penalty (KD on R) that targets stable preferences specifically; the new data window can train at full LR.", correct:true},
+          {key:"b", text:"Low LR is equivalent to KD on R."},
+          {key:"c", text:"Low LR removes the need for a teacher."},
+          {key:"d", text:"LR has no effect on forgetting."},
         ]}
-        trap={<>(c) is destructive — disabling distillation re-introduces catastrophic forgetting. (e) is premature without diagnosis.</>}
-        lens={<>The natural ladder: teacher health → loss-curve diff → replay composition. Most CCD-Rec regressions come from upstream pipeline issues (stale teacher, sample-selector bug) rather than the model itself.</>}
-        stretch={<>What metric would catch (a) before users do?</>}
+        trap={<>(b)(c)(d) miss the structural vs scalar distinction.</>}
+        lens={<>KD on R is a STRUCTURAL anti-forgetting prior, not a global LR cap.</>}
+        stretch={<>How would you choose between low LR and KD on R for very small models?</>}
       />
 
-      <VIS.TrapProblem
-        id="ccd-p8" difficulty="hard"
-        title="P8 — Cold items in the catalog"
-        scenario={<>A new item launches between teacher and student updates. How does CCD-Rec score it?</>}
+      <VIS.TrapProblem id="ccd-p8" difficulty="hard"
+        title="P8 — CCD-Rec anchor (time-coupled self-distillation + shared support): pitch it"
+        scenario={<><em>Discriminating insight: anchor is &ldquo;previous-refresh model becomes the teacher of the new model on a shared/replay item set.&rdquo; The pitch must name both the time-coupling and the shared support. Drop either and the description collapses to plain KD or plain replay.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Teacher has never seen it — distillation contributes no signal. Only the new-data loss path teaches the student about it; until enough interactions accumulate, it remains under-served.", correct:true},
-          {key:"b", text:"Teacher imagines a score for it via interpolation; student copies."},
-          {key:"c", text:"Item gets random embedding."},
-          {key:"d", text:"Item is invisible until the next teacher refresh."},
+          {key:"a", text:"At each refresh, the previous model is frozen and serves as the teacher of the new model on a curated shared item set R. The KD loss on R preserves stable preferences while the task loss on the new data window absorbs new behavior.", correct:true},
+          {key:"b", text:"We distill a big external teacher into a small student weekly."},
+          {key:"c", text:"We use federated learning across user devices."},
+          {key:"d", text:"We freeze user embeddings entirely."},
         ]}
-        trap={<>(b) anthropomorphizes the teacher. (c) is implementation-dependent and misses the point. (d) overstates — item IS visible, just under-scored.</>}
-        lens={<>Cold items are a known weakness of CCD-Rec. Standard mitigations: (1) content-based cold-start path runs in parallel and is mixed into candidate generation, (2) an exploration bonus boosts new-item scores temporarily, (3) item-content tower provides a teacher signal even before interactions exist.</>}
-        stretch={<>How would you measure if your cold-start mitigation is working?</>}
+        trap={<>(b)(c)(d) lose the time axis or the self-loop.</>}
+        lens={<>Self at t-1 + shared support set R are inseparable.</>}
+        stretch={<>What metric on R would tell you the KD weight is too high?</>}
       />
 
-      <VIS.TrapProblem
-        id="ccd-p9" difficulty="medium" multiSelect
-        title="P9 — Failure modes specific to CCD-Rec (not standard incremental training)"
-        scenario={<>Select all that apply.</>}
+      <VIS.TrapProblem id="ccd-p9" difficulty="hard" multiSelect
+        title="P9 — When NOT to use CCD-Rec. Select all that apply."
+        scenario={<><em>Discriminating insight: CCD-Rec needs (i) a refresh cadence faster than full retrain, (ii) a previous-refresh checkpoint, (iii) some stable user preferences worth preserving. It is wrong when the data distribution genuinely shifts every cycle (e.g., breaking news) or when retraining from scratch is cheap.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Teacher staleness propagating into the student.", correct:true},
-          {key:"b", text:"Bias amplification across many distillation generations.", correct:true},
-          {key:"c", text:"Cold-item suppression because teacher has no signal.", correct:true},
-          {key:"d", text:"Standard catastrophic forgetting from fine-tuning."},
-          {key:"e", text:"Random init failures."},
+          {key:"a", text:"Breaking-news ranking where yesterday&apos;s preferences are LITERALLY obsolete today — KD anchoring is wrong.", correct:true},
+          {key:"b", text:"Cold-start models with no production deploy yet — there is no teacher to distill from.", correct:true},
+          {key:"c", text:"Full retrain budget is cheap enough — KD adds engineering complexity for little gain.", correct:true},
+          {key:"d", text:"Hourly refresh of a long-term-user feed with stable preference signal (sweet spot)."},
+          {key:"e", text:"Rapid-cycle A/B exploration where every cycle must explore fresh strategies; KD pulls back to last cycle.", correct:true},
         ]}
-        trap={<>(d) is what CCD-Rec PREVENTS, not a failure mode. (e) afflicts any model.</>}
-        lens={<>The three CCD-Rec-specific risks are about the teacher itself: it can be stale, it can be biased and amplify, and it cannot speak about items it has not seen. None of these exist for plain incremental fine-tuning (which has its own worse problem: forgetting).</>}
-        stretch={<>Which of these is hardest to monitor?</>}
+        trap={<>(d) sweet spot.</>}
+        lens={<>CCD-Rec assumes stable-preference signal exists and a previous checkpoint is available.</>}
+        stretch={<>What signal would tell you preferences are too unstable for CCD-Rec?</>}
       />
 
-      <VIS.TrapProblem
-        id="ccd-p10" difficulty="hard"
-        title="P10 — When NOT to use CCD-Rec"
-        scenario={<>Pick the strongest case AGAINST CCD-Rec.</>}
+      <VIS.TrapProblem id="ccd-p10" difficulty="hard"
+        title="P10 — Why is staleness a risk in CCD-Rec?"
+        scenario={<><em>Discriminating insight: if you keep distilling from the same old teacher cycle after cycle, the student inherits an increasingly stale decision surface. Without a decay schedule on the KD weight (or refreshing the teacher to be model t-1 every cycle, not model t-N), the student over-anchors and lags real preference drift.</em><br/>What is the discipline?</>}
         options={[
-          {key:"a", text:"News-feed recommender where preferences shift hourly and the teacher is always 1+ hours behind reality.", correct:true},
-          {key:"b", text:"E-commerce with stable user preferences."},
-          {key:"c", text:"Music streaming."},
-          {key:"d", text:"Long-form video."},
+          {key:"a", text:"Always re-set the teacher to the IMMEDIATELY previous refresh (t-1, not t-N), AND decay the KD weight as time-since-stable-prefs-baseline grows. Otherwise the student over-anchors to a stale decision surface.", correct:true},
+          {key:"b", text:"Use the same teacher checkpoint forever."},
+          {key:"c", text:"Increase KD weight over time."},
+          {key:"d", text:"Disable the teacher entirely."},
         ]}
-        trap={<>(b), (c), (d) all have stable enough preference distributions for CCD-Rec to win.</>}
-        lens={<>CCD-Rec assumes the teacher remains a useful proxy for the student between updates. When preferences shift faster than the update cadence, the teacher actively HURTS — it pulls the student back to old preferences. News, breaking content, live commerce: bad fits unless update cadence approaches minutes.</>}
-        stretch={<>Could you adapt CCD-Rec for hourly preference shifts? What would change?</>}
+        trap={<>(b)(c) over-anchor. (d) defeats the purpose.</>}
+        lens={<>Teacher must roll forward each cycle; KD weight should decay if anything.</>}
+        stretch={<>What dashboard catches teacher staleness?</>}
       />
 
-      <VIS.TrapProblem
-        id="ccd-p11" difficulty="medium"
-        title="P11 — Anchor retrain cadence"
-        scenario={<>How often should you do a full retrain (reset the teacher chain) to bound long-run drift?</>}
+      <VIS.TrapProblem id="ccd-p11" difficulty="hard"
+        title="P11 — CCD-Rec loss composition"
+        scenario={<><em>Discriminating insight: total loss = lambda * KD(student on R vs teacher on R) + (1 - lambda) * Task(student on new window vs labels). lambda is the anti-forgetting knob; T (KD temperature) controls how soft the teacher scores are. KD alone freezes the model; task alone forgets.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Depends on the cohort — weekly or monthly is common; faster if you observe bias amplification, slower if metrics stay healthy.", correct:true},
-          {key:"b", text:"Every CCD-Rec cycle — defeats the purpose."},
-          {key:"c", text:"Never — CCD-Rec replaces full retraining."},
-          {key:"d", text:"Every 1000 cycles."},
+          {key:"a", text:"L = lambda * KD(student on R vs teacher on R) + (1 - lambda) * Task(student on new window vs labels). lambda controls anti-forgetting strength; temperature T controls how soft the teacher signal is. Both losses load-bearing.", correct:true},
+          {key:"b", text:"KD only."},
+          {key:"c", text:"Task only (this is plain incremental fine-tune)."},
+          {key:"d", text:"Contrastive loss between student and teacher embeddings."},
         ]}
-        trap={<>(b) is the strawman that defeats the cost win. (c) ignores chain drift. (d) is arbitrary.</>}
-        lens={<>The anchor retrain is the safety net for the teacher chain. Its frequency is set by how fast drift accumulates in your setup — measured by comparing CCD-Rec student against an off-line fresh-retrain on a holdout. Most production systems anchor weekly or monthly.</>}
-        stretch={<>What metric tells you anchor-retrain is overdue?</>}
+        trap={<>(b) freezes. (c) is the baseline. (d) wrong family.</>}
+        lens={<>Two-term loss; lambda is the anti-forgetting knob.</>}
+        stretch={<>Should lambda be fixed, decayed, or learned?</>}
       />
+
+      <VIS.TrapProblem id="ccd-p12" difficulty="hard"
+        title="P12 — What does CCD-Rec deliberately drop vs full retrain?"
+        scenario={<><em>Discriminating insight: full retrain re-derives ALL parameters from scratch every cycle and is provably immune to forgetting but expensive. CCD-Rec gives up that immunity for a much cheaper update — KD provides an APPROXIMATE anchor, not a guarantee.</em><br/>What does CCD-Rec give up?</>}
+        options={[
+          {key:"a", text:"Immunity to forgetting. Full retrain is provably immune because it re-derives all parameters; CCD-Rec gives an approximate anchor via KD. The trade is compute per cycle for a small anti-forgetting residual.", correct:true},
+          {key:"b", text:"Gradient descent."},
+          {key:"c", text:"The teacher."},
+          {key:"d", text:"The new data window."},
+        ]}
+        trap={<>(b)(c)(d) miss the dropped property.</>}
+        lens={<>CCD-Rec trades full immunity for compute.</>}
+        stretch={<>How would you measure the residual forgetting?</>}
+      />
+
+      <VIS.TrapProblem id="ccd-p13" difficulty="hard"
+        title="P13 — Most fragile knob in CCD-Rec"
+        scenario={<><em>Discriminating insight: the size of R (KD support set) and lambda (KD weight) jointly determine the forgetting-vs-staleness tradeoff. Mis-set support pushes the KD anchor to a tiny or oversized region; mis-set lambda either freezes or forgets. Temperature next. LR last.</em><br/>Rank.</>}
+        options={[
+          {key:"a", text:"Size of R is most fragile — too small under-anchors stable preferences, too large fights the new task loss everywhere. lambda (KD weight) next; temperature after; LR last.", correct:true},
+          {key:"b", text:"Optimizer choice is most fragile."},
+          {key:"c", text:"Batch size is most fragile."},
+          {key:"d", text:"Embedding dimension is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) miss the CCD-Rec-specific knobs.</>}
+        lens={<>Size of R and lambda are the anti-forgetting knobs.</>}
+        stretch={<>How would you cross-validate the size of R?</>}
+      />
+
+      <VIS.TrapProblem id="ccd-p14" difficulty="medium"
+        title="P14 — Data assumption violations"
+        scenario={<><em>Discriminating insight: CCD-Rec assumes stable preferences ACTUALLY EXIST in the population. For an audience that churns every week (e.g., short-lived games marketplace), the &ldquo;stable&rdquo; signal the teacher encodes is a fiction and KD propagates noise as if it were stable.</em><br/>Which violation is most direct?</>}
+        options={[
+          {key:"a", text:"User base churns faster than the refresh cycle — there are no stable preferences for the teacher to encode. KD then anchors the student to ghost preferences and underperforms plain incremental fine-tune.", correct:true},
+          {key:"b", text:"Off-by-one in date partitioning."},
+          {key:"c", text:"GPU OOM during distillation."},
+          {key:"d", text:"Tokenizer mismatch."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>CCD-Rec needs a population with actual stable preferences.</>}
+        stretch={<>What metric detects ghost-preference anchoring?</>}
+      />
+
+      <VIS.TrapProblem id="ccd-p15" difficulty="hard"
+        title="P15 — Intuitive but wrong: &ldquo;the teacher dominates training cost&rdquo;"
+        scenario={<><em>Discriminating insight: the teacher is FROZEN. It runs forward passes on R only — no gradients, no backprop. R is a tiny subset of the catalog. The teacher&apos;s training cost is zero (it was trained yesterday in production). Total CCD-Rec overhead vs plain fine-tune is one forward pass on R.</em><br/>Why is &ldquo;teacher dominates&rdquo; wrong?</>}
+        options={[
+          {key:"a", text:"The teacher is frozen and only forward-evaluated on the small set R; its training cost is amortized from yesterday&apos;s production deploy. CCD-Rec&apos;s overhead over plain fine-tune is one extra forward pass on R, which is small.", correct:true},
+          {key:"b", text:"The teacher requires a full backward pass."},
+          {key:"c", text:"The teacher must be re-trained from scratch every cycle."},
+          {key:"d", text:"There is no teacher in CCD-Rec."},
+        ]}
+        trap={<>(b)(c) confuse training and forward. (d) denies mechanism.</>}
+        lens={<>Frozen teacher + small R = small overhead.</>}
+        stretch={<>What is the realistic % training overhead in production?</>}
+      />
+
+      <VIS.TrapProblem id="ccd-p16" difficulty="hard"
+        title="P16 — Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;CCD-Rec is just KD&rdquo; cascades into (i) using a big external teacher (wastes compute, wrong forgetting signal), (ii) computing KD on new-window items only (defeats the anchor), (iii) refreshing the teacher rarely (over-anchors). Each correction restores a load-bearing piece.</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: external teacher (wrong signal), KD on new-window items (no anchor for stable preferences), stale teacher (over-anchors). The self-loop (teacher = previous-refresh self) and the shared support R are inseparable from CCD-Rec.", correct:true},
+          {key:"b", text:"Only the teacher choice."},
+          {key:"c", text:"Only the support set."},
+          {key:"d", text:"Nothing — CCD-Rec really is just KD."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Self-at-t-1, support R, fresh teacher each cycle — all three load-bearing.</>}
+        stretch={<>What ablation shows each piece is necessary?</>}
+      />
+
+      <VIS.TrapProblem id="ccd-p17" difficulty="medium"
+        title="P17 — Senior vs junior diagnostic"
+        scenario={<><em>Discriminating insight: when returning-user CTR drops after a refresh, a junior bumps the KD weight lambda. A senior plots KD loss on R AND task loss on the new window separately — if KD plateaued early but returning-user CTR dropped, R is too small (anchor support insufficient); if KD is still high, teacher is stale.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Plot KD loss on R and task loss on the new window separately. KD plateau + CTR drop means R is too small (expand R or sample more tail). High KD + CTR drop means the teacher is stale (re-set to immediately previous refresh).", correct:true},
+          {key:"b", text:"Bump lambda blindly."},
+          {key:"c", text:"Drop CCD-Rec entirely."},
+          {key:"d", text:"Increase embedding size."},
+        ]}
+        trap={<>(b)(c)(d) miss the diagnostic decomposition.</>}
+        lens={<>KD loss curve on R is the CCD-Rec-specific diagnostic.</>}
+        stretch={<>What dashboard would show both curves side by side?</>}
+      />
+
+      <VIS.TrapProblem id="ccd-p18" difficulty="hard"
+        title="P18 — Plausible-misattribution: drift in the user-base shape"
+        scenario={<><em>Discriminating insight: returning-user CTR drops gradually over a month while new-user metrics stay flat. The team blames CCD-Rec staleness and disables KD. Real cause: the returning-user cohort itself shifted (people switched device classes, regions); the teacher&apos;s preferences were correct for the OLD cohort but the new returning cohort is different. Disabling KD makes it worse because new data still under-represents the new returning cohort.</em><br/>Most likely cause?</>}
+        options={[
+          {key:"a", text:"The returning-user COHORT shifted (device mix, region mix); the teacher anchors yesterday&apos;s cohort. Fix is to refresh the COHORT DEFINITION inside R, not disable KD. Disabling KD makes returning-user CTR worse.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Disk full on the training cluster."},
+          {key:"d", text:"Random seed changed."},
+        ]}
+        trap={<>(b)(c)(d) generic infra suspects.</>}
+        lens={<>R is a population definition; if the population shifts, R must shift too.</>}
+        stretch={<>What CI gate would detect cohort-definition drift in R?</>}
+      />
+
+      <VIS.TrapProblem id="ccd-p19" difficulty="hard"
+        title="P19 — Production gotcha: teacher-student feature schema skew"
+        scenario={<><em>Discriminating insight: CCD-Rec assumes teacher and student have the SAME feature schema so their outputs on R are comparable. If the team ships a new feature mid-cycle (added a context vector), the teacher&apos;s outputs on R are computed in the OLD schema; comparing them to the student&apos;s outputs in the new schema makes the KD loss arbitrary noise.</em><br/>What is the discipline?</>}
+        options={[
+          {key:"a", text:"Pin the feature schema across teacher and student or compute KD only on features common to both. A new feature mid-cycle invalidates the comparison; the KD loss becomes schema-noise and pulls the student in random directions.", correct:true},
+          {key:"b", text:"Feature schema is irrelevant to KD."},
+          {key:"c", text:"The student inherits features from the teacher automatically."},
+          {key:"d", text:"Skip CCD-Rec when adding features."},
+        ]}
+        trap={<>(b)(c) deny the schema dependency. (d) is over-correction.</>}
+        lens={<>Schema parity is a CCD-Rec precondition; new features require a teacher re-baseline.</>}
+        stretch={<>How would you do a teacher re-baseline cleanly?</>}
+      />
+
+      <VIS.TrapProblem id="ccd-p20" difficulty="hard"
+        title="P20 — Failure on Friday: returning-user CTR drops 6% after refresh"
+        scenario={<><em>Discriminating insight: KD weight lambda was bumped to 0.7 for &ldquo;extra anti-forgetting&rdquo;; the model became over-anchored to last week&apos;s preferences and stopped absorbing this week&apos;s new behavior; new-user CTR also stagnates. Diagnosis is lambda mis-set, not a CCD-Rec bug.</em><br/>3am page. Diagnose.</>}
+        options={[
+          {key:"a", text:"lambda was raised too high; the student is over-anchored to the teacher and underweights new behavior. Roll lambda back to baseline and verify both returning-user AND new-user CTR recover.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Disk full."},
+        ]}
+        trap={<>(b)(c)(d) miss the KD-weight diagnostic.</>}
+        lens={<>Over-anchoring is the most common CCD-Rec failure mode after a lambda change.</>}
+        stretch={<>What canary would catch this before full rollout?</>}
+      />
+
+      <VIS.TrapProblem id="ccd-p21" difficulty="medium"
+        title="P21 — Library default that bites: KD temperature"
+        scenario={<><em>Discriminating insight: many KD libraries default temperature T=1 (softmax with no smoothing), which produces near-argmax teacher distributions for recsys logits — dark knowledge is lost. CCD-Rec depends on the teacher&apos;s RELATIVE scores across items, so T should typically be 2-4.</em><br/>What is the gotcha?</>}
+        options={[
+          {key:"a", text:"Default T=1 collapses the teacher&apos;s score distribution to near-argmax for recsys logits; the dark-knowledge structure (which items the teacher scored similarly) is destroyed. Use T in [2, 4] so the relative ordering across items is preserved.", correct:true},
+          {key:"b", text:"Default LR is too high."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>KD temperature must smooth the teacher to expose dark knowledge.</>}
+        stretch={<>What does T approaching infinity do to the loss?</>}
+      />
+
+      <VIS.TrapProblem id="ccd-p22" difficulty="hard" ordered
+        title="P22 — Order the CCD-Rec refresh"
+        scenario={<><em>Discriminating insight: rollout is (1) load previous-refresh model as frozen teacher, (2) prepare new data window AND shared support R, (3) compute teacher logits on R, (4) train student with task loss on new window and KD loss on R, (5) validate on both returning-user and new-user slices, (6) deploy and archive student as next cycle&apos;s teacher. Computing teacher logits AFTER student training is the classic mistake.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Load previous-refresh teacher frozen -> prepare new window and R -> compute teacher logits on R -> train student with both losses -> validate returning + new slices -> deploy and archive as next teacher.", correct:true},
+          {key:"b", text:"Compute teacher logits after student training."},
+          {key:"c", text:"Skip the returning-user validation slice."},
+          {key:"d", text:"Deploy before archiving the previous teacher."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics.</>}
+        lens={<>Teacher logits before student training; validate both slices; archive for the next cycle.</>}
+        stretch={<>Why archive before deploying?</>}
+      />
+
+      <VIS.TrapProblem id="ccd-p23" difficulty="hard"
+        title="P23 — Smallest input that breaks CCD-Rec&apos;s claimed advantage"
+        scenario={<><em>Discriminating insight: if the new data window perfectly covers the same items as R AND the teacher&apos;s outputs on R are noisy, KD on R fights the task loss without adding signal. CCD-Rec collapses to noise injection in that regime.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"New window covers exactly the items in R, and the teacher&apos;s scores on R are noisy (e.g., teacher was undertrained yesterday). KD then injects noisy gradients into a well-covered region — strictly worse than plain incremental fine-tune.", correct:true},
+          {key:"b", text:"Long-term user feed with stable preferences (sweet spot)."},
+          {key:"c", text:"Daily refresh with curated R (sweet spot)."},
+          {key:"d", text:"Mature production model with clean teacher (sweet spot)."},
+        ]}
+        trap={<>(b)(c)(d) sweet spots.</>}
+        lens={<>CCD-Rec needs R to cover a region the new window DOES NOT see well.</>}
+        stretch={<>How would you measure R-window overlap automatically?</>}
+      />
+
+      <VIS.TrapProblem id="ccd-p24" difficulty="hard"
+        title="P24 — Named failure: teacher chain over-anchoring"
+        scenario={<><em>Discriminating insight: a common bug — the team keeps the teacher fixed at an older snapshot (e.g., last week&apos;s model) for stability, treating CCD-Rec as a long-horizon anchor. After several cycles the student is pulled toward a snapshot that no longer reflects reality; performance silently regresses. Fix: roll the teacher each cycle to the IMMEDIATELY previous refresh; if needed, decay lambda over time-since-teacher.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Teacher chain over-anchoring — keeping the same teacher across many cycles freezes the decision surface to a stale snapshot. Roll teacher each cycle (immediately previous refresh, not multi-cycle-old); decay lambda with time-since-teacher if extra protection is needed.", correct:true},
+          {key:"b", text:"Use the same teacher for a year."},
+          {key:"c", text:"Increase lambda over time."},
+          {key:"d", text:"Disable refreshes."},
+        ]}
+        trap={<>(b)(c)(d) deepen the bug.</>}
+        lens={<>Teacher must roll forward each cycle; lambda decays.</>}
+        stretch={<>How would you monitor for over-anchoring in production?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://dl.acm.org/doi/10.1145/3637528.3671924" target="_blank" rel="noopener"><strong>Wang et al. — Continual Collaborative Distillation for Recommender System</strong></a> <span style={{color:"#64748b", fontSize:14}}>(KDD 2024, paper)</span><br/>The canonical CCD-Rec paper. Read the experiment section for the cost/quality breakdown.</li>
-        <li><a href="https://arxiv.org/abs/1612.00796" target="_blank" rel="noopener"><strong>Kirkpatrick et al. — Overcoming catastrophic forgetting in neural networks (EWC)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>Original elastic-weight-consolidation paper. Useful prior art to compare CCD-Rec&apos;s distillation approach against weight regularization.</li>
-        <li><a href="https://arxiv.org/abs/1503.02531" target="_blank" rel="noopener"><strong>Hinton, Vinyals, Dean — Distilling the Knowledge in a Neural Network</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper)</span><br/>The distillation primer. The temperature, soft-target, and KL-divergence machinery CCD-Rec inherits all comes from this paper.</li>
-        <li><a href="https://eugeneyan.com/writing/recsys-llm/" target="_blank" rel="noopener"><strong>Eugene Yan — RecSys in the LLM Era</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Practitioner overview of production incremental-retraining patterns, including distillation-style approaches.</li>
-        <li><a href="https://www.continualai.org/" target="_blank" rel="noopener"><strong>ContinualAI — community resources</strong></a> <span style={{color:"#64748b", fontSize:14}}>(reference)</span><br/>Curated reading list and benchmarks for continual learning more broadly. Useful for understanding where CCD-Rec sits in the field.</li>
+        <li><a href="https://dl.acm.org/doi/10.1145/3637528.3671924" target="_blank" rel="noopener">Wang et al., <em>Continual Collaborative Distillation for Recommender System</em> (KDD 2024)</a> — the source paper; formalizes time-coupled KD and selective replay.</li>
+        <li><a href="https://lilianweng.github.io/posts/2018-11-30-meta-learning/" target="_blank" rel="noopener">Lilian Weng — <em>Meta-Learning and Continual Learning</em> (blog)</a> — practitioner overview of EWC, rehearsal, KD as continual learning tools.</li>
+        <li><a href="https://www.pnas.org/doi/10.1073/pnas.1611835114" target="_blank" rel="noopener">Kirkpatrick et al., <em>Overcoming catastrophic forgetting in neural networks</em> (PNAS 2017)</a> — canonical EWC paper, the regularization alternative to CCD-Rec.</li>
+        <li><a href="https://arxiv.org/abs/1503.02531" target="_blank" rel="noopener">Hinton et al., <em>Distilling the Knowledge in a Neural Network</em> (NeurIPS 2014 workshop)</a> — original KD; CCD-Rec specializes this to time-coupled self-distillation.</li>
+        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener">Eugene Yan — <em>System Design for Discovery</em> (blog)</a> — production recsys refresh patterns and why incremental updates matter.</li>
+        <li><a href="https://research.google/teams/brain/" target="_blank" rel="noopener">Google Research — Brain team continual learning publications</a> — survey hub for rehearsal vs regularization vs distillation families.</li>
       </ul>
     </VIS.Section>
   </main>
