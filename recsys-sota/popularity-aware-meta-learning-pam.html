@@ -1650,17 +1650,17 @@ const App = () => (
       {/* axis: C2 — loss/objective */}
       <VIS.TrapProblem
         id="pam-p11" difficulty="hard"
-        title="P11 — Loss: bucket-conditioned vs joint"
-        scenario={<><em>Discriminating insight: PAM&apos;s outer loss aggregates per-bucket meta-objectives. Joint loss without bucket conditioning lets head-bucket gradients dominate; the tail buckets never get representative gradient flow. The bucket-conditioned formulation gives each bucket its own averaged gradient.</em><br/>Pick.</>}
+        title="P11 — Loss: bucket-conditioned vs IPW reweighting vs joint"
+        scenario={<><em>Discriminating insight: PAM stratifies at the META-TASK SAMPLING step (each bucket contributes its own averaged inner gradient). IPW-style reweighting only rescales the per-example loss; head-bucket tasks still dominate the meta-batch composition, so the tail buckets get high-variance gradients and a stale prior. Sampling-time stratification and loss-time reweighting are NOT equivalent.</em><br/>Pick the load-bearing formulation.</>}
         options={[
-          {key:"a", text:"L_outer = Σ_bucket w_bucket · E_tasks-in-bucket[L_inner]. Each bucket contributes an averaged gradient; w_bucket controls how much each bucket is weighted overall. Joint without bucketing lets head items dominate.", correct:true},
-          {key:"b", text:"L_outer = E_all-tasks[L_inner] (no bucketing)."},
-          {key:"c", text:"L_outer = max_bucket E_tasks-in-bucket[L_inner]."},
-          {key:"d", text:"L_outer = adversarial loss with gradient reversal."},
+          {key:"a", text:"L_outer = Σ_bucket w_bucket · E_tasks-in-bucket[L_inner]. Bucket-conditioned averaging means each bucket contributes its own meta-gradient regardless of head/tail task counts; w_bucket controls overall mixing weight.", correct:true},
+          {key:"b", text:"L_outer = E_all-tasks[(1/p_bucket(item)) · L_inner], inverse-propensity weighting where p_bucket is the marginal popularity-bucket frequency. Rescales per-task loss but does not stratify meta-task sampling, so head tasks still dominate the batch.", correct:false},
+          {key:"c", text:"L_outer = E_all-tasks[L_inner] with no bucketing. Head-bucket tasks dominate the gradient; tail buckets get negligible signal.", correct:false},
+          {key:"d", text:"L_outer = E_all-tasks[L_inner] + λ · adversarial-domain-discriminator loss with gradient reversal. This is MAFCDR&apos;s cross-domain objective, not PAM&apos;s stratification.", correct:false},
         ]}
-        trap={<>(b) collapses to uniform. (c) min-max not aligned. (d) is MAFCDR.</>}
-        lens={<>Bucket-conditioned averaging is the explicit fairness mechanism.</>}
-        stretch={<>How do you set w_bucket — uniform or trajectory-prior-weighted?</>}
+        trap={<>(b) is the senior-MLE near-miss — IPW reweights losses but leaves task sampling unstratified, so tail-bucket gradients stay high-variance. (c) collapses to uniform. (d) is MAFCDR&apos;s objective.</>}
+        lens={<>Sampling-time stratification ≠ loss-time reweighting. PAM&apos;s lever is the meta-task sampler.</>}
+        stretch={<>When would IPW be sufficient on its own — and why isn&apos;t it here?</>}
       />
 
       {/* axis: C3 — what's dropped */}
@@ -1762,17 +1762,17 @@ const App = () => (
       {/* axis: D4 — plausible misattribution */}
       <VIS.TrapProblem
         id="pam-p18" difficulty="hard"
-        title="P18 — Plausible misattribution"
-        scenario={<><em>Discriminating insight: a sudden drop in cold-trending NDCG looks like MAML LR drift but is actually predictor staleness; the predictor was trained on a pre-holiday window and is now misbucketing holiday items.</em><br/>Most likely cause?</>}
+        title="P18 — Offline lift is real, online lift is zero. Where did it go?"
+        scenario={<><em>Discriminating insight: PAM produces well-calibrated cold-item embeddings, but the UPSTREAM candidate generator (two-tower retrieval, ANN index) never surfaces those items into the ranker&apos;s top-K — so PAM&apos;s lift never reaches users. The bug is downstream-of-PAM cascade starvation, not anything inside the meta-learner.</em><br/>Most likely cause?</>}
         options={[
-          {key:"a", text:"Trajectory predictor was trained on a pre-holiday window; it is now misbucketing holiday-themed items as cold-forever when they are actually cold-trending. Retrain the predictor on the recent window; PAM will route correctly again.", correct:true},
-          {key:"b", text:"MAML inner LR drift."},
-          {key:"c", text:"GPU thermal throttling."},
-          {key:"d", text:"Cache invalidation."},
+          {key:"a", text:"Upstream candidate generator (retrieval / ANN index) does not surface cold items into PAM&apos;s ranking pool; PAM only re-ranks items it never sees. Fix: add a cold-item quota to retrieval or rebuild the ANN index with the new cold embeddings.", correct:true},
+          {key:"b", text:"PAM&apos;s outer-loop loss is decreasing on the wrong bucket; head-bucket gradients have started dominating and tail buckets are no longer fitting offline metrics.", correct:false},
+          {key:"c", text:"The offline eval set is sampled uniformly across buckets, but online traffic is head-dominated — so the offline NDCG lift is a sampling artifact and there is no real lift to recover.", correct:false},
+          {key:"d", text:"Trajectory-bucket boundaries defined at meta-train time have drifted (yesterday&apos;s tail is today&apos;s head), so items are being routed to the wrong bucket-specific head at serve time.", correct:false},
         ]}
-        trap={<>(b)(c)(d) generic.</>}
-        lens={<>Upstream label drift is the typical PAM-specific cause.</>}
-        stretch={<>How would you canary the predictor weekly?</>}
+        trap={<>(b)(c)(d) are all PAM-internal stories. The bug is cascade-level: a perfect cold-item ranker is useless if retrieval never feeds it cold items.</>}
+        lens={<>Trace the request path end-to-end. Embedding quality &gt; pool composition &gt; user impact.</>}
+        stretch={<>What metric would you instrument to catch this cascade gap before launch?</>}
       />
 
       {/* axis: E1 — production gotcha */}

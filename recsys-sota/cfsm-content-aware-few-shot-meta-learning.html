@@ -1664,17 +1664,17 @@ const App = () => (
       {/* axis: C3 — what's dropped */}
       <VIS.TrapProblem
         id="cfsm-p12" difficulty="medium"
-        title="P12 — What CFSM DROPS vs standard MAML-Rec"
-        scenario={<><em>Discriminating insight: CFSM drops the dependency on per-user INTERACTION history as the prior. It replaces that with content. Interaction history is still used in the inner loop adaptation, but it is NOT the prior anymore.</em><br/>What is dropped?</>}
+        title="P12 — At day-1 cold-start, CFSM skips the inner-loop fine-tune. Why?"
+        scenario={<><em>Discriminating insight: with 0-3 interactions, the inner-loop gradient is dominated by interaction NOISE (one accidental click swings the update). The content-derived initialization is already the best estimate; one or two SGD steps on a tiny support set move the user-tower AWAY from a well-calibrated prior toward an overfit to those few clicks.</em><br/>Pick the load-bearing reason.</>}
         options={[
-          {key:"a", text:"Reliance on per-user interaction HISTORY as the meta-prior. Interactions enter only in the inner-loop adaptation; the prior is content-derived. This is what enables day-1 cold-start.", correct:true},
-          {key:"b", text:"The MAML inner loop."},
-          {key:"c", text:"The item embedding table."},
-          {key:"d", text:"Everything."},
+          {key:"a", text:"With 0-3 interactions, the inner-loop SGD step overfits to interaction noise; the content prior is already calibrated and a fine-tune update only adds variance. Serve the meta-prior directly at day-1; fine-tune only once interactions exceed a stability threshold.", correct:true},
+          {key:"b", text:"The MAML inner loop is mathematically undefined when the support set has fewer than K examples."},
+          {key:"c", text:"CFSM removes the inner loop entirely; there is no fine-tune step at any user lifecycle stage."},
+          {key:"d", text:"Skipping fine-tune is a latency optimization only; with infinite serving budget you would always run inner-loop SGD."},
         ]}
-        trap={<>(b)(c) still present.</>}
-        lens={<>The dropped piece is the interaction-history-as-prior assumption.</>}
-        stretch={<>When does dropping interaction-as-prior cost you?</>}
+        trap={<>(b) false — the loop is defined for any K. (c) false — fine-tune returns once interactions stabilize. (d) reverses cause: skipping is a STATISTICAL choice, not a latency one.</>}
+        lens={<>The fine-tune step is dropped at day-1 because interaction-noise variance dominates content-prior bias.</>}
+        stretch={<>What interaction count threshold would you set, and how would you measure it?</>}
       />
 
       {/* axis: C4 */}
