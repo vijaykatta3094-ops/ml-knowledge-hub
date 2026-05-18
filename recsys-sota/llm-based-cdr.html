@@ -1699,20 +1699,20 @@ const App = () => (
         stretch={<>What is the first thing you would say in design review to catch this?</>}
       />
 
-      {/* axis: D4 */}
+      {/* axis: D4 — bridge prompt transferability, the LLM-CDR-unique facet */}
       <VIS.TrapProblem
         id="lcdr-p15" difficulty="medium"
-        title="P15 — Senior point: prompt versioning is a CI concern"
-        scenario={<><em>Discriminating insight: a junior treats the prompt as a config; a senior treats it as the model &mdash; versioned, A/B&apos;d, regression-tested.</em><br/>Senior insight on operating LLM-CDR?</>}
+        title="P15 — When the source-domain bridge prompt fails to transfer"
+        scenario={<><em>Discriminating insight: LLM-CDR&apos;s &quot;bridge&quot; is the natural-language re-encoding of source-domain history. The transferable bridge describes BEHAVIORAL primitives (&quot;prefers slow-burn pacing&quot;); the domain-locked bridge leaks source vocabulary (&quot;loves Sanderson&apos;s magic systems&quot;). Senior LLM-CDR question.</em><br/>Books → podcasts LLM-CDR works on offline eval but tanks at launch. The bridge prompt template lists the user&apos;s book titles verbatim and asks for podcast recommendations they&apos;d like. What&apos;s the LLM-CDR-specific bridge failure?</>}
         options={[
-          {key:"a", text:"The prompt template is the model — version it in source control, A/B test changes, run offline regression on a held-out eval set, and treat prompt diffs like model diffs.", correct:true},
-          {key:"b", text:"Use the largest LLM available."},
-          {key:"c", text:"Add caching."},
-          {key:"d", text:"Use cheaper API tiers."},
+          {key:"a", text:"The titles list locks the LLM into source-domain VOCABULARY matching — it scans for podcasts containing those book titles or authors. Bridge must instead extract behavioral primitives (pacing, length, tone) BEFORE the cross-domain inference.", correct:true},
+          {key:"b", text:"The LLM context window is too small for full reading history."},
+          {key:"c", text:"Cold-start &mdash; LLMs always need warm-up data."},
+          {key:"d", text:"Target-domain catalog isn&apos;t in the LLM&apos;s pretraining corpus."},
         ]}
-        trap={<>(b)(c)(d) are ops basics, not the LLM-CDR-specific insight.</>}
-        lens={<>Prompt = model. Same discipline.</>}
-        stretch={<>What smallest prompt regression test would you put in CI?</>}
+        trap={<>(b) misframes &mdash; the failure persists with short history. (c) generic. (d) plausible-sounding but corpus coverage doesn&apos;t fix vocabulary-locked retrieval; you&apos;d still get name-matching.</>}
+        lens={<>The bridge prompt is the model&apos;s decision boundary &mdash; bridges that name source items lock the model into a retrieval task; bridges that name behaviors enable transfer.</>}
+        stretch={<>Write the 2-stage bridge prompt that decouples extraction from cross-domain inference.</>}
       />
 
       {/* axis: E1 */}
@@ -1772,11 +1772,11 @@ const App = () => (
         scenario={<><em>Discriminating insight: if descriptions are SKU + price, the LLM has nothing semantic to map. The advantage collapses to popularity prior over what the LLM memorized.</em><br/>What does LLM-CDR collapse to when item descriptions are just IDs?</>}
         options={[
           {key:"a", text:"Whatever popularity prior the LLM has memorized from pretraining for those IDs — often near-random for unseen IDs, popularity-biased for famous ones.", correct:true},
-          {key:"b", text:"Random."},
-          {key:"c", text:"Optimal ranking."},
-          {key:"d", text:"Item-content retrieval."},
+          {key:"b", text:"Identical to content-based retrieval over the same ID space — equivalent to a textbook content-similarity baseline."},
+          {key:"c", text:"Optimal ranking &mdash; the LLM&apos;s in-context reasoning compensates for missing text."},
+          {key:"d", text:"Falls back to collaborative filtering signals via co-occurrence of IDs in pretraining."},
         ]}
-        trap={<>(b) too strong. (c) absurd. (d) wrong stack.</>}
+        trap={<>(b) tempting but content-retrieval needs CONTENT &mdash; SKU + price isn&apos;t content. (c) absurd. (d) misattributes &mdash; LLM pretraining doesn&apos;t see your private SKU co-occurrence.</>}
         lens={<>No semantic input ⇒ no semantic mapping. The intelligence is in the prompt-time text.</>}
         stretch={<>How would you detect this collapse in offline eval?</>}
       />

@@ -1510,20 +1510,20 @@ const App = () => (
         stretch={<>What diagnostic distinguishes representation-sparsity from MNAR exposure?</>}
       />
 
-      {/* axis: A3 */}
+      {/* axis: E — production gotcha: shifting popularity prior */}
       <VIS.TrapProblem
         id="dre-p3" difficulty="hard"
-        title="P3 — DRE vs PopRT"
-        scenario={<><em>Discriminating insight: PopRT does no training intervention; works on any catalog regardless of content similarity. DRE requires content similarity but produces better-conditioned embeddings (useful for downstream ANN retrieval).</em><br/>Your tail items are content-similar to head AND you also use embeddings for ANN retrieval. Which method?</>}
+        title="P3 — When the popularity boundary itself moves under DRE"
+        scenario={<><em>Discriminating insight: DRE&apos;s orthogonal popularity head is trained against a SNAPSHOT of the popularity prior. When a single new item goes viral overnight (a celebrity post, a TikTok trend), the empirical &quot;popular&quot; boundary shifts faster than the prior is refreshed, so the orthogonal head is now decorrelating embeddings from a STALE definition of popularity. Until the prior is rebuilt, the head silently injects misalignment instead of removing it.</em><br/>A new item hits 100x its prior CTR in 12 hours; your DRE pipeline refreshes the popularity prior weekly. What&apos;s the DRE-specific production gotcha?</>}
         options={[
-          {key:"a", text:"DRE — improved tail embeddings also lift ANN retrieval recall, not just final ranking. PopRT's serving-time reweighting doesn't change the embeddings used by ANN.", correct:true},
-          {key:"b", text:"PopRT — always cheaper."},
-          {key:"c", text:"Both."},
-          {key:"d", text:"Neither."},
+          {key:"a", text:"The orthogonal popularity head is decorrelating against a 7-day-old popularity bucketing — the new viral item is bucketed as TAIL in the head&apos;s training signal, so the head pulls its embedding AWAY from popular neighbors exactly when it should be pulling toward them. Mitigation: stream-update the popularity prior or fall back to a default head while the prior is stale.", correct:true},
+          {key:"b", text:"DRE&apos;s contrastive loss spikes &mdash; the viral item has too few content-similar neighbors and the loss diverges."},
+          {key:"c", text:"Nothing &mdash; DRE is invariant to popularity-prior drift because the orthogonal head removes popularity signal entirely."},
+          {key:"d", text:"The ANN index becomes stale &mdash; rebuild it nightly to track the viral item&apos;s embedding shift."},
         ]}
-        trap={<>(b) ignores the ANN benefit. (c) over-engineering.</>}
-        lens={<>DRE&apos;s embedding improvement compounds across the stack (ANN + ranker). That&apos;s its hidden lift.</>}
-        stretch={<>What is the ANN-retrieval lift you would expect?</>}
+        trap={<>(b) confuses the orthogonal head with the contrastive enhancement &mdash; different mechanism. (c) the seductive misread: &quot;orthogonal to popularity&quot; means orthogonal to the TRAINED popularity, not to the live one. (d) generic ANN hygiene; misses the DRE-specific bug.</>}
+        lens={<>The orthogonal head is only as good as the popularity prior it was trained against. Prior-refresh cadence is a hidden DRE hyperparameter that matters most under catalog regime shifts.</>}
+        stretch={<>Design a 2-line monitor that detects orthogonal-head staleness before it hits production metrics.</>}
       />
 
       {/* axis: A4 */}
@@ -1710,12 +1710,12 @@ const App = () => (
         scenario={<><em>Discriminating insight: junior says &quot;DRE boosts tail items&quot;. Senior point: representation-level + content-similarity prerequisite + popularity-orthogonal head.</em><br/>Pick the answer that is TRUE but misses the senior point.</>}
         options={[
           {key:"a", text:"DRE boosts tail-item recall.", correct:true},
-          {key:"b", text:"DRE only works when tail items are content-similar to head."},
-          {key:"c", text:"DRE's orthogonal head decorrelates popularity from the embedding."},
-          {key:"d", text:"DRE's enhanced embeddings compound across the stack (ANN + ranker)."},
+          {key:"b", text:"DRE&apos;s lift is conditional on a content-similar head neighborhood existing for each tail item &mdash; the load-bearing prerequisite without which the contrastive pull is noise."},
+          {key:"c", text:"DRE separates two interventions: representation enhancement (similarity contrastive) and the orthogonal popularity head &mdash; either alone underperforms; the two together are the paper&apos;s contribution."},
+          {key:"d", text:"DRE&apos;s representation gains compound across the stack &mdash; the same enhanced embedding lifts ANN recall AND L3 ranker AUC, so the measured ranker-only lift undercounts total system impact."},
         ]}
-        trap={<>(a) is true and survives redaction.</>}
-        lens={<>Senior point: representation-level + similarity prerequisite + orthogonal head.</>}
+        trap={<>(a) is true and survives redaction &mdash; it states the OUTCOME but names none of the load-bearing mechanism. (b)(c)(d) each name a distinct senior anchor (prerequisite / two-headed design / stack-compounding) and would survive a senior interview.</>}
+        lens={<>Senior point: representation-level + similarity prerequisite + orthogonal head + stack-compounding. (a) is the junior shape because it omits ALL four.</>}
         stretch={<>Smallest ablation that proves the orthogonal head matters?</>}
       />
 
@@ -1817,20 +1817,20 @@ const App = () => (
         stretch={<>What stacking order would you try?</>}
       />
 
-      {/* axis: F4 */}
+      {/* axis: F4 — content-similarity-head training regime, truly-novel content */}
       <VIS.TrapProblem
         id="dre-p22" difficulty="medium"
-        title="P22 — Edge case: claim collapses"
-        scenario={<><em>Discriminating insight: DRE&apos;s advantage collapses when content metadata is missing or low-quality. The similarity index becomes random; the contrastive pull becomes noise.</em><br/>Pick the case where DRE&apos;s advantage shrinks to ~zero.</>}
+        title="P22 — Training regime under truly-novel content"
+        scenario={<><em>Discriminating insight: DRE has two heads sharing one backbone &mdash; (i) the content-similarity contrastive head needs &geq;k content-similar head neighbors per tail item; (ii) the orthogonal popularity head is trained against the popularity prior. When tail items are TRULY NOVEL (no content-similar head neighbors, e.g., a new category), head (i) silently degrades (no positive pairs) while head (ii) keeps training. The asymmetric collapse produces embeddings that have BEEN decorrelated from popularity but have NOT been pulled toward any neighborhood &mdash; they drift to a popularity-orthogonal null region of the space.</em><br/>You launch a new &quot;collectibles&quot; category with no analog in the existing catalog. DRE&apos;s degradation pattern?</>}
         options={[
-          {key:"a", text:"Content metadata is missing or low-quality (items have only IDs and prices) — similarity index becomes random, contrastive pull becomes noise.", correct:true},
-          {key:"b", text:"Large catalog."},
-          {key:"c", text:"Rich head item embeddings."},
-          {key:"d", text:"Sparse tail interactions."},
+          {key:"a", text:"Asymmetric head collapse: the contrastive head produces near-zero gradient (no positive pairs above the similarity threshold), but the orthogonal popularity head trains normally — net effect is embeddings decorrelated from popularity yet untethered from any neighborhood. Items cluster in a popularity-null region with random rank.", correct:true},
+          {key:"b", text:"Both heads fail equally; the model reverts to the pretraining initialization."},
+          {key:"c", text:"The orthogonal head fails first because there are no popular collectibles in the prior."},
+          {key:"d", text:"DRE silently disables both heads under low-similarity and falls back to the base recommender."},
         ]}
-        trap={<>(b)(c)(d) all SUPPORT DRE.</>}
-        lens={<>Content metadata is the load-bearing dependency for DRE.</>}
-        stretch={<>How would you enrich metadata before deploying DRE?</>}
+        trap={<>(b) ignores the architectural asymmetry &mdash; the two heads have different prerequisites and fail independently. (c) inverts the failure order &mdash; popularity prior is well-defined (zero is a valid bucket); similarity is what&apos;s undefined. (d) DRE has no such fallback &mdash; you have to add it.</>}
+        lens={<>Two heads, two prerequisites, two failure modes. Asymmetric collapse is the DRE-specific signature when one prerequisite (content neighbors) is missing but the other (popularity prior) is fine.</>}
+        stretch={<>What guard rail would you add to detect contrastive-head starvation per category?</>}
       />
 
       {/* axis: F5 */}
@@ -1865,20 +1865,20 @@ const App = () => (
         stretch={<>What is the index-rebuild frequency?</>}
       />
 
-      {/* axis: F7 */}
+      {/* axis: F7 — orthogonal-head fusion architecture (DRE-internal ablation) */}
       <VIS.TrapProblem
         id="dre-p25" difficulty="hard"
-        title="P25 — Stacking DRE with PopRT or BISER"
-        scenario={<><em>Discriminating insight: DRE (representation-time) + PopRT (serving-time) compose cleanly &mdash; train DRE-enhanced model, deploy under PopRT. DRE + BISER co-train requires care (orthogonal-head + dual-model interaction).</em><br/>Cleanest stacking pattern?</>}
+        title="P25 — How does the orthogonal popularity head FUSE into the representation?"
+        scenario={<><em>Discriminating insight: the DRE paper ablates four fusion patterns for combining the orthogonal popularity head with the base embedding: (concat) embed and popularity vector concatenated &mdash; downstream layers learn to ignore popularity; (add) summed &mdash; popularity acts as a bias and weakens the decorrelation; (residual) popularity is a skip-connection over the embedding &mdash; allows gradient flow but lets popularity leak back; (FiLM) popularity vector gates the embedding via affine modulation &mdash; preserves orthogonality but lets popularity MODULATE without entering the additive path. The paper finds FiLM dominates concat and residual on tail-recall, narrowly above add.</em><br/>Which fusion did the DRE paper find best for preserving orthogonality while still letting the popularity signal inform ranking?</>}
         options={[
-          {key:"a", text:"Train DRE-enhanced model first (representation-level), then deploy under PopRT router (serving-level). Different intervention points compose orthogonally.", correct:true},
-          {key:"b", text:"Co-train DRE + BISER + PopRT in one loss."},
-          {key:"c", text:"Use only one method."},
-          {key:"d", text:"Ensemble at inference."},
+          {key:"a", text:"FiLM-style affine modulation — the popularity vector gates (scales + shifts) the embedding rather than entering its additive subspace. Orthogonality is preserved while popularity still informs the final ranking through modulation, beating concat / residual / add on tail-recall ablations.", correct:true},
+          {key:"b", text:"Concatenation &mdash; downstream layers can learn whatever weighting they need; most expressive."},
+          {key:"c", text:"Residual skip-connection over the embedding &mdash; standard transformer pattern."},
+          {key:"d", text:"Element-wise addition with a learned scalar &mdash; simplest and matches the paper&apos;s ablation winner."},
         ]}
-        trap={<>(b) hard to stabilize. (c) leaves lift on the table.</>}
-        lens={<>Intervention-point composability: representation-time + serving-time compose easily.</>}
-        stretch={<>Which combo gives the biggest expected lift?</>}
+        trap={<>(b) downstream layers under-utilize concatenated popularity when the gradient is dominated by the larger embedding dimensions; orthogonality is preserved but signal is wasted. (c) residual leaks popularity back into the embedding path, defeating the orthogonal head. (d) plausible but (a) outperforms add specifically because modulation is multiplicative and doesn&apos;t enter the additive subspace orthogonality is defined over.</>}
+        lens={<>The fusion choice is what operationalizes &quot;orthogonal&quot;. FiLM-style modulation is the senior pick because it lets popularity steer without entering the subspace orthogonality is measured in.</>}
+        stretch={<>Sketch the FiLM block: where does popularity enter as gamma/beta?</>}
       />
 
       {/* axis: F8 */}

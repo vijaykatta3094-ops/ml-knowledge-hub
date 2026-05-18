@@ -1702,20 +1702,20 @@ const App = () => (
         stretch={<>How would you continuously instrument probe accuracy in prod?</>}
       />
 
-      {/* axis: D4 — content of specific head */}
+      {/* axis: D4 — content of specific head, probe-classifier-falsifiable */}
       <VIS.TrapProblem
         id="disco-p15" difficulty="medium"
-        title="P15 — Which signal belongs in the SPECIFIC head?"
-        scenario={<><em>Discriminating insight: shared = taste primitives that survive translation (non-fiction preference, evening engagement, long-form). Specific = domain-mechanic-specific behaviors (series-binge cadence in books, episode-completion in podcasts).</em><br/>Books-and-podcasts deployment &mdash; which signal is MOST likely captured by the books-SPECIFIC head?</>}
+        title="P15 — Probe-classifier test: where did the books-buying-prior land?"
+        scenario={<><em>Discriminating insight: DisCo&apos;s L3 push-apart loss specifically claims a signal that is books-only (e.g., books-buying intent in a holiday-gift window) is REPELLED from shared and contained in books-specific. The senior test is a probe classifier on each head: shared should be near-random on books-only behavior; specific should be highly predictive.</em><br/>You suspect &quot;buys-as-gifts-in-December&quot; (books-only) has leaked into shared. Which probe is most diagnostic of DisCo&apos;s factoring claim?</>}
         options={[
-          {key:"a", text:"Series-binge cadence (read 5 books in a series back-to-back) — a domain-mechanic-specific behavior that does not translate to podcasts.", correct:true},
-          {key:"b", text:"General preference for non-fiction over fiction."},
-          {key:"c", text:"Time-of-day engagement (evening reader)."},
-          {key:"d", text:"Preference for long-form over short-form content."},
+          {key:"a", text:"Train a small linear probe to predict gift-buyer label from EACH head separately. Factoring holds iff specific-head AUC is high AND shared-head AUC is near 0.5 — both halves matter; shared-must-fail is the load-bearing test.", correct:true},
+          {key:"b", text:"Compute cosine similarity between the two heads — if low, factoring is fine."},
+          {key:"c", text:"Look at downstream NDCG — if it improved, the factoring worked."},
+          {key:"d", text:"Inspect attention weights on the books embedding."},
         ]}
-        trap={<>(b)(c)(d) all survive cross-domain translation &mdash; they belong in SHARED.</>}
-        lens={<>The intuition: if the behavior would mean the same thing in the other domain, it's shared. If the behavior requires domain-specific mechanics to even exist, it's specific.</>}
-        stretch={<>Could the same raw feature (clicks per session) be split across both heads?</>}
+        trap={<>(b) cosine measures redundancy, not invariance &mdash; orthogonal heads can both still carry books-only signal. (c) NDCG conflates many causes. (d) DisCo has no per-domain attention &mdash; that&apos;s DSAM.</>}
+        lens={<>DisCo&apos;s claim is invariance on the shared head, not just decorrelation. The shared-head-must-fail probe is the DisCo-specific falsifier.</>}
+        stretch={<>What probe AUC threshold would you treat as a regression?</>}
       />
 
       {/* axis: E1 — production gotcha */}
@@ -1807,11 +1807,11 @@ const App = () => (
         scenario={<><em>Discriminating insight: the cleanest extension is O(N^2) pairwise alignment so the shared head sees balanced positives; anchor-based loses symmetry; ensembling three pairwise DisCos returns three shared heads, defeating the unification.</em><br/>Extend to books + podcasts + audiobooks. Cleanest L1 extension?</>}
         options={[
           {key:"a", text:"Pairwise L1 over all 3 pairs; one shared head supervised by all three pair sources. Symmetric and balanced.", correct:true},
-          {key:"b", text:"Pick books as anchor; align podcasts and audiobooks to it."},
+          {key:"b", text:"Use the user-id self-edges to learn ONE cross-domain identity embedding shared across all three, then attach 3 specific heads."},
           {key:"c", text:"Triplet contrastive across all three."},
           {key:"d", text:"Train pairwise DisCos and ensemble."},
         ]}
-        trap={<>(b) asymmetric &mdash; books sets the geometry. (c) right family but needs careful sampling. (d) returns 3 shared heads.</>}
+        trap={<>(b) plausible but breaks the factoring &mdash; self-edges don&apos;t supervise INVARIANCE; without L1 cross-domain pairs the shared head silently absorbs domain-specific structure. (c) right family but needs careful sampling. (d) returns 3 shared heads, defeats unification.</>}
         lens={<>Pairwise alignment across O(N^2) pairs is the symmetric extension &mdash; at N=3, it's cheap. Anchor-based is the budget alternative when N gets big.</>}
         stretch={<>When does pairwise O(N^2) become impractical?</>}
       />
@@ -1838,10 +1838,10 @@ const App = () => (
         title="P23 — Failure mode the paper itself admits"
         scenario={<><em>Discriminating insight: the paper itself flags that disentanglement quality depends on contrastive-objective DESIGN &mdash; not on data volume, not on graph size, not on optimizer.</em><br/>What's the failure mode the AAAI 2025 paper explicitly admits?</>}
         options={[
-          {key:"a", text:"Disentanglement quality is bounded by the contrastive-objective DESIGN — bad L1/L2/L3 design leaks specific into shared, and DisCo reduces to naive CDR with extra steps.", correct:true},
-          {key:"b", text:"Compute cost is too high."},
-          {key:"c", text:"Item embeddings are noisy."},
-          {key:"d", text:"Negative sampling is slow."},
+          {key:"a", text:"Disentanglement quality is bounded by L1/L2/L3 design; bad design reduces DisCo to naive CDR with extra steps.", correct:true},
+          {key:"b", text:"Compute cost dominates &mdash; the two-head architecture doubles training FLOPs and forces smaller batches."},
+          {key:"c", text:"Item embeddings noise propagates &mdash; without clean item features, the shared head learns spurious cross-domain correlations."},
+          {key:"d", text:"Negative sampling rate is the practical bottleneck &mdash; below a critical sampling ratio L3 stops separating heads."},
         ]}
         trap={<>(b)(c)(d) are generic ML constraints, not DisCo-specific admitted failures.</>}
         lens={<>Read the paper's limitations section. The honest gotcha is: "we don't have a closed-form bound on disentanglement quality; it depends on how you designed the losses".</>}

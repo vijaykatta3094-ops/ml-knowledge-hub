@@ -1672,20 +1672,20 @@ const App = () => (
         stretch={<>When would you still prefer IPW?</>}
       />
 
-      {/* axis: D2 */}
+      {/* axis: D2 — context-vector composition tradeoff (router input design) */}
       <VIS.TrapProblem
         id="poprt-p13" difficulty="hard"
-        title="P13 — Cause looks like A but is actually B"
-        scenario={<><em>Discriminating insight: tail-recall regression often LOOKS like "tail specialist is broken" but is specifically "router threshold drifted; tail queries are being routed to the head model" &mdash; different fix surface.</em><br/>Tail NDCG drops. Generic reading: "specialist broken". PopRT-specific reading?</>}
+        title="P13 — Router context-vector composition: what to feed the gate?"
+        scenario={<><em>Discriminating insight: PopRT&apos;s router accuracy is bottlenecked by what enters its context vector. Popularity-bucket-only context is the cheapest but cannot disambiguate &quot;user shopping for a niche gift&quot; (tail-intent under a head-popular query) from &quot;user wants the popular thing&quot;; adding item-content embedding fixes that but leaks head bias; user-segment plus session-stage is the senior compromise.</em><br/>Your PopRT router uses ONLY popularity-bucket of the candidate as the context vector. The router is high-accuracy on holdout but tail-recall sags in production. Which context-design failure?</>}
         options={[
-          {key:"a", text:"Likely a router-threshold drift — popularity-context router is mis-classifying tail-intent queries as head-intent, so they get routed to the head model (which under-serves them). Diagnose via router-output distribution; fix by recalibrating the threshold.", correct:true},
-          {key:"b", text:"Roll back."},
-          {key:"c", text:"Add dropout."},
-          {key:"d", text:"Retrain head."},
+          {key:"a", text:"Popularity-bucket alone is too narrow — it can route the candidate but not the INTENT. A user typing &quot;1960s jazz vinyl&quot; under a head-popular session never reaches a tail specialist because the candidate-popularity context says &quot;head&quot;. Add user-segment + query-rarity to the context.", correct:true},
+          {key:"b", text:"The router is overfit; add dropout to the gate."},
+          {key:"c", text:"Use item-content embedding as router context &mdash; it has highest fidelity for tail discrimination."},
+          {key:"d", text:"Use only the user&apos;s historical popularity-bucket distribution &mdash; user-level features dominate item-level."},
         ]}
-        trap={<>(b)(c)(d) are generic.</>}
-        lens={<>The first PopRT-specific diagnostic is router output distribution.</>}
-        stretch={<>How would you instrument continuous router monitoring?</>}
+        trap={<>(b) misdiagnoses generalization vs context-coverage. (c) tempting but content embedding is pretrained on a head-skewed corpus &mdash; it INJECTS head bias into the router. (d) ignores the per-query intent shift.</>}
+        lens={<>Router context = which axes of intent the gate can separate. Bucket-only collapses two intent dimensions onto one feature; the fix is dimensionality, not regularization.</>}
+        stretch={<>Sketch the minimal 3-feature context vector and justify each.</>}
       />
 
       {/* axis: D3 */}
@@ -1866,20 +1866,20 @@ const App = () => (
         stretch={<>What is the back-of-envelope latency overhead?</>}
       />
 
-      {/* axis: F7 */}
+      {/* axis: F7 — serving-time deployment topology */}
       <VIS.TrapProblem
         id="poprt-p25" difficulty="hard"
-        title="P25 — Stacking PopRT with BISER or DRE"
-        scenario={<><em>Discriminating insight: PopRT (serving-time) and BISER (training-time) operate at different intervention points and can compose. DRE (representation-time) can also stack but you must order: train DRE-augmented model first, then deploy with PopRT routing.</em><br/>Can PopRT compose with BISER or DRE?</>}
+        title="P25 — Where in the serving stack should PopRT live?"
+        scenario={<><em>Discriminating insight: PopRT can be installed at three rank-stack surfaces and each has a different tail-uplift/head-CTR tradeoff. (1) AFTER L3 ranker as a re-route (chooses among already-scored candidates) &mdash; lowest head risk, smallest tail lift since L3 has already pruned tail. (2) INSIDE L3 as a rerank-by-router pass &mdash; medium risk, medium lift. (3) AT L4 final-cut on a slate of ~50 &mdash; biggest tail lift but with rank-position constraints binding (top-3 positions own &gt;70% of CTR; any tail injection there hits head CTR hardest).</em><br/>You want tail uplift WITHOUT denting head CTR. Where should PopRT sit?</>}
         options={[
-          {key:"a", text:"Yes — different intervention points. Train BISER (debias at training) for the head model; then deploy under PopRT router for tail intent. Same for DRE-augmented head. The interventions are orthogonal.", correct:true},
-          {key:"b", text:"No — they conflict."},
-          {key:"c", text:"Only with IPW."},
-          {key:"d", text:"Only at inference ensembling."},
+          {key:"a", text:"Inside L3 rerank with a position-budget rule: PopRT can reorder ranks 4–N but never displace the top-3. Mid-stack gives meaningful tail recovery (L3 still has tail candidates in its scored set), and the position-budget caps head-CTR exposure to the long-tail of the slate.", correct:true},
+          {key:"b", text:"After L3 (post-ranker) &mdash; safest because L3 has already made its call; PopRT only re-routes the leftovers."},
+          {key:"c", text:"At L4 final-cut on a slate of 50 &mdash; PopRT gets the most freedom and the biggest tail lift, with no constraint on top positions."},
+          {key:"d", text:"Anywhere &mdash; PopRT&apos;s router decides per-query, so the surface doesn&apos;t matter."},
         ]}
-        trap={<>(b) overstates. (c)(d) miss the composition pattern.</>}
-        lens={<>Intervention-point composability: training-time methods stack under PopRT cleanly.</>}
-        stretch={<>Which combo would you try first?</>}
+        trap={<>(b) plausible-sounding but tail items are already pruned by L3 score; PopRT has nothing to elevate. (c) maximum lift but slaughters head CTR because positions 1–3 carry &gt;70% of clicks. (d) topology absolutely matters &mdash; the router&apos;s decision space is constrained by which candidates reach the surface.</>}
+        lens={<>Rank-position constraints are binding: tail uplift compounds linearly with available rank slots, head-CTR loss compounds super-linearly with displacement near the top. L3-rerank with a top-K freeze is the senior compromise.</>}
+        stretch={<>Quantify: with top-3 frozen and PopRT free on ranks 4–10, what fraction of total CTR is the deploy risking?</>}
       />
 
       {/* axis: F8 */}

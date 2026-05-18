@@ -1483,9 +1483,9 @@ const App = () => (
         scenario={<><em>Discriminating insight: IPS is unbiased ONLY when the propensity model is correct. In MNAR with non-stationary logging policies (typical production), propensity drifts and IPS becomes badly biased. BISER&apos;s mutual self-supervision sidesteps the propensity estimate entirely.</em><br/>You have a propensity model that&apos;s correct on offline replay but the logging policy changed last quarter. Which method handles this best?</>}
         options={[
           {key:"a", text:"BISER — it has no propensity model to be stale. The dual-model mutual labeling works on the current data distribution, not the logged one.", correct:true},
-          {key:"b", text:"IPS — just retrain the propensity."},
-          {key:"c", text:"Doubly Robust — handles policy drift by definition."},
-          {key:"d", text:"Single-model self-distill."},
+          {key:"b", text:"IPS &mdash; retrain the propensity on last week&apos;s logs and the unbiasedness guarantee is restored under the new policy."},
+          {key:"c", text:"Doubly Robust &mdash; handles policy drift by definition through the value-function correction term."},
+          {key:"d", text:"Single-model self-distillation &mdash; the teacher absorbs policy drift and the student inherits the corrected labels."},
         ]}
         trap={<>(b) assumes you CAN retrain propensity correctly &mdash; usually you can&apos;t, that&apos;s why we&apos;re here. (c) DR still depends on propensity quality. (d) confirmation-bias amplifier.</>}
         lens={<>BISER&apos;s edge is regime-specific: when propensity is unreliable, BISER wins. With perfect propensity, IPS is competitive at half the compute.</>}
@@ -1799,20 +1799,20 @@ const App = () => (
         stretch={<>What agreement threshold would you set?</>}
       />
 
-      {/* axis: F3 */}
+      {/* axis: F3 — dual-model heterogeneity requirement, BISER-unique */}
       <VIS.TrapProblem
         id="biser-p21" difficulty="medium"
-        title="P21 — Edge case: claim collapses"
-        scenario={<><em>Discriminating insight: BISER&apos;s mechanism collapses when (i) propensities are clean (IPS wins), or (ii) the two models converge to similarity (no mutual info).</em><br/>Two distinct edge cases where BISER&apos;s mechanism collapses?</>}
+        title="P21 — What if both BISER models share architecture?"
+        scenario={<><em>Discriminating insight: BISER&apos;s mutual supervision is information-theoretic &mdash; each model must produce errors the OTHER doesn&apos;t make, otherwise their pseudo-labels are redundant and the bilateral channel collapses to single-model self-distillation. Heterogeneity (different inductive biases, e.g., MF vs sequence model, or different feature subsets) is the load-bearing prerequisite, not architectural symmetry.</em><br/>You instantiate BISER with two identical NeuMF networks (same arch, same features) &mdash; only random init differs. What&apos;s the BISER-specific failure mode?</>}
         options={[
-          {key:"a", text:"(i) Clean randomized-exposure propensities make IPS competitive at half the cost. (ii) The two models converge to architectural similarity; mutual info collapses.", correct:true},
-          {key:"b", text:"Too much data; too little data."},
-          {key:"c", text:"Wrong LR; wrong batch size."},
-          {key:"d", text:"Mac vs Linux."},
+          {key:"a", text:"After a few epochs both models learn near-identical decision surfaces — their disagreement collapses to noise from init, the mutual-supervision signal becomes self-distillation, and confirmation bias on majority (head) items amplifies instead of cancels.", correct:true},
+          {key:"b", text:"Training stalls because the optimizer can&apos;t decide between the two identical losses."},
+          {key:"c", text:"The propensity model degrades because two identical encoders double-count interactions."},
+          {key:"d", text:"Performance is unchanged &mdash; BISER doesn&apos;t require architectural diversity, only different random seeds."},
         ]}
-        trap={<>(b)(c)(d) generic.</>}
-        lens={<>Both edge cases attack the mechanism specifically.</>}
-        stretch={<>How would you detect (ii) early in training?</>}
+        trap={<>(b) optimizer-mythology. (c) BISER has no propensity model. (d) the seductive wrong answer &mdash; identical-arch BISER is what most teams ship and is exactly why their tail metric flatlines.</>}
+        lens={<>Heterogeneity is a mechanism prerequisite, not a hyperparameter. Different inductive biases ⇒ uncorrelated errors ⇒ usable mutual labels.</>}
+        stretch={<>Quantify heterogeneity: what early-training signal would tell you the two models are converging?</>}
       />
 
       {/* axis: F4 */}
