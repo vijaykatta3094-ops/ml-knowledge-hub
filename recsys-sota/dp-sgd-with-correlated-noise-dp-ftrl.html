@@ -1414,246 +1414,422 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 18
+// DP-FTRL — DP-SGD with correlated (tree-aggregated) noise
+//
+// Anchor (survives §2a redaction):
+//   Variant of DP-SGD where noise is CORRELATED across training steps via
+//   TREE-AGGREGATION (a.k.a. "tree-based noise mechanism"): the noise on
+//   the CUMULATIVE gradient is composed from a binary tree of partial-sum
+//   noise nodes. Correlated noise partially CANCELS across consecutive
+//   steps, so the effective noise on the running sum (what the model
+//   actually parameterises) grows like O(polylog T) instead of O(sqrt(T))
+//   as under Abadi's independent-noise DP-SGD. Same per-sample L2 clip;
+//   different cross-step noise STRUCTURE. RecSys angle: sequential/online
+//   training over long horizons benefits most — the polylog vs sqrt gap is
+//   load-bearing for long-running recommender updates.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Privacy &middot; DP-FTRL"
-      title="DP-SGD with correlated noise (DP-FTRL)"
-      subtitle="Replace per-step i.i.d. Gaussian noise with temporally correlated noise — better utility at the same privacy budget for sequential training."
+      pill="RecSys SOTA &middot; Privacy &middot; DP training"
+      title="DP-FTRL &mdash; correlated (tree-aggregated) noise for DP training"
+      subtitle="Replace Abadi DP-SGD&apos;s independent per-step noise with CORRELATED noise composed from a binary tree of partial-sum noise nodes. Correlated noise partially cancels when accumulated, so effective noise on the running sum grows like polylog(T) instead of sqrt(T). Same per-sample clip; different cross-step noise structure. Biggest wins on long sequential RecSys training."
       byline={[
-        {label: "Paper", value: "Practical and Private (Deep) Learning without Sampling or Shuffling (Kairouz et al., ICML 2021); 2025 ACM CSUR DP survey"},
-        {label: "Domain", value: "Private model training where the utility-privacy Pareto frontier matters"},
+        {label: "Paper", value: "Kairouz, McMahan, Song, Thakurta &mdash; Practical and Private (Deep) Learning without Sampling or Shuffling (ICML 2021), and follow-on production deployments at Google"},
+        {label: "Surface", value: "Long sequential / online DP training of recommenders over many SGD steps where Abadi&apos;s independent-noise budget blows up; production RecSys / on-device personalisation"},
+        {label: "Anchor that survives redaction", value: "Tree-aggregated correlated noise; effective accumulated-noise growth polylog(T) vs Abadi&apos;s sqrt(T)"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="DP-FTRL: a differentially private follow-the-regularized-leader optimizer that injects temporally CORRELATED noise across training steps rather than independent per-step noise. Lets sequential training spend less effective noise for the same privacy budget.">DP-FTRL</VIS.Term> replaces i.i.d. per-step Gaussian noise with structured correlated noise; the partial sums the model actually sees converge faster, so utility at a fixed &epsilon; improves substantially over vanilla DP-SGD.
+      Abadi DP-SGD adds INDEPENDENT Gaussian noise each step; the model&apos;s running parameter is essentially a cumulative noisy sum, whose effective noise grows like O(sqrt(T)) over T steps. For long sequential RecSys training (online updates, frequent retrains, many steps) this exhausts utility well before the privacy budget hits the target. DP-FTRL replaces the independent noise with TREE-AGGREGATED CORRELATED noise &mdash; the noise on the cumulative sum is composed from a binary tree of partial-sum noise nodes that partially cancel when accumulated. Effective noise on the running sum grows like O(polylog T). Per-sample L2 clipping is unchanged; the difference is the cross-step noise STRUCTURE. Senior trap: NOT independent noise (that&apos;s Abadi); NOT one-shot output perturbation; NOT federated learning (orthogonal &mdash; DP-FTRL can be used inside federated training).
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        Vanilla DP-SGD adds fresh independent Gaussian noise at every step. The model parameters are the running SUM of noisy updates, so the noise SUMS too — its variance grows linearly with steps. For sequential training (many small updates), this is wasteful: most of the per-step noise gets averaged out, but the privacy accountant has still spent budget on each draw. DP-FTRL injects noise that is CORRELATED across steps in a structured way, so when the partial sums add up, the cross-step covariance cancels and the EFFECTIVE noise on the parameter sum is much smaller for the same total privacy cost.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  M["Tree-aggregation noise structure"]
-  N1["Step 1 noise"]
-  N2["Step 2 noise (correlated with 1)"]
-  NT["Step T noise (correlated)"]
-  P["Partial sum theta_t"]
-  E["Effective noise on theta_t"]
-  M --> N1 --> P
-  M --> N2 --> P
-  M --> NT --> P
-  P --> E
-      `} />
-      <VIS.Equation display tex="\theta_t = \theta_0 - \eta \sum_{s=1}^{t} g_s + \eta \cdot \xi_t \quad ; \quad \text{Var}(\xi_t)_{\text{DP-FTRL}} \ll \text{Var}(\xi_t)_{\text{DP-SGD}}" />
-      <p>
-        The original implementation uses tree aggregation (each noise sample contributes to multiple partial sums via a binary tree), so noise that would cancel does cancel, and the privacy accountant charges each leaf noise only once.
-      </p>
+    <VIS.Section id="sec-what" title="What it is &mdash; tree-aggregated noise mechanism">
+      <VIS.Mermaid chart={`flowchart TB
+  CLIP["Per-sample L2 clip (same as Abadi)"]
+  SUM["Sum clipped per-sample gradients"]
+  TREE["Tree-aggregated noise on cumulative sum"]
+  CUM["Running cumulative gradient with polylog T noise"]
+  UPDATE["Update parameters"]
+  ACC["Tree accountant tracks (eps, delta)"]
+  CLIP --> SUM --> TREE --> CUM --> UPDATE
+  TREE --> ACC`} />
+      <ul>
+        <li><strong>Same per-sample clipping.</strong> L2 clip at norm C per example, exactly like Abadi DP-SGD. Sensitivity bookkeeping is unchanged.</li>
+        <li><strong>Tree-aggregated noise.</strong> Conceptually, build a binary tree whose leaves are training steps and whose internal nodes hold INDEPENDENT noise samples. Each step&apos;s cumulative noise is the sum of noise along the path from root to that step&apos;s leaf. Adjacent steps share most ancestor noise, so noise correlates positively, and the running sum&apos;s effective noise grows like O(polylog T).</li>
+        <li><strong>Why it helps utility.</strong> What the model parameter actually sees is the cumulative gradient sum, not each step in isolation. Correlated noise partially cancels in that cumulative sum; independent noise (Abadi) accumulates as random walk &mdash; O(sqrt(T)). Polylog beats sqrt at long horizons.</li>
+        <li><strong>RecSys angle.</strong> Long sequential training (continuous online updates, frequent retrains over months) is where the polylog vs sqrt gap matters most. Short training runs see modest gain.</li>
+      </ul>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from DP-SGD and from output-perturbation DP">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>DP-SGD (i.i.d. noise)</th><th style={{textAlign:"left",padding:8}}>DP-FTRL (correlated noise)</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How DP-FTRL differs from neighbours">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Noise across steps</th>
+          <th style={{textAlign:"left", padding:8}}>Accumulated-noise growth</th>
+          <th style={{textAlign:"left", padding:8}}>Per-sample clip</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Noise structure</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Independent per step</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Correlated across steps</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Subsampling required</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Poisson, for amplification</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Not required (single-epoch ok)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Best regime</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Multi-epoch, randomized</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Sequential, streaming, single pass</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Accountant complexity</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>RDP / Moments (mature)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Tree-aggregation / matrix factorization (newer)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Utility at tight &epsilon;</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Drops sharply</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Drops more gracefully</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Engineering complexity</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Moderate (Opacus, JAX)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High (custom noise generator)</td></tr>
+          <tr><td style={{padding:8}}>Abadi DP-SGD</td><td style={{padding:8}}>Independent Gaussian</td><td style={{padding:8}}>O(sqrt(T))</td><td style={{padding:8}}>Yes</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>DP-FTRL</strong></td><td style={{padding:8}}><strong>Correlated (tree-aggregated)</strong></td><td style={{padding:8}}><strong>O(polylog T)</strong></td><td style={{padding:8}}><strong>Yes</strong></td></tr>
+          <tr><td style={{padding:8}}>Output-perturbation DP</td><td style={{padding:8}}>One-shot at end</td><td style={{padding:8}}>O(1) but only for simple convex problems</td><td style={{padding:8}}>N/A</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Federated learning (no DP)</td><td style={{padding:8}}>None (no privacy)</td><td style={{padding:8}}>N/A</td><td style={{padding:8}}>No</td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Sequential or streaming training with one (or few) pass over the data.</li>
-        <li>Federated learning rounds where each device participates once and shuffling is impossible.</li>
-        <li>Regimes where the utility-privacy Pareto is tight and DP-SGD&apos;s utility collapse at small &epsilon; is the binding constraint.</li>
-        <li>Settings where Poisson subsampling cannot be enforced (e.g., user-level federated learning with deterministic device participation).</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill &mdash; 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the discriminating axis. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Accountant complexity.</strong> Tree-aggregation and matrix-factorization accountants are newer and have more surface area for implementation bugs.</li>
-        <li><strong>Multi-epoch erosion.</strong> The biggest gains are in single-pass or one-epoch settings; with many epochs, DP-SGD with subsampling can match or beat DP-FTRL.</li>
-        <li><strong>Memory and compute overhead.</strong> Tree noise needs O(log T) noise samples cached; matrix-factorization variants need a precomputed factorization that scales with steps.</li>
-        <li><strong>Optimizer interaction.</strong> Adam-family optimizers interact non-trivially with the correlated noise; vanilla SGD is the studied baseline.</li>
-        <li><strong>Code is rarer.</strong> Far fewer production-grade libraries; production teams often build their own.</li>
-      </ul>
-      <VIS.Callout kind="gotcha" title="Why correlated noise helps sequential but not one-shot">
-        DP-FTRL&apos;s win comes from the fact that you release MANY correlated partial sums during training (every step). The correlation lets the cross-step noise cancel when those sums are added together. For a ONE-SHOT release (release only the final parameters once), there is no sequence of partial sums to exploit — DP-SGD and DP-FTRL collapse to roughly the same noise on a single Gaussian draw. The structure pays off only when the training trajectory itself is the privacy unit.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="ftrl-p1" difficulty="hard"
-        title="P1 — Why correlated noise helps sequential but not one-shot"
-        scenario={<>You read that DP-FTRL beats DP-SGD on sequential training. You then propose using DP-FTRL for a one-shot model release (train, release final theta once). Why is this a misuse?</>}
+      <VIS.TrapProblem id="pr-p1" difficulty="hard"
+        title="P1 &mdash; DP-FTRL vs Abadi DP-SGD: load-bearing difference?"
+        scenario={<><em>Discriminating insight: same per-sample L2 clipping; the difference is the CROSS-STEP noise structure. Abadi adds INDEPENDENT Gaussian noise each step; DP-FTRL adds CORRELATED tree-aggregated noise. Correlated noise partially cancels when accumulated, so the running parameter sees O(polylog T) effective noise instead of O(sqrt(T)).</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"DP-FTRL&apos;s benefit comes from cross-step noise cancellation when many partial sums are released. A one-shot release has no sequence to exploit; on a single Gaussian draw, correlated and i.i.d. noise are equivalent.", correct:true},
-          {key:"b", text:"DP-FTRL is strictly better in all settings."},
-          {key:"c", text:"DP-SGD is mathematically incompatible with one-shot."},
-          {key:"d", text:"Correlated noise reduces variance for any release pattern."},
+          {key:"a", text:"Same per-sample L2 clip; the difference is cross-step noise structure. Abadi adds INDEPENDENT Gaussian noise each step. DP-FTRL adds CORRELATED tree-aggregated noise. Correlated noise partially cancels when accumulated, so the model&apos;s running parameter sees effective noise growing like O(polylog T) under DP-FTRL vs O(sqrt(T)) under Abadi &mdash; the polylog vs sqrt gap is the utility win at long T.", correct:true},
+          {key:"b", text:"They are identical."},
+          {key:"c", text:"DP-FTRL drops the per-sample clip."},
+          {key:"d", text:"Abadi uses correlated noise."},
         ]}
-        trap={<>(b)(d) overstate DP-FTRL. (c) is wrong about DP-SGD.</>}
-        lens={<>The structural advantage is a property of the release sequence, not the algorithm in isolation. When the privacy unit is &quot;the full training trajectory&quot;, DP-FTRL&apos;s correlated noise lets the partial sums benefit from cancellation. With one final release, there is only one term and no structure to exploit.</>}
-        stretch={<>What other release patterns would benefit from correlated noise besides per-step partial sums?</>}
+        trap={<>(b)(c)(d) miss the cross-step noise axis.</>}
+        lens={<>Same clip; different cross-step noise structure (independent vs tree-aggregated).</>}
+        stretch={<>At what T does polylog beat sqrt meaningfully? (Roughly T &gt; 1000.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ftrl-p2" difficulty="hard" multiSelect
-        title="P2 — Where DP-FTRL is the WRONG choice"
-        scenario={<>Pick the scenarios where DP-FTRL is not preferred to DP-SGD.</>}
+      <VIS.TrapProblem id="pr-p2" difficulty="hard"
+        title="P2 &mdash; Tree aggregation: what is the tree actually?"
+        scenario={<><em>Discriminating insight: imagine a binary tree whose leaves are training steps 1..T and whose internal nodes hold independent Gaussian noise samples. Step t&apos;s effective noise on the cumulative gradient is the sum of noise along the path from root to leaf t. Adjacent steps share most ancestors &mdash; their noise is positively correlated and partially cancels in the sum.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Multi-epoch training where Poisson subsampling is available and well-implemented.", correct:true},
-          {key:"b", text:"Team without engineering bandwidth to maintain a custom correlated-noise generator.", correct:true},
-          {key:"c", text:"One-shot release where only final parameters are exposed.", correct:true},
-          {key:"d", text:"Single-pass federated learning with deterministic device participation."},
-          {key:"e", text:"Streaming on-device training over months."},
+          {key:"a", text:"A binary tree whose leaves are training steps 1..T and whose internal nodes hold independent Gaussian noise samples. The noise applied to step t&apos;s cumulative gradient is the sum of noise along the root-to-leaf-t path. Adjacent steps share most ancestor nodes so their effective noise is positively correlated; correlated noise partially cancels when accumulated &mdash; that is what makes the polylog T bound work.", correct:true},
+          {key:"b", text:"It is just a different random number generator."},
+          {key:"c", text:"The tree is decorative."},
+          {key:"d", text:"Leaves hold independent noise; root is unused."},
         ]}
-        trap={<>(d)(e) are DP-FTRL wins.</>}
-        lens={<>The bad-fit scenarios: multi-epoch (subsampling amplification gives DP-SGD an easier win), team-capacity-limited (DP-FTRL has more surface), and one-shot (no sequence to exploit). For sequential / streaming / single-pass federated, DP-FTRL is the right default.</>}
-        stretch={<>What is the engineering footprint of DP-FTRL vs DP-SGD in lines of code?</>}
+        trap={<>(b)(c)(d) miss the mechanism.</>}
+        lens={<>Tree of noise nodes; path-sum correlates adjacent steps.</>}
+        stretch={<>Why a binary tree? (Logarithmic depth bounds the sum-of-path noise.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ftrl-p3" difficulty="hard"
-        title="P3 — Tree aggregation as the noise structure"
-        scenario={<>The original DP-FTRL paper uses a binary-tree noise structure. What does the tree achieve?</>}
+      <VIS.TrapProblem id="pr-p3" difficulty="hard"
+        title="P3 &mdash; DP-FTRL vs federated learning: same axis?"
+        scenario={<><em>Discriminating insight: orthogonal. Federated learning is about WHERE training happens (clients vs server); DP-FTRL is about WHAT NOISE to add for DP guarantees. They compose: federated learning with DP-FTRL noise gives sequential cross-device training with strong DP. Confusing them leads to either no privacy or unnecessary federation.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Each leaf is a fresh Gaussian sample; internal nodes are sums of their leaves. A partial sum at step t is computed from O(log T) tree nodes, each of which is reused across many partial sums — total privacy cost grows polylog rather than linearly in T.", correct:true},
-          {key:"b", text:"The tree is for memory efficiency only."},
-          {key:"c", text:"The tree replaces the privacy accountant."},
-          {key:"d", text:"The tree adds noise to the final parameter only."},
+          {key:"a", text:"Orthogonal. Federated learning answers WHERE training happens (clients keep data local, send updates to a server). DP-FTRL answers WHAT NOISE to add to gradients for a (&epsilon;, &delta;) DP guarantee under long sequential training. They compose: federated learning + DP-FTRL gives cross-device training with strong DP and good utility over long horizons.", correct:true},
+          {key:"b", text:"They are the same technique."},
+          {key:"c", text:"DP-FTRL replaces federated learning."},
+          {key:"d", text:"Federated learning provides DP automatically."},
         ]}
-        trap={<>(b)(c)(d) miss the privacy-cost mechanism.</>}
-        lens={<>The tree shares noise across overlapping partial sums. Each leaf is counted ONCE in the privacy accountant; the partial sums reuse internal nodes. The result: total privacy cost grows as O(log T) rather than O(T), giving the headline utility improvement at fixed &epsilon;.</>}
-        stretch={<>What is the memory cost of the tree structure in terms of T?</>}
+        trap={<>(b)(c)(d) conflate axes.</>}
+        lens={<>Federated = where; DP-FTRL = what noise.</>}
+        stretch={<>What is &lsquo;DP-FedAvg with FTRL noise&rsquo;? (Production combination used at Google.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ftrl-p4" difficulty="medium"
-        title="P4 — DP-FTRL vs DP-SGD utility gap at &epsilon;=1"
-        scenario={<>For a typical sequential training task at &epsilon;=1, what is the rough magnitude of the utility gap between DP-FTRL and DP-SGD?</>}
+      <VIS.TrapProblem id="pr-p4" difficulty="medium"
+        title="P4 &mdash; Without DP-FTRL, what is the realistic fallback for long sequential DP RecSys training?"
+        scenario={<><em>Discriminating insight: fallbacks for very long training are Abadi DP-SGD (independent noise, budget blows up at long T), output-perturbation DP (only convex), or relaxing &epsilon; (weakens privacy claim). DP-FTRL fills the &lsquo;long T, strong utility, calibratable budget&rsquo; corner.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"DP-FTRL typically achieves utility comparable to DP-SGD at a much larger &epsilon; (often 3-10x larger) — the privacy-utility frontier is meaningfully better.", correct:true},
-          {key:"b", text:"DP-FTRL and DP-SGD are identical."},
-          {key:"c", text:"DP-FTRL is always worse at small &epsilon;."},
-          {key:"d", text:"The gap is unmeasurable."},
+          {key:"a", text:"Abadi DP-SGD (independent noise &mdash; O(sqrt(T)) accumulated noise blows up utility at long T), output-perturbation DP (only works for simple convex problems), or relaxing the target &epsilon; (weakens the privacy claim). DP-FTRL occupies the &lsquo;long T, strong utility at fixed &epsilon;&rsquo; corner via correlated tree-aggregated noise.", correct:true},
+          {key:"b", text:"There is no fallback."},
+          {key:"c", text:"Skip privacy."},
+          {key:"d", text:"Use smaller learning rate."},
         ]}
-        trap={<>(b)(c)(d) misread the published results.</>}
-        lens={<>The headline result: at tight &epsilon; budgets in the sequential regime, DP-FTRL closes a meaningful fraction of the gap to non-private SGD. Reported numbers vary by task but a 3-10x effective &epsilon; improvement is typical for federated next-word prediction and similar streaming tasks.</>}
-        stretch={<>How would you replicate the comparison on your own task?</>}
+        trap={<>(b)(c)(d) absurd.</>}
+        lens={<>Each fallback fails on long-T utility, depth, or privacy claim.</>}
+        stretch={<>When does Abadi DP-SGD still beat DP-FTRL? (Short T, simpler infra.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ftrl-p5" difficulty="hard" multiSelect
-        title="P5 — Diagnosing why DP-FTRL is not winning on your task"
-        scenario={<>You implement DP-FTRL and observe that it matches DP-SGD&apos;s utility, not exceeds it. Pick the plausible root causes.</>}
+      <VIS.TrapProblem id="pr-p5" difficulty="hard"
+        title="P5 &mdash; When does DP-FTRL stop helping?"
+        scenario={<><em>Discriminating insight: needs (i) long training horizon T (the polylog vs sqrt gap is what you&apos;re buying), (ii) tolerance for tree-machinery infrastructure, (iii) stable streaming order of training examples (the tree-aggregation accountant assumes a specific traversal). Short T = small gain. No streaming order = accountant gets messy. High-precision gradients required = noise still hurts.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"You are running multi-epoch with subsampling — DP-SGD&apos;s amplification mostly closes the gap.", correct:true},
-          {key:"b", text:"Implementation bug in the tree noise: leaves are being resampled per step, removing the correlation that drives the win.", correct:true},
-          {key:"c", text:"Your accountant counts leaf nodes multiple times.", correct:true},
-          {key:"d", text:"DP-FTRL has no theoretical advantage."},
-          {key:"e", text:"The optimizer is Adam, not SGD, and the interaction is unstudied."},
+          {key:"a", text:"Short training runs (T&lt;1000) where the polylog vs sqrt gap is small and Abadi DP-SGD is simpler; infrastructures without the tree-aggregation machinery (per-step buffers, path-aware noise injection) and no budget to build it; surfaces where high-precision gradients are required (DP noise of any kind hurts); workloads with no stable streaming order that the tree-aggregation accountant assumes.", correct:true},
+          {key:"b", text:"It always wins."},
+          {key:"c", text:"It only works at T=10^6."},
+          {key:"d", text:"It only works for federated learning."},
         ]}
-        trap={<>(d) is wrong. (e) is real but more nuanced. (a)(b)(c) are the most common explanations.</>}
-        lens={<>Three classes of culprit: regime mismatch (multi-epoch + subsampling neutralizes the advantage), noise-correlation bug (each step independently re-samples noise so DP-FTRL collapses to DP-SGD), and accountant bug (over-counting privacy cost). Verify the noise structure with a covariance test before debugging utility.</>}
-        stretch={<>How would you unit-test the correlated-noise structure?</>}
+        trap={<>(b)(c)(d) miss the long-T + infra + ordering premises.</>}
+        lens={<>Long T + tree infra + stable streaming order.</>}
+        stretch={<>What T is the realistic break-even vs Abadi?</>}
       />
 
-      <VIS.TrapProblem
-        id="ftrl-p6" difficulty="medium"
-        title="P6 — Matrix factorization mechanism (newer DP-FTRL variant)"
-        scenario={<>Recent DP-FTRL variants replace tree aggregation with a learned matrix factorization. What does this achieve?</>}
+      <VIS.TrapProblem id="pr-p6" difficulty="hard"
+        title="P6 &mdash; Pick the architecture for &lsquo;DP-train a sequential recsys with daily online updates over a year, &epsilon;=4&rsquo;"
+        scenario={<><em>Discriminating insight: a year of daily updates is T &gt;&gt; 1000. Abadi&apos;s sqrt(T) noise growth exhausts the budget before the year ends or forces &epsilon; up. DP-FTRL&apos;s polylog growth keeps utility usable over the full year at the same &epsilon;.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"A precomputed factorization A=BC of the partial-sum matrix lets you inject noise via B and reconstruct partial sums via C, minimizing effective noise for a given privacy budget — strictly improves on the tree aggregation when the factorization is well-chosen.", correct:true},
-          {key:"b", text:"It replaces SGD with a different optimizer."},
-          {key:"c", text:"Matrix factorization is unrelated to DP."},
-          {key:"d", text:"Tree aggregation is provably optimal already."},
+          {key:"a", text:"DP-FTRL with tree-aggregated correlated noise, per-sample L2 clipping unchanged from Abadi, tree accountant calibrated to (&epsilon;=4, &delta;) over the year. At T = many thousand sequential SGD steps, Abadi&apos;s O(sqrt(T)) accumulated noise exhausts utility before the year ends; DP-FTRL&apos;s O(polylog T) keeps utility usable at the same budget. Tree infrastructure is the implementation cost.", correct:true},
+          {key:"b", text:"Abadi DP-SGD with independent noise."},
+          {key:"c", text:"Output-perturbation DP."},
+          {key:"d", text:"Skip privacy for the year."},
         ]}
-        trap={<>(b)(c) misread the technique. (d) is the misconception this variant explicitly addresses.</>}
-        lens={<>Matrix-factorization mechanisms generalize tree aggregation. The factorization is computed offline and is task-agnostic; the runtime cost is the same as DP-SGD plus the noise injection. This is the current state-of-the-art for sequential DP training and is what most 2024-2025 implementations actually use.</>}
-        stretch={<>What is the precomputation cost of the factorization?</>}
+        trap={<>(b)(c)(d) miss the long-T fit.</>}
+        lens={<>Year of daily updates + &epsilon;=4 is DP-FTRL&apos;s canonical surface.</>}
+        stretch={<>How big does the noise tree need to be? (Depth ~ log T.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ftrl-p7" difficulty="hard"
-        title="P7 — Federated learning context"
-        scenario={<>Why is DP-FTRL particularly well-suited to user-level DP in federated learning?</>}
+      <VIS.TrapProblem id="pr-p7" difficulty="hard"
+        title="P7 &mdash; Sounds reasonable: &ldquo;correlated noise is always better than independent noise&rdquo;"
+        scenario={<><em>Discriminating insight: not always. Correlated noise gives utility wins only when the PARAMETER YOU CARE ABOUT is the CUMULATIVE SUM &mdash; the running gradient sum that drives FTRL-style training. For applications where you care about individual per-step quantities (one-shot prediction, contextual bandits with no state) the noise cancellation in the cumulative sum does not help. Correlation is a structural fit, not a free win.</em><br/>Why is the naive view wrong?</>}
         options={[
-          {key:"a", text:"Federated rounds are sequential, single-pass over users (each device participates rarely), so subsampling amplification does not help. DP-FTRL&apos;s correlated noise gives a real utility win in exactly this regime.", correct:true},
-          {key:"b", text:"DP-FTRL handles user-level DP automatically."},
-          {key:"c", text:"Federated learning does not need DP."},
-          {key:"d", text:"DP-FTRL replaces the federated server."},
+          {key:"a", text:"Correlated noise helps only when the quantity you care about is the CUMULATIVE SUM of noisy values &mdash; the running gradient sum that drives FTRL-style training. Independent noise accumulates as random walk; correlated noise partially cancels. For applications where you care about each per-step quantity individually (one-shot prediction, contextual bandits with no state) the cancellation does not help &mdash; correlation is a structural fit, not a free win.", correct:true},
+          {key:"b", text:"Correlated noise is always better."},
+          {key:"c", text:"Independent noise is always better."},
+          {key:"d", text:"Both noises are equivalent in all settings."},
         ]}
-        trap={<>(b)(c)(d) misread the relationship.</>}
-        lens={<>The federated learning sweet spot for DP-FTRL: sequential rounds where each user appears at most a few times, no subsampling amplification available. This is exactly the &quot;sequential single-pass&quot; regime where correlated noise dominates. Google has reported large utility wins for federated next-word prediction in mobile keyboards using DP-FTRL.</>}
-        stretch={<>What changes if a user participates in every federated round?</>}
+        trap={<>(b)(c)(d) miss the cumulative-sum premise.</>}
+        lens={<>Correlation helps only for cumulative-sum quantities.</>}
+        stretch={<>Why does FTRL specifically benefit? (Its update IS the cumulative noisy sum.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ftrl-p8" difficulty="hard" mode="ordered"
-        title="P8 — DP-FTRL deployment sequence"
-        scenario={<>Order the steps to ship DP-FTRL. Wrong moves unranked.</>}
+      <VIS.TrapProblem id="pr-p8" difficulty="hard"
+        title="P8 &mdash; Pitch DP-FTRL&apos;s anchor"
+        scenario={<><em>Discriminating insight: anchor = &ldquo;same per-sample L2 clip as Abadi; replace independent Gaussian noise with tree-aggregated correlated noise; effective accumulated noise grows polylog T vs Abadi&apos;s sqrt T; biggest win on long sequential training&rdquo;.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Confirm the regime is sequential / single-pass / federated; show DP-SGD subsampling does NOT apply.", order:1},
-          {key:"b", text:"Pick the correlation structure (tree aggregation vs matrix factorization).", order:2},
-          {key:"c", text:"Implement the noise generator; unit-test the cross-step covariance matrix.", order:3},
-          {key:"d", text:"Use the matched accountant (tree or factorization); verify on a calibration run vs DP-SGD.", order:4},
-          {key:"e", text:"Skip the covariance unit test; observed utility will reveal bugs."},
-          {key:"f", text:"Ship and monitor empirical utility-privacy at the released &epsilon;.", order:5},
+          {key:"a", text:"Per-sample L2 clip unchanged from Abadi DP-SGD; replace independent per-step Gaussian noise with tree-aggregated correlated noise composed from a binary tree of partial-sum noise nodes. Effective noise on the cumulative gradient grows like O(polylog T) instead of O(sqrt(T)) under independent noise. Biggest utility win on long sequential RecSys training (online updates over months). Tree accountant tracks (&epsilon;, &delta;).", correct:true},
+          {key:"b", text:"DP-FTRL drops clipping."},
+          {key:"c", text:"DP-FTRL uses one-shot output perturbation."},
+          {key:"d", text:"DP-FTRL is federated learning."},
         ]}
-        trap={<>(e) is the silent-collapse trap; DP-FTRL with broken correlation looks like a worse DP-SGD.</>}
-        lens={<>Sequence: confirm regime, pick structure, implement + test covariance, match the accountant, ship. The covariance unit test is the most overlooked discipline — it directly verifies that the math the accountant assumes is what the code is doing.</>}
-        stretch={<>What does a failed covariance test look like in numbers?</>}
+        trap={<>(b)(c)(d) wrong family.</>}
+        lens={<>Same clip &middot; tree-aggregated correlated noise &middot; polylog T accumulated noise.</>}
+        stretch={<>Which piece does the paper underspecify? (Engineering of the noise tree for very long T.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ftrl-p9" difficulty="medium" multiSelect
-        title="P9 — When DP-SGD is the better choice"
-        scenario={<>Pick the situations where DP-SGD with Poisson subsampling beats DP-FTRL on the Pareto frontier.</>}
+      <VIS.TrapProblem id="pr-p9" difficulty="hard" multiSelect
+        title="P9 &mdash; When NOT to use DP-FTRL. Select all that apply."
+        scenario={<><em>Discriminating insight: needs long T, tree-machinery infra, stable streaming order, cumulative-sum-style training. Wrong for short runs, weak infra, contextual-bandit-style state-free settings, or surfaces where Abadi&apos;s sqrt(T) is acceptable.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Multi-epoch training where Poisson subsampling amplification provides strong privacy at modest noise.", correct:true},
-          {key:"b", text:"Team without engineering bandwidth for the more complex noise structure.", correct:true},
-          {key:"c", text:"Workloads with shuffling baked in (large-scale supervised training on a fixed dataset).", correct:true},
-          {key:"d", text:"Single-pass on-device streaming."},
-          {key:"e", text:"User-level DP in federated learning."},
+          {key:"a", text:"Short training runs T&lt;1000 &mdash; the polylog vs sqrt gap is small and Abadi&apos;s simpler infra is preferred.", correct:true},
+          {key:"b", text:"No engineering budget for tree-aggregation machinery (per-step buffers, path-aware noise injection, tree accountant).", correct:true},
+          {key:"c", text:"Workloads where the quantity of interest is per-step (one-shot prediction, stateless bandits) &mdash; correlated noise cancellation does not help.", correct:true},
+          {key:"d", text:"Surfaces with unstable example streaming order that the tree accountant cannot model.", correct:true},
+          {key:"e", text:"Year-long daily sequential DP-recsys training at &epsilon;=4."},
         ]}
-        trap={<>(d)(e) are DP-FTRL strongholds.</>}
-        lens={<>Three pro-DP-SGD situations: multi-epoch + subsampling (amplification closes the gap), team-bandwidth constraints (Opacus is mature), and naturally shuffled workloads. For everything sequential / single-pass / federated, DP-FTRL wins.</>}
-        stretch={<>How would you build a flowchart that picks DP-SGD vs DP-FTRL for a new project?</>}
+        trap={<>(e) the canonical fit.</>}
+        lens={<>Long T + tree infra + stable order + cumulative-sum training.</>}
+        stretch={<>When to start with Abadi and migrate to DP-FTRL?</>}
       />
 
-      <VIS.TrapProblem
-        id="ftrl-p10" difficulty="hard"
-        title="P10 — Privacy unit and DP-FTRL"
-        scenario={<>You apply DP-FTRL with the &quot;round&quot; as the privacy unit, but you really want user-level DP across many rounds. What additional care do you need?</>}
+      <VIS.TrapProblem id="pr-p10" difficulty="hard"
+        title="P10 &mdash; Correlation coefficient: load-bearing knob?"
+        scenario={<><em>Discriminating insight: in the canonical paper the &ldquo;correlation&rdquo; is implicit in the tree structure &mdash; tree depth and the branching factor are the actual knobs. Some practitioner variants expose a tunable correlation coefficient &rho; that interpolates between independent (&rho;=0) and full-tree (&rho;=1) noise. Mis-setting &rho; can move you all the way back to Abadi&apos;s sqrt(T) regime &mdash; or to overcorrelated noise that biases the cumulative sum.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"User-level DP requires accounting for ALL of a user&apos;s contributions across rounds; per-round DP says nothing about a user who participates many times. Either group-privacy composition or explicit user-level clipping is required, with the accountant updated to match.", correct:true},
-          {key:"b", text:"DP-FTRL already gives user-level DP automatically."},
-          {key:"c", text:"Per-round DP and user-level DP are equivalent."},
-          {key:"d", text:"User-level DP is not possible under DP-FTRL."},
+          {key:"a", text:"Tree depth and branching factor implicitly fix the cross-step correlation in the canonical formulation. Practitioner variants expose a tunable correlation coefficient &rho; that interpolates between independent (&rho;=0, back to Abadi) and full-tree (&rho;=1) noise. Mis-setting &rho; either erases the DP-FTRL utility win (too low) or biases the cumulative sum (too high). Tune against offline (&epsilon;, utility) curves.", correct:true},
+          {key:"b", text:"There is no correlation knob &mdash; correlation is fixed."},
+          {key:"c", text:"Correlation coefficient is decorative."},
+          {key:"d", text:"Correlation is set by learning rate."},
         ]}
-        trap={<>(b)(c)(d) misread the relationship.</>}
-        lens={<>The privacy unit is a design choice independent of the noise mechanism. DP-FTRL gives a tight bound on the chosen unit. To convert per-round DP into user-level DP, you compose across rounds (loose) or clip at the user level (tight, requires book-keeping which user participated when). The accountant must match the unit; getting this wrong silently overstates the privacy guarantee.</>}
-        stretch={<>What is the utility cost of switching from per-round DP-FTRL to user-level DP-FTRL?</>}
+        trap={<>(b)(c)(d) miss the tunable correlation.</>}
+        lens={<>&rho; interpolates between independent (Abadi) and full tree.</>}
+        stretch={<>What &rho; is paper-default? (Implicit in tree depth; production variants tune.)</>}
       />
+
+      <VIS.TrapProblem id="pr-p11" difficulty="hard"
+        title="P11 &mdash; RecSys-specific: why correlated noise helps sequential rec training"
+        scenario={<><em>Discriminating insight: sequential rec training updates the model parameter (and the per-user embedding) at every step over thousands of online interactions. The model parameter IS the cumulative noisy gradient sum. Under Abadi, sqrt(T) random-walk noise accumulates in the parameter and drives drift. Under DP-FTRL, polylog T cancellation keeps the parameter close to its non-private trajectory.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"The recommender&apos;s model parameter (and per-user embeddings) at step T IS effectively the cumulative noisy gradient sum across all prior steps. Under Abadi&apos;s independent noise the accumulated noise grows like O(sqrt(T)) and drives drift. Under DP-FTRL&apos;s correlated noise the cumulative sum sees O(polylog T) effective noise; the model stays close to its non-private trajectory over long horizons.", correct:true},
+          {key:"b", text:"The parameter does not depend on cumulative gradients."},
+          {key:"c", text:"Correlated noise hurts sequential training."},
+          {key:"d", text:"Sequential training does not benefit from DP-FTRL."},
+        ]}
+        trap={<>(b)(c)(d) miss the cumulative-sum nature of the parameter.</>}
+        lens={<>Parameter = cumulative noisy sum; correlated noise cancels in the sum.</>}
+        stretch={<>What metric exposes the cumulative drift? (Parameter L2 distance to non-DP run over time.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p12" difficulty="hard"
+        title="P12 &mdash; What does DP-FTRL deliberately drop vs Abadi DP-SGD?"
+        scenario={<><em>Discriminating insight: DP-FTRL forfeits implementation simplicity (the tree-aggregation machinery and tree accountant add infra) and assumes a stable streaming order. In exchange it gains utility at fixed &epsilon; over long sequential training. The same per-sample L2 clip and Gaussian-mechanism framework apply.</em><br/>What does DP-FTRL forfeit?</>}
+        options={[
+          {key:"a", text:"Implementation simplicity (the tree-aggregation noise mechanism and tree accountant add infra overhead vs Abadi&apos;s drop-in independent noise) and reliance on a stable streaming order of examples for the tree accountant. In exchange it gains a polylog-vs-sqrt utility win at fixed &epsilon; over long sequential training. The clip + Gaussian-mechanism framework is otherwise unchanged.", correct:true},
+          {key:"b", text:"DP-FTRL forfeits per-sample clipping."},
+          {key:"c", text:"DP-FTRL forfeits privacy."},
+          {key:"d", text:"DP-FTRL forfeits the dataset."},
+        ]}
+        trap={<>(b)(c)(d) misread.</>}
+        lens={<>Infra cost + ordering assumption for polylog-vs-sqrt utility.</>}
+        stretch={<>How long does T need to be to repay the infra cost?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p13" difficulty="hard"
+        title="P13 &mdash; Most fragile knob"
+        scenario={<><em>Discriminating insight: tree depth (or correlation coefficient &rho; in practitioner variants) is the most fragile. Wrong depth either collapses back to independent noise (no win over Abadi) or over-correlates and biases the cumulative sum. Clip C is the secondary knob, same as Abadi. Learning rate is robust.</em><br/>Rank fragility.</>}
+        options={[
+          {key:"a", text:"Tree depth (or correlation coefficient &rho;) is most fragile. Too shallow tree (or &rho;&apos;close to 0): collapses back to independent noise, no DP-FTRL win over Abadi. Too deep / &rho; close to 1: over-correlated noise biases the cumulative sum and can hurt utility differently. Clip C is secondary (same role as in Abadi). Learning rate is robust within DP-SGD&apos;s usual range.", correct:true},
+          {key:"b", text:"Learning rate is most fragile."},
+          {key:"c", text:"Tokenizer choice is most fragile."},
+          {key:"d", text:"Batch size is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Tree depth / correlation must hit the polylog regime without over-correlating.</>}
+        stretch={<>What does over-correlation look like in offline metrics?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p14" difficulty="hard"
+        title="P14 &mdash; Plausible-misattribution: utility regressed after &lsquo;migrating from Abadi to DP-FTRL&rsquo;"
+        scenario={<><em>Discriminating insight: team migrated to DP-FTRL but kept the SAME &sigma; that Abadi used. The tree accountant has different sensitivity bookkeeping; the noise was over-budget for the same target (&epsilon;, &delta;) and utility regressed. Fix: re-run the tree accountant against the training schedule and re-calibrate &sigma; for DP-FTRL.</em><br/>Diagnosis?</>}
+        options={[
+          {key:"a", text:"The team migrated to DP-FTRL but kept the SAME noise multiplier &sigma; that Abadi used. The tree accountant has different sensitivity bookkeeping &mdash; the noise was over-budget for the target (&epsilon;, &delta;), or mis-calibrated for the correlated structure. Utility regressed. Fix: re-run the tree accountant against the training schedule and re-calibrate &sigma; for DP-FTRL; do not blame the method.", correct:true},
+          {key:"b", text:"GPU thermal throttling.", correct:false},
+          {key:"c", text:"Cache TTL changed.", correct:false},
+          {key:"d", text:"Tokenizer drift.", correct:false},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Accountant change requires noise re-calibration.</>}
+        stretch={<>How to validate? (Tree accountant final-(&epsilon;,&delta;) matches target.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p15" difficulty="hard"
+        title="P15 &mdash; Intuitive but wrong: &ldquo;just use DP-FTRL everywhere, it dominates Abadi&rdquo;"
+        scenario={<><em>Discriminating insight: DP-FTRL needs (a) long T for the polylog gain to matter, (b) tree infra to implement correctly, (c) stable streaming order for the accountant. Short-T runs, contextual-bandit stateless workloads, or shuffled-batch training where order is irrelevant see modest or zero gain over Abadi.</em><br/>Why is the naive view wrong?</>}
+        options={[
+          {key:"a", text:"DP-FTRL needs long T (polylog vs sqrt gap is meaningful only over many steps), tree-aggregation infrastructure, and a stable streaming order for the tree accountant. Short-T runs, stateless workloads (one-shot prediction, contextual bandits without parameter accumulation), or shuffled-batch training where order is irrelevant see modest or zero gain &mdash; Abadi&apos;s simpler infra wins in those settings.", correct:true},
+          {key:"b", text:"DP-FTRL always wins."},
+          {key:"c", text:"Abadi is always better."},
+          {key:"d", text:"They are interchangeable."},
+        ]}
+        trap={<>(b)(c)(d) miss the regime dependence.</>}
+        lens={<>DP-FTRL wins specifically in the long-T cumulative-sum regime.</>}
+        stretch={<>What T break-even? (Roughly T &gt; 1000-10000 depending on &epsilon;.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p16" difficulty="hard"
+        title="P16 &mdash; Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;DP-FTRL is just Abadi + more noise&rdquo; cascades into using independent noise generators (no correlation, no win), keeping the Abadi accountant (wrong budget bookkeeping), and ignoring streaming-order constraints (accountant invalid).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: noise structure (using independent generators gives no correlation and no DP-FTRL win &mdash; you are running Abadi), accountant (the Abadi/RDP accountant does not bookkeep tree-aggregated noise correctly &mdash; budget claims become invalid), and streaming-order assumption (the tree accountant relies on a known sequential traversal of examples; arbitrary shuffling invalidates it).", correct:true},
+          {key:"b", text:"Only noise structure."},
+          {key:"c", text:"Only accountant."},
+          {key:"d", text:"Nothing &mdash; it is just Abadi + more noise."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Correlated noise + tree accountant + streaming order jointly load-bearing.</>}
+        stretch={<>Which piece does the paper underspecify? (Production tree-buffer engineering.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p17" difficulty="medium"
+        title="P17 &mdash; Senior vs junior framing on weak DP-FTRL gain"
+        scenario={<><em>Discriminating insight: junior bumps tree depth. Senior first audits whether the workload actually has long T and cumulative-sum semantics (otherwise the gain ceiling is low), then checks tree accountant calibration vs Abadi accountant for the same &epsilon;.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Audit whether the workload has long T (T&gt;&gt;1000) and cumulative-sum-style training (the parameter is the running noisy sum). If both are weak, DP-FTRL&apos;s ceiling vs Abadi is low &mdash; no knob fixes that. Then verify the tree accountant is calibrated for the new noise structure (a common bug is reusing the Abadi accountant). Tree depth / &rho; is the last knob.", correct:true},
+          {key:"b", text:"Bump tree depth immediately."},
+          {key:"c", text:"Switch back to Abadi."},
+          {key:"d", text:"Skip privacy."},
+        ]}
+        trap={<>(b)(c)(d) generic or off-topic.</>}
+        lens={<>Long-T + cumulative-sum regime &gt; accountant -&gt; tree depth.</>}
+        stretch={<>Dashboard panel for cumulative noise vs non-DP trajectory?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p18" difficulty="hard"
+        title="P18 &mdash; Plausible-misattribution: utility cratered after example stream became shuffled per epoch"
+        scenario={<><em>Discriminating insight: the tree accountant assumes a stable sequential traversal of examples. An eng change re-shuffled the example stream every epoch; the accountant&apos;s budget claims became invalid AND the correlated-noise structure no longer matched the actual update sequence. Effective noise grew, utility regressed. Fix: pin streaming order, or move to a shuffle-aware accountant.</em><br/>Diagnosis?</>}
+        options={[
+          {key:"a", text:"The tree-aggregation accountant assumes a stable sequential traversal of examples; a per-epoch shuffle invalidated both the budget claim and the correlated-noise structure (the noise tree no longer matched the actual update sequence). Effective noise on the cumulative sum grew, utility regressed. Fix: pin example streaming order, or migrate to a shuffle-aware variant of the accountant.", correct:true},
+          {key:"b", text:"GPU thermal throttling.", correct:false},
+          {key:"c", text:"Cache TTL changed.", correct:false},
+          {key:"d", text:"Tokenizer drift.", correct:false},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Tree accountant requires stable streaming order.</>}
+        stretch={<>How to detect order drift in CI? (Hash the example sequence; alert on change.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p19" difficulty="hard"
+        title="P19 &mdash; Production gotcha: tree-buffer memory footprint at very long T"
+        scenario={<><em>Discriminating insight: the naive tree-aggregation buffer is O(T) noise samples to maintain. At T=10^6 (a year of fine-grained updates) the buffer is substantial. Production implementations use sparse/online tree variants that maintain O(log T) state, regenerating noise on demand from a seeded PRNG. Forgetting this leads to memory blow-up.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"A naive tree buffer stores O(T) noise samples; at T=10^6 the memory footprint is substantial. Production implementations use online / sparse-tree variants that keep O(log T) state and regenerate path-noise on demand from a seeded PRNG. Forgetting this leads to memory blow-up on long runs; use the sparse implementation from the start.", correct:true},
+          {key:"b", text:"Tree buffer is free."},
+          {key:"c", text:"O(T) memory is always fine."},
+          {key:"d", text:"Use random noise without a seeded PRNG."},
+        ]}
+        trap={<>(b)(c)(d) miss the memory engineering.</>}
+        lens={<>Use sparse / online tree implementation to keep state O(log T).</>}
+        stretch={<>How does the PRNG seed factor in? (Deterministic noise reproduction per step.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p20" difficulty="hard"
+        title="P20 &mdash; Failure on Friday: cumulative-utility drift after a tree-depth bump &lsquo;for more correlation&rsquo;"
+        scenario={<><em>Discriminating insight: team raised tree depth (effective &rho; closer to 1) to gain more cancellation. Over-correlation BIASED the cumulative sum &mdash; correlated noise no longer averaged to zero in the running sum but added a slow drift. Offline NDCG vs non-DP grew over training. Fix: drop tree depth back, or model the bias.</em><br/>3am page: cumulative-utility drift. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Raising tree depth pushed effective &rho; close to 1. Over-correlation means the noise no longer averages toward zero in the cumulative sum &mdash; it injects a slow drift / bias into the running parameter. Offline NDCG vs non-DP baseline grew steadily over training (not random walk &mdash; drift). Fix: drop tree depth back; or apply a bias-correction term to the cumulative sum.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Tokenizer drift."},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Over-correlation introduces bias drift in the cumulative sum.</>}
+        stretch={<>Runbook entry for tree-depth changes?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p21" difficulty="medium"
+        title="P21 &mdash; Library default that bites: TF-Privacy / Opacus DP-FTRL variants out of date"
+        scenario={<><em>Discriminating insight: TF-Privacy and Opacus implementations of DP-FTRL trail the research literature by a year or two; defaults sometimes use older tree-aggregation variants that the latest accountants improved on. Always pin the implementation version and validate the accountant against a known target (&epsilon;, &delta;).</em><br/>Where does the default break?</>}
+        options={[
+          {key:"a", text:"TF-Privacy / Opacus DP-FTRL implementations trail the research literature; defaults sometimes use older tree-aggregation variants the latest accountants have superseded. Always pin the library version, read the version&apos;s docs for which tree variant it implements, and validate the accountant numerically against a known target (&epsilon;, &delta;) for your training schedule. Do not assume the default is the current state of the art.", correct:true},
+          {key:"b", text:"Default learning rate is wrong."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Pin lib version; validate accountant numerically.</>}
+        stretch={<>Unit test? (Assert accountant&apos;s reported (&epsilon;, &delta;) matches expected at end.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p22" difficulty="hard" ordered
+        title="P22 &mdash; Order the DP-FTRL rollout"
+        scenario={<><em>Discriminating insight: rollout = (1) confirm long-T cumulative-sum workload, (2) reuse Abadi&apos;s per-sample clip + grad-norm tuning, (3) pin streaming order, (4) implement tree-aggregated noise (or use library), (5) calibrate &sigma; via tree accountant, (6) memory-engineer sparse tree at large T, (7) shadow vs Abadi baseline, (8) launch with tree-accountant tracking.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Confirm long-T cumulative-sum workload -&gt; reuse Abadi&apos;s per-sample L2 clip + grad-norm tuning -&gt; pin example streaming order -&gt; implement tree-aggregated noise (or use library) -&gt; calibrate &sigma; via tree accountant for target (&epsilon;, &delta;) -&gt; memory-engineer sparse tree at large T -&gt; shadow vs Abadi DP-SGD baseline -&gt; launch with tree-accountant tracking", correct:true},
+          {key:"b", text:"Use independent noise generators."},
+          {key:"c", text:"Reuse Abadi accountant without recalibration."},
+          {key:"d", text:"Launch without shadow."},
+        ]}
+        trap={<>(b)(c)(d) lose privacy or utility correctness.</>}
+        lens={<>Long T -&gt; clip -&gt; pin order -&gt; tree noise -&gt; tree accountant -&gt; sparse memory -&gt; shadow -&gt; launch.</>}
+        stretch={<>Why pin streaming order before noise tree?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p23" difficulty="hard"
+        title="P23 &mdash; Smallest input that breaks the claimed advantage"
+        scenario={<><em>Discriminating insight: a short training run (T=200 steps) with target &epsilon;=4 breaks DP-FTRL&apos;s claimed advantage &mdash; the polylog vs sqrt gap is small at T=200 and the tree-machinery overhead exceeds the utility gain. Abadi DP-SGD with the same clip + noise budget delivers identical or better utility with simpler infra.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A short training run (T=200 steps) with target &epsilon;=4. The polylog-vs-sqrt gap is small at T=200 (both are O(10)-ish), the tree-aggregation machinery and accountant overhead are non-trivial, and Abadi DP-SGD with the same clip + noise budget delivers identical or better utility with simpler infra. DP-FTRL&apos;s advantage materialises only at long T.", correct:true},
+          {key:"b", text:"Year of daily updates at &epsilon;=4 (canonical fit)."},
+          {key:"c", text:"100M users."},
+          {key:"d", text:"Catalog of 50M items."},
+        ]}
+        trap={<>(b) canonical fit. (c)(d) scale red herrings.</>}
+        lens={<>Long T is the premise; short T = no gain.</>}
+        stretch={<>What T is the realistic break-even?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p24" difficulty="hard"
+        title="P24 &mdash; DP-FTRL composition with federated learning"
+        scenario={<><em>Discriminating insight: DP-FTRL composes cleanly with federated learning: the server-side aggregation step adds tree-aggregated correlated noise across federated rounds. The combination is what Google uses in production for on-device personalisation. Federated learning provides the data-locality privacy; DP-FTRL provides the (&epsilon;, &delta;) DP guarantee.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"DP-FTRL composes cleanly with federated learning. The server-side aggregation step adds tree-aggregated correlated noise across federated rounds; per-client per-sample clipping at the client preserves sensitivity bounds. The combination is what production deployments use (e.g., Google&apos;s on-device personalisation). Federated learning provides data locality; DP-FTRL provides the calibratable (&epsilon;, &delta;) DP guarantee under long sequential federation.", correct:true},
+          {key:"b", text:"DP-FTRL conflicts with federated learning."},
+          {key:"c", text:"DP-FTRL replaces federated learning."},
+          {key:"d", text:"Federated learning provides DP automatically; DP-FTRL is redundant."},
+        ]}
+        trap={<>(b)(c)(d) miss the composition.</>}
+        lens={<>Federated (where) + DP-FTRL (what noise) compose.</>}
+        stretch={<>What clipping granularity? (Per-client typically; user-level DP.)</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/2103.00039" target="_blank" rel="noopener">Kairouz, McMahan, Song, Thakurta, Thakkar, Xu — <em>Practical and Private (Deep) Learning without Sampling or Shuffling</em> (ICML 2021, paper)</a> — the DP-FTRL paper with tree aggregation. Read this before any implementation.</li>
-        <li><a href="https://arxiv.org/abs/2306.08153" target="_blank" rel="noopener">Choquette-Choo et al. — <em>Multi-Epoch Matrix Factorization Mechanisms for DP-FTRL</em> (2023, paper)</a> — the matrix-factorization successor that most modern implementations use.</li>
-        <li><a href="https://dl.acm.org/doi/10.1145/3712000" target="_blank" rel="noopener">ACM CSUR — <em>Advances in Differentially Private Machine Learning</em> (2025, survey)</a> — situates DP-FTRL within the broader DP landscape; useful for grounding interview answers.</li>
-        <li><a href="https://desfontain.es/blog/" target="_blank" rel="noopener">Damien Desfontaines — <em>Differential Privacy blog</em> (desfontain.es, blog)</a> — accessible posts on accountant choice and what &epsilon; means in production.</li>
-        <li><a href="https://blog.research.google/2022/02/federated-learning-with-formal.html" target="_blank" rel="noopener">Google Research — <em>Federated Learning with Formal Differential Privacy Guarantees</em> (research blog)</a> — Google&apos;s production deployment of DP-FTRL for federated next-word prediction.</li>
+        <li><a href="https://arxiv.org/abs/2103.00039" target="_blank" rel="noopener">Kairouz, McMahan, Song, Thakurta &mdash; <em>Practical and Private (Deep) Learning without Sampling or Shuffling</em> (ICML 2021)</a> &mdash; the canonical DP-FTRL paper. The tree-aggregation mechanism and accountant sections are the must-reads.</li>
+        <li><a href="https://desfontain.es/blog/differential-privacy-in-machine-learning.html" target="_blank" rel="noopener">Damien Desfontaines &mdash; <em>DP in ML</em> (blog series)</a> &mdash; readable practitioner walkthrough of independent vs correlated noise and where each helps.</li>
+        <li><a href="https://research.google/blog/federated-learning-with-formal-differential-privacy-guarantees/" target="_blank" rel="noopener">Google Research blog &mdash; <em>Federated Learning with Formal Differential Privacy Guarantees</em></a> &mdash; production deployment notes for DP-FTRL inside federated training; useful for the &lsquo;why long T matters&rsquo; intuition.</li>
+        <li><a href="https://arxiv.org/abs/1607.00133" target="_blank" rel="noopener">Abadi et al. &mdash; <em>Deep Learning with Differential Privacy</em> (CCS 2016)</a> &mdash; the independent-noise DP-SGD baseline DP-FTRL contrasts with. Read for the sqrt(T) accumulated-noise framing.</li>
+        <li><a href="https://opacus.ai/" target="_blank" rel="noopener">Opacus &mdash; PyTorch DP library</a> &mdash; check the version&apos;s DP-FTRL variant (P21). Tree-aggregation infra and accountant utilities live here.</li>
+        <li><a href="https://www.youtube.com/watch?v=DXX-FFwf_yY" target="_blank" rel="noopener">Borja Balle &mdash; <em>Privacy Amplification by Subsampling</em> (video)</a> &mdash; the subsampling-amplification context that DP-FTRL builds on for long-T training without sampling.</li>
       </ul>
     </VIS.Section>
   </main>

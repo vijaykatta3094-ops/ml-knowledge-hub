@@ -1414,244 +1414,424 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 18
+// DP-SGD baseline — Abadi et al., "Deep Learning with Differential Privacy" (CCS 2016)
+//
+// Anchor (survives §2a redaction):
+//   Foundational 2016 formulation of differentially-private SGD for deep
+//   nets. THREE load-bearing pieces: (1) PER-SAMPLE gradient clipping
+//   at L2 norm C — bounds each example's contribution to sensitivity;
+//   (2) INDEPENDENT Gaussian noise added to the SUM of clipped
+//   per-sample grads each step, scaled by σ·C; (3) MOMENTS ACCOUNTANT
+//   to track the (ε, δ) privacy budget over many SGD steps tighter
+//   than naive composition. Differs from DP-FTRL (correlated tree-
+//   aggregated noise — different cross-step structure). RecSys angle:
+//   sparse user-embedding rows make clipping non-trivial; popularity
+//   bias amplifies under uniform noise; the embedding table is the
+//   sensitive surface.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Privacy &middot; Differential privacy"
-      title="DP-SGD baseline (Abadi et al.)"
-      subtitle="Per-example gradient clipping plus Gaussian noise, accounted by RDP / Moments — the foundational private-training procedure that everything else compares to."
+      pill="RecSys SOTA &middot; Privacy &middot; DP training"
+      title="DP-SGD baseline (Abadi 2016) &mdash; per-sample clip, independent Gaussian noise, moments accountant"
+      subtitle="The 2016 Abadi et al. formulation: clip each example&apos;s gradient to L2 norm C, add independent Gaussian noise scaled by &sigma;&middot;C to the per-step sum, track the (&epsilon;, &delta;) budget via the moments accountant. Independent per-step noise &mdash; the contrast point is DP-FTRL&apos;s correlated noise. RecSys angle: sparse user-embedding rows + popularity bias under uniform noise."
       byline={[
-        {label: "Paper", value: "Deep Learning with Differential Privacy (Abadi et al., CCS 2016); 2025 ACM CSUR DP survey"},
-        {label: "Domain", value: "Private model training for regulated recsys / healthcare / search"},
+        {label: "Paper", value: "Abadi, Chu, Goodfellow, McMahan, Mironov, Talwar, Zhang &mdash; Deep Learning with Differential Privacy (CCS 2016)"},
+        {label: "Surface", value: "Training a recommender on user-item interactions where privacy is required (regulated domain, EU users, sensitive vertical); baseline against which all subsequent DP recsys variants are measured"},
+        {label: "Anchor that survives redaction", value: "Per-sample L2 clip + independent Gaussian noise + moments accountant &mdash; the 2016 baseline"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="DP-SGD: stochastic gradient descent modified to be differentially private. Each example&apos;s gradient is clipped to a fixed norm, then Gaussian noise is added to the sum, and a privacy accountant tracks how much epsilon has been spent.">DP-SGD</VIS.Term> turns SGD into a differentially private procedure by clipping <em>per-example</em> gradients and injecting Gaussian noise; the catch is that per-example clipping breaks the batch-parallelism GPUs are designed for, so naive implementations are dramatically slower than plain SGD.
+      Plain SGD on user-item data leaks training examples via membership-inference / gradient inversion. DP-SGD (Abadi 2016) plugs three pieces into SGD: clip each EXAMPLE&apos;s gradient to L2 norm C (bounds sensitivity), add INDEPENDENT Gaussian noise scaled by <em>&sigma;&middot;C</em> to the per-step sum (the privacy-introducing step), and track the (&epsilon;, &delta;) budget over many steps via the MOMENTS ACCOUNTANT (tighter than naive composition). Senior trap: the cross-step noise is INDEPENDENT &mdash; this is what DP-FTRL specifically improves on by adding correlated tree-aggregated noise. RecSys-specific: sparse user-embedding rows make per-sample clipping awkward (one row updated per example), and popularity bias amplifies under uniform noise because rare-item embeddings have a worse signal-to-noise ratio.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        Plain SGD leaks information about individual training examples — <VIS.Term def="Membership inference: an attack that, given a trained model and a candidate example, determines whether that example was in the training set with non-trivial accuracy. A privacy failure even if the data itself is not exposed.">membership inference</VIS.Term> attacks can tell whether a specific user&apos;s record was in the training data. DP-SGD makes the procedure provably private by bounding the influence of any single example on the released model. Two ingredients: (1) clip each example&apos;s gradient to a fixed L2 norm C so no example can swing the update too much, and (2) add Gaussian noise to the SUM of clipped gradients with stddev proportional to C. The <VIS.Term def="Privacy accountant: a bookkeeping algorithm that, given the noise scale and sampling rate per step, computes the cumulative privacy budget (epsilon, delta) spent across all training steps. RDP and Moments are tight accountants commonly used with DP-SGD.">privacy accountant</VIS.Term> tracks total privacy spent across all training steps.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  B["Sample minibatch (Poisson)"]
-  G["Compute per-example gradients"]
-  C["Clip each gradient to norm C"]
-  S["Sum clipped gradients"]
-  N["Add Gaussian noise N(0, sigma C)"]
-  U["Update theta"]
-  A["Privacy accountant: track epsilon"]
-  B --> G --> C --> S --> N --> U
-  N --> A
-      `} />
-      <VIS.Equation display tex="\tilde{g}_t = \frac{1}{B}\Big(\sum_{i \in \mathcal{B}_t} \text{clip}(\nabla \ell_i, C) + \mathcal{N}(0, (\sigma C)^2 I)\Big)" />
-      <p>
-        Two knobs matter for privacy: the noise multiplier &sigma; (bigger = more private, less useful) and the sampling rate q = B / N (Poisson subsampling amplifies privacy). The clipping norm C affects utility but not privacy directly. The accountant turns (&sigma;, q, T steps) into a tight (&epsilon;, &delta;) budget.
-      </p>
+    <VIS.Section id="sec-what" title="What it is &mdash; three pieces bolted onto SGD">
+      <VIS.Mermaid chart={`flowchart TB
+  GRAD["Per-sample gradients g_i"]
+  CLIP["Clip each g_i to L2 norm C"]
+  SUM["Sum clipped gradients"]
+  NOISE["Add independent Gaussian noise N(0, sigma^2 C^2 I)"]
+  UPDATE["Update parameters"]
+  ACC["Moments accountant tracks (eps, delta)"]
+  GRAD --> CLIP --> SUM --> NOISE --> UPDATE
+  NOISE --> ACC`} />
+      <ul>
+        <li><strong>Per-sample clip.</strong> Compute the gradient for each example separately, clip its L2 norm at C. Bounds each example&apos;s contribution to the per-step sensitivity. This is what makes the noise calibratable.</li>
+        <li><strong>Independent Gaussian noise.</strong> Add fresh independent noise N(0, &sigma;^2 C^2 I) to the sum of clipped per-sample gradients each step. Independent per step &mdash; the contrast with DP-FTRL.</li>
+        <li><strong>Moments accountant.</strong> Track the (&epsilon;, &delta;) budget tightly over thousands of SGD steps. Tighter than naive strong composition; gives a usable budget for typical training.</li>
+        <li><strong>RecSys-specific friction.</strong> Each example touches one user embedding row + one item embedding row. Per-sample clipping in a sparse-embedding regime needs careful sensitivity bookkeeping. Popularity bias: frequent items get many gradient updates with averaged-out noise; rare items get few updates and are dominated by noise.</li>
+      </ul>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from plain SGD and from output-perturbation DP">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Plain SGD</th><th style={{textAlign:"left",padding:8}}>Output-perturbation DP</th><th style={{textAlign:"left",padding:8}}>DP-SGD</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How Abadi DP-SGD differs from neighbours">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Noise across steps</th>
+          <th style={{textAlign:"left", padding:8}}>Sensitivity bound</th>
+          <th style={{textAlign:"left", padding:8}}>Accountant</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Privacy guarantee</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Approximate (only convex)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Tight DP for non-convex</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Per-example clipping</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>N/A</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Required</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>GPU efficiency</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Full batch-parallel</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Full</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Broken by per-example grads</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Utility at epsilon under 1</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>N/A</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Often unusable</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Drops sharply</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Composition</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>N/A</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Naive</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Tight via RDP / Moments</td></tr>
+          <tr><td style={{padding:8}}>Plain SGD</td><td style={{padding:8}}>None &mdash; no privacy</td><td style={{padding:8}}>N/A</td><td style={{padding:8}}>N/A</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>Abadi DP-SGD (2016)</strong></td><td style={{padding:8}}><strong>Independent Gaussian</strong></td><td style={{padding:8}}><strong>Per-sample L2 clip at C</strong></td><td style={{padding:8}}><strong>Moments accountant</strong></td></tr>
+          <tr><td style={{padding:8}}>DP-SGD (RDP accountant)</td><td style={{padding:8}}>Independent Gaussian</td><td style={{padding:8}}>Per-sample L2 clip</td><td style={{padding:8}}>R&eacute;nyi DP (often tighter)</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>DP-FTRL (correlated)</td><td style={{padding:8}}>Correlated (tree-aggregated)</td><td style={{padding:8}}>Per-sample L2 clip</td><td style={{padding:8}}>Specialised tree accountant</td></tr>
+          <tr><td style={{padding:8}}>Output-perturbation DP</td><td style={{padding:8}}>One-shot at end</td><td style={{padding:8}}>Function sensitivity</td><td style={{padding:8}}>Pure DP</td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Any training that is legally or contractually required to be differentially private (medical, EU consent regimes, internal data-leakage policies).</li>
-        <li>Recsys training on user behavior where membership inference is a real threat.</li>
-        <li>Foundation-model fine-tuning on sensitive corpora that must come with formal privacy guarantees.</li>
-        <li>Baselines: every advanced DP method (DP-FTRL, group privacy, user-level DP) is a modification of DP-SGD — understand the baseline first.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill &mdash; 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the discriminating axis. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Per-example clipping kills batch-parallelism.</strong> Standard autodiff produces a summed gradient over the batch; DP-SGD needs the gradient per example, which forces either microbatching or vectorized-jacobian tricks.</li>
-        <li><strong>Utility collapse at &epsilon; under 1.</strong> Aggressive privacy budgets degrade model quality sharply, especially on small or imbalanced datasets.</li>
-        <li><strong>Clipping bias.</strong> Per-example clipping is a biased gradient estimator; large per-example gradients are systematically dampened.</li>
-        <li><strong>Accountant choice matters.</strong> Naive composition wildly over-counts privacy; RDP / Moments / GDP accountants are mandatory for tight budgets.</li>
-        <li><strong>Subsampling assumption.</strong> Privacy amplification by Poisson subsampling assumes the sampler is correct; uniform-random sampling is a common bug.</li>
-      </ul>
-      <VIS.Callout kind="gotcha" title="The GPU-efficiency problem at the heart of DP-SGD">
-        Frameworks like Opacus and JAX&apos;s vmap make per-example gradients tractable, but DP-SGD is still 2-10x slower than plain SGD on typical models. The fundamental issue: autodiff is engineered to give SUM gradients; per-example gradients require either microbatching (which throws away the batch) or jacobian-vector tricks (which use extra memory). This is why every &quot;efficient DP-SGD&quot; paper of the last five years exists.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="dpsgd-p1" difficulty="hard"
-        title="P1 — Why per-example clipping breaks batch-parallelism"
-        scenario={<>You profile DP-SGD with Opacus and observe a 5x slowdown vs plain SGD on the same model and batch size. The bottleneck is gradient computation, not noise sampling. Why?</>}
+      <VIS.TrapProblem id="pr-p1" difficulty="hard"
+        title="P1 &mdash; Abadi DP-SGD vs DP-FTRL: load-bearing difference?"
+        scenario={<><em>Discriminating insight: Abadi DP-SGD adds INDEPENDENT Gaussian noise each step. DP-FTRL adds CORRELATED noise across steps via tree-aggregation, achieving a tighter privacy-utility trade because correlated noise partially cancels when accumulated. Same per-sample clipping, same Gaussian mechanism &mdash; the difference is the cross-step noise structure.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Standard autodiff returns a summed gradient over the batch; per-example clipping needs the gradient PER example, which means either microbatching (one example at a time) or storing the full per-example jacobian, both of which sacrifice the batch parallelism GPUs are tuned for.", correct:true},
-          {key:"b", text:"The Gaussian noise computation is slow."},
-          {key:"c", text:"The privacy accountant runs every step and dominates."},
-          {key:"d", text:"DP-SGD requires a smaller batch by design."},
+          {key:"a", text:"Abadi DP-SGD adds INDEPENDENT Gaussian noise each step. DP-FTRL adds CORRELATED noise across steps via tree-aggregation; correlated noise partially cancels when accumulated, so the effective noise on the cumulative gradient is smaller for the same per-step privacy &mdash; better utility at the same budget. Same per-sample clipping; difference is cross-step noise structure.", correct:true},
+          {key:"b", text:"They are identical."},
+          {key:"c", text:"DP-FTRL has no clipping."},
+          {key:"d", text:"Abadi uses correlated noise."},
         ]}
-        trap={<>(b)(c) confuse the costs — noise + accountant are negligible. (d) is wrong about the design.</>}
-        lens={<>Per-example gradients are the architectural mismatch. Naive implementations microbatch (one example at a time) and lose all parallelism. Efficient implementations use vectorized per-example tricks (Opacus, ghost clipping) that recover most of the throughput but still pay a constant 2-5x cost. This is why &quot;efficient DP-SGD&quot; is an active research area.</>}
-        stretch={<>What is the asymptotic cost of ghost clipping vs full per-example?</>}
+        trap={<>(b)(c)(d) miss the cross-step noise axis.</>}
+        lens={<>Independent (Abadi) vs correlated (DP-FTRL) noise across steps.</>}
+        stretch={<>Why does correlated noise help? (Partial cancellation in the sum.)</>}
       />
 
-      <VIS.TrapProblem
-        id="dpsgd-p2" difficulty="hard" multiSelect
-        title="P2 — Why utility drops sharply at &epsilon; under 1"
-        scenario={<>You compare DP-SGD at &epsilon;=8 vs &epsilon;=0.5 on the same model. At &epsilon;=8 utility is acceptable; at &epsilon;=0.5 it collapses. Pick the mechanisms that contribute.</>}
+      <VIS.TrapProblem id="pr-p2" difficulty="hard"
+        title="P2 &mdash; Why PER-SAMPLE clip, not per-batch?"
+        scenario={<><em>Discriminating insight: differential privacy needs to bound how much a SINGLE training example can change the output. Per-batch clipping bounds the batch&apos;s norm but allows one outlier example to dominate &mdash; sensitivity is unbounded by single-example influence. Per-sample clipping bounds each example&apos;s contribution explicitly so the Gaussian-mechanism sensitivity is C, and the noise can be calibrated.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Smaller &epsilon; requires larger &sigma; for the same step count; gradient SNR drops below the signal threshold.", correct:true},
-          {key:"b", text:"At tight budgets, even tightly accounted training rounds spend the budget faster than utility accrues.", correct:true},
-          {key:"c", text:"Per-example clipping bias is amplified when noise is large relative to gradient norm.", correct:true},
-          {key:"d", text:"DP-SGD requires &epsilon; over 8 by definition."},
-          {key:"e", text:"&epsilon; under 1 mathematically prevents convergence."},
+          {key:"a", text:"DP needs to bound how much a SINGLE training example can change the output. Per-batch clipping bounds the batch norm but lets an outlier example dominate &mdash; per-example sensitivity is unbounded. Per-sample clipping bounds each example&apos;s contribution explicitly so sensitivity is exactly C and the Gaussian noise can be calibrated to give a (&epsilon;, &delta;) guarantee.", correct:true},
+          {key:"b", text:"Per-batch and per-sample are equivalent."},
+          {key:"c", text:"Per-sample is decorative."},
+          {key:"d", text:"Per-batch bounds per-example sensitivity."},
         ]}
-        trap={<>(d)(e) overstate. (a)(b)(c) all contribute.</>}
-        lens={<>Tight &epsilon; means more noise per step OR fewer steps. Both kill utility. Noise dominates the gradient signal; clipping bias becomes a larger fraction of the update; and the accountant runs out of budget before the model converges. The standard production sweet spot is &epsilon; in the 4-8 range for many tasks.</>}
-        stretch={<>For a fixed dataset and model, what is the optimal tradeoff between &sigma; and number of steps?</>}
+        trap={<>(b)(c)(d) miss the sensitivity definition.</>}
+        lens={<>DP sensitivity is per-example; clip must be per-example.</>}
+        stretch={<>What is the computational cost? (Per-sample grad needs vmap or microbatching.)</>}
       />
 
-      <VIS.TrapProblem
-        id="dpsgd-p3" difficulty="hard"
-        title="P3 — Why the choice of accountant matters"
-        scenario={<>Your team uses naive composition (basic theorem) to track DP-SGD privacy and reports &epsilon;=12 after 10000 steps. A colleague switches to RDP and reports &epsilon;=4 for the same training run. Who is right?</>}
+      <VIS.TrapProblem id="pr-p3" difficulty="hard"
+        title="P3 &mdash; Why MOMENTS ACCOUNTANT, not naive strong composition?"
+        scenario={<><em>Discriminating insight: naive strong composition gives an &epsilon; that grows like O(T^(1/2)) over T steps; for T=10^5 training steps the budget blows up. Moments accountant tracks the log-MGF of the privacy-loss random variable, giving a tighter bound that scales much better and yields a usable &epsilon; for typical training.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Both are valid upper bounds, but RDP is tighter — naive composition wildly overestimates privacy cost for Gaussian mechanisms with subsampling.", correct:true},
-          {key:"b", text:"Naive composition is right; RDP is a heuristic."},
-          {key:"c", text:"They measure different things."},
-          {key:"d", text:"The privacy budget cannot be lowered by changing the accountant."},
+          {key:"a", text:"Naive strong composition gives an &epsilon; growing like O(T^(1/2)) over T steps; at T=10^5 (typical training) the budget blows up far past what is usable. Moments accountant tracks the log-moment-generating function of the privacy-loss random variable and gives a tighter bound that scales much better, yielding a usable &epsilon; for realistic training schedules.", correct:true},
+          {key:"b", text:"Moments accountant is looser than composition."},
+          {key:"c", text:"They are equivalent."},
+          {key:"d", text:"Naive composition gives a usable budget at T=10^5."},
         ]}
-        trap={<>(b) is backwards — RDP is the rigorous improvement. (c)(d) misunderstand accounting.</>}
-        lens={<>The accountant is bookkeeping; it does not change the algorithm. RDP / Moments / GDP exploit the Gaussian structure and Poisson subsampling to give MUCH tighter bounds on the same training run. Using naive composition leaves utility on the table because you spend budget you do not actually need.</>}
-        stretch={<>When would naive composition be the correct choice?</>}
+        trap={<>(b)(c)(d) misread the accounting axis.</>}
+        lens={<>Moments accountant gives a usable budget over many steps.</>}
+        stretch={<>What replaced it later? (R&eacute;nyi DP accountant; often even tighter.)</>}
       />
 
-      <VIS.TrapProblem
-        id="dpsgd-p4" difficulty="medium"
-        title="P4 — Choosing the clipping norm C"
-        scenario={<>What is the right framing for picking C?</>}
+      <VIS.TrapProblem id="pr-p4" difficulty="medium"
+        title="P4 &mdash; Without DP-SGD, what is the realistic fallback for &lsquo;train a recommender on sensitive data&rsquo;?"
+        scenario={<><em>Discriminating insight: fallbacks are plain SGD (no privacy &mdash; membership inference works), output-perturbation DP (only useful for simple convex problems), federated learning without DP (gradient leakage still possible), or DP-FTRL (better utility but requires the correlated-noise machinery).</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"C controls the bias-variance tradeoff: low C clips many gradients (high bias, low noise after scaling), high C clips fewer gradients (low bias, more noise needed). Pick the median per-example gradient norm as a starting point and tune.", correct:true},
-          {key:"b", text:"C should always be 1."},
-          {key:"c", text:"C has no effect on privacy."},
-          {key:"d", text:"C is set by the privacy accountant."},
+          {key:"a", text:"Plain SGD (no privacy &mdash; membership inference recovers training examples), output-perturbation DP (works for simple convex problems; not deep nets), federated learning alone (gradient leakage still possible without DP noise), or DP-FTRL (better utility but requires correlated-noise tree-aggregation machinery). Abadi DP-SGD is the &lsquo;works for deep nets, simple to implement&rsquo; corner.", correct:true},
+          {key:"b", text:"There is no fallback."},
+          {key:"c", text:"Use larger batch sizes."},
+          {key:"d", text:"Skip training."},
         ]}
-        trap={<>(b)(c)(d) misrepresent the parameter. C affects utility, not privacy.</>}
-        lens={<>C affects utility through the bias-variance tradeoff: too low and you systematically dampen large signals; too high and you need more noise to maintain the same &epsilon;. The median per-example gradient norm at the start of training is a strong default; adaptive clipping (Andrew et al. 2021) tunes it during training.</>}
-        stretch={<>What is the consequence of leaving C at 1 when typical gradients have norm 0.1?</>}
+        trap={<>(b)(c)(d) absurd.</>}
+        lens={<>Each fallback fails on privacy, depth, or independent-leakage.</>}
+        stretch={<>When does DP-FTRL beat Abadi? (Long training runs, sequential RecSys updates.)</>}
       />
 
-      <VIS.TrapProblem
-        id="dpsgd-p5" difficulty="hard" multiSelect
-        title="P5 — Where DP-SGD is the WRONG tool"
-        scenario={<>Pick the scenarios where DP-SGD is not the right choice.</>}
+      <VIS.TrapProblem id="pr-p5" difficulty="hard"
+        title="P5 &mdash; When does Abadi DP-SGD stop helping?"
+        scenario={<><em>Discriminating insight: needs (i) per-sample gradient access (some hardware/library combos make this hard), (ii) compute budget for the clipping overhead, (iii) tolerable utility drop at the target &epsilon;. On very small datasets the noise dominates signal; very long training runs blow the budget under independent noise; sparse-embedding workloads need careful per-row sensitivity bookkeeping.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"No formal privacy requirement; threat model is satisfied by access controls and audit.", correct:true},
-          {key:"b", text:"Tight latency budget requiring full GPU batch-parallelism that DP-SGD breaks.", correct:true},
-          {key:"c", text:"Very small dataset where utility collapse is unacceptable at any reasonable &epsilon;.", correct:true},
-          {key:"d", text:"Training a recsys model on medical records under HIPAA-like rules."},
-          {key:"e", text:"Large foundation-model pretraining on public web data."},
+          {key:"a", text:"Very small datasets (N&lt;1k) where the noise injection dominates signal at any usable &epsilon;; very long training runs where independent per-step noise exhausts the budget (DP-FTRL wins instead); sparse user-embedding regimes without careful per-row sensitivity bookkeeping; surfaces where per-sample gradient compute is infeasible.", correct:true},
+          {key:"b", text:"It always wins."},
+          {key:"c", text:"It only works at &epsilon;&lt;1."},
+          {key:"d", text:"It only works with batch size 1."},
         ]}
-        trap={<>(d) is exactly when you USE DP-SGD. (e) is a debatable middle case — public data has weaker requirements but DP can still apply for fine-tuning.</>}
-        lens={<>The bad-fit scenarios: no privacy threat (no point paying the cost), batch-tight inference / training (DP-SGD throughput tax), small data (utility collapse). For regulated training on sensitive user data, DP-SGD is the default unless your team has investment in a tighter alternative.</>}
-        stretch={<>What is the right baseline to compare a non-DP model against if the regulatory team wants &quot;evidence we considered DP&quot;?</>}
+        trap={<>(b)(c)(d) miss the data size + budget + per-sample-grad premises.</>}
+        lens={<>Enough data + budget room + per-sample grad accessible.</>}
+        stretch={<>What N flips the trade vs non-DP training?</>}
       />
 
-      <VIS.TrapProblem
-        id="dpsgd-p6" difficulty="medium"
-        title="P6 — Poisson vs uniform subsampling"
-        scenario={<>Your implementation uses uniform random batching but cites the Poisson-subsampling privacy amplification theorem. What is the issue?</>}
+      <VIS.TrapProblem id="pr-p6" difficulty="hard"
+        title="P6 &mdash; Pick the architecture for &lsquo;DP-train a two-tower recsys on EU users with &epsilon;=4, &delta;=1e-7&rsquo;"
+        scenario={<><em>Discriminating insight: &epsilon;=4 is a realistic recsys budget. The two-tower has per-sample sparse-embedding gradients. Abadi DP-SGD is the canonical baseline; per-sample clip + Gaussian noise + moments accountant gets you to &epsilon;=4 with a measurable utility drop. DP-FTRL would gain utility but needs correlated-noise machinery the team may not have.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Privacy amplification by subsampling REQUIRES Poisson sampling (each example included independently with probability q); uniform fixed-size batches do not satisfy the theorem and your stated &epsilon; is an under-estimate.", correct:true},
-          {key:"b", text:"Uniform sampling is tighter than Poisson."},
-          {key:"c", text:"Both sampling schemes give the same epsilon."},
-          {key:"d", text:"Subsampling does not affect epsilon."},
+          {key:"a", text:"Abadi DP-SGD with per-sample L2 clip at C tuned on grad-norm percentiles, &sigma; calibrated so moments accountant gives (&epsilon;=4, &delta;=1e-7) over training, per-row sensitivity bookkeeping for sparse user/item embeddings. Acceptable utility drop vs non-DP baseline; well-supported in TF-Privacy / Opacus. DP-FTRL would gain utility but adds correlated-noise machinery.", correct:true},
+          {key:"b", text:"Plain SGD (ignores privacy requirement)."},
+          {key:"c", text:"Output-perturbation DP (does not work for deep nets)."},
+          {key:"d", text:"Train without privacy and audit later."},
         ]}
-        trap={<>(b)(c)(d) misread the theorem.</>}
-        lens={<>This is a classic compliance bug. The Poisson assumption is doing real work in the amplification proof; uniform sampling at fixed batch size gives weaker bounds. Either fix the sampler or use the uniform-sampling accountant.</>}
-        stretch={<>How would you audit which sampling scheme is actually in use?</>}
+        trap={<>(b)(c)(d) miss the privacy requirement or scope.</>}
+        lens={<>&epsilon;=4 + two-tower + EU compliance is Abadi&apos;s canonical surface.</>}
+        stretch={<>How does DP-FTRL upgrade this?</>}
       />
 
-      <VIS.TrapProblem
-        id="dpsgd-p7" difficulty="hard"
-        title="P7 — Membership inference as the actual threat"
-        scenario={<>You train a model with DP-SGD at &epsilon;=10. A reviewer asks whether membership inference is actually prevented at this budget. What is the correct answer?</>}
+      <VIS.TrapProblem id="pr-p7" difficulty="hard"
+        title="P7 &mdash; Sounds reasonable: &ldquo;just add Gaussian noise to the gradient &mdash; that is DP&rdquo;"
+        scenario={<><em>Discriminating insight: just adding noise without per-sample CLIPPING means each example&apos;s gradient sensitivity is unbounded &mdash; an outlier example can shift the gradient by an arbitrary amount, no Gaussian-mechanism (&epsilon;, &delta;) guarantee holds. The clip is what makes the noise scale meaningful for DP.</em><br/>Why is the shortcut wrong?</>}
         options={[
-          {key:"a", text:"At &epsilon;=10, formal DP guarantees are very loose — membership inference attacks may still succeed empirically. The practical privacy is determined by the EMPIRICAL attack success rate, which can be much lower than the &epsilon; bound suggests but is not guaranteed.", correct:true},
-          {key:"b", text:"Any &epsilon; eliminates membership inference completely."},
-          {key:"c", text:"&epsilon;=10 is unsafe by definition."},
-          {key:"d", text:"DP and membership inference are unrelated."},
+          {key:"a", text:"Adding noise without per-sample clipping leaves per-example sensitivity unbounded &mdash; one outlier example can shift the gradient by an arbitrary amount; no (&epsilon;, &delta;) guarantee from the Gaussian mechanism. The CLIP at L2 norm C is what bounds sensitivity to exactly C; only then does noise &sigma;&middot;C give a calibrated DP guarantee.", correct:true},
+          {key:"b", text:"Adding noise alone is DP."},
+          {key:"c", text:"Clipping is decorative."},
+          {key:"d", text:"Per-sample clipping is optional."},
         ]}
-        trap={<>(b)(c)(d) misread the relationship. The &epsilon; bound is a worst-case theoretical bound, not the operational risk.</>}
-        lens={<>DP gives a worst-case bound; empirical membership inference can be lower. For accountability, you should run BOTH a formal &epsilon; calculation AND empirical attack evaluation. Many production teams report both: &quot;trained at &epsilon;=10 with empirical MI attack success at 52%&quot;.</>}
-        stretch={<>How would you design an empirical MI test for production?</>}
+        trap={<>(b)(c)(d) miss the sensitivity-bounding role of clipping.</>}
+        lens={<>Clipping bounds sensitivity; noise is calibrated against that bound.</>}
+        stretch={<>What is the smallest counterexample? (One large-gradient outlier example.)</>}
       />
 
-      <VIS.TrapProblem
-        id="dpsgd-p8" difficulty="hard" mode="ordered"
-        title="P8 — DP-SGD deployment sequence"
-        scenario={<>Order the steps to ship DP-SGD. Wrong moves unranked.</>}
+      <VIS.TrapProblem id="pr-p8" difficulty="hard"
+        title="P8 &mdash; Pitch Abadi DP-SGD&apos;s anchor"
+        scenario={<><em>Discriminating insight: anchor = &ldquo;per-sample L2 clip at C + independent Gaussian noise &sigma;&middot;C added to the per-step sum + moments accountant tracking (&epsilon;, &delta;) over many steps&rdquo;. The 2016 baseline; cross-step noise is independent (DP-FTRL improves this specifically).</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Clarify the privacy unit (record vs user) and required &epsilon; with privacy / legal.", order:1},
-          {key:"b", text:"Pick a privacy accountant (RDP or GDP); compute the budget &sigma; and step count.", order:2},
-          {key:"c", text:"Implement Poisson subsampling correctly; verify the sampler in unit tests.", order:3},
-          {key:"d", text:"Tune clipping norm C and noise multiplier &sigma;; profile per-example gradient throughput.", order:4},
-          {key:"e", text:"Skip empirical membership-inference evaluation; the formal &epsilon; suffices."},
-          {key:"f", text:"Run empirical membership-inference attack on the released model; report alongside &epsilon;.", order:5},
+          {key:"a", text:"Foundational 2016 formulation: clip each example&apos;s gradient at L2 norm C (per-sample, bounds sensitivity), add independent Gaussian noise N(0, &sigma;^2 C^2 I) to the per-step sum (the noise mechanism), track (&epsilon;, &delta;) over T steps via moments accountant (tighter than naive composition). RecSys-specific: per-row sensitivity bookkeeping for sparse user/item embeddings; popularity bias under uniform noise.", correct:true},
+          {key:"b", text:"Abadi DP-SGD uses correlated noise across steps."},
+          {key:"c", text:"Abadi DP-SGD is output-perturbation."},
+          {key:"d", text:"Abadi DP-SGD has no clipping."},
         ]}
-        trap={<>(e) is a compliance / accountability gap.</>}
-        lens={<>Sequence: clarify unit + budget, pick accountant, fix sampling, tune knobs, MI-attack the result. Skipping the empirical MI test is a common shortcut — and the single thing that catches sampler bugs and accountant misuse before they ship.</>}
-        stretch={<>Which step is hardest to retrofit after launch?</>}
+        trap={<>(b)(c)(d) wrong family or piece.</>}
+        lens={<>Per-sample clip + independent Gaussian + moments accountant.</>}
+        stretch={<>Which piece is the most paper-specific contribution? (Moments accountant.)</>}
       />
 
-      <VIS.TrapProblem
-        id="dpsgd-p9" difficulty="medium" multiSelect
-        title="P9 — Common DP-SGD bugs in production"
-        scenario={<>Pick the implementation bugs that silently break DP-SGD&apos;s stated privacy guarantee.</>}
+      <VIS.TrapProblem id="pr-p9" difficulty="hard" multiSelect
+        title="P9 &mdash; When NOT to use Abadi DP-SGD. Select all that apply."
+        scenario={<><em>Discriminating insight: needs reasonable data size, per-sample grad access, budget room, and tolerance for utility drop. Wrong for tiny datasets, hardware without per-sample grad, very long training runs (DP-FTRL wins), and surfaces where no privacy is needed.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Clipping AFTER summing the batch (one big clipped gradient) instead of per-example then sum.", correct:true},
-          {key:"b", text:"Using non-Poisson sampling while citing Poisson amplification.", correct:true},
-          {key:"c", text:"Adding noise to the loss instead of to the summed clipped gradient.", correct:true},
-          {key:"d", text:"Resetting the random seed every step."},
-          {key:"e", text:"Using SGD with momentum instead of plain SGD."},
+          {key:"a", text:"Dataset N&lt;1k &mdash; noise dominates signal at any usable &epsilon;.", correct:true},
+          {key:"b", text:"Hardware/library combination that cannot compute per-sample gradients efficiently (e.g., very large batched ops without vmap).", correct:true},
+          {key:"c", text:"Very long sequential training over many SGD steps where DP-FTRL&apos;s correlated noise gives strictly better utility at the same budget.", correct:true},
+          {key:"d", text:"No privacy requirement and no regulator pressure &mdash; the utility hit is gratuitous.", correct:true},
+          {key:"e", text:"Two-tower recsys on EU-user interaction logs at &epsilon;=4, &delta;=1e-7."},
         ]}
-        trap={<>(d)(e) are not privacy bugs (d is bad for noise quality but is fine if the noise is from a CSPRNG; e is a utility choice). (a)(b)(c) all silently invalidate the proof.</>}
-        lens={<>Three silent breakages: post-sum clipping (treats batch as one example), wrong sampling (breaks amplification), wrong noise placement (no longer Gaussian on the gradient sum). Each invalidates the privacy claim while the loss curve looks normal. Code review and unit tests of the sampler are essential.</>}
-        stretch={<>How would you unit-test the privacy invariants without leaking real user data?</>}
+        trap={<>(e) the canonical fit.</>}
+        lens={<>Reasonable N + per-sample grad + privacy need + tolerable utility hit.</>}
+        stretch={<>How to decide between Abadi and DP-FTRL early?</>}
       />
 
-      <VIS.TrapProblem
-        id="dpsgd-p10" difficulty="hard"
-        title="P10 — Record-level vs user-level DP"
-        scenario={<>Your dataset has multiple records per user (a user has many clicks). You apply DP-SGD with the &quot;record&quot; as the privacy unit. A reviewer says this misses the actual threat model. Why?</>}
+      <VIS.TrapProblem id="pr-p10" difficulty="hard"
+        title="P10 &mdash; RecSys-specific: sparse-embedding sensitivity bookkeeping"
+        scenario={<><em>Discriminating insight: each training example touches a tiny subset of the embedding table (one user row + one item row). Naive per-sample L2 clipping of the whole flattened gradient over the full table is meaningful, but to keep sensitivity tight one usually clips PER-ROW or PER-USER. Otherwise the clip is dominated by zeros and noise is added to rows that did not move.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"If a user contributes many records, record-level DP bounds the influence of one click but says nothing about the user as a whole; the right unit for a user-privacy claim is user-level DP, which requires grouping all of a user&apos;s records and clipping at the user-gradient level.", correct:true},
-          {key:"b", text:"Record-level and user-level DP are equivalent."},
-          {key:"c", text:"Privacy units do not affect &epsilon;."},
-          {key:"d", text:"The reviewer is wrong; record-level is always sufficient."},
+          {key:"a", text:"Each training example touches only a tiny subset of the embedding table (one user row + one item row). Clipping the full-table flattened gradient under-uses the clip budget &mdash; most coordinates are zero. Clip per-row (or per-user, per-item) so the L2 bound is tight on the rows that actually moved; otherwise noise is added uniformly to rows that did not move, costing utility for no privacy gain.", correct:true},
+          {key:"b", text:"Always clip the full table."},
+          {key:"c", text:"Embeddings are not DP-sensitive."},
+          {key:"d", text:"Clipping per row is decorative."},
         ]}
-        trap={<>(b)(c)(d) miss the distinction.</>}
-        lens={<>The privacy unit is half the contract. Record-level DP defends against single-click leakage. User-level DP defends against the much stronger threat of identifying a user from their click pattern. The two require different clipping and accounting; choose the unit BEFORE picking the algorithm.</>}
-        stretch={<>What is the utility cost of switching from record-level to user-level DP on a recsys click dataset?</>}
+        trap={<>(b)(c)(d) miss the sparse-grad structure.</>}
+        lens={<>Sparse-embedding grads need per-row clipping for tight sensitivity.</>}
+        stretch={<>How does this change the accountant? (Per-user privacy &mdash; user-level DP.)</>}
       />
+
+      <VIS.TrapProblem id="pr-p11" difficulty="hard"
+        title="P11 &mdash; RecSys-specific: popularity bias under uniform noise"
+        scenario={<><em>Discriminating insight: frequent items receive many gradient updates per epoch &mdash; the averaged noise is small. Rare items receive few updates &mdash; the noise dominates the signal. DP-SGD amplifies popularity bias because head items learn well and tail items learn near-noise. Mitigation is sampling-rate adjustment, per-row clip scaling, or DP-FTRL&apos;s correlated noise (which cancels better over time).</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Frequent items receive many gradient updates per epoch and the averaged noise becomes small; rare items receive few updates and noise dominates signal. DP-SGD amplifies popularity bias because head items learn cleanly while tail items learn near-noise. Mitigations: sampling-rate adjustment for rare items, per-row clip-scale tuning, or moving to DP-FTRL where correlated noise cancels better over time.", correct:true},
+          {key:"b", text:"DP-SGD is popularity-neutral."},
+          {key:"c", text:"Rare items learn better under DP-SGD."},
+          {key:"d", text:"Popularity bias is decorative."},
+        ]}
+        trap={<>(b)(c)(d) miss the SNR-by-frequency mechanism.</>}
+        lens={<>Frequent items: high SNR. Rare items: low SNR. Bias amplified.</>}
+        stretch={<>How to monitor? (Tail-item recall vs head-item recall under DP.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p12" difficulty="hard"
+        title="P12 &mdash; What does Abadi DP-SGD deliberately drop vs plain SGD?"
+        scenario={<><em>Discriminating insight: Abadi forfeits some accuracy (typically 1-5% on classification, more on hard tasks) and per-step throughput (per-sample grads cost more). In exchange it gains a measurable (&epsilon;, &delta;) privacy guarantee under the moments accountant.</em><br/>What does Abadi forfeit?</>}
+        options={[
+          {key:"a", text:"Accuracy (typically 1-5% on classification, often more on harder tasks or smaller datasets) and per-step throughput (per-sample gradients cost more than batched gradients, even with vmap). In exchange it gains a measurable (&epsilon;, &delta;) privacy guarantee tracked tightly by the moments accountant &mdash; usable for regulator-facing claims.", correct:true},
+          {key:"b", text:"Abadi forfeits training."},
+          {key:"c", text:"Abadi forfeits the user data."},
+          {key:"d", text:"Abadi forfeits the model."},
+        ]}
+        trap={<>(b)(c)(d) misread.</>}
+        lens={<>Accuracy + throughput for a calibratable (&epsilon;, &delta;).</>}
+        stretch={<>What &epsilon; budget makes the trade obviously worth it?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p13" difficulty="hard"
+        title="P13 &mdash; Most fragile knob"
+        scenario={<><em>Discriminating insight: clip norm C is the most fragile knob. Too small: all gradients clipped to nearly the same direction, lose informative magnitude. Too large: sensitivity is high so &sigma;&middot;C noise dominates. Noise multiplier &sigma; is the secondary knob (set by accountant). Learning rate is robust.</em><br/>Rank fragility.</>}
+        options={[
+          {key:"a", text:"Clip norm C is most fragile &mdash; too small clips most gradients to the same direction (loses magnitude information, learning collapses); too large makes sensitivity high so &sigma;&middot;C noise dominates (utility collapses). Tune C to the gradient-norm distribution&apos;s median or 50th-75th percentile. Noise multiplier &sigma; is the secondary knob (set by accountant target). Learning rate is robust within DP-SGD&apos;s normal range.", correct:true},
+          {key:"b", text:"Learning rate is most fragile."},
+          {key:"c", text:"Tokenizer choice is most fragile."},
+          {key:"d", text:"Batch size is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>C trades information loss against noise scale.</>}
+        stretch={<>How to tune C? (Plot grad-norm histogram on a small non-DP run.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p14" difficulty="hard"
+        title="P14 &mdash; Plausible-misattribution: tail-item recall cratered after enabling DP-SGD"
+        scenario={<><em>Discriminating insight: per-row sensitivity bookkeeping was off; the team clipped the full-table flattened gradient instead of per-row. Effective per-row noise on rare-item rows dominated their tiny signal; tail-item embeddings collapsed toward noise. Head-item recall looked fine. Fix is per-row clipping (user-level DP setup), not raising &epsilon;.</em><br/>Diagnosis?</>}
+        options={[
+          {key:"a", text:"The team clipped the FULL-table flattened gradient instead of per-row. On sparse-embedding updates the clip budget is dominated by zeros, the L2 bound is loose, and the calibrated noise per-row ends up larger than necessary. Rare-item rows have few updates and the noise dominates their signal &mdash; tail recall collapses. Fix: clip per-row (user-level DP); do not raise &epsilon; to compensate.", correct:true},
+          {key:"b", text:"GPU thermal throttling.", correct:false},
+          {key:"c", text:"Cache TTL changed.", correct:false},
+          {key:"d", text:"Tokenizer drift.", correct:false},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Wrong clipping granularity wastes budget on tail-row noise.</>}
+        stretch={<>How to monitor? (Tail-item recall per-DP vs non-DP run.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p15" difficulty="hard"
+        title="P15 &mdash; Intuitive but wrong: &ldquo;raise &epsilon; to fix poor utility&rdquo;"
+        scenario={<><em>Discriminating insight: raising &epsilon; weakens privacy linearly but only buys a sublinear utility win &mdash; and undermines the regulator-facing claim that motivated DP. Better moves first: tune C against grad-norm percentiles, fix per-row clipping, increase batch size (improves accountant), or move to DP-FTRL for the same &epsilon;.</em><br/>Why is the naive view wrong?</>}
+        options={[
+          {key:"a", text:"Raising &epsilon; weakens privacy linearly but the utility win is sublinear, and it undermines the regulator-facing privacy claim. Cheaper moves first: tune clip norm C against grad-norm percentiles, switch to per-row sparse-embedding clipping, increase batch size (the accountant amortises better at larger batches), or move to DP-FTRL for the same &epsilon; with correlated-noise utility gain.", correct:true},
+          {key:"b", text:"&epsilon; is decorative."},
+          {key:"c", text:"Higher &epsilon; gives strictly better privacy."},
+          {key:"d", text:"Raising &epsilon; is always the right move."},
+        ]}
+        trap={<>(b)(c)(d) misread the privacy-utility trade.</>}
+        lens={<>Tune C, batch size, clipping granularity, or method before relaxing &epsilon;.</>}
+        stretch={<>What &epsilon; range is &lsquo;meaningful privacy&rsquo;? (Typically &epsilon;&lt;10 for ML; depends on regulator.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p16" difficulty="hard"
+        title="P16 &mdash; Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;DP-SGD = add noise to gradient&rdquo; cascades into skipping per-sample clipping (sensitivity unbounded), using naive strong composition (budget blows up), and ignoring per-row sensitivity for sparse embeddings (tail recall collapses).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: per-sample clipping (without it, per-example sensitivity is unbounded and no Gaussian-mechanism guarantee holds); accountant choice (naive strong composition gives O(T^(1/2)) and the budget blows up over many steps; the moments accountant is what makes long training feasible); and per-row sensitivity for sparse-embedding workloads (the wrong granularity wastes budget on tail rows). Each is load-bearing.", correct:true},
+          {key:"b", text:"Only clipping."},
+          {key:"c", text:"Only accountant."},
+          {key:"d", text:"Nothing &mdash; it is just noise on the gradient."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Clipping + accountant + sparse-row granularity jointly load-bearing.</>}
+        stretch={<>Which piece does the paper most underspecify? (Per-row sensitivity for sparse models.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p17" difficulty="medium"
+        title="P17 &mdash; Senior vs junior framing on weak DP-SGD utility"
+        scenario={<><em>Discriminating insight: junior raises &epsilon; or learning rate. Senior first audits clip norm C against grad-norm percentiles, clipping granularity for sparse embeddings, and batch size (accountant gains a lot at large batches). Without these, no &epsilon; tweak helps.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Audit clip norm C against the actual grad-norm distribution percentiles (typical C falls between p50 and p75 of grad norms); check clipping granularity for sparse-embedding rows; raise batch size (the accountant amortises better at large batches). Only then revisit &epsilon;. Learning rate is the last lever within DP-SGD&apos;s normal range.", correct:true},
+          {key:"b", text:"Raise &epsilon; immediately."},
+          {key:"c", text:"Lower batch size."},
+          {key:"d", text:"Skip privacy."},
+        ]}
+        trap={<>(b)(c)(d) generic or off-topic.</>}
+        lens={<>C against grad-norm -&gt; clipping granularity -&gt; batch size -&gt; &epsilon;.</>}
+        stretch={<>Dashboard panel for grad-norm distribution vs C?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p18" difficulty="hard"
+        title="P18 &mdash; Plausible-misattribution: utility regressed after a batch-size cut to save GPU memory"
+        scenario={<><em>Discriminating insight: cutting batch size from 8192 to 1024 hurt utility under DP-SGD MORE than expected. Reason: the moments accountant amortises noise much better at large batches (subsampling amplification gives smaller effective noise per example); cutting batch size raises effective per-example noise sharply. Fix is gradient accumulation to keep effective batch size large, not raise &epsilon;.</em><br/>Diagnosis?</>}
+        options={[
+          {key:"a", text:"The moments accountant benefits from subsampling amplification: at larger batches, the privacy cost of one step is amortised over more examples and effective per-example noise is smaller. Cutting batch size from 8192 to 1024 raised effective per-example noise sharply &mdash; utility regressed for the same &epsilon;. Fix: use gradient accumulation to keep effective batch size large, or rebudget. Do not raise &epsilon; to mask the loss.", correct:true},
+          {key:"b", text:"GPU thermal throttling.", correct:false},
+          {key:"c", text:"Cache TTL changed.", correct:false},
+          {key:"d", text:"Tokenizer drift.", correct:false},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Subsampling amplification means large batches are utility-friendly under DP-SGD.</>}
+        stretch={<>How to keep effective batch size large under VRAM constraints? (Gradient accumulation, microbatching.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p19" difficulty="hard"
+        title="P19 &mdash; Production gotcha: clip norm C tuned on non-DP run"
+        scenario={<><em>Discriminating insight: a common practice is running a small non-DP pre-training run, plotting grad-norm percentiles, and setting C at the median or 50th-75th percentile. Skipping this and picking C=1.0 by default usually clips too aggressively or too loosely; both hurt utility. The dashboard panel is &lsquo;grad-norm histogram with C marker&rsquo;.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Run a brief non-DP warmup, log per-sample grad norms, plot the histogram, and set C at the median or 50th-75th percentile of that distribution. Picking C=1.0 by default often clips too aggressively (collapsing magnitude) or too loosely (inflating noise). The standard dashboard panel is &lsquo;grad-norm histogram with C marker&rsquo;; alert on distribution drift over training.", correct:true},
+          {key:"b", text:"C=1.0 is always correct."},
+          {key:"c", text:"C is decorative."},
+          {key:"d", text:"Set C to the maximum grad norm."},
+        ]}
+        trap={<>(b)(c)(d) miss the data-driven C tuning.</>}
+        lens={<>Tune C against the actual grad-norm distribution, not a default.</>}
+        stretch={<>How often to retune C? (When data or model architecture changes.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p20" difficulty="hard"
+        title="P20 &mdash; Failure on Friday: tail-item recall cratered after enabling DP-SGD on user-embedding training"
+        scenario={<><em>Discriminating insight: team enabled DP-SGD with full-table per-sample clipping. Rare items had few examples per epoch; per-row noise dominated their signal. Head items learned fine; tail recall fell 30%. 3am page. Fix: per-user clipping (user-level DP) with stratified per-frequency clip-scale tuning. Reverting DP would lose compliance.</em><br/>3am page: tail recall down 30%. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Full-table per-sample clipping wasted clip budget on the sparse zero coordinates; the calibrated noise per row was larger than necessary; rare-item rows received few gradient updates and the noise dominated their signal. Tail recall collapsed while head recall stayed fine. Fix: switch to per-user (user-level) clipping with stratified per-frequency clip-scale tuning; do not revert DP (compliance) or raise &epsilon; (regulator).", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Tokenizer drift."},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Sparse-embedding sensitivity must be per-row to keep tail SNR usable.</>}
+        stretch={<>Runbook entry for enabling DP on a new model family?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p21" difficulty="medium"
+        title="P21 &mdash; Library default that bites: Opacus / TF-Privacy default noise multiplier"
+        scenario={<><em>Discriminating insight: Opacus and TF-Privacy default noise multiplier values are conservative (&sigma;=1.0 or 1.1 is common). On large datasets you can get tighter (&epsilon;, &delta;) at smaller &sigma; via the accountant &mdash; or trade larger &sigma; for smaller &epsilon;. Accepting the default without running the accountant against your dataset size leaves utility on the table or under-spends the privacy budget.</em><br/>Where does the default break?</>}
+        options={[
+          {key:"a", text:"Opacus / TF-Privacy ship conservative default &sigma; values (often 1.0-1.1). Without running the moments / RDP accountant against your specific (dataset size, batch size, T steps) you either leave utility on the table or under-spend the privacy budget. Always plug your training parameters into the accountant and choose &sigma; to hit your target (&epsilon;, &delta;) exactly, not by default.", correct:true},
+          {key:"b", text:"Default learning rate is wrong."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Choose &sigma; from the accountant, not the library default.</>}
+        stretch={<>Unit test? (Assert (&epsilon;, &delta;) at end of training matches target.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p22" difficulty="hard" ordered
+        title="P22 &mdash; Order the DP-SGD rollout"
+        scenario={<><em>Discriminating insight: rollout = (1) define target (&epsilon;, &delta;) per surface, (2) profile grad-norm distribution non-DP, (3) set clip norm C from percentiles, (4) pick batch size large via accumulation, (5) compute &sigma; from accountant, (6) per-row clipping for sparse embeddings, (7) shadow against non-DP baseline, (8) launch.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Define target (&epsilon;, &delta;) per surface -&gt; profile grad-norm distribution on a short non-DP warmup -&gt; set clip norm C at median or 50th-75th percentile -&gt; pick large batch size (via gradient accumulation if needed) -&gt; compute &sigma; from the moments/RDP accountant -&gt; switch to per-row clipping for sparse embeddings -&gt; shadow vs non-DP baseline -&gt; launch with privacy budget tracking", correct:true},
+          {key:"b", text:"Skip the accountant."},
+          {key:"c", text:"Default C=1.0 without profiling."},
+          {key:"d", text:"Launch without shadow."},
+        ]}
+        trap={<>(b)(c)(d) lose privacy or utility correctness.</>}
+        lens={<>Target -&gt; grad-norm profile -&gt; C -&gt; batch -&gt; &sigma; -&gt; sparse clip -&gt; shadow -&gt; launch.</>}
+        stretch={<>Why batch size before &sigma;?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p23" difficulty="hard"
+        title="P23 &mdash; Smallest input that breaks the claimed advantage"
+        scenario={<><em>Discriminating insight: a tiny dataset (N=100) with target &epsilon;=2 breaks DP-SGD &mdash; the noise &sigma;&middot;C dominates the per-step signal because there are few examples per batch and subsampling amplification is weak. Even with perfect clipping and accountant the utility is no better than random. DP-SGD needs reasonable N to give the accountant subsampling-amplification leverage.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A tiny dataset (N=100) with target &epsilon;=2 &mdash; subsampling amplification is weak (few examples per batch), the noise &sigma;&middot;C dominates the signal each step, and even perfect clipping and accountant cannot recover usable utility. DP-SGD becomes near-random; the privacy-utility trade is hopeless at this scale. The Abadi baseline needs reasonable N for the accountant to give amplification leverage.", correct:true},
+          {key:"b", text:"Two-tower recsys on EU users with &epsilon;=4 (canonical fit)."},
+          {key:"c", text:"100M users."},
+          {key:"d", text:"Catalog of 50M items."},
+        ]}
+        trap={<>(b) canonical fit. (c)(d) scale red herrings &mdash; large N helps DP-SGD.</>}
+        lens={<>Subsampling amplification requires reasonable N to deliver utility.</>}
+        stretch={<>What N is the realistic minimum at &epsilon;=2?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p24" difficulty="hard"
+        title="P24 &mdash; Abadi vs RDP accountant &mdash; should we still use the moments accountant?"
+        scenario={<><em>Discriminating insight: the moments accountant was the 2016 contribution. The R&eacute;nyi DP (RDP) accountant (Mironov 2017) often gives a tighter bound for the same training schedule. Production setups typically use RDP today; the moments accountant remains historically important and pedagogically clearer. The CLIP + NOISE pieces are unchanged.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Moments accountant was the 2016 contribution. R&eacute;nyi DP (RDP) accountant (Mironov 2017) often gives a tighter bound for the same training schedule and is the production default today (TF-Privacy, Opacus). The per-sample clipping and Gaussian noise pieces are unchanged. Use RDP unless you need to reproduce a 2016-era result; the moments accountant remains pedagogically central.", correct:true},
+          {key:"b", text:"Moments accountant is strictly tighter than RDP."},
+          {key:"c", text:"Switching to RDP changes the noise mechanism."},
+          {key:"d", text:"RDP has no relationship to (&epsilon;, &delta;)-DP."},
+        ]}
+        trap={<>(b)(c)(d) misread the relationship.</>}
+        lens={<>Moments accountant (2016) -&gt; RDP accountant (2017) for tighter bounds; clip + noise unchanged.</>}
+        stretch={<>What does &lsquo;RDP&rsquo; track? (R&eacute;nyi divergence at multiple orders.)</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/1607.00133" target="_blank" rel="noopener">Abadi et al. — <em>Deep Learning with Differential Privacy</em> (CCS 2016, paper)</a> — the original DP-SGD paper with the Moments accountant. The reference everyone cites.</li>
-        <li><a href="https://arxiv.org/pdf/2303.00654" target="_blank" rel="noopener">ACM CSUR — <em>A Survey on Differentially Private Machine Learning</em> (2024, survey)</a> — current landscape, including DP-FTRL and related improvements.</li>
-        <li><a href="https://opacus.ai/" target="_blank" rel="noopener">Opacus — <em>DP-SGD for PyTorch</em> (library and docs)</a> — production-grade DP-SGD with vectorized per-example gradients; read the gotchas section.</li>
-        <li><a href="https://desfontain.es/blog/" target="_blank" rel="noopener">Damien Desfontaines — <em>Differential Privacy blog</em> (desfontain.es, blog)</a> — accessible, opinionated practitioner posts on DP accounting and the &quot;real meaning&quot; of &epsilon;.</li>
-        <li><a href="https://programming-dp.com/" target="_blank" rel="noopener">Joseph Near and Chike Abuah — <em>Programming Differential Privacy</em> (free online textbook)</a> — interactive Python-first DP textbook; the easiest on-ramp.</li>
+        <li><a href="https://arxiv.org/abs/1607.00133" target="_blank" rel="noopener">Abadi, Chu, Goodfellow, McMahan, Mironov, Talwar, Zhang &mdash; <em>Deep Learning with Differential Privacy</em> (CCS 2016)</a> &mdash; the canonical paper. Sections on per-sample clipping and the moments accountant are the must-reads; the experiments motivate the budget choices.</li>
+        <li><a href="https://desfontain.es/blog/differential-privacy-in-machine-learning.html" target="_blank" rel="noopener">Damien Desfontaines &mdash; <em>Differential Privacy in Machine Learning</em> (blog series)</a> &mdash; the most readable practitioner walkthrough of DP-SGD intuition, clipping, and accountants.</li>
+        <li><a href="https://opacus.ai/" target="_blank" rel="noopener">Opacus &mdash; PyTorch DP-SGD library</a> &mdash; default implementation used in production. The tutorials illustrate per-sample gradient computation and accountant usage.</li>
+        <li><a href="https://arxiv.org/abs/1702.07476" target="_blank" rel="noopener">Mironov &mdash; <em>R&eacute;nyi Differential Privacy</em> (CSF 2017)</a> &mdash; the RDP accountant that superseded the moments accountant in practice.</li>
+        <li><a href="https://www.youtube.com/watch?v=DXX-FFwf_yY" target="_blank" rel="noopener">Borja Balle &mdash; <em>Privacy Amplification by Subsampling</em> (video lecture)</a> &mdash; the subsampling-amplification mechanism that drives why large batches are utility-friendly under DP-SGD.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Differential_privacy" target="_blank" rel="noopener">Wikipedia &mdash; <em>Differential Privacy</em></a> &mdash; the (&epsilon;, &delta;)-DP definition and Gaussian mechanism background; useful for stitching the math together.</li>
       </ul>
     </VIS.Section>
   </main>

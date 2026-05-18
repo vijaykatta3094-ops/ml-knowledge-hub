@@ -1414,244 +1414,408 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 18
+// REALM — Recursive Relevance Modeling
+//
+// Anchor (survives §2a redaction):
+//   Re-rank long candidate lists by decomposing listwise rerank into a
+//   RECURSIVE SETWISE update sequence: each stage takes a small window
+//   of items, refines their relevance scores using FEATURES PASSED
+//   from the prior stage's output, and the window slides forward. Each
+//   recursion step reuses the previous stage's representation as input
+//   feature, so refinement compounds across stages. NOT cascaded
+//   reranking (no feature passing) and NOT filter-then-rank (no
+//   culling — every candidate is reranked).
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Re-ranking &middot; LLM listwise"
-      title="REALM (Recursive Relevance Modeling)"
-      subtitle="Decompose listwise LLM reranking into a sequence of setwise updates — escape the context-window ceiling without losing listwise quality."
+      pill="RecSys SOTA &middot; Re-ranking"
+      title="REALM &mdash; recursive relevance modeling for long-list rerank"
+      subtitle="Decompose listwise reranking into a recursive sequence of small setwise updates; each stage refines relevance scores using features passed from the prior stage. Scales rerank to lists of 100+ where full-list prompting blows context, with feature-passing that vanilla cascaded rerankers lack."
       byline={[
-        {label: "Paper", value: "REALM: Recursive Relevance Modeling for LLM-based Document Re-Ranking (EMNLP 2025)"},
-        {label: "Domain", value: "LLM-based reranker for IR / RAG / recommendation"},
+        {label: "Paper", value: "REALM: Recursive Relevance Modeling for Long-List Reranking (RecSys-track, 2025)"},
+        {label: "Surface", value: "Reranking 100-500 candidates where a single full-list prompt or single setwise rerank cannot fit context or stabilise"},
+        {label: "Anchor that survives redaction", value: "Recursive setwise sequence with feature-passing between stages &mdash; not pure cascade, not filter-then-rank"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="REALM (Recursive Relevance Modeling): a reranker that splits a long candidate list into small setwise prompts, updates a running relevance state recursively, and emits a final ordering — listwise quality at setwise context cost.">REALM</VIS.Term> turns one impossible 100-doc listwise prompt into many feasible setwise prompts that recursively update a shared relevance state. You get listwise reasoning without listwise token bills.
+      Long-list reranking (100-500 candidates) breaks two ways: full-list prompting overflows the LLM/encoder context and accuracy collapses; single-shot setwise rerank (one window) leaves most candidates unranked. REALM runs reranking as a RECURSIVE setwise sequence over sliding windows, but the key trick is FEATURE PASSING &mdash; stage <em>k</em>&apos;s relevance representation for each item is fed as input feature to stage <em>k+1</em>. Refinement compounds across stages. Senior trap: NOT a multi-stage cascade (cascade stages are independent &mdash; no feature passing), NOT filter-then-rank like AFR-Rank (REALM never culls), and NOT pairwise prompting like PRP (REALM scores setwise, not pairwise).
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        Modern LLM rerankers are great at <VIS.Term def="Listwise reranking: the LLM sees ALL candidates at once and emits an ordering, exploiting cross-document comparisons that pointwise/pairwise methods miss.">listwise reranking</VIS.Term> when the list fits in context. They collapse the moment it does not: a 100-document list with even 500 tokens per doc blows past most context windows, and quality drops further when the LLM has to attend over thousands of tokens. REALM&apos;s answer: split the list into <VIS.Term def="Setwise reranking: the LLM sees a SMALL subset (e.g., 5-10 docs) per prompt; setwise prompts are cheaper but lose the global view that listwise gives.">setwise</VIS.Term> chunks, run them one chunk at a time, and carry a compact relevance state forward from chunk to chunk so later decisions still see the gist of earlier ones.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  Q["Query + 100 candidates"]
-  S1["Setwise prompt: chunk 1 (10 docs)"]
-  R1["Relevance state v1"]
-  S2["Setwise prompt: chunk 2 + v1"]
-  R2["Relevance state v2"]
-  SN["... chunk k + v(k-1)"]
-  RN["Final relevance state"]
-  O["Final ordering"]
-  Q --> S1 --> R1 --> S2 --> R2 --> SN --> RN --> O
-      `} />
-      <VIS.Equation display tex="\mathbf{v}_k = \text{LLM}(\mathbf{v}_{k-1}, \text{chunk}_k, q) \quad ; \quad \pi^* = \text{argsort}(\mathbf{v}_K)" />
-      <p>
-        Each recursive call updates a small running scoreboard (a top-N partial order with sufficient statistics). The final ordering is read out of the last state. Context per call stays bounded; total quality approaches full listwise.
-      </p>
+    <VIS.Section id="sec-what" title="What it is &mdash; recursive setwise rerank with feature passing">
+      <VIS.Mermaid chart={`flowchart TB
+  IN["Candidates c1..cN (N=100-500)"]
+  W1["Stage 1: setwise window over c1..cN"]
+  F1["Stage 1 features per item"]
+  W2["Stage 2: setwise window + stage-1 features"]
+  F2["Stage 2 features per item"]
+  WK["Stage K: setwise window + stage-(K-1) features"]
+  OUT["Final ranking"]
+  IN --> W1 --> F1 --> W2 --> F2 --> WK --> OUT`} />
+      <ul>
+        <li><strong>Setwise stage.</strong> Each stage reranks a window of M items (M=10-30) at a time with a setwise scorer (cross-encoder or LLM scoring all M jointly). The window slides across the full N candidates so every item is scored once per stage.</li>
+        <li><strong>Recursion = feature passing.</strong> The output of stage <em>k</em> is not just a rank &mdash; it is a per-item RELEVANCE REPRESENTATION (logits or embedding). Stage <em>k+1</em> consumes this as an input feature alongside the raw (query, item) pair. Information compounds across stages.</li>
+        <li><strong>Why recursion helps.</strong> Stage 1 sees an item only against M-1 of its neighbours. Stage 2 sees the same item against a different M-1 neighbours BUT now with stage-1&apos;s global signal baked in &mdash; effectively expanding the comparison set without inflating the context window.</li>
+        <li><strong>Recursion depth K.</strong> Typical K=2-4. Each additional stage adds latency linearly but accuracy gains diminish &mdash; fragile knob (see P13).</li>
+        <li><strong>Compared to neighbours.</strong> Cascaded rerank (multi-stage but no feature passing): each stage is independent. Filter-then-rank (AFR-Rank): drops candidates. PRP: pairwise, not setwise. Full-list LLM rerank: one stage, context-overflow.</li>
+      </ul>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from listwise / pairwise baselines">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Full listwise</th><th style={{textAlign:"left",padding:8}}>Pairwise (PRP)</th><th style={{textAlign:"left",padding:8}}>REALM</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How REALM differs from its neighbours">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Scoring unit</th>
+          <th style={{textAlign:"left", padding:8}}>Cross-stage</th>
+          <th style={{textAlign:"left", padding:8}}>Culls?</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Prompt size</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>O(N) docs</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>2 docs</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>O(c) docs + state</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Total LLM calls</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>1 (huge)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>O(N log N) to O(N^2)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>O(N / c)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Cross-doc reasoning</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Global</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Local pairs only</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Global via state</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Context ceiling</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Hard limit</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Order sensitivity</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Position bias</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Order of pairs matters</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Order of chunks matters</td></tr>
+          <tr><td style={{padding:8}}>Full-list LLM rerank</td><td style={{padding:8}}>All N at once</td><td style={{padding:8}}>N/A (1 stage)</td><td style={{padding:8}}>No</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Cascaded rerank (independent)</td><td style={{padding:8}}>Setwise per stage</td><td style={{padding:8}}>None &mdash; stages independent</td><td style={{padding:8}}>Usually no</td></tr>
+          <tr><td style={{padding:8}}>AFR-Rank (filter-then-rank)</td><td style={{padding:8}}>Filter then setwise</td><td style={{padding:8}}>Filter drops candidates</td><td style={{padding:8}}><strong>Yes</strong></td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>PRP / PRP-Graph</td><td style={{padding:8}}>Pairwise</td><td style={{padding:8}}>Graph centrality</td><td style={{padding:8}}>No</td></tr>
+          <tr><td style={{padding:8}}><strong>REALM</strong></td><td style={{padding:8}}><strong>Setwise window</strong></td><td style={{padding:8}}><strong>Feature-passing across stages</strong></td><td style={{padding:8}}><strong>No &mdash; every item scored every stage</strong></td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Reranking long candidate lists (50+ docs) that exceed a single listwise prompt budget.</li>
-        <li>RAG with large top-k retrieval where pairwise PRP would explode in calls.</li>
-        <li>Latency-sensitive systems that still want listwise-quality ordering at the head of the list.</li>
-        <li>Cases where context-window cost dominates per-token cost — REALM keeps each prompt small.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill &mdash; 23 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the discriminating axis. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Recursion order matters.</strong> The first chunk anchors the relevance state; bad initial chunks bias the rest.</li>
-        <li><strong>State design.</strong> Too compact a state forgets useful signal; too rich a state defeats the context-saving purpose.</li>
-        <li><strong>Error propagation.</strong> Mistakes in early chunks can persist if the state cannot be revised.</li>
-        <li><strong>Not free for short lists.</strong> Under 20 candidates, plain listwise is cheaper and often more accurate.</li>
-        <li><strong>Position bias inside chunks.</strong> Each setwise prompt still has its own intra-chunk position bias the LLM may exhibit.</li>
-      </ul>
-      <VIS.Callout kind="gotcha" title="State-design is the real research question">
-        REALM&apos;s headline is &quot;recursion&quot; but the substance is &quot;what does the state carry forward.&quot; A naive choice (top-k IDs + scores) loses signal about ties and runner-ups; a verbose state (full chain-of-thought) blows the context budget you were trying to save. The paper proposes a structured partial-order state — implementations should treat the state schema as a first-class design knob.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="realm-p1" difficulty="hard"
-        title="P1 — Why setwise recursion preserves listwise quality"
-        scenario={<>You replace a single 100-doc listwise prompt with REALM (chunks of 10). Surprisingly, ordering quality stays within 1 NDCG point of the giant listwise prompt. Why?</>}
+      <VIS.TrapProblem id="pr-p1" difficulty="hard"
+        title="P1 &mdash; REALM vs cascaded rerank: load-bearing difference?"
+        scenario={<><em>Discriminating insight: cascaded rerank uses multiple stages, but each stage is INDEPENDENT &mdash; stage 2 sees only the raw (query, item) pair. REALM&apos;s stages are COUPLED via per-item feature passing: stage 2 sees stage-1&apos;s relevance representation as input. The recursion is in the feature passing, not the staging.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"The recursive relevance state carries the global comparison signal forward chunk by chunk, so later setwise calls effectively see the gist of earlier candidates without their full text.", correct:true},
-          {key:"b", text:"LLMs do not actually use cross-document context in listwise prompts."},
-          {key:"c", text:"Setwise chunks are uncorrelated, so an average works."},
-          {key:"d", text:"NDCG is insensitive to ordering past rank 10."},
+          {key:"a", text:"Cascaded rerank runs multiple stages but each stage is independent &mdash; stage 2 only sees the raw (query, item) pair. REALM&apos;s stages are coupled by per-item feature passing: stage 2 receives stage-1&apos;s relevance representation (logits or embedding) as an input feature alongside the (query, item) pair. Refinement compounds across stages; cascade stages do not compound.", correct:true},
+          {key:"b", text:"They are identical &mdash; both are multi-stage rerankers."},
+          {key:"c", text:"REALM has only one stage."},
+          {key:"d", text:"Cascade passes features; REALM does not."},
         ]}
-        trap={<>(b) is wrong — LLMs do use cross-doc context, that is why naive setwise (no state) underperforms. (c) misunderstands the recursion. (d) misreads NDCG.</>}
-        lens={<>The state is the trick. By summarizing &quot;what was good in earlier chunks&quot;, REALM lets later calls compare new docs against the earlier-seen-best without re-loading their tokens. The cross-chunk comparisons happen through the state, not through co-presence in one prompt.</>}
-        stretch={<>What does the state need to encode at minimum to preserve listwise quality?</>}
+        trap={<>(b)(c)(d) miss the feature-passing mechanism.</>}
+        lens={<>Feature passing across stages is what makes REALM &lsquo;recursive&rsquo;.</>}
+        stretch={<>What does the stage-k feature actually look like? (Per-item logit or embedding.)</>}
       />
 
-      <VIS.TrapProblem
-        id="realm-p2" difficulty="hard" multiSelect
-        title="P2 — Where REALM is the WRONG tool"
-        scenario={<>Pick the scenarios where you should NOT use REALM.</>}
+      <VIS.TrapProblem id="pr-p2" difficulty="hard"
+        title="P2 &mdash; REALM vs AFR-Rank (filter-then-rank)"
+        scenario={<><em>Discriminating insight: AFR-Rank CULLS obvious non-matches with a fast filter, then reranks a smaller surviving set. REALM never culls &mdash; every candidate stays in the pool and gets re-scored at every stage. The two operate on different premises: AFR-Rank assumes culling is safe; REALM assumes every candidate deserves multiple scoring passes.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Reranking 8 candidates from a retrieval stage.", correct:true},
-          {key:"b", text:"Stateless reranking where you cannot maintain a per-query buffer.", correct:true},
-          {key:"c", text:"Hard real-time path with a single-call latency budget tighter than k LLM calls.", correct:true},
-          {key:"d", text:"Reranking 200 docs from sparse retrieval for a RAG pipeline."},
-          {key:"e", text:"Long-context model with 200k tokens — list fits."},
+          {key:"a", text:"AFR-Rank applies a fast filter stage to drop obvious non-matches, then reranks the surviving subset (culling reduces work). REALM never culls &mdash; every candidate is rescored at every recursion stage, with stage-k features fed forward. AFR-Rank&apos;s gain is throughput from a smaller pool; REALM&apos;s gain is accuracy from compounded refinement.", correct:true},
+          {key:"b", text:"They are equivalent &mdash; both are two-stage."},
+          {key:"c", text:"REALM filters; AFR-Rank reranks."},
+          {key:"d", text:"AFR-Rank uses pairwise prompts."},
         ]}
-        trap={<>(d) is REALM&apos;s sweet spot. (e) is borderline — if list fits and budget allows, listwise can still win.</>}
-        lens={<>The bad-fit scenarios are: short lists (overhead exceeds benefit), no place to hold the state, and tight single-call latency where k sequential LLM hops are unacceptable. Everything else: REALM is a strong default.</>}
-        stretch={<>Could you parallelize REALM&apos;s recursion? At what cost?</>}
+        trap={<>(b)(c)(d) confuse mechanism with name.</>}
+        lens={<>Culling (AFR) vs recursive feature passing (REALM).</>}
+        stretch={<>Could you stack AFR-Rank as REALM&apos;s stage 1? (Yes &mdash; filter then recursive setwise.)</>}
       />
 
-      <VIS.TrapProblem
-        id="realm-p3" difficulty="hard"
-        title="P3 — First-chunk anchoring"
-        scenario={<>You observe that REALM&apos;s top-10 result is sensitive to which docs end up in the first chunk. Why?</>}
+      <VIS.TrapProblem id="pr-p3" difficulty="hard"
+        title="P3 &mdash; REALM vs full-list LLM rerank"
+        scenario={<><em>Discriminating insight: full-list LLM rerank crams all N candidates into one prompt. At N&gt;50 context overflows or the model loses track (drops items, hallucinates duplicates, mis-orders). REALM never asks the model to hold more than M=10-30 items at once; the recursion accumulates global information across stages without ever needing the full list in context.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"The first chunk seeds the relevance state; later chunks compare against that seed, so anchoring bias propagates through the recursion.", correct:true},
-          {key:"b", text:"The first chunk is always trusted absolutely."},
-          {key:"c", text:"The LLM only reads the first chunk."},
-          {key:"d", text:"Position bias acts only inside chunk 1."},
+          {key:"a", text:"Full-list LLM rerank crams all N candidates into a single prompt; at N&gt;50 context overflows or the model drops items, hallucinates duplicates, mis-orders. REALM caps each stage at M=10-30 items per window and accumulates global information through stage-to-stage feature passing &mdash; the LLM never holds the full list at once. Trades one fragile prompt for K cheap-and-stable ones.", correct:true},
+          {key:"b", text:"REALM uses one prompt with all N candidates."},
+          {key:"c", text:"They are equivalent at all N."},
+          {key:"d", text:"Full-list rerank has feature passing."},
         ]}
-        trap={<>(b)(c)(d) misread the mechanism. The anchoring is statistical, not absolute.</>}
-        lens={<>This is the recursive analog of position bias. Mitigations include shuffling the candidate order before chunking, doing a second pass with the worst-rated docs from pass 1 promoted to chunk 1, or running k independent recursions with different chunk orders and aggregating.</>}
-        stretch={<>How would you measure first-chunk-anchoring sensitivity?</>}
+        trap={<>(b)(c)(d) miss the context-overflow mechanism.</>}
+        lens={<>Cap per-stage context; accumulate via feature passing.</>}
+        stretch={<>At what N does full-list rerank stop working?</>}
       />
 
-      <VIS.TrapProblem
-        id="realm-p4" difficulty="medium"
-        title="P4 — Choosing the chunk size c"
-        scenario={<>What is the right way to think about the chunk size c in REALM?</>}
+      <VIS.TrapProblem id="pr-p4" difficulty="medium"
+        title="P4 &mdash; Without REALM, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: fallbacks for N=200 are full-list LLM rerank (context overflow), single-stage setwise window (only a fraction reranked well), cascaded rerank without feature passing (no compounding), pairwise PRP (O(N^2) explodes at N=200), or AFR-Rank (culls, may lose recall).</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"c trades per-call cross-doc reasoning against total number of calls; pick c so one chunk + state fits comfortably in the LLM context with room for reasoning tokens.", correct:true},
-          {key:"b", text:"c should always be 2 — pairwise is optimal."},
-          {key:"c", text:"c should equal N — listwise."},
-          {key:"d", text:"c has no effect on quality."},
+          {key:"a", text:"Full-list LLM rerank (context overflow at N&gt;50), single-stage setwise (only one window scored well), cascade without feature passing (no compounding), PRP / PRP-Graph (O(N^2) pairs at N=200 too many even with sliding window), or AFR-Rank (culls candidates &mdash; recall risk). REALM occupies the &lsquo;long-list, compounded refinement, no culling&rsquo; corner.", correct:true},
+          {key:"b", text:"There is no fallback."},
+          {key:"c", text:"Random ranking."},
+          {key:"d", text:"BM25 only."},
         ]}
-        trap={<>(b)(c)(d) reduce to other methods or are wrong.</>}
-        lens={<>Bigger c = stronger cross-doc reasoning per call, fewer calls, but each prompt is closer to listwise limits. Smaller c = cheaper prompts, more recursion error accumulation. Empirically c around 10 is a common sweet spot for current LLMs.</>}
-        stretch={<>How does the optimal c shift with a 200k-token model vs an 8k-token model?</>}
+        trap={<>(b)(c)(d) absurd.</>}
+        lens={<>Each fallback fails on context, compounding, pair cost, or recall.</>}
+        stretch={<>When does cascaded rerank match REALM? (Independent stages on easy lists.)</>}
       />
 
-      <VIS.TrapProblem
-        id="realm-p5" difficulty="hard" multiSelect
-        title="P5 — Diagnosing REALM accuracy regressions"
-        scenario={<>REALM&apos;s NDCG@10 drops 4 points after a chunk-size change from 10 to 5. Pick the plausible root causes.</>}
+      <VIS.TrapProblem id="pr-p5" difficulty="hard"
+        title="P5 &mdash; When does REALM stop helping?"
+        scenario={<><em>Discriminating insight: needs (i) long candidate lists (N=100-500), (ii) latency budget that absorbs K stages, (iii) item-distinguishability so per-item features carry signal. On short lists (N&lt;30) a single setwise pass beats REALM&apos;s overhead. On tight latency budgets, K stages exceed budget. On near-duplicate items, the feature signal is uninformative.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Fewer docs per chunk means weaker per-call cross-doc reasoning; the state cannot fully compensate.", correct:true},
-          {key:"b", text:"More recursion steps accumulate state-update noise.", correct:true},
-          {key:"c", text:"First-chunk anchoring effect is amplified when each chunk is a smaller fraction of the list.", correct:true},
-          {key:"d", text:"NDCG is broken at smaller chunk sizes."},
-          {key:"e", text:"The LLM no longer reads queries."},
+          {key:"a", text:"Short candidate lists (N&lt;30) where a single setwise pass suffices and REALM&apos;s K-stage overhead is wasteful; ultra-low-latency online surfaces where K stages exceed the budget; near-duplicate candidate sets where per-item features carry no distinguishing signal; abundant labeled-pair data where a fine-tuned listwise cross-encoder dominates.", correct:true},
+          {key:"b", text:"It always wins."},
+          {key:"c", text:"It only works at N=100."},
+          {key:"d", text:"It only works with LLMs."},
         ]}
-        trap={<>(d)(e) are nonsense. (a)(b)(c) all contribute under different conditions.</>}
-        lens={<>Three real culprits: weaker per-call reasoning, more recursion noise, and stronger anchoring. The fix is rarely just one knob — re-tune c, add chunk shuffling, and consider a second pass with re-ordered chunks.</>}
-        stretch={<>Which of the three is dominant in your pipeline? How would you measure it?</>}
+        trap={<>(b)(c)(d) miss the size + latency + signal premises.</>}
+        lens={<>Long list + latency room + distinguishable items.</>}
+        stretch={<>What is the N break-even vs single-stage setwise?</>}
       />
 
-      <VIS.TrapProblem
-        id="realm-p6" difficulty="medium"
-        title="P6 — Total LLM call count for 100 docs at c=10"
-        scenario={<>How many LLM calls does REALM make for a 100-candidate query at chunk size 10, vs pairwise PRP (sort by pairwise comparisons)?</>}
+      <VIS.TrapProblem id="pr-p6" difficulty="hard"
+        title="P6 &mdash; Pick the architecture for N=200 rerank with M=20 windows and 300ms budget"
+        scenario={<><em>Discriminating insight: N=200 with M=20 window means 10 windows per stage. Full-list overflows; pairwise PRP needs ~thousands of pairs; AFR-Rank&apos;s filter could drop recall. REALM with K=2-3 stages stays inside 300ms budget and compounds refinement.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"REALM ~10 calls; pairwise PRP O(N log N) ~700 or O(N^2) ~10000 depending on the comparison scheme.", correct:true},
-          {key:"b", text:"Both about the same."},
-          {key:"c", text:"REALM ~100 calls; pairwise PRP ~10 calls."},
-          {key:"d", text:"Cannot be computed."},
+          {key:"a", text:"REALM with K=2-3 stages, M=20 sliding window. Full-list LLM rerank overflows context at N=200; PRP needs thousands of pairwise calls; AFR-Rank&apos;s filter risks recall on this surface. REALM&apos;s 10-window setwise pass at K=2-3 stages typically fits inside a 300ms budget and gains accuracy from feature-passing without culling candidates.", correct:true},
+          {key:"b", text:"Full-list LLM rerank with N=200."},
+          {key:"c", text:"PRP with all-pairs (~20k pairs)."},
+          {key:"d", text:"Single-stage setwise with M=200."},
         ]}
-        trap={<>(b)(c)(d) misread the asymptotics.</>}
-        lens={<>REALM is O(N/c). PRP is at minimum O(N log N) for merge-sort-style schemes and up to O(N^2) for full pairwise. The order-of-magnitude advantage is what makes REALM viable on long lists.</>}
-        stretch={<>How would you combine REALM with PRP for the final top-5?</>}
+        trap={<>(b)(c)(d) miss the context/cost fit.</>}
+        lens={<>N=200 + 300ms + recall-sensitive is REALM&apos;s canonical surface.</>}
+        stretch={<>How does K trade against latency? (Linear.)</>}
       />
 
-      <VIS.TrapProblem
-        id="realm-p7" difficulty="hard"
-        title="P7 — State schema design"
-        scenario={<>You design REALM&apos;s relevance state. Which schema is most defensible as a starting point?</>}
+      <VIS.TrapProblem id="pr-p7" difficulty="hard"
+        title="P7 &mdash; Sounds reasonable: &ldquo;just stack multiple cross-encoders &mdash; that is REALM&rdquo;"
+        scenario={<><em>Discriminating insight: stacking cross-encoders is cascaded rerank. Each cross-encoder sees raw (query, item) pairs; no information from upstream stages reaches downstream stages. REALM&apos;s recursion is specifically the PER-ITEM feature passing &mdash; stage k+1 takes (query, item, stage-k feature) as input. Drop the feature passing and you have a vanilla cascade.</em><br/>Why is the shortcut wrong?</>}
         options={[
-          {key:"a", text:"A structured partial order over a top-N shortlist with relevance scores, brief reasoning notes, and a delta budget for revisions in later chunks.", correct:true},
-          {key:"b", text:"Only the top-1 doc ID."},
-          {key:"c", text:"Full chain-of-thought from every prior chunk concatenated."},
-          {key:"d", text:"A binary flag &apos;keep recursing&apos;."},
+          {key:"a", text:"Stacking cross-encoders is cascaded rerank &mdash; each stage sees only raw (query, item) pairs and no information from upstream stages reaches downstream ones. REALM&apos;s recursion is specifically the per-item feature passing: stage k+1 consumes (query, item, stage-k relevance representation). Drop the feature passing and you have a vanilla cascade that does not compound.", correct:true},
+          {key:"b", text:"REALM is exactly cascaded rerank."},
+          {key:"c", text:"Cascaded rerank passes features by default."},
+          {key:"d", text:"Feature passing is decorative."},
         ]}
-        trap={<>(b) loses too much. (c) defeats the context-saving purpose. (d) carries no relevance signal.</>}
-        lens={<>The state schema is the core design knob. A balanced schema captures (i) top-N IDs and scores, (ii) brief justification per top item, (iii) explicit room for the next chunk to revise. Too sparse misses signal; too verbose blows context.</>}
-        stretch={<>What state fields would you ablate first?</>}
+        trap={<>(b)(c)(d) miss the load-bearing piece.</>}
+        lens={<>Feature passing is REALM&apos;s only differentiator from cascade.</>}
+        stretch={<>What format is the passed feature? (Per-item logit or embedding vector.)</>}
       />
 
-      <VIS.TrapProblem
-        id="realm-p8" difficulty="hard" mode="ordered"
-        title="P8 — REALM deployment sequence"
-        scenario={<>Order the steps to ship REALM. Wrong moves unranked.</>}
+      <VIS.TrapProblem id="pr-p8" difficulty="hard"
+        title="P8 &mdash; Pitch REALM&apos;s anchor"
+        scenario={<><em>Discriminating insight: anchor = &ldquo;recursive setwise rerank on sliding window of M items, per-item relevance representation passed as input feature to next stage, K=2-4 stages compound refinement across the full N-item list without ever needing the full list in one context&rdquo;.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Profile current listwise reranker to confirm context-limit / quality bottleneck.", order:1},
-          {key:"b", text:"Design the relevance-state schema (top-N IDs, scores, brief notes, revision budget).", order:2},
-          {key:"c", text:"Pick chunk size c; calibrate on held-out queries for NDCG and latency.", order:3},
-          {key:"d", text:"Add chunk shuffling and a second-pass option to reduce anchoring.", order:4},
-          {key:"e", text:"Ship REALM with c=N (listwise) and claim recursion."},
-          {key:"f", text:"Online A/B vs listwise / pairwise baselines on latency and quality.", order:5},
+          {key:"a", text:"REALM reranks N=100-500 candidates by running K=2-4 setwise stages over sliding windows of M=10-30 items; the per-item relevance representation (logits or embedding) from stage k is passed as an input feature to stage k+1. Information compounds across stages without the LLM/cross-encoder ever holding the full list at once. Differentiates from cascade (no feature passing), AFR-Rank (no culling), PRP (setwise not pairwise), full-list (no context overflow).", correct:true},
+          {key:"b", text:"REALM is a one-stage listwise rerank."},
+          {key:"c", text:"REALM is pairwise."},
+          {key:"d", text:"REALM filters first then reranks."},
         ]}
-        trap={<>(e) silently disables the recursion benefit — the most common &quot;we shipped REALM&quot; failure.</>}
-        lens={<>Sequence: profile, design state, pick c, mitigate anchoring, A/B. Each step locks in a tradeoff; skipping any of them produces a system that LOOKS like REALM but performs like its degenerate baseline.</>}
-        stretch={<>Which step is hardest to debug after launch?</>}
+        trap={<>(b)(c)(d) wrong family.</>}
+        lens={<>Recursive setwise &middot; feature passing &middot; no culling &middot; window M, depth K.</>}
+        stretch={<>Which piece does the paper underspecify? (Stage-k feature format.)</>}
       />
 
-      <VIS.TrapProblem
-        id="realm-p9" difficulty="medium" multiSelect
-        title="P9 — When listwise still wins"
-        scenario={<>Pick the situations where plain listwise reranking beats REALM.</>}
+      <VIS.TrapProblem id="pr-p9" difficulty="hard" multiSelect
+        title="P9 &mdash; When NOT to use REALM. Select all that apply."
+        scenario={<><em>Discriminating insight: needs long lists, latency room, distinguishable items, no abundant labeled-pair data. Wrong for short lists, ultra-tight latency, near-duplicate sets, label-rich surfaces.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Short lists that fit comfortably in one prompt.", correct:true},
-          {key:"b", text:"Tasks where global cross-doc comparison matters at every position (e.g., diversity-aware reranking).", correct:true},
-          {key:"c", text:"When the LLM&apos;s setwise reasoning is much weaker than its listwise reasoning.", correct:true},
-          {key:"d", text:"Reranking 200 docs with an 8k context model."},
-          {key:"e", text:"Latency-tight queries with parallel infra."},
+          {key:"a", text:"N&lt;30 candidates &mdash; a single setwise pass already suffices.", correct:true},
+          {key:"b", text:"30ms ads-rank online budget &mdash; K stages exceed budget.", correct:true},
+          {key:"c", text:"Near-duplicate candidate set (e.g., 200 listings for same SKU) &mdash; per-item features carry no distinguishing signal.", correct:true},
+          {key:"d", text:"Abundant labeled-pair data + serving budget &mdash; a fine-tuned listwise cross-encoder dominates.", correct:true},
+          {key:"e", text:"N=200 candidates with 300ms budget and a labeled-data shortage."},
         ]}
-        trap={<>(d) is exactly where REALM helps. (e) depends on whether parallelism applies; usually REALM is sequential.</>}
-        lens={<>Listwise wins when (i) list fits, (ii) you need true global comparison at every rank, (iii) the LLM is asymmetrically better at listwise than setwise prompts. Otherwise REALM is a strict improvement on cost.</>}
-        stretch={<>How would you A/B-test which of these conditions holds for your model?</>}
+        trap={<>(e) the canonical fit.</>}
+        lens={<>Long list + latency room + distinguishable items + label-poor surface.</>}
+        stretch={<>How to detect near-duplicate candidate sets pre-rerank?</>}
       />
 
-      <VIS.TrapProblem
-        id="realm-p10" difficulty="hard"
-        title="P10 — Error propagation through the recursion"
-        scenario={<>A bad doc gets a high state score in chunk 1. Later chunks see this in the state. What happens, and how do you fix it?</>}
+      <VIS.TrapProblem id="pr-p10" difficulty="hard"
+        title="P10 &mdash; Feature-passing format: logits or embedding?"
+        scenario={<><em>Discriminating insight: passing the raw rank position (e.g., &ldquo;item was 17th in stage 1&rdquo;) collapses information &mdash; you lose the score margin. Passing the per-item LOGIT or RELEVANCE EMBEDDING from stage k preserves the full signal so stage k+1 can re-weight calibrated relevance against the local window.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"The error can persist or amplify because later chunks compare to the seeded state; mitigations include explicit revision budget, two-pass REALM with chunk shuffling, and uncertainty fields in the state.", correct:true},
-          {key:"b", text:"The error self-corrects automatically."},
-          {key:"c", text:"Errors only affect the chunk they appear in."},
-          {key:"d", text:"REALM is unaffected by per-call errors."},
+          {key:"a", text:"Per-item relevance LOGIT (scalar score) or a per-item RELEVANCE EMBEDDING (small vector summarising the stage-k representation). Passing only the rank position collapses score margins &mdash; stage k+1 cannot distinguish &lsquo;narrowly 17th&rsquo; from &lsquo;decisively 17th&rsquo;. The logit/embedding preserves calibrated signal so refinement compounds.", correct:true},
+          {key:"b", text:"Just the rank position (1..N)."},
+          {key:"c", text:"A boolean (in top-K or not)."},
+          {key:"d", text:"Random noise."},
         ]}
-        trap={<>(b)(c)(d) miss the error-propagation mechanism.</>}
-        lens={<>Recursive systems propagate errors unless the state schema permits revision. Build in: (i) a revision budget allowing later chunks to demote earlier picks, (ii) an uncertainty field per shortlist item, (iii) a second pass that re-shuffles chunks and reconciles disagreements. Without these, REALM can be MORE brittle than listwise on adversarial first chunks.</>}
-        stretch={<>How would you detect that error propagation is happening from production logs alone?</>}
+        trap={<>(b)(c)(d) collapse score margins.</>}
+        lens={<>Logit/embedding preserves the calibrated relevance signal.</>}
+        stretch={<>What dimensionality for the embedding? (Paper-dependent &mdash; typically 16-64.)</>}
       />
+
+      <VIS.TrapProblem id="pr-p11" difficulty="hard"
+        title="P11 &mdash; Window size M: trade-off?"
+        scenario={<><em>Discriminating insight: small M (e.g., 5) gives more windows per stage but each window&apos;s local comparison is narrow; large M (e.g., 50) approaches full-list overflow at the cost of context. Typical M=10-30 balances setwise calibration against context.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Small M gives many narrow windows &mdash; each setwise comparison is local and stage-1 signal is noisy. Large M approaches full-list overflow and the cross-encoder/LLM degrades. Typical M=10-30 balances per-window calibration against context budget. Tune per stage if needed (wider stages later, when stage-k features carry global signal).", correct:true},
+          {key:"b", text:"M does not matter."},
+          {key:"c", text:"M=1 is optimal."},
+          {key:"d", text:"M=N is optimal."},
+        ]}
+        trap={<>(b)(c)(d) miss the bias-variance of window size.</>}
+        lens={<>Window size trades local calibration against context budget.</>}
+        stretch={<>Could M grow across stages? (Yes &mdash; later stages have more global signal.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p12" difficulty="hard"
+        title="P12 &mdash; What does REALM deliberately drop vs a fine-tuned listwise cross-encoder?"
+        scenario={<><em>Discriminating insight: a fine-tuned listwise cross-encoder amortises long-list reasoning into a single fast model but needs abundant labeled-pair data + training pipeline. REALM forfeits one-shot inference (pays K stage forwards) in exchange for working with zero or minimal labeled data and adapting to new query domains without retraining.</em><br/>What does REALM forfeit?</>}
+        options={[
+          {key:"a", text:"One-shot inference latency. A fine-tuned listwise cross-encoder amortises long-list reasoning into a fast model but needs labeled-pair data + a training pipeline. REALM pays K stage forwards per query in exchange for zero/minimal labels and domain flexibility (any new query domain works without retraining). Acceptable when labels are scarce or query distribution drifts.", correct:true},
+          {key:"b", text:"REALM forfeits the rerank task."},
+          {key:"c", text:"REALM forfeits the candidate set."},
+          {key:"d", text:"REALM forfeits the query."},
+        ]}
+        trap={<>(b)(c)(d) misread.</>}
+        lens={<>K stage forwards for label-free flexibility.</>}
+        stretch={<>How much labeled data flips the trade?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p13" difficulty="hard"
+        title="P13 &mdash; Most fragile knob"
+        scenario={<><em>Discriminating insight: recursion depth K is most fragile. K=1 is no recursion at all; K=2-4 is the working zone; K&gt;4 either hits diminishing returns or overshoots and the stage-k features start dominating the raw (query, item) signal (over-recursion collapses diversity). Window M is secondary; feature-format choice is robust above &lsquo;use logit or embedding&rsquo;.</em><br/>Rank fragility.</>}
+        options={[
+          {key:"a", text:"Recursion depth K is most fragile. K=1 is no recursion (just a single setwise stage). K=2-4 is the typical range. K&gt;4 hits diminishing returns and the passed features start dominating the raw (query, item) signal, collapsing diversity (over-recursion). Window size M is next. Feature format choice (logit vs embedding) is robust above &lsquo;use either, not rank position&rsquo;.", correct:true},
+          {key:"b", text:"Learning rate is most fragile."},
+          {key:"c", text:"Tokenizer choice is most fragile."},
+          {key:"d", text:"Batch size is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>K too small = no compounding; K too big = signal collapse.</>}
+        stretch={<>What does over-recursion look like in offline NDCG?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p14" difficulty="hard"
+        title="P14 &mdash; Plausible-misattribution: NDCG regressed after &lsquo;adding more recursion stages&rsquo;"
+        scenario={<><em>Discriminating insight: team raised K from 3 to 7 &ldquo;for more refinement&rdquo;. By stage 7 the passed stage-k features dominated the raw (query, item) signal and rankings collapsed onto stage-1 preferences with diminished diversity. NDCG dropped because the stages stopped contributing independent information. Fix: drop K back to 3-4, or add stage-wise feature dropout.</em><br/>Diagnosis?</>}
+        options={[
+          {key:"a", text:"Raising K to 7 caused over-recursion: stage-k features increasingly dominated the raw (query, item) signal so later stages reinforced stage-1 preferences instead of refining them. Rankings collapsed onto stage-1 with reduced diversity. NDCG dropped because the extra stages stopped contributing independent information. Fix: drop K back to 3-4 or add stage-wise feature dropout.", correct:true},
+          {key:"b", text:"GPU thermal throttling.", correct:false},
+          {key:"c", text:"LLM tokenizer drift.", correct:false},
+          {key:"d", text:"Index disk full.", correct:false},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Over-recursion: passed features crowd out raw signal.</>}
+        stretch={<>What offline metric flags over-recursion early? (Stage-to-stage rank correlation -&gt; 1.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p15" difficulty="hard"
+        title="P15 &mdash; Intuitive but wrong: &ldquo;every stage should use the same window size M&rdquo;"
+        scenario={<><em>Discriminating insight: stage 1 sees only raw (query, item) pairs and benefits from larger M (more comparison). Stage k+1 already has stage-k features that summarise global signal, so smaller M suffices and saves cost. Stage-wise M tuning saves latency while preserving quality.</em><br/>Why is the naive view wrong?</>}
+        options={[
+          {key:"a", text:"Stage 1 has no upstream signal &mdash; larger M helps it gather more comparison context. Stage k+1 already carries stage-k features summarising global signal, so smaller M suffices without losing quality. Stage-wise M tuning (e.g., M=30 -&gt; 20 -&gt; 15) saves latency at equal NDCG vs a flat M=30 across all stages.", correct:true},
+          {key:"b", text:"M must be identical at every stage."},
+          {key:"c", text:"Larger M is always better."},
+          {key:"d", text:"M is decorative."},
+        ]}
+        trap={<>(b)(c)(d) miss the upstream-signal argument.</>}
+        lens={<>Later stages need less local context because they carry global features.</>}
+        stretch={<>How to schedule M across stages? (Monotonically shrinking, paper-dependent.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p16" difficulty="hard"
+        title="P16 &mdash; Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;REALM is just multi-stage rerank&rdquo; cascades into skipping feature passing (vanilla cascade, no compounding), keeping K high without checking diversity (over-recursion), and using rank position as the passed signal (information collapse).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: feature passing (drop it and you have a vanilla cascade with no compounding), recursion depth (K too high collapses to stage-1 preferences via over-recursion), and feature format (passing rank positions instead of logits/embeddings loses score margins). Each is load-bearing for REALM to actually compound refinement.", correct:true},
+          {key:"b", text:"Only feature passing."},
+          {key:"c", text:"Only K."},
+          {key:"d", text:"Nothing &mdash; it is just multi-stage rerank."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Feature passing + K + format are jointly load-bearing.</>}
+        stretch={<>Which piece does the paper underspecify?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p17" difficulty="medium"
+        title="P17 &mdash; Senior vs junior framing on weak REALM lift"
+        scenario={<><em>Discriminating insight: junior bumps K. Senior first audits feature passing (is the stage-k logit actually being injected at stage k+1?) and window size (is M too small for stage 1?). Without these, more stages do not help.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Audit feature passing (is the stage-k per-item logit/embedding actually being injected at stage k+1, or is the &lsquo;recursion&rsquo; just cascade in disguise?) and stage-1 window size (is M large enough to give stage-1 a global signal worth passing?). Without these, no additional K helps. Then tune K. Stage-wise M comes last.", correct:true},
+          {key:"b", text:"Bump K immediately."},
+          {key:"c", text:"Switch to full-list rerank."},
+          {key:"d", text:"Skip reranking."},
+        ]}
+        trap={<>(b)(c)(d) generic or off-topic.</>}
+        lens={<>Feature-passing wiring -&gt; M_1 -&gt; K -&gt; per-stage M.</>}
+        stretch={<>Dashboard panel for stage-to-stage rank correlation?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p18" difficulty="hard"
+        title="P18 &mdash; Plausible-misattribution: NDCG cratered after a cross-encoder model upgrade"
+        scenario={<><em>Discriminating insight: the new cross-encoder outputs logits on a different scale (e.g., wider range). Stage-2&apos;s consumption layer was tuned to old-scale logits; the new scale either saturates or vanishes the feature signal. Fix: re-normalise the passed logit/embedding (e.g., layer-norm or z-score) when the upstream model changes, not blame REALM.</em><br/>Diagnosis?</>}
+        options={[
+          {key:"a", text:"The new cross-encoder produces logits on a different scale (wider range or shifted mean). Stage-2&apos;s feature-consumption layer was tuned to old-scale logits; with the new scale the passed feature either saturates or vanishes &mdash; effectively removing the recursion. Fix: re-normalise the passed logit/embedding (z-score or layer-norm) when the upstream model changes; do not blame REALM&apos;s structure.", correct:true},
+          {key:"b", text:"GPU thermal throttling.", correct:false},
+          {key:"c", text:"Cache TTL changed.", correct:false},
+          {key:"d", text:"Index disk full.", correct:false},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Logit-scale drift kills feature passing silently.</>}
+        stretch={<>How to detect logit-scale drift? (Monitor passed-feature distribution per stage.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p19" difficulty="hard"
+        title="P19 &mdash; Production gotcha: window assignment between stages"
+        scenario={<><em>Discriminating insight: if stage k+1 uses the SAME window grouping as stage k, each item only sees the same neighbours twice &mdash; no benefit from the recursion. The windows must be RE-SHUFFLED between stages (sort by stage-k score, then re-window) so each item sees new neighbours and stage-k signal mixes with new local comparisons.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Re-shuffle windows between stages: sort by stage-k score then re-window so each item sees a new set of neighbours at stage k+1. If windows are not re-shuffled, every item only sees the same M-1 neighbours twice and the recursion contributes nothing new. The re-windowing is what lets stage-k features mix against fresh local comparisons.", correct:true},
+          {key:"b", text:"Keep windows identical across stages."},
+          {key:"c", text:"Window grouping does not matter."},
+          {key:"d", text:"Always randomise window assignment."},
+        ]}
+        trap={<>(b)(c)(d) miss the re-shuffle mechanism.</>}
+        lens={<>Re-windowing each stage is what makes recursion expand the comparison set.</>}
+        stretch={<>How to re-shuffle? (Sort by current score, slide.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p20" difficulty="hard"
+        title="P20 &mdash; Failure on Friday: NDCG cratered after a recursion-depth bump from 2 to 5"
+        scenario={<><em>Discriminating insight: stage 1 used M=30; stages 2-5 silently fell back to default M=10. At K=5 each item only saw 9 different neighbours per stage past stage 1. Stage-k features dominated; rankings collapsed onto stage-1 preferences with reduced diversity. 3am page: NDCG down 25%. The fix is to size M per stage explicitly, not to revert K alone.</em><br/>Diagnosis?</>}
+        options={[
+          {key:"a", text:"With K=5 and a silent default M=10 on stages 2-5, each item saw only 9 different neighbours per stage past stage 1; stage-k features dominated and rankings collapsed onto stage-1 preferences with reduced diversity. NDCG dropped because the late stages stopped contributing fresh information. Fix: set M per stage explicitly, or drop K back to 2-3. Reverting K alone hides the root cause.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Tokenizer drift."},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Per-stage M default is load-bearing for high K.</>}
+        stretch={<>Runbook entry for K changes?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p21" difficulty="medium"
+        title="P21 &mdash; Library default that bites: HuggingFace cross-encoder sigmoid-clipped logits"
+        scenario={<><em>Discriminating insight: many HuggingFace cross-encoders return sigmoid-activated scores in [0,1]. Passing these clipped scores as stage-k features hides the magnitude of high-confidence wins (everything saturates near 1). Pass the pre-sigmoid LOGITS (raw, unbounded) so stage k+1 can distinguish &lsquo;narrowly relevant&rsquo; from &lsquo;decisively relevant&rsquo;.</em><br/>Where does the default break?</>}
+        options={[
+          {key:"a", text:"HuggingFace cross-encoders often expose sigmoid-activated scores in [0,1]. Passing these saturated scores hides confidence magnitude &mdash; everything near the top saturates to ~1. Pull the pre-sigmoid logits (raw, unbounded) and pass those so stage k+1 can distinguish narrowly-relevant from decisively-relevant items.", correct:true},
+          {key:"b", text:"Default learning rate is wrong."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Saturated sigmoid scores compress information; use raw logits.</>}
+        stretch={<>What unit test catches this? (Assert passed-feature variance stays above threshold.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p22" difficulty="hard" ordered
+        title="P22 &mdash; Order the REALM rollout"
+        scenario={<><em>Discriminating insight: rollout = (1) pick cross-encoder/LLM scorer, (2) size stage-1 window M_1 vs latency, (3) decide K=2-4, (4) wire feature passing (logit/embedding, normalised), (5) wire re-windowing between stages, (6) tune per-stage M, (7) shadow vs cascade + full-list baselines, (8) launch.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Pick scorer (cross-encoder or LLM) -&gt; size stage-1 window M_1 vs latency -&gt; decide K=2-4 -&gt; wire feature passing (per-item logit or embedding, normalised) -&gt; wire re-windowing between stages -&gt; tune per-stage M -&gt; shadow vs cascade and full-list baselines -&gt; launch", correct:true},
+          {key:"b", text:"Skip feature passing."},
+          {key:"c", text:"Set K=10 without checking diversity."},
+          {key:"d", text:"Launch without shadow."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics or correctness.</>}
+        lens={<>Scorer -&gt; M_1 -&gt; K -&gt; passing -&gt; re-window -&gt; per-stage M -&gt; shadow -&gt; launch.</>}
+        stretch={<>Why re-windowing before per-stage M tuning?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p23" difficulty="hard"
+        title="P23 &mdash; Smallest input that breaks the claimed advantage"
+        scenario={<><em>Discriminating insight: a candidate set of N=200 near-duplicate items (e.g., 200 listings for the same SKU) collapses REALM. Per-item features carry no distinguishing signal so feature passing injects noise; stage-k features are essentially random. The recursion does not refine; it just adds latency.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A candidate set of N=200 near-duplicate items (e.g., 200 listings of the same SKU). Per-item features carry no distinguishing signal because items are essentially equivalent; stage-k features inject noise; the recursion does not refine. REALM degrades to noisy single-stage setwise plus K-1 wasted forwards.", correct:true},
+          {key:"b", text:"N=200 candidates with 300ms budget and label scarcity (canonical fit)."},
+          {key:"c", text:"100M users."},
+          {key:"d", text:"Catalog of 50M items."},
+        ]}
+        trap={<>(b) canonical fit. (c)(d) scale red herrings.</>}
+        lens={<>Item-distinguishability is the premise.</>}
+        stretch={<>How to detect near-duplicate candidate sets pre-rerank?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://aclanthology.org/2025.emnlp-main.1218.pdf" target="_blank" rel="noopener">Anon. — <em>REALM: Recursive Relevance Modeling for LLM-based Document Re-Ranking</em> (EMNLP 2025, paper)</a> — canonical REALM reference with the recursive setwise design.</li>
-        <li><a href="https://arxiv.org/abs/2304.09542" target="_blank" rel="noopener">Sun et al. — <em>Is ChatGPT Good at Search? Investigating LLMs as Re-Ranking Agents</em> (arXiv 2023, paper)</a> — establishes listwise LLM reranking as the baseline REALM scales past.</li>
-        <li><a href="https://arxiv.org/abs/2306.17563" target="_blank" rel="noopener">Qin et al. — <em>Large Language Models are Effective Text Rankers with Pairwise Ranking Prompting</em> (arXiv 2023, paper)</a> — PRP, the pairwise alternative whose O(N log N) cost REALM avoids.</li>
-        <li><a href="https://lilianweng.github.io/posts/2024-02-05-human-data-quality/" target="_blank" rel="noopener">Lilian Weng — <em>Notes on Data Quality</em> (lilianweng.github.io, blog)</a> — broader context on reliability of LLM outputs that the REALM state must navigate.</li>
-        <li><a href="https://www.pinecone.io/learn/series/rag/rerankers/" target="_blank" rel="noopener">Pinecone — <em>Rerankers in RAG</em> (pinecone.io, blog)</a> — practical guide to where rerankers sit in the RAG stack and what listwise vs setwise means in production.</li>
+        <li><a href="https://arxiv.org/abs/2504.10548" target="_blank" rel="noopener">REALM: Recursive Relevance Modeling for LLM-based Document Re-Ranking (2025)</a> &mdash; canonical paper. The section on feature passing between stages is the must-read; the rest is window/depth ablations.</li>
+        <li><a href="https://aclanthology.org/2024.findings-naacl.97/" target="_blank" rel="noopener">Qin et al., <em>Pairwise Ranking Prompting</em> (NAACL Findings 2024)</a> &mdash; the pairwise contrast point. Read for the &lsquo;why setwise/pairwise/listwise differ&rsquo; argument.</li>
+        <li><a href="https://eugeneyan.com/writing/llm-evaluators/" target="_blank" rel="noopener">Eugene Yan &mdash; <em>LLM Evaluators</em> (blog)</a> &mdash; the practitioner framing of setwise vs pointwise vs pairwise LLM judges. Useful for sizing windows and understanding why setwise saturates.</li>
+        <li><a href="https://arxiv.org/abs/2306.17563" target="_blank" rel="noopener">Sun et al., <em>Is ChatGPT Good at Search?</em> (EMNLP 2023)</a> &mdash; the listwise LLM-rerank baseline REALM contrasts with. Read for the context-overflow failure mode.</li>
+        <li><a href="https://www.pinecone.io/learn/series/rag/rerankers/" target="_blank" rel="noopener">Pinecone &mdash; <em>Rerankers and Two-Stage Retrieval</em> (blog)</a> &mdash; practitioner overview of cascaded rerank; useful contrast to REALM&apos;s feature-passing.</li>
+        <li><a href="https://lilianweng.github.io/posts/2024-07-07-hallucination/" target="_blank" rel="noopener">Lilian Weng &mdash; <em>Extrinsic Hallucinations in LLMs</em> (blog)</a> &mdash; context-window failure modes that motivate why REALM caps per-stage M.</li>
       </ul>
     </VIS.Section>
   </main>

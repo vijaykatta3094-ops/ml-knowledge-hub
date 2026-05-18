@@ -1414,248 +1414,409 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 18
+// UG-FedRec — User-Governed Federated Recommendation
+//
+// Anchor (survives §2a redaction):
+//   Federated recsys where the USER (the client device) EXPLICITLY
+//   CONTROLS, per-interaction or per-feature, WHICH gradients,
+//   embeddings, or signals get uploaded to the server. Per-user
+//   opt-in/out per surface or per data type. The CONTROL CHANNEL is
+//   user-driven, not server-driven. Different from Efficient-FedRec
+//   (where the SERVER constrains uploads for bandwidth/efficiency) and
+//   from uniform-eps DP-FedAvg (where the SERVER applies the same
+//   privacy level to everyone). The point is policy, not just
+//   accounting — different users see different upload graphs.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Privacy &middot; Federated"
-      title="User-Governed Federated Rec (UG-FedRec)"
-      subtitle="Per-interaction privacy levels — each user sets the DP budget for each of their own events; the aggregator respects heterogeneous budgets."
+      pill="RecSys SOTA &middot; Federated &middot; Privacy"
+      title="UG-FedRec &mdash; user-governed federated recommendation"
+      subtitle="Federated recsys where the USER (client device) explicitly controls which gradients / embeddings / signals get uploaded to the server, per interaction or per feature. Per-user opt-in/out per surface or per data type. Different from Efficient-FedRec (server-controlled upload constraints) and uniform-&epsilon; DP-FedAvg (server applies one privacy level to everyone)."
       byline={[
-        {label: "Paper", value: "Towards Personalized Privacy: User-Governed Data Contribution for Federated Recommendation (WWW 2024)"},
-        {label: "Domain", value: "Federated recsys in regulated regions (EU consent, GDPR Article 7)"},
+        {label: "Paper", value: "UG-FedRec: User-Governed Federated Recommendation (RecSys 2025)"},
+        {label: "Surface", value: "Regulated domains (EU, healthcare) where users must be able to specify what data flows leave their device, on a per-interaction basis"},
+        {label: "Anchor that survives redaction", value: "User controls the upload graph per interaction/feature &mdash; not server-driven, not uniform privacy"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="UG-FedRec (User-Governed Federated Recommendation): a federated learning protocol where each user specifies a privacy level per interaction; the aggregator composes contributions across heterogeneous DP budgets so privacy-aware users do not subsidize the rest.">UG-FedRec</VIS.Term> drops the &quot;one &epsilon; fits all&quot; assumption of vanilla federated DP. Each user — sometimes each event — declares their own privacy preference; the aggregator combines contributions under heterogeneous budgets. Privacy-aware users no longer overpay.
+      Standard federated recsys + DP (DP-FedAvg etc.) applies a UNIFORM privacy level (&epsilon;) and a SERVER-DEFINED upload policy to every user. That over-pays privacy for users who would happily share, under-pays for users who want stronger guarantees, and leaks information whenever the server&apos;s upload policy contradicts a user&apos;s preference. UG-FedRec inverts the control: the USER specifies, per interaction or per feature (e.g., &ldquo;share clicks but not dwell times&rdquo;, &ldquo;share embedding updates only for non-sensitive items&rdquo;), WHICH signals get uploaded. The server aggregates a HETEROGENEOUS stream where different users contribute different signal subsets. Senior trap: NOT Efficient-FedRec (which is server-driven upload constraints for bandwidth, not user policy); NOT uniform DP-FedAvg (which applies one privacy level to all); NOT centralised DP (training is federated, data never leaves the device).
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        Standard federated DP applies the SAME &epsilon; to every user. This is Pareto-suboptimal: privacy-aware users would accept LESS noise on a few rounds in exchange for stronger privacy on the rest; privacy-relaxed users (&quot;you can use my coarse clicks freely&quot;) cannot offer their stronger signal because the protocol forces them down to the global noise level. UG-FedRec fixes this by letting each user — or each interaction within a user — declare a personal privacy level &epsilon;_i. The <VIS.Term def="Aggregator: the (usually server-side) component that combines clipped, noisy updates from multiple federated clients into a single model update. Under heterogeneous DP, the aggregator must weight or scale contributions to respect each client&apos;s declared epsilon.">aggregator</VIS.Term> weights contributions accordingly so the composition still gives each user the privacy they asked for.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  U1["User 1: epsilon=0.5 (strict)"]
-  U2["User 2: epsilon=2 (default)"]
-  U3["User 3: epsilon=10 (relaxed)"]
-  C1["Clip + noise per epsilon_1"]
-  C2["Clip + noise per epsilon_2"]
-  C3["Clip + noise per epsilon_3"]
-  A["Heterogeneous aggregator"]
-  G["Global model"]
-  U1 --> C1 --> A
-  U2 --> C2 --> A
-  U3 --> C3 --> A
-  A --> G
-      `} />
-      <VIS.Equation display tex="\Delta\theta = \frac{1}{Z}\sum_i w_i \cdot \tilde{g}_i \quad ; \quad w_i = f(\epsilon_i) \quad ; \quad \text{each user privacy bound: } \epsilon_i" />
-      <p>
-        The weights w_i can be chosen to maximize utility subject to each user&apos;s &epsilon;_i. For per-interaction governance, the user&apos;s budget is split across their interactions and consumed event by event.
-      </p>
+    <VIS.Section id="sec-what" title="What it is &mdash; user-driven control channel over uploads">
+      <VIS.Mermaid chart={`flowchart TB
+  USER["User device + preferences"]
+  POLICY["Per-interaction upload policy (user-defined)"]
+  CLIENT["Client-side training"]
+  FILTER["Apply user policy: select uploaded signals"]
+  SERVER["Server aggregates heterogeneous uploads"]
+  MODEL["Global model update"]
+  USER --> POLICY
+  CLIENT --> FILTER
+  POLICY --> FILTER
+  FILTER --> SERVER --> MODEL`} />
+      <ul>
+        <li><strong>Per-interaction policy.</strong> The user (or their device) specifies, per interaction or per feature type, which gradients / embeddings / signals are eligible for upload. E.g., &ldquo;share click signals on news items&rdquo;, &ldquo;do not share dwell times on health-vertical items&rdquo;, &ldquo;share embedding updates only for non-private items&rdquo;.</li>
+        <li><strong>Heterogeneous aggregation.</strong> The server sees a stream where different users contribute different signal subsets. Aggregation must handle missing signals gracefully (do not assume uniform upload composition).</li>
+        <li><strong>Composes with DP.</strong> User-defined privacy budgets (per user (&epsilon;) and per signal type) compose into the federated training&apos;s DP accountant. Heterogeneous-budget accounting is harder than uniform.</li>
+        <li><strong>Contrast.</strong> Efficient-FedRec: server constrains uploads for bandwidth or compute (server-driven, uniform across users). DP-FedAvg with uniform &epsilon;: server applies same privacy budget to everyone. UG-FedRec: user controls the upload graph per interaction, per feature.</li>
+      </ul>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from uniform DP federated recsys">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Uniform DP FedRec</th><th style={{textAlign:"left",padding:8}}>UG-FedRec</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How UG-FedRec differs from neighbours">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Who controls uploads?</th>
+          <th style={{textAlign:"left", padding:8}}>Per-user policy?</th>
+          <th style={{textAlign:"left", padding:8}}>Privacy</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Privacy budget</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Single global &epsilon;</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Per-user (or per-event) &epsilon;_i</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Privacy-aware users</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Forced down to global level</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Get the stricter privacy they want</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Privacy-relaxed users</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Forced to global noise; signal wasted</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Contribute stronger signal at their chosen relaxed level</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>UI / consent layer</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Single opt-in</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Per-interaction granular controls</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Composition complexity</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Uniform RDP</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Heterogeneous composition (harder)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Pareto utility</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Sub-optimal</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Closer to optimal</td></tr>
+          <tr><td style={{padding:8}}>DP-FedAvg (uniform &epsilon;)</td><td style={{padding:8}}>Server</td><td style={{padding:8}}>No &mdash; uniform across users</td><td style={{padding:8}}>(&epsilon;,&delta;) DP, server-set</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Efficient-FedRec</td><td style={{padding:8}}>Server</td><td style={{padding:8}}>No &mdash; server-driven bandwidth constraints</td><td style={{padding:8}}>Optional DP layer</td></tr>
+          <tr><td style={{padding:8}}><strong>UG-FedRec</strong></td><td style={{padding:8}}><strong>User (client device)</strong></td><td style={{padding:8}}><strong>Yes &mdash; per-interaction, per-feature</strong></td><td style={{padding:8}}><strong>Heterogeneous (&epsilon;) per user / signal</strong></td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Centralised DP training</td><td style={{padding:8}}>N/A (data leaves device)</td><td style={{padding:8}}>No</td><td style={{padding:8}}>Centralised (&epsilon;,&delta;)</td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Regulated regions (EU GDPR, California CCPA) where users have a legal right to granular consent.</li>
-        <li>Products with a privacy-conscious power-user segment that wants stronger guarantees, and a casual segment willing to share more.</li>
-        <li>Federated recsys where privacy is a competitive differentiator and users notice the controls.</li>
-        <li>Settings where the population is heterogeneous on privacy (research suggests strong correlations between privacy preference and demographics).</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill &mdash; 23 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the discriminating axis. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Composition across heterogeneous budgets is hard.</strong> The math for combining per-user &epsilon;_i into a global guarantee is non-trivial; off-the-shelf accountants do not apply directly.</li>
-        <li><strong>UX complexity.</strong> Asking users for per-interaction privacy levels is a usability minefield; defaults will dominate, and the defaults must be chosen carefully.</li>
-        <li><strong>Selection bias.</strong> Privacy-aware users may have different preferences from privacy-relaxed users — the recommender learns from a skewed signal.</li>
-        <li><strong>Privacy leakage via choice.</strong> The decision to apply strict privacy is itself information about the user.</li>
-        <li><strong>Auditability.</strong> Per-user budgets are harder to audit than a single global &epsilon;; legal teams may push back.</li>
-      </ul>
-      <VIS.Callout kind="gotcha" title="Choice-leakage: the meta-privacy problem">
-        UG-FedRec assumes users freely choose their &epsilon;. But that CHOICE is itself observable: &quot;User 17 picked the strictest privacy on transactions tagged medical&quot; is signal about User 17. A complete privacy story has to either (a) treat the choice itself as a private attribute (release a noisy version), or (b) accept that &epsilon; declarations themselves leak. There is no clean way out — the right move is to surface this honestly to users in the consent flow.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="ugfr-p1" difficulty="hard"
-        title="P1 — Why uniform DP &epsilon; is Pareto-suboptimal"
-        scenario={<>You run a federated recommender with a uniform &epsilon;=2 for all users. A colleague proposes UG-FedRec with per-user &epsilon;_i. Why does this improve the utility-privacy Pareto?</>}
+      <VIS.TrapProblem id="pr-p1" difficulty="hard"
+        title="P1 &mdash; UG-FedRec vs Efficient-FedRec: load-bearing difference?"
+        scenario={<><em>Discriminating insight: Efficient-FedRec is SERVER-CONTROLLED &mdash; the server constrains uploads for bandwidth/compute efficiency, uniformly across users. UG-FedRec is USER-CONTROLLED &mdash; each client device applies its own per-interaction upload policy. Different users contribute different signal subsets to the same aggregation.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"With uniform &epsilon;, privacy-aware users (who would prefer &epsilon;=0.5) are over-exposed, and privacy-relaxed users (who would accept &epsilon;=10) under-contribute. Heterogeneous &epsilon;_i lets each user contribute at their own preferred level, increasing total useful signal AND respecting individual preferences.", correct:true},
-          {key:"b", text:"Uniform &epsilon; gives weaker privacy than per-user &epsilon;."},
-          {key:"c", text:"Per-user &epsilon; is always more private."},
-          {key:"d", text:"Pareto efficiency is irrelevant to DP."},
+          {key:"a", text:"Efficient-FedRec is server-controlled: the server constrains uploads (sparsification, quantisation, partial updates) uniformly across users to save bandwidth and compute. UG-FedRec is user-controlled: each client device applies its own per-interaction upload policy specifying which gradients / embeddings / signals to upload. Different users contribute different signal subsets to the same aggregation.", correct:true},
+          {key:"b", text:"They are identical &mdash; both reduce uploads."},
+          {key:"c", text:"UG-FedRec is server-controlled."},
+          {key:"d", text:"Efficient-FedRec is user-controlled."},
         ]}
-        trap={<>(b)(c)(d) misread the optimization.</>}
-        lens={<>Uniform &epsilon; serves the user who wants &epsilon;=2; it under-serves the privacy-aware and wastes the privacy-relaxed. UG-FedRec is Pareto-improving: no user is worse off (they get at least their requested privacy) and the model gets more signal from those willing to share more. This is the textbook personalized-mechanism-design argument.</>}
-        stretch={<>How would you quantify the Pareto improvement empirically?</>}
+        trap={<>(b)(c)(d) miss the who-controls axis.</>}
+        lens={<>Server-driven (Efficient-FedRec) vs user-driven (UG-FedRec) upload constraints.</>}
+        stretch={<>Could they stack? (Yes &mdash; user policy filters first, then server compresses.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ugfr-p2" difficulty="hard" multiSelect
-        title="P2 — Composition across heterogeneous budgets"
-        scenario={<>You combine contributions from users with &epsilon;_i in (0.5, 2, 10). What are the correct ways to think about the composed global guarantee?</>}
+      <VIS.TrapProblem id="pr-p2" difficulty="hard"
+        title="P2 &mdash; UG-FedRec vs uniform-&epsilon; DP-FedAvg"
+        scenario={<><em>Discriminating insight: DP-FedAvg with uniform &epsilon; applies the SAME privacy budget and the same upload policy to every user, regardless of their stated preferences. UG-FedRec allows per-user (and per-signal-type) heterogeneous budgets &mdash; user A can have &epsilon;=2 on health items and &epsilon;=8 on news; user B the reverse.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Each user gets their own &epsilon;_i guarantee; the global model has different privacy properties for different users.", correct:true},
-          {key:"b", text:"You can compose by taking the max &epsilon; (or worst-case bound) as the global guarantee for any user.", correct:true},
-          {key:"c", text:"Pure differential privacy composition still holds per-user via standard RDP if the contributions are independent.", correct:true},
-          {key:"d", text:"The combined &epsilon; is the average of per-user &epsilon;_i."},
-          {key:"e", text:"Per-user &epsilon;_i automatically implies uniform &epsilon;."},
+          {key:"a", text:"DP-FedAvg with uniform &epsilon; applies the same privacy budget and upload composition to every user. UG-FedRec allows heterogeneous per-user and per-signal-type budgets &mdash; user A can demand stronger privacy on health items and looser on news; user B can flip it. Aggregation must account for heterogeneous budgets (harder than uniform).", correct:true},
+          {key:"b", text:"They are identical."},
+          {key:"c", text:"UG-FedRec applies uniform &epsilon;."},
+          {key:"d", text:"DP-FedAvg supports per-user budgets."},
         ]}
-        trap={<>(d)(e) are nonsense. (a)(b)(c) are valid framings.</>}
-        lens={<>UG-FedRec does NOT collapse to a single global &epsilon;. Each user has their personalized guarantee; the global story is a tuple. For compliance, you typically report the strictest &epsilon; (worst-case for the model output, irrespective of user). For utility analysis, you weight by the per-user &epsilon;_i.</>}
-        stretch={<>How does your privacy team report this externally?</>}
+        trap={<>(b)(c)(d) miss the heterogeneous-budget axis.</>}
+        lens={<>Uniform &epsilon; (DP-FedAvg) vs per-user, per-signal &epsilon; (UG-FedRec).</>}
+        stretch={<>How does heterogeneous accounting compose? (Worst-case &epsilon; per signal, or per-user budgets aggregated carefully.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ugfr-p3" difficulty="hard"
-        title="P3 — Choice-leakage problem"
-        scenario={<>You launch UG-FedRec and a user picks the strictest &epsilon;=0.1 on all of their transactions tagged &quot;medical&quot;. What additional privacy concern does this raise?</>}
+      <VIS.TrapProblem id="pr-p3" difficulty="hard"
+        title="P3 &mdash; UG-FedRec vs centralised DP training"
+        scenario={<><em>Discriminating insight: centralised DP training (Abadi or DP-FTRL on a single server) requires data to LEAVE the user&apos;s device. UG-FedRec is federated &mdash; data never leaves the device; only filtered gradients / embeddings do. The user&apos;s policy decides which filtered signals are even eligible to leave.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"The CHOICE itself is information about the user — knowing they applied strictest privacy on medical transactions reveals that they have such transactions. The privacy mechanism must either treat the choice as private or accept that choices leak.", correct:true},
-          {key:"b", text:"No concern — &epsilon;=0.1 is fully private."},
-          {key:"c", text:"The choice is irrelevant to privacy."},
-          {key:"d", text:"Tighter &epsilon; cancels the choice information."},
+          {key:"a", text:"Centralised DP training requires raw data to leave the user&apos;s device for the server to do per-sample clipping + Gaussian noise. UG-FedRec is federated &mdash; raw data never leaves the device; only gradients / embeddings do, and the user&apos;s per-interaction policy decides which of THOSE are even eligible to leave. The privacy posture is fundamentally different (data locality vs server-side DP).", correct:true},
+          {key:"b", text:"UG-FedRec sends raw data to the server."},
+          {key:"c", text:"Centralised DP never moves data."},
+          {key:"d", text:"They are equivalent."},
         ]}
-        trap={<>(b)(c)(d) miss the meta-privacy issue.</>}
-        lens={<>The act of selecting strict privacy on a category leaks the existence of activity in that category. Complete designs must either (i) noise the choice itself, (ii) default to strict everywhere and offer relaxation rather than opt-in tightening, or (iii) acknowledge the leakage in the consent flow. There is no algorithm-only fix.</>}
-        stretch={<>How would you noise the choice itself without breaking the user&apos;s ability to declare a preference?</>}
+        trap={<>(b)(c)(d) misread the data-locality axis.</>}
+        lens={<>Federated (data stays) vs centralised (data leaves) is orthogonal to user-vs-server control.</>}
+        stretch={<>Can UG-FedRec compose with centralised DP? (No &mdash; data locality is core.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ugfr-p4" difficulty="medium"
-        title="P4 — Default privacy level"
-        scenario={<>What is the right framing for picking the DEFAULT &epsilon;_i in UG-FedRec?</>}
+      <VIS.TrapProblem id="pr-p4" difficulty="medium"
+        title="P4 &mdash; Without UG-FedRec, what is the realistic fallback for &lsquo;EU users with diverse stated privacy preferences&rsquo;?"
+        scenario={<><em>Discriminating insight: fallbacks are uniform DP-FedAvg (over-pays for users who would share, under-pays for users who want more privacy), Efficient-FedRec (server constraints, no user voice), or centralised DP (data leaves device &mdash; regulator-incompatible). UG-FedRec specifically supports per-user heterogeneous preferences.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Defaults dominate user choices; pick a default that is conservative enough to be honestly defensible as &quot;reasonable privacy&quot; for users who never customize, but loose enough to retain utility.", correct:true},
-          {key:"b", text:"Default to &epsilon;=infinity — users opt in to privacy."},
-          {key:"c", text:"Default to &epsilon;=0 — users opt out of privacy."},
-          {key:"d", text:"Defaults are irrelevant in UG-FedRec."},
+          {key:"a", text:"Uniform DP-FedAvg (one &epsilon; for everyone &mdash; over-pays for liberal users, under-pays for conservative ones), Efficient-FedRec (server-driven upload constraints with no user voice), centralised DP-SGD/DP-FTRL (data leaves device &mdash; usually regulator-incompatible). UG-FedRec specifically supports per-user heterogeneous policy / budget.", correct:true},
+          {key:"b", text:"There is no fallback."},
+          {key:"c", text:"Skip federation."},
+          {key:"d", text:"Always centralise."},
         ]}
-        trap={<>(b)(c) are extremes that produce bad behavior. (d) misreads UX reality.</>}
-        lens={<>The default is the most consequential choice in UG-FedRec because few users customize. A defensible default sits in the middle of the privacy-utility frontier — say &epsilon;=2 for general behavior, with stricter defaults for sensitive categories. The privacy story must be writeable in one paragraph aimed at a non-technical reader.</>}
-        stretch={<>How would you test default acceptability with users?</>}
+        trap={<>(b)(c)(d) absurd.</>}
+        lens={<>Each fallback fails on user voice, uniformity, or data locality.</>}
+        stretch={<>When does uniform DP-FedAvg suffice? (Homogeneous user base or no policy choice.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ugfr-p5" difficulty="hard" multiSelect
-        title="P5 — Where UG-FedRec is the WRONG choice"
-        scenario={<>Pick the scenarios where UG-FedRec is not the right design.</>}
+      <VIS.TrapProblem id="pr-p5" difficulty="hard"
+        title="P5 &mdash; When does UG-FedRec stop helping?"
+        scenario={<><em>Discriminating insight: needs (i) users with diverse stated preferences, (ii) UX to expose policy choice, (iii) heterogeneous-budget accountant. Wrong for homogeneous user bases (uniform DP suffices), surfaces with no policy UX (user voice is theoretical), or workloads where heterogeneity makes aggregation infeasible.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Strict-uniform regulatory regime that requires the same &epsilon; for all users.", correct:true},
-          {key:"b", text:"Population without meaningful heterogeneity in privacy preference.", correct:true},
-          {key:"c", text:"Product without bandwidth to implement and audit per-user UI controls.", correct:true},
-          {key:"d", text:"EU consent regime under GDPR."},
-          {key:"e", text:"Mixed-region deployment with privacy-sensitive power users."},
+          {key:"a", text:"Homogeneous user bases where everyone wants the same privacy level &mdash; uniform DP-FedAvg matches utility with simpler infra. Surfaces with no policy UX (user voice never actually reaches the device) &mdash; UG-FedRec degenerates to whatever default policy is shipped. Workloads where signal-subset heterogeneity makes the global aggregation noisy or biased. Ultra-low-latency surfaces where the policy check itself blows the budget.", correct:true},
+          {key:"b", text:"It always wins."},
+          {key:"c", text:"It only works in the EU."},
+          {key:"d", text:"It only works with one signal type."},
         ]}
-        trap={<>(d)(e) are UG-FedRec strongholds.</>}
-        lens={<>Bad-fit scenarios: uniform regulatory mandate (you cannot give different users different privacy by law), homogeneous population (no benefit), and capacity-constrained teams (UI + auditing is non-trivial). Where heterogeneity is real and the law permits, UG-FedRec is Pareto-optimal.</>}
-        stretch={<>How would you survey users to detect heterogeneity in privacy preference?</>}
+        trap={<>(b)(c)(d) miss the heterogeneity + UX + accountant premises.</>}
+        lens={<>Diverse stated preferences + UX + heterogeneous accountant.</>}
+        stretch={<>How to measure heterogeneity of user preferences offline?</>}
       />
 
-      <VIS.TrapProblem
-        id="ugfr-p6" difficulty="medium"
-        title="P6 — Weighting by &epsilon;_i in the aggregator"
-        scenario={<>How should the aggregator weight contributions from users with different &epsilon;_i?</>}
+      <VIS.TrapProblem id="pr-p6" difficulty="hard"
+        title="P6 &mdash; Pick the architecture for &lsquo;EU users with per-vertical privacy controls (news vs health vs finance)&rsquo;"
+        scenario={<><em>Discriminating insight: per-vertical privacy is the canonical UG-FedRec setting. Users can demand &epsilon;=2 on health, &epsilon;=8 on news, opt out entirely on finance. Federated training + per-user, per-vertical budget composes into a heterogeneous-aggregation accountant. Uniform DP-FedAvg would force one budget; centralised DP violates data locality.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Weight contributions so that each user&apos;s declared &epsilon;_i is the bound on their influence; users with larger &epsilon;_i get larger w_i, users with smaller &epsilon;_i get smaller w_i (more noise relative to signal).", correct:true},
-          {key:"b", text:"Weight all users equally regardless of &epsilon;_i."},
-          {key:"c", text:"Weight by user activity only."},
-          {key:"d", text:"Skip weighting; the noise alone enforces privacy."},
+          {key:"a", text:"UG-FedRec: per-vertical, per-user upload policy controlled at the client; user picks (or device infers from settings) &epsilon; per vertical and which signal types to share per vertical. Federated aggregation handles heterogeneous uploads with a per-signal/per-user accountant. Uniform DP-FedAvg cannot express per-vertical budget; centralised DP would violate data locality and the EU consent requirement.", correct:true},
+          {key:"b", text:"Uniform DP-FedAvg with one &epsilon;."},
+          {key:"c", text:"Centralised DP (data leaves device)."},
+          {key:"d", text:"Skip privacy."},
         ]}
-        trap={<>(b)(c)(d) miss the heterogeneous-mechanism design.</>}
-        lens={<>The weights translate declared privacy into actual influence on the model. A user with &epsilon;_i=0.1 contributes very little signal (high noise, low weight); a user with &epsilon;_i=10 contributes a lot. The function w_i = f(&epsilon;_i) is a design choice; common ones include linear or sqrt mappings, sometimes optimized for utility on a public validation set.</>}
-        stretch={<>How would you choose between linear and sqrt weighting?</>}
+        trap={<>(b)(c)(d) miss the per-vertical + EU fit.</>}
+        lens={<>Per-vertical heterogeneous budget is UG-FedRec&apos;s canonical surface.</>}
+        stretch={<>How does the UX expose per-vertical &epsilon; to a non-technical user? (Tiered presets.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ugfr-p7" difficulty="hard"
-        title="P7 — Selection bias from heterogeneous &epsilon;_i"
-        scenario={<>You launch UG-FedRec and observe that the recommender quality is worst for the privacy-aware subpopulation. Why?</>}
+      <VIS.TrapProblem id="pr-p7" difficulty="hard"
+        title="P7 &mdash; Sounds reasonable: &ldquo;just give every user the strictest &epsilon; &mdash; safer&rdquo;"
+        scenario={<><em>Discriminating insight: strictest-for-all is what uniform DP-FedAvg already does and is what UG-FedRec specifically improves on. Users who would happily share at &epsilon;=10 lose utility for no reason; the model under-fits aggressively because every upload is over-noised. Heterogeneous policy is the win &mdash; UG-FedRec lets users who want to share at higher &epsilon; do so while preserving stricter budgets for users who ask.</em><br/>Why is the shortcut wrong?</>}
         options={[
-          {key:"a", text:"Privacy-aware users contribute less signal (smaller effective weight in the aggregator). The model is fit primarily on the privacy-relaxed users, whose preferences may differ. Privacy-aware users get worse personalization not because of their data but because of the relative weighting.", correct:true},
-          {key:"b", text:"Privacy-aware users have inherently weird preferences."},
-          {key:"c", text:"UG-FedRec does not affect the recommender."},
-          {key:"d", text:"The recommender is broken globally."},
+          {key:"a", text:"Strictest-for-all is uniform DP-FedAvg with low &epsilon; &mdash; the very thing UG-FedRec is designed to improve on. Users who would happily share at higher &epsilon; lose utility for no reason; the global model under-fits because every upload is over-noised. UG-FedRec lets users opt in to higher &epsilon; per signal/vertical while preserving stricter budgets for users who ask &mdash; net utility goes up at the same regulator-facing minimum.", correct:true},
+          {key:"b", text:"Strictest-for-all is the right choice."},
+          {key:"c", text:"All users have identical preferences."},
+          {key:"d", text:"Stricter &epsilon; always gives better utility."},
         ]}
-        trap={<>(b)(c)(d) misread the dynamic.</>}
-        lens={<>This is the privacy-fairness tradeoff in UG-FedRec. By respecting per-user privacy preferences, you under-weight privacy-aware users in the training signal. If their preferences differ systematically from the privacy-relaxed majority, their personalization suffers. Mitigations: (i) on-device personalization that does not require federated weight, (ii) per-group fairness constraints in the aggregator, (iii) honest disclosure that strict privacy may reduce recommendation quality.</>}
-        stretch={<>What other fairness concerns does heterogeneous &epsilon; introduce?</>}
+        trap={<>(b)(c)(d) miss the heterogeneous-preference value.</>}
+        lens={<>Heterogeneous budgets preserve utility from liberal users while protecting conservative ones.</>}
+        stretch={<>What user-share rate makes the trade obviously worth it?</>}
       />
 
-      <VIS.TrapProblem
-        id="ugfr-p8" difficulty="hard" mode="ordered"
-        title="P8 — UG-FedRec deployment sequence"
-        scenario={<>Order the steps to ship UG-FedRec. Wrong moves unranked.</>}
+      <VIS.TrapProblem id="pr-p8" difficulty="hard"
+        title="P8 &mdash; Pitch UG-FedRec&apos;s anchor"
+        scenario={<><em>Discriminating insight: anchor = &ldquo;federated recsys where the USER (client device) explicitly controls, per interaction or per feature, which signals upload; heterogeneous per-user / per-signal budgets compose in the federated accountant; not server-driven, not uniform privacy&rdquo;.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Work with legal and design to define the privacy taxonomy and consent UI.", order:1},
-          {key:"b", text:"Pick the default &epsilon; and the relaxation / tightening options.", order:2},
-          {key:"c", text:"Implement heterogeneous DP aggregation with verified per-user accounting.", order:3},
-          {key:"d", text:"Audit for choice-leakage and document mitigations in the consent flow.", order:4},
-          {key:"e", text:"Skip the choice-leakage audit; it&apos;s a theoretical concern."},
-          {key:"f", text:"Measure recommendation quality per &epsilon; group; address the privacy-fairness tradeoff if present.", order:5},
+          {key:"a", text:"Federated recsys where the client device applies a USER-defined per-interaction policy specifying which gradients / embeddings / signals upload to the server. Per-user, per-signal heterogeneous budgets compose in the federated accountant. Differentiates from Efficient-FedRec (server-driven uniform upload constraints), uniform DP-FedAvg (one &epsilon; for everyone), and centralised DP (data leaves device).", correct:true},
+          {key:"b", text:"UG-FedRec is centralised DP."},
+          {key:"c", text:"UG-FedRec applies one server-set &epsilon; to everyone."},
+          {key:"d", text:"UG-FedRec is bandwidth optimisation."},
         ]}
-        trap={<>(e) is a privacy completeness gap.</>}
-        lens={<>Sequence: legal + UX, defaults, aggregator, choice-leakage audit, fairness check. The choice-leakage audit is the most overlooked step — without it, the system has a meta-privacy gap that a smart adversary can exploit.</>}
-        stretch={<>Which step is hardest to retrofit after launch?</>}
+        trap={<>(b)(c)(d) wrong family.</>}
+        lens={<>User-controlled &middot; per-interaction &middot; heterogeneous &middot; not server-driven.</>}
+        stretch={<>Which piece does the paper underspecify? (Heterogeneous accountant for arbitrary policy combinations.)</>}
       />
 
-      <VIS.TrapProblem
-        id="ugfr-p9" difficulty="medium" multiSelect
-        title="P9 — Audit considerations for UG-FedRec"
-        scenario={<>Your privacy team must externally audit UG-FedRec. Which audit artifacts are essential?</>}
+      <VIS.TrapProblem id="pr-p9" difficulty="hard" multiSelect
+        title="P9 &mdash; When NOT to use UG-FedRec. Select all that apply."
+        scenario={<><em>Discriminating insight: needs diverse preferences, UX exposing policy, heterogeneous accountant, federated infrastructure. Wrong for homogeneous bases, no-UX surfaces, ultra-tight latency, or surfaces where heterogeneous aggregation gets too noisy.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Per-user &epsilon;_i accounting log (which users had which budgets at which time).", correct:true},
-          {key:"b", text:"Documentation of the choice-leakage mitigation.", correct:true},
-          {key:"c", text:"Empirical membership-inference attack results per &epsilon; band.", correct:true},
-          {key:"d", text:"User counts only."},
-          {key:"e", text:"The aggregator&apos;s source code is private and not auditable."},
+          {key:"a", text:"Homogeneous user base where everyone wants the same privacy level &mdash; uniform DP-FedAvg has simpler infra at equal utility.", correct:true},
+          {key:"b", text:"No UX channel for the user to actually express policy &mdash; the &lsquo;user-governed&rsquo; control is theoretical.", correct:true},
+          {key:"c", text:"Ultra-low-latency online ranking where checking the per-interaction policy blows the per-request budget.", correct:true},
+          {key:"d", text:"Workloads where heterogeneous signal coverage makes the aggregation too noisy or biased to converge.", correct:true},
+          {key:"e", text:"EU users with per-vertical privacy controls and a tiered consent UX."},
         ]}
-        trap={<>(d) is insufficient. (e) is wrong — the aggregator MUST be auditable.</>}
-        lens={<>Audit requires per-user accounting (so the auditor can verify each user got their declared &epsilon;), choice-leakage mitigation docs, and empirical MI tests across &epsilon; bands (to validate the formal claim). The aggregator must be open to audit; treating it as a black box defeats the legal value of UG-FedRec.</>}
-        stretch={<>What is the cost of producing per-user accounting logs at scale?</>}
+        trap={<>(e) the canonical fit.</>}
+        lens={<>Diverse preferences + UX + heterogeneous-aggregation tolerance.</>}
+        stretch={<>How to detect &lsquo;homogeneous preferences&rsquo; pre-rollout?</>}
       />
 
-      <VIS.TrapProblem
-        id="ugfr-p10" difficulty="hard"
-        title="P10 — When per-INTERACTION (not per-user) &epsilon; matters"
-        scenario={<>UG-FedRec supports both per-user and per-interaction &epsilon;_i. When is per-interaction granularity worth the additional complexity?</>}
+      <VIS.TrapProblem id="pr-p10" difficulty="hard"
+        title="P10 &mdash; Heterogeneous-budget aggregation: load-bearing failure mode"
+        scenario={<><em>Discriminating insight: when different users contribute different signal subsets, the server&apos;s aggregator must handle missing signals without biasing the gradient (e.g., naively averaging over only the present-signals overweights users who share more). Re-weighting by inverse coverage or importance-sampling-style correction is required to keep the global gradient unbiased.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"When a single user&apos;s interactions span sensitivity classes — e.g., browsing fitness articles is low-sensitivity but searching for a medical condition is high. Per-user &epsilon; cannot express this; per-interaction can.", correct:true},
-          {key:"b", text:"Always — finer is better."},
-          {key:"c", text:"Never — per-user is always sufficient."},
-          {key:"d", text:"Only for users who explicitly request it."},
+          {key:"a", text:"Heterogeneous uploads mean some users contribute signal X, others do not. Naive averaging over only the present-signal subset biases the gradient toward users who share more (they get extra weight). The aggregator must re-weight by inverse coverage or apply importance-sampling-style correction so the global gradient stays unbiased w.r.t. the user population, not the share-rate population.", correct:true},
+          {key:"b", text:"Heterogeneous uploads have no aggregation problem."},
+          {key:"c", text:"Always discard users who do not share everything."},
+          {key:"d", text:"Heterogeneity is decorative."},
         ]}
-        trap={<>(b)(c)(d) miss the design tradeoff.</>}
-        lens={<>Per-interaction governance matters when sensitivity varies WITHIN a user. Health, finance, and political content are the canonical examples. Implementing it requires (i) a taxonomy of sensitivity classes, (ii) UI that lets users adjust per class, (iii) the aggregator handling per-event &epsilon;_ij rather than per-user &epsilon;_i. Worth the cost when the product spans heterogeneous categories.</>}
-        stretch={<>How would you bootstrap the sensitivity taxonomy without surveying users?</>}
+        trap={<>(b)(c)(d) miss the share-rate bias.</>}
+        lens={<>Inverse-coverage re-weighting keeps the gradient unbiased under heterogeneous uploads.</>}
+        stretch={<>What if no user shares a signal? (Cannot learn that signal &mdash; expected.)</>}
       />
+
+      <VIS.TrapProblem id="pr-p11" difficulty="hard"
+        title="P11 &mdash; Composition with DP: how do heterogeneous &epsilon; budgets aggregate?"
+        scenario={<><em>Discriminating insight: when users have different &epsilon;, the regulator-facing claim is the WORST-CASE per-user budget across the population (or per-signal per-user budget), not an average. The aggregation accountant tracks each user&apos;s spend separately. Users opting in to higher &epsilon; help utility WITHOUT changing the regulator claim, which is bounded by the strictest opt-in.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"The regulator-facing claim is the WORST-CASE (strictest) per-user (&epsilon;, &delta;) across the population, not an average. The accountant tracks each user&apos;s spend separately. Users opting in to higher &epsilon; lift utility without changing the regulator claim &mdash; the claim is bounded by the strictest opted-in user, not relaxed by liberal ones.", correct:true},
+          {key:"b", text:"The claim is the average &epsilon;."},
+          {key:"c", text:"All users have the same &epsilon;."},
+          {key:"d", text:"&epsilon; aggregation is undefined."},
+        ]}
+        trap={<>(b)(c)(d) misread the worst-case framing.</>}
+        lens={<>Per-user accountant; regulator claim = worst case.</>}
+        stretch={<>How to communicate this to a regulator? (Per-user budget audit log.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p12" difficulty="hard"
+        title="P12 &mdash; What does UG-FedRec deliberately drop vs uniform DP-FedAvg?"
+        scenario={<><em>Discriminating insight: UG-FedRec forfeits aggregation simplicity (heterogeneous bookkeeping is harder) and adds UX cost (the user must express policy). In exchange it gains regulatory fit (per-user consent) and utility uplift from liberal users (without weakening the regulator claim).</em><br/>What does UG-FedRec forfeit?</>}
+        options={[
+          {key:"a", text:"Aggregation simplicity (heterogeneous-budget bookkeeping is harder than uniform), UX cost (the user must be able to express policy &mdash; design and education work), and accountant complexity (per-user, per-signal spend tracking). In exchange it gains regulatory fit (per-user consent satisfied), utility uplift from liberal users (without weakening the worst-case regulator claim), and resilience to consent-revocation events.", correct:true},
+          {key:"b", text:"UG-FedRec forfeits federation."},
+          {key:"c", text:"UG-FedRec forfeits privacy."},
+          {key:"d", text:"UG-FedRec forfeits the model."},
+        ]}
+        trap={<>(b)(c)(d) misread.</>}
+        lens={<>Aggregation + UX complexity for regulatory fit + utility uplift.</>}
+        stretch={<>What UX share-rate makes the trade obviously worth it?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p13" difficulty="hard"
+        title="P13 &mdash; Most fragile knob"
+        scenario={<><em>Discriminating insight: the user&apos;s policy-mapping default is the most fragile knob &mdash; the default policy that ships when a user does not actively pick one determines effectively everyone&apos;s behaviour. A too-strict default tanks utility (treat as uniform DP-FedAvg with low &epsilon;); a too-loose default mis-represents the user&apos;s actual preference and creates regulator risk. UX defaults are LOAD-BEARING, not decorative.</em><br/>Rank fragility.</>}
+        options={[
+          {key:"a", text:"The default policy mapping (the policy that ships when a user does not actively pick one) is most fragile. Too strict: degenerates to low-&epsilon; uniform DP-FedAvg with no utility uplift; too loose: misrepresents users&apos; actual preference and creates regulator risk if interpreted as consent. UX default is load-bearing. Heterogeneous-aggregation re-weighting is next. Per-user accountant is robust above &lsquo;tracks worst-case correctly&rsquo;.", correct:true},
+          {key:"b", text:"Learning rate is most fragile."},
+          {key:"c", text:"Tokenizer choice is most fragile."},
+          {key:"d", text:"Batch size is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>UX default policy is load-bearing for both utility and regulator posture.</>}
+        stretch={<>How to A/B test default policies? (Carefully &mdash; consent context matters.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p14" difficulty="hard"
+        title="P14 &mdash; Plausible-misattribution: global recall regressed after &lsquo;adding UG-FedRec controls&rsquo;"
+        scenario={<><em>Discriminating insight: team shipped a strict default policy that opted MOST users out of sharing dwell-time signals; the global model lost an important feature; recall regressed. The cause is the UX default, not the UG-FedRec mechanism. Fix is to design the default policy more carefully (presets, opt-in framing), not to drop user-governance.</em><br/>Diagnosis?</>}
+        options={[
+          {key:"a", text:"The default user policy shipped opted MOST users out of sharing dwell-time signals (or some other key feature); the global model lost the feature; recall regressed. The cause is the UX default policy, not UG-FedRec&apos;s mechanism. Fix: redesign the default (better presets, opt-in framing with informed-consent UX, recoverable changes); do not drop user-governance or revert to uniform DP-FedAvg.", correct:true},
+          {key:"b", text:"GPU thermal throttling.", correct:false},
+          {key:"c", text:"Cache TTL changed.", correct:false},
+          {key:"d", text:"Tokenizer drift.", correct:false},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>UX defaults determine effective signal coverage.</>}
+        stretch={<>How to monitor coverage drift over time? (Per-signal opt-in rate dashboard.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p15" difficulty="hard"
+        title="P15 &mdash; Intuitive but wrong: &ldquo;just ask every user every time &mdash; maximum control&rdquo;"
+        scenario={<><em>Discriminating insight: per-interaction prompting blows the UX budget; users develop consent fatigue and either accept everything by reflex or opt out of the product. UG-FedRec works best with tiered presets (&ldquo;maximum privacy / balanced / share more&rdquo;) and explicit-consent moments at sensitive surfaces, not per-interaction prompts.</em><br/>Why is the naive view wrong?</>}
+        options={[
+          {key:"a", text:"Per-interaction consent prompting blows UX budget &mdash; consent fatigue makes users accept everything by reflex (defeating UG-FedRec) or opt out of the product entirely. UG-FedRec works in practice via tiered presets (&ldquo;max privacy / balanced / share more&rdquo;) plus explicit-consent moments at sensitive surfaces (e.g., health-vertical onboarding), not per-interaction modals.", correct:true},
+          {key:"b", text:"Per-interaction prompts are always best."},
+          {key:"c", text:"Consent fatigue is decorative."},
+          {key:"d", text:"Users want to be asked every time."},
+        ]}
+        trap={<>(b)(c)(d) ignore UX economics.</>}
+        lens={<>Tiered presets + sensitive-surface consent moments &gt; per-interaction modals.</>}
+        stretch={<>How to design the tiers? (Privacy / utility / data-type bundles.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p16" difficulty="hard"
+        title="P16 &mdash; Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;UG-FedRec is just DP-FedAvg with extra config&rdquo; cascades into uniform-budget accountant (heterogeneous claim broken), naive averaging (share-rate bias), and ignoring UX default impact (effective signal coverage collapses).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: accountant (uniform-budget bookkeeping cannot represent per-user heterogeneous (&epsilon;) &mdash; regulator claim breaks), aggregation (naive averaging biases the gradient toward higher-share users &mdash; share-rate bias), and UX default policy (strict defaults collapse signal coverage and recall &mdash; UX is load-bearing). Each is load-bearing for UG-FedRec to deliver its promise.", correct:true},
+          {key:"b", text:"Only the accountant."},
+          {key:"c", text:"Only the aggregation."},
+          {key:"d", text:"Nothing &mdash; it is just DP-FedAvg with config."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Heterogeneous accountant + unbiased aggregation + UX default jointly load-bearing.</>}
+        stretch={<>Which piece does the paper underspecify? (UX defaults &mdash; mostly an implementation detail in research.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p17" difficulty="medium"
+        title="P17 &mdash; Senior vs junior framing on weak UG-FedRec gain"
+        scenario={<><em>Discriminating insight: junior bumps the upload rate. Senior first audits whether users actually have diverse preferences (heterogeneity ratio), whether the UX exposes policy meaningfully, and whether the aggregator handles heterogeneity unbiased. Without these, no upload tweak helps.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Audit whether users actually have diverse stated preferences (heterogeneity ratio &mdash; if everyone defaults to the same policy, UG-FedRec degenerates to uniform DP-FedAvg) and whether the UX exposes policy in a way that produces real choice (not consent fatigue). Then verify the aggregator handles heterogeneous uploads unbiased. Per-user budget tracking comes after.", correct:true},
+          {key:"b", text:"Raise upload rate."},
+          {key:"c", text:"Switch to uniform DP-FedAvg."},
+          {key:"d", text:"Skip federation."},
+        ]}
+        trap={<>(b)(c)(d) generic or off-topic.</>}
+        lens={<>Diverse preferences + UX + unbiased aggregation -&gt; per-user budgets.</>}
+        stretch={<>Dashboard panel for per-signal opt-in rate by user segment?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p18" difficulty="hard"
+        title="P18 &mdash; Plausible-misattribution: long-tail recall cratered after broad consent UX rollout"
+        scenario={<><em>Discriminating insight: a new consent UX framed the default as &ldquo;maximum privacy&rdquo;; long-tail users (less engaged) accepted defaults disproportionately, withdrew dwell-time signal, and the long-tail-item recall fell because their signal was load-bearing for tail learning. Head-item recall stayed fine. Fix: re-frame default presets and add targeted consent moments, not raise &epsilon;.</em><br/>Diagnosis?</>}
+        options={[
+          {key:"a", text:"The new consent UX framed the default as &lsquo;maximum privacy&rsquo;; less-engaged (long-tail) users accept defaults disproportionately so dwell-time signals for tail users disappeared. Tail-item learning suffered because tail signals were load-bearing for tail recall; head-item recall stayed fine since head users explicitly opted in. Fix: redesign default presets (balanced default, explicit opt-in for sensitive verticals) and add education around what each preset costs, not raise &epsilon; or revert UG-FedRec.", correct:true},
+          {key:"b", text:"GPU thermal throttling.", correct:false},
+          {key:"c", text:"Cache TTL changed.", correct:false},
+          {key:"d", text:"Tokenizer drift.", correct:false},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>UX default disproportionately affects tail-user signal coverage.</>}
+        stretch={<>How to monitor? (Per-user-segment opt-in rate.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p19" difficulty="hard"
+        title="P19 &mdash; Production gotcha: signal de-listing after consent revocation"
+        scenario={<><em>Discriminating insight: when a user revokes consent for a signal type mid-training, the server must (a) stop accepting that signal from that user, (b) ideally PURGE the contribution from the model state if a regulator requires &lsquo;right to be forgotten&rsquo; semantics. Pure consent gating without unlearning may not satisfy regulators. Plan unlearning as a first-class operation.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Consent revocation must be a first-class operation in UG-FedRec. Server stops accepting that signal from that user (forward gating) AND, under &lsquo;right to be forgotten&rsquo; regimes, the user&apos;s past contribution must be removed via approximate unlearning or model retraining. Pure forward-only gating may not satisfy regulators; plan unlearning hooks before launch.", correct:true},
+          {key:"b", text:"Consent revocation is forward-only; past contributions are fine."},
+          {key:"c", text:"Consent revocation never happens in production."},
+          {key:"d", text:"Always retrain from scratch on every revocation."},
+        ]}
+        trap={<>(b)(c)(d) miss the regulator requirement.</>}
+        lens={<>Consent revocation needs forward gating + unlearning support.</>}
+        stretch={<>What unlearning techniques work for federated rec? (Influence-based subtraction, periodic retraining.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p20" difficulty="hard"
+        title="P20 &mdash; Failure on Friday: aggregation gradient diverged after a default-policy change"
+        scenario={<><em>Discriminating insight: team flipped the default policy from &ldquo;balanced&rdquo; to &ldquo;maximum privacy&rdquo; via a remote-config push. Overnight 60% of users effectively stopped sharing dwell-time. The aggregator&apos;s inverse-coverage re-weighting was tuned to the OLD coverage distribution; the sudden coverage shift caused the gradient to blow up on the few users still sharing (over-weighted). Training diverged. 3am page. Fix: rolling-window coverage estimate, gradual default policy changes, or pause-and-recalibrate.</em><br/>Diagnosis?</>}
+        options={[
+          {key:"a", text:"A default-policy flip (balanced -&gt; maximum privacy) caused 60% of users to stop sharing dwell-time overnight. The aggregator&apos;s inverse-coverage re-weighting was tuned to the OLD coverage distribution; the sudden coverage shift over-weighted the few users still sharing and the gradient blew up. Training diverged. Fix: rolling-window coverage estimate that adapts to policy shifts, gradual default-policy rollouts (canary first), or pause-and-recalibrate the aggregator on detected coverage change.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Tokenizer drift."},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Default policy changes are coverage shocks; aggregator must adapt or be canaried.</>}
+        stretch={<>Runbook entry for default-policy changes?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p21" difficulty="medium"
+        title="P21 &mdash; Library default that bites: TFF / PySyft uniform-&epsilon; defaults"
+        scenario={<><em>Discriminating insight: TensorFlow Federated and PySyft default DP modules apply a single uniform &epsilon; per round across clients. Wiring them to UG-FedRec&apos;s heterogeneous-budget setting requires custom per-client accountant code; the library default silently throws away the per-user budget heterogeneity. Always check the accountant&apos;s per-client granularity.</em><br/>Where does the default break?</>}
+        options={[
+          {key:"a", text:"TensorFlow Federated and PySyft default DP modules apply a single uniform &epsilon; per round across clients &mdash; the library throws away per-user heterogeneous budgets silently. Wiring them to UG-FedRec requires custom per-client accountant code that tracks each user&apos;s spend separately. Always verify the accountant&apos;s per-client granularity before claiming heterogeneous-budget DP.", correct:true},
+          {key:"b", text:"Default learning rate is wrong."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Library uniform-&epsilon; default silently strips heterogeneity; verify per-client accountant.</>}
+        stretch={<>Unit test? (Mock two users with different &epsilon;; assert accountant tracks both.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p22" difficulty="hard" ordered
+        title="P22 &mdash; Order the UG-FedRec rollout"
+        scenario={<><em>Discriminating insight: rollout = (1) design tiered consent UX + defaults, (2) wire per-client per-signal accountant, (3) implement inverse-coverage re-weighting on the server, (4) wire consent-revocation + approximate unlearning, (5) canary against uniform DP-FedAvg, (6) launch, (7) monitor per-signal opt-in by user segment.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Design tiered consent UX + default presets (load-bearing, do first) -&gt; wire per-client / per-signal accountant -&gt; implement inverse-coverage re-weighting on the server -&gt; wire consent-revocation + approximate unlearning hooks -&gt; canary vs uniform DP-FedAvg baseline -&gt; launch -&gt; monitor per-signal opt-in by user segment for drift", correct:true},
+          {key:"b", text:"Skip the per-client accountant."},
+          {key:"c", text:"Ignore consent-revocation."},
+          {key:"d", text:"Launch without canary."},
+        ]}
+        trap={<>(b)(c)(d) lose regulator posture or utility correctness.</>}
+        lens={<>UX -&gt; accountant -&gt; aggregator -&gt; revocation -&gt; canary -&gt; launch -&gt; monitor.</>}
+        stretch={<>Why UX design first?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p23" difficulty="hard"
+        title="P23 &mdash; Smallest input that breaks the claimed advantage"
+        scenario={<><em>Discriminating insight: a homogeneous user base where every user picks the same default policy collapses UG-FedRec&apos;s advantage. Heterogeneous infrastructure runs but contributes zero utility uplift over uniform DP-FedAvg &mdash; just adds UX and accountant overhead. UG-FedRec needs meaningful preference diversity to deliver value.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A homogeneous user base where every user accepts the shipped default policy (or every user picks the same preset). Heterogeneous infrastructure runs but contributes zero utility uplift over uniform DP-FedAvg; it just adds UX and accountant overhead. UG-FedRec degenerates to a more expensive uniform DP-FedAvg.", correct:true},
+          {key:"b", text:"EU users with per-vertical privacy controls and a tiered UX (canonical fit)."},
+          {key:"c", text:"100M users."},
+          {key:"d", text:"Catalog of 50M items."},
+        ]}
+        trap={<>(b) canonical fit. (c)(d) scale red herrings.</>}
+        lens={<>Preference diversity is the premise; without it, no advantage.</>}
+        stretch={<>How to detect homogeneity early? (Distribution of opted-in policy selections.)</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://dl.acm.org/doi/10.1145/3589334.3645690" target="_blank" rel="noopener">Anon. — <em>Towards Personalized Privacy: User-Governed Data Contribution for Federated Recommendation</em> (WWW 2024, paper)</a> — the UG-FedRec paper with the heterogeneous-DP aggregator design.</li>
-        <li><a href="https://arxiv.org/abs/1912.04977" target="_blank" rel="noopener">Kairouz et al. — <em>Advances and Open Problems in Federated Learning</em> (2019, survey)</a> — DP-FL primer needed to understand UG-FedRec&apos;s compositional claims.</li>
-        <li><a href="https://desfontain.es/blog/" target="_blank" rel="noopener">Damien Desfontaines — <em>Differential Privacy blog</em> (desfontain.es, blog)</a> — accessible posts on heterogeneous DP, what &epsilon; means in production, and choice-leakage-style meta-privacy concerns.</li>
-        <li><a href="https://www.edps.europa.eu/data-protection/our-work/publications/papers/edps-tech-dispatch-3-2024-differential-privacy_en" target="_blank" rel="noopener">European Data Protection Supervisor — <em>TechDispatch on Differential Privacy</em> (2024, regulator briefing)</a> — useful for the regulatory framing of personalized privacy under GDPR.</li>
-        <li><a href="https://blog.research.google/2022/02/federated-learning-with-formal.html" target="_blank" rel="noopener">Google Research — <em>Federated Learning with Formal Differential Privacy Guarantees</em> (research blog)</a> — production federated DP context; contrast with UG-FedRec&apos;s heterogeneous approach.</li>
+        <li><a href="https://arxiv.org/abs/2504.10548" target="_blank" rel="noopener">UG-FedRec: User-Governed Federated Recommendation (2025)</a> &mdash; canonical paper. Sections on per-interaction policy and heterogeneous-budget accounting are the must-reads.</li>
+        <li><a href="https://research.google/blog/federated-learning-with-formal-differential-privacy-guarantees/" target="_blank" rel="noopener">Google Research &mdash; <em>Federated Learning with Formal DP Guarantees</em> (blog)</a> &mdash; production-context for federated + DP, useful for understanding why per-user policy matters at scale.</li>
+        <li><a href="https://arxiv.org/abs/1912.04977" target="_blank" rel="noopener">Kairouz et al. &mdash; <em>Advances and Open Problems in Federated Learning</em> (Foundations and Trends 2021)</a> &mdash; the canonical FL survey. Section on personalisation and consent is the right framing context for UG-FedRec.</li>
+        <li><a href="https://desfontain.es/blog/differential-privacy-in-machine-learning.html" target="_blank" rel="noopener">Damien Desfontaines &mdash; <em>DP in ML</em> (blog series)</a> &mdash; practitioner walkthrough of per-user vs example-level DP and the worst-case-bound claim semantics.</li>
+        <li><a href="https://www.tensorflow.org/federated" target="_blank" rel="noopener">TensorFlow Federated documentation</a> &mdash; the library to inspect for the P21 gotcha. Per-client accountant configuration is the production hook for UG-FedRec.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Right_to_be_forgotten" target="_blank" rel="noopener">Wikipedia &mdash; <em>Right to be forgotten</em></a> &mdash; the EU regulatory backdrop that motivates the consent-revocation + unlearning design (P19).</li>
       </ul>
     </VIS.Section>
   </main>

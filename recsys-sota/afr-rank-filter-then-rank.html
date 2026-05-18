@@ -1414,241 +1414,424 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// REDO v2 — RecSys-SOTA batch 18
+// AFR-Rank — Adaptive Filter-then-Rank cascaded reranker
+//
+// Anchor (survives §2a redaction):
+//   A two-stage cascaded reranker where a CHEAP, fast FILTER stage drops
+//   obvious-non-match candidates BEFORE an expensive LLM/cross-encoder
+//   ranking stage. The filter is a semantic classifier (binary or
+//   regression) trained to discriminate "obviously irrelevant" vs
+//   "deserves rerank"; it does NOT produce a ranking. The expensive
+//   ranker only sees survivors. Different from candidate generation
+//   (retrieval) — AFR-Rank sits AFTER retrieval, BEFORE the LLM
+//   reranker, on an already-retrieved candidate set. Different from
+//   REALM (which never culls) and from BM25/TF-IDF filtering (which is
+//   lexical, not semantic).
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Re-ranking &middot; LLM listwise"
-      title="AFR-Rank (Adaptive Filter-then-Rank)"
-      subtitle="Drop the obvious non-matches before listwise reranking — preserve LLM context for items that actually deserve a head-to-head comparison."
+      pill="RecSys SOTA &middot; Re-ranking"
+      title="AFR-Rank &mdash; adaptive filter-then-rank cascaded reranker"
+      subtitle="Insert a cheap semantic FILTER stage between retrieval and the expensive LLM/cross-encoder reranker. The filter drops obvious non-matches so the expensive ranker only spends budget on survivors. Sits on top of retrieval, beneath rerank. Different from REALM (no culling) and from lexical BM25 filters (no semantic signal)."
       byline={[
-        {label: "Paper", value: "AFR-Rank: Adaptive Filter-then-Rank (Information Processing and Management, 2025)"},
-        {label: "Domain", value: "LLM reranker for IR / search / RAG"},
+        {label: "Paper", value: "AFR-Rank: Adaptive Filter Ranking for Long-List LLM Reranking (RecSys 2025)"},
+        {label: "Surface", value: "Long candidate lists (N=100-1000+) with many obvious non-matches, expensive ranker on top, latency budget that does not absorb full-list rerank"},
+        {label: "Anchor that survives redaction", value: "Cheap semantic filter culls obvious non-matches before the expensive ranker &mdash; cascade, not recursive, not lexical"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="AFR-Rank: a two-stage LLM reranker that first uses a cheap relevance filter to drop obvious non-matches, then runs listwise prompting only over the survivors. Spends LLM context where it actually matters.">AFR-Rank</VIS.Term> beats one-shot listwise prompting on long candidate lists by spending LLM context where it matters: filter the obvious junk first, rank the survivors with full attention.
+      Long candidate lists often contain MANY obvious non-matches that any decent semantic classifier can identify cheaply &mdash; but vanilla LLM rerank burns full inference cost on them anyway, blowing latency and context budget. AFR-Rank inserts a cheap binary/regression semantic filter BEFORE the expensive ranker; the filter drops the obvious-irrelevants, the expensive ranker only sees survivors. The cascade gains throughput from the smaller post-filter pool without paying the full rerank cost on items that were never going to win. Senior trap: NOT lexical BM25/TF-IDF (those are term-frequency filters, not semantic); NOT recursive (no feature passing &mdash; the filter just culls); NOT candidate generation (retrieval already happened); NOT REALM (REALM never culls and runs every candidate through every stage).
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
-      <p>
-        On a 100-document list, listwise LLM rerankers behave badly: the prompt is huge, attention is diluted, and the LLM&apos;s scoring quality drops as the list lengthens. Most of those 100 docs are obviously irrelevant — they only LOOK like candidates because the upstream retriever cast a wide net. AFR-Rank exploits this by inserting a <VIS.Term def="A cheap pre-filter that scores each candidate (often pointwise or with a tiny LLM call) and discards items below a threshold. Used to prune obvious non-matches before listwise reasoning.">relevance filter</VIS.Term> in front of the listwise call. The filter passes only the plausible candidates forward, and the listwise prompt sees a shorter, denser list it can actually reason over.
-      </p>
-      <VIS.Mermaid chart={`
-flowchart TB
-  R["Retriever top-100"]
-  F["Adaptive filter (pointwise score)"]
-  S["Survivors top-k (k less than 100)"]
-  L["Listwise LLM rerank over survivors"]
-  O["Final ordering"]
-  R --> F --> S --> L --> O
-      `} />
-      <VIS.Equation display tex="\text{Survivors} = \{ d \in C : s_\text{filter}(q, d) \geq \tau \} \quad ; \quad \pi^* = \text{Listwise}(q, \text{Survivors})" />
-      <p>
-        The threshold &tau; is the central knob. Set too tight, the filter throws away true positives the listwise stage could have rescued. Set too loose, the listwise stage is back to its original context problem. AFR-Rank tunes &tau; adaptively per query — hence the &quot;Adaptive&quot; prefix.
-      </p>
+    <VIS.Section id="sec-what" title="What it is &mdash; cheap semantic filter then expensive ranker">
+      <VIS.Mermaid chart={`flowchart TB
+  RET["Retrieval: N candidates (100-1000+)"]
+  FIL["Cheap semantic filter (binary)"]
+  KEEP["Survivors (small set)"]
+  DROP["Dropped obvious non-matches"]
+  RNK["Expensive ranker (LLM or cross-encoder)"]
+  OUT["Top-K"]
+  RET --> FIL
+  FIL -->|keep| KEEP --> RNK --> OUT
+  FIL -->|drop| DROP`} />
+      <ul>
+        <li><strong>Filter stage.</strong> A cheap semantic classifier (often a small bi-encoder distilled from the heavy ranker, or a lightweight cross-encoder) outputs a per-item KEEP/DROP signal. It does NOT produce a ranking &mdash; only a binary culling decision. Designed for high recall on the survivor set, not for ranking accuracy.</li>
+        <li><strong>Rank stage.</strong> The expensive LLM or cross-encoder sees only the survivors. Smaller working set means tighter context window, lower cost, sometimes higher quality (less distraction).</li>
+        <li><strong>Adaptive threshold.</strong> The filter threshold is tuned per surface to bound filter-FN rate (false drops). &lsquo;Adaptive&rsquo; in the name refers to learning the threshold from labeled or implicit feedback per query type, not adapting the model weights online.</li>
+        <li><strong>What it is NOT.</strong> Not lexical filtering (BM25/TF-IDF use term overlap, not semantic embedding). Not REALM (REALM never culls and recurses through stages with feature passing). Not candidate generation (retrieval already produced the N candidates).</li>
+      </ul>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from full listwise and from sliding-window listwise">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Full listwise</th><th style={{textAlign:"left",padding:8}}>Sliding-window listwise</th><th style={{textAlign:"left",padding:8}}>AFR-Rank</th></tr></thead>
+    <VIS.Section id="sec-diff" title="How AFR-Rank differs from its neighbours">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
+        <thead><tr style={{background:"#1f3a5f", color:"#fff"}}>
+          <th style={{textAlign:"left", padding:8}}>Method</th>
+          <th style={{textAlign:"left", padding:8}}>Culls?</th>
+          <th style={{textAlign:"left", padding:8}}>Filter signal</th>
+          <th style={{textAlign:"left", padding:8}}>Cross-stage</th>
+        </tr></thead>
         <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Listwise prompt length</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>O(N)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>O(window)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>O(survivors)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Discriminates obvious junk</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>In one big call</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Across windows</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Up front, cheaply</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>False-negative risk</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Low (sees everything)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Medium (window edges)</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>High if &tau; too tight</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Total LLM cost</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Huge</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Many windows</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>One small listwise + cheap filter</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Best regime</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Short lists</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Long lists, uniform relevance</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Long lists with many obvious non-matches</td></tr>
+          <tr><td style={{padding:8}}>BM25 / TF-IDF prefilter</td><td style={{padding:8}}>Yes</td><td style={{padding:8}}>Lexical term frequency</td><td style={{padding:8}}>None</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}><strong>AFR-Rank</strong></td><td style={{padding:8}}><strong>Yes (semantic)</strong></td><td style={{padding:8}}><strong>Semantic classifier</strong></td><td style={{padding:8}}>None (pure cull)</td></tr>
+          <tr><td style={{padding:8}}>REALM (recursive)</td><td style={{padding:8}}>No</td><td style={{padding:8}}>N/A &mdash; never filters</td><td style={{padding:8}}>Feature passing across stages</td></tr>
+          <tr style={{background:"#f8fafc"}}><td style={{padding:8}}>Cascaded rerank (independent)</td><td style={{padding:8}}>Optional (usually no)</td><td style={{padding:8}}>Rank score, not filter</td><td style={{padding:8}}>None</td></tr>
+          <tr><td style={{padding:8}}>Candidate generation (retrieval)</td><td style={{padding:8}}>N/A (produces N)</td><td style={{padding:8}}>ANN / dense retrieval</td><td style={{padding:8}}>N/A</td></tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Long-tail retrieval where the top-100 contains 10-20 plausible items and 80+ obvious non-matches.</li>
-        <li>RAG pipelines with high-recall sparse retrievers (BM25 + expansion) that drag in junk.</li>
-        <li>Latency-sensitive search where the cost of full listwise prompting is prohibitive.</li>
-        <li>Domains with a clear filter signal (entity match, freshness, language) that is cheap to compute.</li>
-      </ul>
-    </VIS.Section>
+    <VIS.Section id="sec-drill" title="Drill &mdash; 24 trap problems">
+      <p style={{color:"#475569"}}>Each problem cites the discriminating axis. Pick, then reveal.</p>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Filter false negatives.</strong> A true positive thrown out by the filter cannot be recovered downstream.</li>
-        <li><strong>Threshold drift.</strong> &tau; that worked at launch can degrade as query distribution shifts.</li>
-        <li><strong>Filter-rank coupling.</strong> If the filter signal correlates with the LLM&apos;s own preferences, you over-filter the cases the LLM would have re-ordered.</li>
-        <li><strong>Adaptive logic complexity.</strong> Per-query &tau; needs a meta-signal (query length, ambiguity, retriever confidence) — adds plumbing.</li>
-        <li><strong>Evaluation has to include filter recall</strong> — looking only at final NDCG hides cases where filter is throwing away the gold doc.</li>
-      </ul>
-      <VIS.Callout kind="gotcha" title="The recall ceiling trap">
-        AFR-Rank&apos;s ceiling is the filter&apos;s recall. If the filter drops the true positive, no amount of clever listwise reasoning downstream can recover it. The headline NDCG gains over plain listwise hide this — the filter recall must be reported alongside reranker quality, not separately. A common production failure: filter recall silently drops 2-3 points after a retriever change, and the team blames the LLM.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
-
-      <VIS.TrapProblem
-        id="afr-p1" difficulty="hard"
-        title="P1 — Why filter-then-rank beats one-shot listwise on long lists"
-        scenario={<>You switch from full listwise reranking (top-100) to AFR-Rank (filter to top-15, then listwise). NDCG@10 improves 3 points despite the listwise stage now seeing fewer candidates head-to-head. Why?</>}
+      <VIS.TrapProblem id="pr-p1" difficulty="hard"
+        title="P1 &mdash; AFR-Rank vs REALM: load-bearing difference?"
+        scenario={<><em>Discriminating insight: AFR-Rank CULLS obvious non-matches with a cheap filter, then the expensive ranker only sees survivors. REALM NEVER culls &mdash; every candidate stays in the pool and is rescored at every recursion stage. Their gains come from opposite directions: AFR-Rank from a smaller pool, REALM from compounded refinement on the full pool.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"The full-listwise LLM had its attention diluted across 80+ obviously irrelevant docs; AFR concentrates the LLM&apos;s reasoning on the 15 plausible candidates where comparison actually matters.", correct:true},
-          {key:"b", text:"NDCG improves whenever the list shortens."},
-          {key:"c", text:"The LLM is more accurate on shorter lists in all cases."},
-          {key:"d", text:"Filtering removes the irrelevant docs from the test set."},
+          {key:"a", text:"AFR-Rank culls obvious non-matches with a cheap semantic filter, then runs the expensive ranker on survivors only &mdash; gain from a smaller working set. REALM never culls and rescores every candidate at every recursion stage with feature passing &mdash; gain from compounded refinement on the full pool. Opposite mechanisms: AFR-Rank trades recall risk for throughput; REALM trades latency for accuracy.", correct:true},
+          {key:"b", text:"They are identical &mdash; both cull candidates."},
+          {key:"c", text:"REALM culls; AFR-Rank does not."},
+          {key:"d", text:"Both use feature passing."},
         ]}
-        trap={<>(b) is metric-illiterate. (c) is too strong a claim. (d) confuses train vs eval.</>}
-        lens={<>The win is attention concentration, not list shortening per se. The LLM&apos;s listwise reasoning has fixed capacity; spending half of it on obvious junk hurts the head-of-list ordering you cared about. AFR re-allocates that capacity to the candidates that need real comparison.</>}
-        stretch={<>How would you measure &quot;attention dilution&quot; directly?</>}
+        trap={<>(b)(c)(d) miss the cull-vs-recurse axis.</>}
+        lens={<>Cull (AFR) vs recurse without culling (REALM).</>}
+        stretch={<>Could you stack AFR-Rank then REALM? (Yes &mdash; filter cuts the pool, REALM compounds on survivors.)</>}
       />
 
-      <VIS.TrapProblem
-        id="afr-p2" difficulty="hard" multiSelect
-        title="P2 — Diagnosing AFR-Rank quality regressions"
-        scenario={<>AFR-Rank NDCG@10 drops 4 points after a retriever upgrade. Pick the plausible root causes.</>}
+      <VIS.TrapProblem id="pr-p2" difficulty="hard"
+        title="P2 &mdash; AFR-Rank vs BM25 / TF-IDF prefilter"
+        scenario={<><em>Discriminating insight: BM25/TF-IDF are LEXICAL filters &mdash; they score by term overlap and miss semantic synonyms (the user query says &ldquo;sneakers&rdquo;, the item title says &ldquo;running shoes&rdquo;). AFR-Rank&apos;s filter is a SEMANTIC classifier (small bi-encoder or distilled cross-encoder) trained on relevance labels &mdash; it recognises semantic match without term overlap.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Retriever now returns more competitive candidates; &tau; calibrated on the old retriever now filters too aggressively.", correct:true},
-          {key:"b", text:"Filter recall dropped because the filter&apos;s features no longer correlate with the new retriever&apos;s candidate quality.", correct:true},
-          {key:"c", text:"Query distribution shifted alongside the retriever upgrade.", correct:true},
-          {key:"d", text:"The LLM was downgraded."},
-          {key:"e", text:"NDCG is incompatible with AFR."},
+          {key:"a", text:"BM25/TF-IDF score by term overlap (lexical). They miss semantic synonyms (&ldquo;sneakers&rdquo; vs &ldquo;running shoes&rdquo;) so they drop semantically-relevant items that lack lexical match &mdash; high filter-FN rate. AFR-Rank&apos;s filter is a semantic classifier trained on relevance labels and recognises semantic match without term overlap, keeping filter-FN low.", correct:true},
+          {key:"b", text:"They are equivalent."},
+          {key:"c", text:"BM25 uses embeddings."},
+          {key:"d", text:"AFR-Rank uses term frequency."},
         ]}
-        trap={<>(d) is a non-sequitur. (e) is wrong. The three real culprits all relate to the filter recalibration debt.</>}
-        lens={<>Filter calibration is brittle to upstream changes. Whenever the retriever, the embedding model, or the query distribution shifts, &tau; (and possibly the filter&apos;s features) must be re-tuned. AFR&apos;s &quot;adaptive&quot; should ideally absorb this, but adaptivity only goes so far.</>}
-        stretch={<>How would you build a regression test that catches this within a day?</>}
+        trap={<>(b)(c)(d) misread mechanism.</>}
+        lens={<>Lexical (BM25) drops semantic synonyms; semantic filter (AFR) keeps them.</>}
+        stretch={<>When does BM25 still suffice? (Term-matched surfaces, exact-product queries.)</>}
       />
 
-      <VIS.TrapProblem
-        id="afr-p3" difficulty="hard"
-        title="P3 — Filter recall as the silent ceiling"
-        scenario={<>AFR-Rank NDCG@10 is 0.72, full listwise is 0.69. Your manager asks why you should NOT just ship AFR. What is the blocking concern to investigate?</>}
+      <VIS.TrapProblem id="pr-p3" difficulty="hard"
+        title="P3 &mdash; AFR-Rank vs candidate generation / retrieval"
+        scenario={<><em>Discriminating insight: candidate generation (ANN, dense retrieval) PRODUCES the N-item candidate set from a corpus of millions. AFR-Rank sits AFTER retrieval and BEFORE rerank, operating on the already-retrieved N. Conflating them leads to building a second retrieval index when you already have one.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Filter recall — if true positives are being thrown out by the filter at non-trivial rates, AFR has a ceiling no LLM tuning can lift, and that ceiling will silently regress under distribution shift.", correct:true},
-          {key:"b", text:"Listwise latency."},
-          {key:"c", text:"NDCG&apos;s tie-breaking."},
-          {key:"d", text:"The LLM&apos;s tokenizer."},
+          {key:"a", text:"Candidate generation produces the N candidates from a corpus of millions via ANN / dense retrieval / embedding index. AFR-Rank sits AFTER retrieval and BEFORE the expensive reranker, operating on the already-retrieved N items. Conflating them leads to building a second retrieval index when the existing one already produced the N. AFR-Rank is a filter inside the rerank stage, not a retrieval stage.", correct:true},
+          {key:"b", text:"AFR-Rank is the retrieval stage."},
+          {key:"c", text:"Retrieval and filter are the same operation."},
+          {key:"d", text:"AFR-Rank produces candidates from scratch."},
         ]}
-        trap={<>(b)(c)(d) are second-order or irrelevant.</>}
-        lens={<>Filter recall is the ceiling that headline metric hides. If the filter drops 5% of gold docs, AFR&apos;s NDCG cannot exceed (1 - 0.05) * full-coverage-NDCG. Always report filter recall side by side; track it as an SLO with its own alerting.</>}
-        stretch={<>What is a target filter recall you would set for an SLO?</>}
+        trap={<>(b)(c)(d) conflate the pipeline stages.</>}
+        lens={<>Retrieval -&gt; AFR filter -&gt; rerank.</>}
+        stretch={<>Why not push the filter into retrieval? (Different signal; retrieval is sublinear over millions, filter is linear over N.)</>}
       />
 
-      <VIS.TrapProblem
-        id="afr-p4" difficulty="medium"
-        title="P4 — Tuning &tau; (the filter threshold)"
-        scenario={<>What is the right framing for picking &tau;?</>}
+      <VIS.TrapProblem id="pr-p4" difficulty="medium"
+        title="P4 &mdash; Without AFR-Rank, what is the realistic fallback?"
+        scenario={<><em>Discriminating insight: fallbacks for N=500 are full LLM rerank (latency blow-up + context overflow), BM25 prefilter (drops semantic synonyms), REALM (no culling, K stages on full N), or simply truncate to top-K from retrieval (loses the rerank benefit on borderline items).</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"&tau; trades filter recall against listwise prompt length; pick &tau; to maintain a filter-recall floor (e.g., 0.98) and let the listwise stage spend its context on the survivors.", correct:true},
-          {key:"b", text:"&tau; should always be 0.5."},
-          {key:"c", text:"&tau; has no effect once the listwise stage runs."},
-          {key:"d", text:"&tau; is a property of the retriever, not the filter."},
+          {key:"a", text:"Full LLM rerank (latency + context blow-up at N=500), BM25 lexical prefilter (drops semantic synonyms &mdash; filter-FN risk), REALM (no culling so K stage forwards on the full 500), or truncate-to-top-K-from-retrieval (loses rerank lift on borderline items). AFR-Rank occupies the &lsquo;semantic culling before rerank&rsquo; corner.", correct:true},
+          {key:"b", text:"There is no fallback."},
+          {key:"c", text:"Random ranking."},
+          {key:"d", text:"Skip retrieval."},
         ]}
-        trap={<>(b)(c)(d) misrepresent the parameter.</>}
-        lens={<>The right discipline: lock a filter-recall floor, then let &tau; vary to minimize listwise prompt length subject to that floor. This decouples the two stages cleanly and makes the system debuggable.</>}
-        stretch={<>How would you set the recall floor differently for navigational vs informational queries?</>}
+        trap={<>(b)(c)(d) absurd.</>}
+        lens={<>Each fallback fails on latency, lexical-coverage, throughput, or rerank-lift.</>}
+        stretch={<>When does truncate-to-top-K beat AFR-Rank? (When retrieval ranking is already strong.)</>}
       />
 
-      <VIS.TrapProblem
-        id="afr-p5" difficulty="hard" multiSelect
-        title="P5 — Where AFR-Rank is the WRONG choice"
-        scenario={<>Pick the scenarios where you should NOT pick AFR-Rank.</>}
+      <VIS.TrapProblem id="pr-p5" difficulty="hard"
+        title="P5 &mdash; When does AFR-Rank stop helping?"
+        scenario={<><em>Discriminating insight: needs (i) long candidate lists with MANY obvious non-matches, (ii) expensive ranker downstream, (iii) trainable filter (labels or distillation source). On short lists (N&lt;30) the filter saves little. With few obvious non-matches the filter has no targets to drop. Without training signal the filter is noise.</em><br/>Where is the boundary?</>}
         options={[
-          {key:"a", text:"Retriever already returns a tight, high-precision shortlist of 8-12 candidates.", correct:true},
-          {key:"b", text:"Domain where filter features and LLM preferences are tightly correlated — over-filtering removes the cases the LLM would re-order.", correct:true},
-          {key:"c", text:"Latency budget admits at most one model call.", correct:true},
-          {key:"d", text:"Retrieving 200 candidates from BM25 + sparse expansion for RAG."},
-          {key:"e", text:"Search over a large news corpus."},
+          {key:"a", text:"Short candidate lists (N&lt;30) where the filter saves little; candidate sets with few obvious non-matches (every item is plausible) where the filter has nothing to drop and any cull risks filter-FN; surfaces with no relevance labels or distillation source so the filter cannot be trained; ultra-low-latency budgets where even the filter overhead is too much.", correct:true},
+          {key:"b", text:"It always wins."},
+          {key:"c", text:"It only works at N=500."},
+          {key:"d", text:"It only works with LLMs."},
         ]}
-        trap={<>(d)(e) are canonical AFR wins.</>}
-        lens={<>The bad-fit scenarios: short tight lists (filter overhead exceeds benefit), filter-LLM correlation (you over-filter the interesting cases), and single-call latency (no room for two stages). Otherwise AFR is a strong choice on long lists.</>}
-        stretch={<>How would you measure filter-LLM correlation?</>}
+        trap={<>(b)(c)(d) miss the long-list + many-non-matches + trainable-filter premises.</>}
+        lens={<>Long list + many obvious non-matches + training signal.</>}
+        stretch={<>What &lsquo;obvious non-match&rsquo; rate flips the trade?</>}
       />
 
-      <VIS.TrapProblem
-        id="afr-p6" difficulty="medium"
-        title="P6 — Filter design choice"
-        scenario={<>What is a defensible default filter for AFR-Rank?</>}
+      <VIS.TrapProblem id="pr-p6" difficulty="hard"
+        title="P6 &mdash; Pick the architecture for N=500 rerank with an expensive 7B LLM ranker and 400ms budget"
+        scenario={<><em>Discriminating insight: at N=500 a full LLM rerank exceeds 400ms easily; the candidate set typically has many obvious non-matches; trained relevance labels exist. AFR-Rank with a cheap distilled filter dropping ~70% leaves ~150 for the 7B ranker; total fits inside 400ms.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"A cheap cross-encoder pointwise scorer (e.g., a small re-ranker) calibrated against the LLM listwise scores on a held-out set.", correct:true},
-          {key:"b", text:"Random sampling."},
-          {key:"c", text:"Always keep the top-10 by retriever score, drop the rest."},
-          {key:"d", text:"Ask the user to filter manually."},
+          {key:"a", text:"AFR-Rank: insert a cheap distilled bi-encoder filter that drops ~60-80% of the 500 candidates as obvious non-matches; the 7B LLM only reranks the ~100-200 survivors. Fits inside 400ms whereas a full 500-item LLM rerank does not. Train the filter via distillation from the 7B&apos;s historical scores or from relevance labels; tune threshold to bound filter-FN.", correct:true},
+          {key:"b", text:"Full LLM rerank on all 500."},
+          {key:"c", text:"BM25 prefilter (semantic-synonym risk)."},
+          {key:"d", text:"Skip rerank entirely."},
         ]}
-        trap={<>(b)(d) are absurd. (c) is a static heuristic that ignores per-query variance.</>}
-        lens={<>Cross-encoder pointwise scorers are the practical default: cheap enough to score 100 docs, accurate enough to discriminate obvious junk, and easy to calibrate against the listwise LLM&apos;s preferences. Alternatives include cheaper LLM pointwise prompts and rule-based filters (language, freshness).</>}
-        stretch={<>What is the tradeoff between a learned cross-encoder filter and an LLM pointwise filter?</>}
+        trap={<>(b)(c)(d) miss the latency/cost fit.</>}
+        lens={<>N=500 + 400ms + expensive ranker is AFR-Rank&apos;s canonical surface.</>}
+        stretch={<>How to size the filter drop rate? (From offline filter-FN tolerance.)</>}
       />
 
-      <VIS.TrapProblem
-        id="afr-p7" difficulty="hard"
-        title="P7 — Why adaptive &tau; matters"
-        scenario={<>You hard-code &tau; at the median filter score from training. After launch, NDCG is fine on average but tail queries (long, ambiguous) degrade. Why?</>}
+      <VIS.TrapProblem id="pr-p7" difficulty="hard"
+        title="P7 &mdash; Sounds reasonable: &ldquo;just put BM25 in front of the LLM ranker &mdash; same thing&rdquo;"
+        scenario={<><em>Discriminating insight: BM25 is a LEXICAL prefilter. It drops items whose terms do not overlap with the query, even if they are semantically relevant (&ldquo;sneakers&rdquo; vs &ldquo;running shoes&rdquo;). On long-tail queries with vocabulary mismatch the BM25 filter-FN rate is severe. AFR-Rank&apos;s filter is a learned SEMANTIC classifier that recognises synonyms by embedding similarity.</em><br/>Why is the shortcut wrong?</>}
         options={[
-          {key:"a", text:"A static &tau; assumes the filter score distribution is identical across queries; long ambiguous queries have lower-confidence filter scores and the static &tau; drops their true positives.", correct:true},
-          {key:"b", text:"Long queries always fail."},
-          {key:"c", text:"The median is the wrong statistic globally."},
-          {key:"d", text:"NDCG is biased against long queries."},
+          {key:"a", text:"BM25 is a lexical prefilter &mdash; it scores by term overlap. On long-tail queries with vocabulary mismatch (user says &ldquo;sneakers&rdquo;, item title says &ldquo;running shoes&rdquo;) BM25 drops semantically-relevant items at high filter-FN rate. AFR-Rank&apos;s filter is a learned semantic classifier (small bi-encoder / distilled cross-encoder) that recognises synonyms via embedding similarity and keeps filter-FN low on vocabulary-mismatch queries.", correct:true},
+          {key:"b", text:"BM25 captures semantic match."},
+          {key:"c", text:"They are equivalent on long tails."},
+          {key:"d", text:"AFR-Rank uses term frequency."},
         ]}
-        trap={<>(b)(c)(d) miss the mechanism.</>}
-        lens={<>Filter score distributions are query-dependent. Adaptive &tau; lets the threshold relax on hard / ambiguous queries (broader keep) and tighten on easy queries (narrow keep). The meta-signal can be retriever confidence, query length, or a small classifier.</>}
-        stretch={<>How would you learn the adaptive &tau; policy?</>}
+        trap={<>(b)(c)(d) miss vocabulary-mismatch failure of BM25.</>}
+        lens={<>Lexical (BM25) vs semantic (AFR) filter signal.</>}
+        stretch={<>How to measure filter-FN rate per query type?</>}
       />
 
-      <VIS.TrapProblem
-        id="afr-p8" difficulty="hard" mode="ordered"
-        title="P8 — AFR-Rank deployment sequence"
-        scenario={<>Order the steps to ship AFR-Rank. Wrong moves unranked.</>}
+      <VIS.TrapProblem id="pr-p8" difficulty="hard"
+        title="P8 &mdash; Pitch AFR-Rank&apos;s anchor"
+        scenario={<><em>Discriminating insight: anchor = &ldquo;cheap semantic filter culls obvious non-matches before the expensive ranker; cascade, not recursive, not lexical; gains throughput from a smaller post-filter pool without paying full rerank cost on never-going-to-win items&rdquo;.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Profile current listwise reranker; confirm long-list / attention-dilution is the bottleneck.", order:1},
-          {key:"b", text:"Pick a cheap filter and calibrate filter recall on a held-out set.", order:2},
-          {key:"c", text:"Lock a filter-recall floor SLO; tune &tau; to minimize survivors subject to the floor.", order:3},
-          {key:"d", text:"Add per-query adaptive &tau; with a small meta-classifier.", order:4},
-          {key:"e", text:"Skip filter-recall monitoring; the listwise stage will compensate."},
-          {key:"f", text:"Online A/B vs listwise and vs sliding-window baselines.", order:5},
+          {key:"a", text:"A two-stage cascade: a cheap semantic classifier (binary/regression, distilled or supervised) drops obvious non-matches before the expensive LLM/cross-encoder reranker; the ranker only sees survivors. Adaptive threshold tuned per surface to bound filter-FN. Differentiates from BM25 (lexical, not semantic), REALM (never culls), candidate generation (retrieval, not filter inside rerank), and full-list rerank (no cull, latency-bound).", correct:true},
+          {key:"b", text:"AFR-Rank is the retrieval stage."},
+          {key:"c", text:"AFR-Rank uses pairwise prompts."},
+          {key:"d", text:"AFR-Rank is a recursive setwise rerank."},
         ]}
-        trap={<>(e) is the silent-regression trap.</>}
-        lens={<>Sequence: profile, pick filter, lock recall floor, adapt &tau;, A/B. The filter-recall SLO is the most overlooked discipline — without it, AFR-Rank looks great on aggregate metrics and fails on the tail queries that matter for user satisfaction.</>}
-        stretch={<>Which step is hardest to retrofit after launch?</>}
+        trap={<>(b)(c)(d) wrong family.</>}
+        lens={<>Cheap semantic filter &middot; cull &middot; cascade not recursive &middot; sits between retrieval and rerank.</>}
+        stretch={<>Which piece does the paper underspecify? (Filter-FN budget per surface.)</>}
       />
 
-      <VIS.TrapProblem
-        id="afr-p9" difficulty="medium" multiSelect
-        title="P9 — Filter-LLM correlation pitfall"
-        scenario={<>Your filter is a cross-encoder trained on the SAME labels used to fine-tune your listwise LLM scorer. What problems should you anticipate?</>}
+      <VIS.TrapProblem id="pr-p9" difficulty="hard" multiSelect
+        title="P9 &mdash; When NOT to use AFR-Rank. Select all that apply."
+        scenario={<><em>Discriminating insight: needs long lists, many obvious non-matches, expensive ranker, training signal. Wrong for short lists, label-poor surfaces, plausible-item-only sets, ultra-low-latency budgets.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"Over-filter: any doc the filter scores low will also be ranked low by the LLM, so the listwise stage rarely overrules the filter — the system collapses to pointwise.", correct:true},
-          {key:"b", text:"Loss of head-room: cases where the LLM would have re-ordered low-filter-score items never reach the LLM.", correct:true},
-          {key:"c", text:"Filter is irrelevant — LLM dominates."},
-          {key:"d", text:"Filter and LLM disagree wildly."},
-          {key:"e", text:"The cross-encoder is unbiased by definition."},
+          {key:"a", text:"N&lt;30 candidates &mdash; the filter saves little overhead.", correct:true},
+          {key:"b", text:"No relevance labels or distillation source &mdash; the semantic filter cannot be trained.", correct:true},
+          {key:"c", text:"Candidate set where every item is plausible (no obvious non-matches) &mdash; the filter has nothing to drop and any cull risks filter-FN.", correct:true},
+          {key:"d", text:"Ultra-low-latency 30ms ads-rank surface &mdash; even the filter overhead is too much.", correct:true},
+          {key:"e", text:"N=500 candidates with an expensive 7B LLM ranker and a 400ms budget."},
         ]}
-        trap={<>(c)(d)(e) misread the dynamic. The real risk is over-correlation, not disagreement.</>}
-        lens={<>When filter and LLM share preferences too tightly, AFR-Rank collapses to a more expensive pointwise system. The fix: train the filter on DIFFERENT supervision (e.g., entailment, lexical overlap, fast embedding similarity) so it adds an independent signal — its job is &quot;is this plausible at all&quot;, not &quot;is this the best&quot;.</>}
-        stretch={<>How would you measure filter-LLM agreement quantitatively?</>}
+        trap={<>(e) the canonical fit.</>}
+        lens={<>Long list + many non-matches + expensive ranker + training signal.</>}
+        stretch={<>How to detect &lsquo;all-plausible&rsquo; candidate sets pre-AFR?</>}
       />
 
-      <VIS.TrapProblem
-        id="afr-p10" difficulty="hard"
-        title="P10 — What single experiment justifies AFR over sliding-window listwise"
-        scenario={<>You must defend AFR-Rank over sliding-window listwise to a senior reviewer. What single experiment is most decisive?</>}
+      <VIS.TrapProblem id="pr-p10" difficulty="hard"
+        title="P10 &mdash; Filter-FN: load-bearing failure mode"
+        scenario={<><em>Discriminating insight: a filter-FN is a TRUE relevant candidate that the filter wrongly dropped. The expensive ranker never sees it; recall@K drops permanently for that query. Filter-FN must be measured offline on labeled queries and bounded by tuning the threshold. False positives (irrelevant survivors) are cheap &mdash; the ranker discards them.</em><br/>Pick.</>}
         options={[
-          {key:"a", text:"On long lists with skewed relevance distributions (few true positives among many obvious non-matches), compare end-to-end NDCG@10 AND total LLM tokens used — AFR should match or beat sliding-window NDCG at a fraction of the tokens.", correct:true},
-          {key:"b", text:"Compare runtime on a single short query."},
-          {key:"c", text:"Compare on a balanced list with uniform relevance."},
-          {key:"d", text:"Measure FLOPs only."},
+          {key:"a", text:"A filter-FN is a truly relevant candidate the filter wrongly dropped &mdash; the downstream ranker never sees it and recall@K drops permanently for that query. Filter-FP is cheap (the ranker rejects irrelevant survivors). Tune the filter threshold conservatively to bound filter-FN; FP cost is just a slightly larger rerank set.", correct:true},
+          {key:"b", text:"Filter-FN is free."},
+          {key:"c", text:"Filter-FP is the load-bearing failure."},
+          {key:"d", text:"FN and FP have symmetric cost."},
         ]}
-        trap={<>(b)(c)(d) miss the regime where AFR wins.</>}
-        lens={<>AFR&apos;s advantage shows up in SKEWED long-list regimes — that is its theoretical home. Sliding-window listwise is fine on uniform-relevance lists but pays for the privilege everywhere; AFR concentrates the cost. The right experiment makes that regime explicit and measures BOTH quality and tokens.</>}
-        stretch={<>What would the result look like if the relevance distribution were uniform?</>}
+        trap={<>(b)(c)(d) miss the asymmetry.</>}
+        lens={<>Filter-FN is permanent recall loss; filter-FP just costs extra rerank.</>}
+        stretch={<>What target filter-FN bound is acceptable? (Surface-specific, typically &lt;1-2%.)</>}
       />
+
+      <VIS.TrapProblem id="pr-p11" difficulty="hard"
+        title="P11 &mdash; Filter threshold: which way does it move?"
+        scenario={<><em>Discriminating insight: lower threshold = keep more items = more filter-FP (extra rerank cost) but less filter-FN (lower recall risk). Higher threshold = drop more items = save rerank cost but more filter-FN. Tune until filter-FN hits the recall budget; do not optimise the threshold for the filter&apos;s own accuracy &mdash; optimise it for the downstream ranker&apos;s recall.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"Tune the filter threshold for downstream recall@K, not for the filter&apos;s own accuracy. Lower threshold = keep more = more FP (cheap extra rerank) but lower FN (safer recall). Higher threshold = drop more = saves rerank cost but more FN (permanent recall loss). The optimal point is the largest drop rate that keeps filter-FN below the recall-loss budget.", correct:true},
+          {key:"b", text:"Maximise the filter&apos;s F1."},
+          {key:"c", text:"Use a fixed threshold across surfaces."},
+          {key:"d", text:"Tune threshold for filter precision only."},
+        ]}
+        trap={<>(b)(c)(d) miss the downstream-recall objective.</>}
+        lens={<>Threshold is tuned against downstream rerank recall, not filter accuracy.</>}
+        stretch={<>How to expose the curve? (Recall@K vs filter-drop-rate plot.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p12" difficulty="hard"
+        title="P12 &mdash; What does AFR-Rank deliberately drop vs full-list rerank?"
+        scenario={<><em>Discriminating insight: AFR-Rank forfeits the chance for the expensive ranker to look at every candidate &mdash; some borderline items get culled by the filter and the ranker never sees them. In exchange it gains throughput / latency budget. The trade is acceptable when filter-FN stays inside the recall budget.</em><br/>What does AFR-Rank forfeit?</>}
+        options={[
+          {key:"a", text:"AFR-Rank forfeits the chance for the expensive ranker to look at every candidate &mdash; the filter culls some borderline items the ranker never sees. In exchange it gains throughput / latency budget. Acceptable when filter-FN stays inside the recall budget (typically &lt;1-2%). Full-list rerank has no filter-FN risk but blows latency at long N.", correct:true},
+          {key:"b", text:"AFR-Rank forfeits the rerank task."},
+          {key:"c", text:"AFR-Rank forfeits the candidates."},
+          {key:"d", text:"AFR-Rank forfeits the query."},
+        ]}
+        trap={<>(b)(c)(d) misread.</>}
+        lens={<>Filter-FN risk for latency savings.</>}
+        stretch={<>What workload makes the trade flip?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p13" difficulty="hard"
+        title="P13 &mdash; Most fragile knob"
+        scenario={<><em>Discriminating insight: filter threshold is most fragile. 2x mis-set in either direction either tanks recall (too high) or eliminates the latency gain (too low). Filter-model size is secondary. Distillation source is robust above &lsquo;not lexical&rsquo;.</em><br/>Rank fragility.</>}
+        options={[
+          {key:"a", text:"Filter threshold is most fragile &mdash; too high causes filter-FN spike (permanent recall loss); too low keeps so much of the pool that the latency gain vanishes. Filter-model size is next. Distillation source choice is robust above &lsquo;not pure lexical&rsquo;. Tune threshold per surface against downstream recall, not filter accuracy.", correct:true},
+          {key:"b", text:"Learning rate is most fragile."},
+          {key:"c", text:"Tokenizer choice is most fragile."},
+          {key:"d", text:"Batch size is most fragile."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Threshold = recall vs latency trade.</>}
+        stretch={<>What unit test catches threshold drift?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p14" difficulty="hard"
+        title="P14 &mdash; Plausible-misattribution: recall@10 cratered after a filter threshold bump &lsquo;for latency&rsquo;"
+        scenario={<><em>Discriminating insight: team raised the filter threshold to drop 85% of candidates &ldquo;to save latency.&rdquo; Filter-FN rate jumped from 1% to 6%; truly relevant items the ranker would have picked were dropped silently. Recall@10 dropped because the ranker never got the chance to rerank them. Fix: lower threshold to restore filter-FN budget, or improve filter model.</em><br/>Diagnosis?</>}
+        options={[
+          {key:"a", text:"The filter threshold was raised to drop 85% of candidates; filter-FN rate jumped from 1% to 6% &mdash; truly relevant items were silently dropped before the ranker saw them. Recall@10 dropped because the ranker never got the chance to rerank them. Fix: lower the threshold back until filter-FN returns to budget, or upgrade the filter model to drop more at the same FN rate.", correct:true},
+          {key:"b", text:"GPU thermal throttling.", correct:false},
+          {key:"c", text:"LLM tokenizer drift.", correct:false},
+          {key:"d", text:"Cache TTL changed.", correct:false},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Threshold bumps must be validated against filter-FN, not just drop rate.</>}
+        stretch={<>What offline metric catches this in CI?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p15" difficulty="hard"
+        title="P15 &mdash; Intuitive but wrong: &ldquo;use a bigger filter model &mdash; same as a smaller version of the ranker&rdquo;"
+        scenario={<><em>Discriminating insight: making the filter as expensive as the ranker erases the latency savings. The filter should be ~10-100x cheaper than the ranker (e.g., distilled bi-encoder vs 7B LLM ranker). If the filter were a viable ranker on its own, you would not need AFR-Rank.</em><br/>Why is the naive view wrong?</>}
+        options={[
+          {key:"a", text:"The filter must be roughly 10-100x cheaper than the ranker for AFR-Rank to deliver a net latency win. A near-as-expensive filter erases the cost savings of culling. The filter&apos;s job is binary keep/drop with high recall, not ranking &mdash; a small distilled bi-encoder typically suffices. If the filter were a viable ranker, AFR-Rank would be pointless.", correct:true},
+          {key:"b", text:"Bigger filter is always better."},
+          {key:"c", text:"Filter and ranker should be the same model."},
+          {key:"d", text:"Filter size does not matter."},
+        ]}
+        trap={<>(b)(c)(d) erase the cascade economics.</>}
+        lens={<>Filter must be 10-100x cheaper than ranker, or the cascade has no win.</>}
+        stretch={<>How is the filter typically trained? (Distillation from the heavy ranker.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p16" difficulty="hard"
+        title="P16 &mdash; Wrong-assumption cascade"
+        scenario={<><em>Discriminating insight: assuming &ldquo;AFR-Rank is just BM25 in disguise&rdquo; cascades into picking a lexical filter (semantic-synonym risk), tuning threshold for filter accuracy not downstream recall (FN cost ignored), and not bounding filter-FN per surface (silent recall loss).</em><br/>What breaks?</>}
+        options={[
+          {key:"a", text:"All three: filter signal (BM25/lexical drops semantic synonyms; AFR&apos;s semantic filter does not), threshold objective (tuning for filter accuracy ignores asymmetric downstream cost &mdash; FN is permanent recall loss, FP is cheap rerank), and per-surface FN bound (without one, filter-FN drifts and recall silently degrades).", correct:true},
+          {key:"b", text:"Only filter signal."},
+          {key:"c", text:"Only threshold."},
+          {key:"d", text:"Nothing &mdash; it is just BM25 in disguise."},
+        ]}
+        trap={<>(d) the seductive misread.</>}
+        lens={<>Filter signal + threshold objective + per-surface FN bound jointly load-bearing.</>}
+        stretch={<>Which piece does the paper underspecify?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p17" difficulty="medium"
+        title="P17 &mdash; Senior vs junior framing on weak AFR-Rank lift"
+        scenario={<><em>Discriminating insight: junior bumps filter threshold. Senior first audits filter-FN budget (is it being measured per surface?) and the filter&apos;s semantic-synonym handling (would a swap to lexical degrade recall on long tails?). Without these, threshold tuning is blind.</em><br/>Which lever first?</>}
+        options={[
+          {key:"a", text:"Audit filter-FN per surface (is the FN budget defined, measured offline, alerted on?) and the filter&apos;s semantic-synonym coverage (would a long-tail vocabulary-mismatch query be dropped wrongly?). Without these, any threshold tuning is blind. Then tune threshold against downstream recall. Filter model upgrade comes last.", correct:true},
+          {key:"b", text:"Raise the threshold."},
+          {key:"c", text:"Switch to BM25."},
+          {key:"d", text:"Skip the filter."},
+        ]}
+        trap={<>(b)(c)(d) generic or off-topic.</>}
+        lens={<>Filter-FN measurement -&gt; synonym coverage -&gt; threshold tuning -&gt; filter model.</>}
+        stretch={<>Dashboard panel for filter-FN per query bucket?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p18" difficulty="hard"
+        title="P18 &mdash; Plausible-misattribution: recall cratered after re-training the filter on a newer label batch"
+        scenario={<><em>Discriminating insight: the new label batch was skewed toward popular queries; the filter learned that long-tail queries usually have few relevant items and started dropping survivors aggressively on long tails &mdash; popularity bias under the filter. Recall on long-tail queries cratered. Fix: rebalance the training set or use stratified sampling, not retrain the heavy ranker.</em><br/>Diagnosis?</>}
+        options={[
+          {key:"a", text:"The new label batch was skewed toward popular queries; the filter inherited popularity bias and started dropping survivors aggressively on long-tail queries (which the label batch underrepresented). Recall on long tails cratered while head queries looked fine. Fix: rebalance the filter&apos;s training set or use stratified sampling per query bucket; do not retrain the heavy ranker.", correct:true},
+          {key:"b", text:"GPU thermal throttling.", correct:false},
+          {key:"c", text:"Cache TTL changed.", correct:false},
+          {key:"d", text:"Index disk full.", correct:false},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Filter inherits label distribution; popularity bias drops long-tail recall.</>}
+        stretch={<>How to monitor long-tail filter-FN separately?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p19" difficulty="hard"
+        title="P19 &mdash; Production gotcha: filter drift after ranker upgrade"
+        scenario={<><em>Discriminating insight: if the filter was distilled from the heavy ranker&apos;s scores and the ranker is then upgraded (new model), the filter is now stale &mdash; it culls based on the OLD ranker&apos;s preferences. Filter-FN on items the new ranker would have promoted can spike. Fix: redistil the filter from the new ranker, or train it on relevance labels directly.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"The filter was distilled from the old ranker&apos;s scores; after a ranker upgrade the filter still culls per the OLD ranker&apos;s preferences. Filter-FN spikes on items the new ranker would have promoted. Fix: redistil the filter from the new ranker, or train it on relevance labels directly (not ranker scores). Schedule the redistillation as part of ranker rollout, not as an afterthought.", correct:true},
+          {key:"b", text:"Filter is independent of the ranker."},
+          {key:"c", text:"Filter does not need updating."},
+          {key:"d", text:"Always retrain the filter from scratch."},
+        ]}
+        trap={<>(b)(c)(d) miss the distillation linkage.</>}
+        lens={<>Distilled filter must be re-distilled when the source ranker upgrades.</>}
+        stretch={<>How to detect filter drift? (Monitor filter-FN under shadow on new-ranker scores.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p20" difficulty="hard"
+        title="P20 &mdash; Failure on Friday: recall down 12% after a filter-batch-size bump &lsquo;for throughput&rsquo;"
+        scenario={<><em>Discriminating insight: batch size of the filter went from 32 to 256; some pipelines apply LayerNorm or BatchNorm differently at batch=256 vs 32, shifting score distribution. Filter threshold is unchanged but the score scale shifted &mdash; effective threshold moved silently. Filter-FN spiked. Fix: re-calibrate threshold post-batch-size change; or freeze norm-layer statistics for inference.</em><br/>3am page: recall down 12%. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Increasing filter inference batch size from 32 to 256 shifted norm-layer statistics (BatchNorm running stats vs current batch, or LayerNorm numerical differences). The filter score distribution moved; the unchanged threshold now cuts at a different effective percentile and filter-FN spiked. Recall@K dropped. Fix: re-calibrate threshold against the new score distribution, or use frozen-norm inference so batch size does not affect scores.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"Cache TTL changed."},
+          {key:"d", text:"Tokenizer drift."},
+        ]}
+        trap={<>(b)(c)(d) infra decoys.</>}
+        lens={<>Batch-size change can shift score distribution; threshold must follow.</>}
+        stretch={<>Runbook entry for filter-batch-size changes?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p21" difficulty="medium"
+        title="P21 &mdash; Library default that bites: SentenceTransformers cosine vs dot-product"
+        scenario={<><em>Discriminating insight: SentenceTransformers ships some models with cosine similarity defaults and others with dot-product; the score range differs significantly. If the AFR-Rank filter threshold was tuned on cosine and you switch a model that defaults to dot-product (or vice versa), the threshold no longer corresponds to the calibrated cut point. Filter-FN spikes silently.</em><br/>Where does the default break?</>}
+        options={[
+          {key:"a", text:"SentenceTransformers ships models with different default similarity functions &mdash; some cosine ([-1,1]), some dot-product (unbounded). Threshold tuned on one does not transfer to the other. Pin the similarity function explicitly (cosine OR dot-product) and re-calibrate the threshold when changing model variants. Many silent filter-FN incidents trace here.", correct:true},
+          {key:"b", text:"Default learning rate is wrong."},
+          {key:"c", text:"Default batch size is wrong."},
+          {key:"d", text:"Default optimizer is wrong."},
+        ]}
+        trap={<>(b)(c)(d) generic.</>}
+        lens={<>Pin similarity function explicitly; re-calibrate on swap.</>}
+        stretch={<>What unit test catches this? (Score-distribution assertion on a golden set.)</>}
+      />
+
+      <VIS.TrapProblem id="pr-p22" difficulty="hard" ordered
+        title="P22 &mdash; Order the AFR-Rank rollout"
+        scenario={<><em>Discriminating insight: rollout = (1) define filter-FN budget per surface, (2) build cheap semantic filter (distil from ranker or train on labels), (3) calibrate threshold against downstream recall, (4) wire shadow vs full-rerank baseline, (5) enable per-surface FN monitoring, (6) launch, (7) schedule redistillation tied to ranker upgrades.</em><br/>Order.</>}
+        options={[
+          {key:"a", text:"Define filter-FN budget per surface -&gt; build cheap semantic filter (distillation from heavy ranker or supervised on labels) -&gt; calibrate threshold against downstream recall@K (not filter accuracy) -&gt; shadow vs full-rerank baseline -&gt; enable per-surface filter-FN monitoring -&gt; launch -&gt; schedule filter redistillation as part of ranker upgrade", correct:true},
+          {key:"b", text:"Use BM25 as the filter."},
+          {key:"c", text:"Tune threshold for filter accuracy."},
+          {key:"d", text:"Launch without shadow."},
+        ]}
+        trap={<>(b)(c)(d) lose stage diagnostics or correctness.</>}
+        lens={<>FN budget -&gt; filter -&gt; threshold -&gt; shadow -&gt; monitoring -&gt; launch -&gt; redistil-on-upgrade.</>}
+        stretch={<>Why FN-budget before filter build?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p23" difficulty="hard"
+        title="P23 &mdash; Smallest input that breaks the claimed advantage"
+        scenario={<><em>Discriminating insight: a candidate set of N=200 items where every item is plausible (no obvious non-matches &mdash; e.g., a curated catalog where retrieval already filtered hard) collapses AFR-Rank&apos;s gain. The filter has nothing to drop without hitting filter-FN risk; the latency win vanishes; the rerank ranker still sees ~all candidates plus the filter overhead.</em><br/>Construct the edge case.</>}
+        options={[
+          {key:"a", text:"A curated candidate set of N=200 where every item is plausible (no obvious non-matches &mdash; retrieval already filtered hard). The filter cannot drop items without risking filter-FN; the latency win vanishes while the filter overhead remains. AFR-Rank degenerates to &lsquo;full rerank plus filter overhead&rsquo; &mdash; a strict regression vs vanilla rerank.", correct:true},
+          {key:"b", text:"N=500 + 7B LLM + 400ms budget (canonical fit)."},
+          {key:"c", text:"100M users."},
+          {key:"d", text:"Catalog of 50M items."},
+        ]}
+        trap={<>(b) canonical fit. (c)(d) scale red herrings.</>}
+        lens={<>Existence of obvious non-matches is the premise.</>}
+        stretch={<>How to detect &lsquo;all-plausible&rsquo; candidate sets pre-AFR?</>}
+      />
+
+      <VIS.TrapProblem id="pr-p24" difficulty="hard"
+        title="P24 &mdash; AFR-Rank stacking with REALM &mdash; coexistence?"
+        scenario={<><em>Discriminating insight: they are complementary, not competing. AFR-Rank culls the pool (e.g., 500 -&gt; 150); REALM then recursively reranks the 150 with feature passing across K=2-3 stages. The cascade gives both throughput from culling and accuracy from compounded refinement.</em><br/>Pick.</>}
+        options={[
+          {key:"a", text:"They are complementary. AFR-Rank&apos;s filter culls the candidate set from N=500 to ~150 survivors. REALM then runs K=2-3 recursive setwise stages over the 150 with feature passing &mdash; smaller pool means each stage&apos;s window covers a larger fraction of the survivors and recursion compounds faster. Net: latency from AFR&apos;s cull plus accuracy from REALM&apos;s compounding.", correct:true},
+          {key:"b", text:"They cannot coexist."},
+          {key:"c", text:"AFR-Rank replaces REALM."},
+          {key:"d", text:"REALM replaces AFR-Rank."},
+        ]}
+        trap={<>(b)(c)(d) miss the cascade composition.</>}
+        lens={<>AFR-Rank cuts pool size; REALM compounds on survivors.</>}
+        stretch={<>Why not REALM first then AFR? (Filter is cheap; cull early.)</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://www.sciencedirect.com/science/article/abs/pii/S0306457325001736" target="_blank" rel="noopener">Anon. — <em>AFR-Rank: Adaptive Filter-then-Rank for LLM Listwise Reranking</em> (IPM 2025, paper)</a> — the canonical AFR-Rank reference with the adaptive threshold design.</li>
-        <li><a href="https://arxiv.org/abs/2304.09542" target="_blank" rel="noopener">Sun et al. — <em>Is ChatGPT Good at Search? Investigating LLMs as Re-Ranking Agents</em> (arXiv 2023, paper)</a> — baseline listwise LLM reranker that AFR improves on.</li>
-        <li><a href="https://www.pinecone.io/learn/series/rag/rerankers/" target="_blank" rel="noopener">Pinecone — <em>Rerankers in RAG</em> (pinecone.io, blog)</a> — practical primer on where rerankers sit in the RAG stack and how cascades like AFR fit in.</li>
-        <li><a href="https://huggingface.co/cross-encoder" target="_blank" rel="noopener">Hugging Face — <em>Cross-Encoders</em> (model hub)</a> — ready-made cross-encoders suitable as the AFR filter stage.</li>
-        <li><a href="https://lilianweng.github.io/posts/2020-10-29-odqa/" target="_blank" rel="noopener">Lilian Weng — <em>How to Build an Open-Domain Question Answering System</em> (lilianweng.github.io, blog)</a> — broader context on retrieve-then-rerank cascades that AFR slots into.</li>
+        <li><a href="https://arxiv.org/abs/2504.10548" target="_blank" rel="noopener">AFR-Rank: Adaptive Filter Ranking for Long-List LLM Reranking (2025)</a> &mdash; the canonical paper. Sections on threshold calibration and filter-FN measurement are the must-reads.</li>
+        <li><a href="https://www.pinecone.io/learn/series/rag/rerankers/" target="_blank" rel="noopener">Pinecone &mdash; <em>Rerankers and Two-Stage Retrieval</em> (blog)</a> &mdash; practitioner overview of the retrieval -&gt; rerank pipeline that AFR-Rank lives inside.</li>
+        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener">Eugene Yan &mdash; <em>System Design for Discovery</em> (blog)</a> &mdash; the canonical multi-stage funnel framing (retrieve -&gt; filter -&gt; rank); useful for understanding where AFR-Rank fits.</li>
+        <li><a href="https://www.sbert.net/" target="_blank" rel="noopener">SentenceTransformers documentation</a> &mdash; the typical filter-model toolkit (bi-encoder, cross-encoder, distillation recipes). Cosine vs dot-product gotcha is in P21.</li>
+        <li><a href="https://arxiv.org/abs/2002.10957" target="_blank" rel="noopener">MiniLM: Deep Self-Attention Distillation (NeurIPS 2020)</a> &mdash; canonical distillation method commonly used to build cheap filter models from heavy rerankers.</li>
+        <li><a href="https://en.wikipedia.org/wiki/Precision_and_recall" target="_blank" rel="noopener">Wikipedia &mdash; <em>Precision and Recall</em></a> &mdash; the FN/FP asymmetry framing that drives threshold tuning.</li>
       </ul>
     </VIS.Section>
   </main>
