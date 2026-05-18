@@ -1414,321 +1414,567 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// Prototypical networks for fraud typology — Fraud SOTA · Few-shot / meta-learning for fraud
-// Class prototypes per fraud MO; new MO equals new prototype, no retraining required.
+// Prototypical networks for fraud typology (Snell et al. NeurIPS 2017 -> 'ProtoFraud' IJCAI 2024)
+// v2 redo - 30+ trap problems spanning A-F. Concept anchor: each fraud MO is a
+// CLASS PROTOTYPE - the MEAN of support embeddings in a shared metric space.
+// New MO = new prototype; add at INFERENCE without retraining. Discriminator vs
+// softmax classifier (needs retraining per new class), vs MAML (parameter
+// adaptation, less stable), vs k-NN (no learned metric).
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="Fraud SOTA · Few-shot / meta-learning for fraud"
-      title="Prototypical networks for fraud typology"
-      subtitle="Per-class prototypes in embedding space — adding a new fraud MO costs zero training, just one new centroid."
+      pill="Fraud SOTA - few-shot / meta-learning"
+      title="ProtoFraud - Prototypical Networks for fraud typology"
+      subtitle="Each fraud modus operandi (MO) is represented by the MEAN of its K labeled examples' embeddings in a shared metric space. New MOs become new prototypes at INFERENCE - no retraining."
       byline={[
-        {label: "Source", value: "Snell et al. ProtoNet (NeurIPS 2017); ProtoFraud (IJCAI 2024)"},
+        {label: "Paper", value: "Snell et al. ProtoNet (NeurIPS 2017); 'ProtoFraud' (IJCAI 2024)"},
         {label: "Year", value: "2024"},
-        {label: "L3", value: "Few-shot fraud typology"},
+        {label: "Domain", value: "Fast-growing fraud typology (crypto, scams)"},
       ]}/>
 
     <VIS.TLDR>
-      A standard softmax classifier hard-codes the class set at training time — adding a new fraud modus operandi (e.g. crypto-rug-pull variant #47) requires retraining the head and shipping a new model.{" "}
-      <VIS.Term def="A few-shot classifier (Snell et al., NeurIPS 2017) that represents each class as the mean embedding of its support examples (the 'prototype'). At inference, a new point is classified by nearest prototype under a learned distance.">Prototypical Networks (ProtoNet)</VIS.Term>{" "}
-      represent each class as a centroid in embedding space; you can add a new MO by averaging ~5-10 example embeddings — no retraining required.
+      Fraud typology grows weekly - new scam variants (pig-butchering, rug-pull, address-poisoning, AI-voice impersonation). A softmax classifier with class C+1 requires retraining + holdout + validation, blocking new-MO response by days-to-weeks. <VIS.Term def="Prototypical Networks - represent each class as the centroid (mean) of its support-set embeddings. Classify new instances by nearest prototype in the shared metric space.">ProtoNet</VIS.Term> represents each MO as a centroid of its K labeled examples in a metric-learned embedding space; new MO arrives, you embed its K examples, take the mean - DONE. The transaction is classified by nearest prototype. No retraining, no holdout, no validation pipeline. Sibling: MAML (parameter-adapting, less stable, more expressive). ProtoNet is the production default; MAML is the escalation. Source: <a href="https://arxiv.org/abs/1703.05175" target="_blank" rel="noopener">arXiv:1703.05175</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 - What it is">
       <p>
-        Train an embedding encoder f(x) using episodic meta-training. Each episode samples N classes and K labelled examples per class (the "support set"), plus Q query points. The loss pushes query points toward their true class prototype (the mean of K support embeddings) and away from other prototypes. At deployment time, you compute one prototype per fraud MO from its known examples. A new transaction is classified by computing its embedding and assigning it to the nearest prototype under a learned distance (typically Euclidean or cosine).
+        Train a feature encoder phi using episodic training (sample N classes per episode, K support per class, M query per class; compute prototypes as mean(phi(support_k)); classify queries by softmax over negative Euclidean distance to prototypes; minimise cross-entropy). At inference, for any new MO with K labels, embed and average; the resulting prototype joins the score-by-nearest-prototype loop. No weights are updated at inference.
       </p>
       <VIS.Mermaid chart={`
-flowchart TB
-  SUP["Support set per MO"] --> ENC["Encoder f(x)"]
-  ENC --> PROTO["Class prototypes c_k"]
-  NEW["New transaction"] --> ENC2["Encoder f(x)"]
-  ENC2 --> EMB["Query embedding"]
-  EMB --> DIST["Distance to all c_k"]
-  PROTO --> DIST
-  DIST --> CLASS["Nearest prototype = predicted MO"]
-  style ENC fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px
-  style PROTO fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+flowchart LR
+  S["MO j support:\\nK labeled txns"]
+  E["Encoder phi"]
+  P["Prototype c_j = mean(phi)"]
+  X["Query transaction"]
+  D["Distance to all prototypes\\n(softmax over -dist)"]
+  Y["Predicted MO"]
+  S --> E --> P
+  X --> E --> D
+  P --> D --> Y
+  style P fill:#dbeafe,stroke:#1e40af,stroke-width:2px
       `} />
-      <p>The encoder f does the work; prototypes are a one-line aggregation. Adding a new MO means computing one new prototype — no gradient steps, no retraining, no model redeploy.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from a softmax classifier">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead>
-          <tr style={{background:"#1f3a5f", color:"#fff"}}>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Softmax classifier</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>ProtoNet</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Class representation</td>
-            <td style={{padding:"8px 10px"}}>Weight row per class</td>
-            <td style={{padding:"8px 10px"}}>Mean embedding (prototype)</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Add new class cost</td>
-            <td style={{padding:"8px 10px"}}>Retrain head + redeploy</td>
-            <td style={{padding:"8px 10px"}}>Compute one centroid</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Minimum examples per class</td>
-            <td style={{padding:"8px 10px"}}>~hundreds typically</td>
-            <td style={{padding:"8px 10px"}}>~5-10 (few-shot)</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Decision boundary</td>
-            <td style={{padding:"8px 10px"}}>Linear in embedding</td>
-            <td style={{padding:"8px 10px"}}>Voronoi cells around prototypes</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Failure mode</td>
-            <td style={{padding:"8px 10px"}}>Overfits at small N</td>
-            <td style={{padding:"8px 10px"}}>Drifts when MOs move in feature space</td>
-          </tr>
-        </tbody>
-      </table>
+    <VIS.Section id="sec-diff" title="Beat 2 - How it differs from softmax classifier, MAML, k-NN">
+      <p>
+        <strong>Softmax classifier.</strong> Learns weight vectors per class; output is dot(W_c, phi(x)) + b_c. To add a new class C+1 you have to LEARN a new weight vector W_(C+1) - which requires retraining (or at least optimising W_(C+1) with the rest frozen). Cannot add a class at pure inference.
+      </p>
+      <p>
+        <strong>MAML (Meta-GNN).</strong> Updates PARAMETERS via inner-loop SGD on the new class's support. More expressive (model parameters adapt) but bi-level training is unstable; ProtoNet trains in hours, MAML in days.
+      </p>
+      <p>
+        <strong>k-NN.</strong> Stores all support points; classifies by nearest neighbour in a fixed feature space. No learned metric - k-NN distance in raw feature space is dominated by irrelevant variance. ProtoNet trains the METRIC SPACE itself via episodic training; the prototype is the centroid in that learned space.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick">
-      <ul>
-        <li><strong>Frequent new fraud MO discovery</strong> — crypto exchanges, marketplaces, BNPL — where new attack variants emerge weekly.</li>
-        <li><strong>Labels are scarce per MO</strong> — analysts can hand-label 10 examples of a new MO in a day, but not 1000.</li>
-        <li><strong>The fraud taxonomy is open-ended</strong> — softmax requires a fixed class count; ProtoNet has none.</li>
-        <li><strong>Latency budget allows nearest-prototype lookup</strong> — at K classes, inference is K dot products after one forward pass; manageable up to K ~ 1000.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 - When to pick it">
+      <p>
+        Pick ProtoNet when (a) typology grows continuously (new fraud MOs weekly), (b) per-MO label volume is small (K = 5-50), (c) MOs are well-separated in feature space (verified - measure inter-prototype distance vs intra-prototype variance), (d) latency budget allows distance computation to N prototypes per query (or you prune to top-K prototypes), (e) you need fast deployment of new MOs without retraining cycle.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations &amp; gotchas">
-      <VIS.Callout kind="gotcha" title="Prototypes degrade when MOs drift in feature space">
-        Attackers move. A prototype computed in January may sit in the wrong region by July. Refresh prototypes periodically (weekly is a typical cadence) using freshly adjudicated labels.
+    <VIS.Section id="sec-gotchas" title="Beat 4 - Limitations and gotchas">
+      <VIS.Callout kind="gotcha" title="Prototypes degrade if MOs DRIFT in feature space">
+        A prototype is a static centroid computed at the time the MO was added. If the MO's transactions drift over time (adversaries evolve their pattern), the prototype becomes stale. Need periodic recomputation OR an online prototype-update mechanism.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="The encoder is fixed — but the world is not">
-        ProtoNet's promise of zero retraining only holds while the encoder f(x) generalises. When a new MO uses features the encoder never saw (e.g. a new payment rail), no number of prototypes will rescue it; the encoder itself needs an update.
+      <VIS.Callout kind="gotcha" title="Mean-centroid is sensitive to support outliers">
+        At K=10, one mislabeled positive shifts the prototype meaningfully. ProtoNet's robustness to label noise is lower than discriminative classifiers (which average over all training data). Curate support carefully.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="Prototype contamination from noisy labels">
-        One mislabelled example in a 10-shot support set shifts the centroid by ~10 percent. ProtoNet is more fragile than softmax to label noise per class. Mitigate with robust mean (median, trimmed mean) or by hand-vetting the support set.
+      <VIS.Callout kind="gotcha" title="Equal-prior softmax assumption">
+        Softmax over distances assumes uniform prior over MOs. In fraud, MO base rates are HEAVILY skewed (1 popular MO -> 90% of fraud; 50 rare MOs -> 10%). Need to either (a) re-weight scores by MO prior or (b) calibrate post-hoc.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+    <VIS.Section id="sec-drill" title="Drill - trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Ten interview traps on ProtoNet, fraud-typology growth, and prototype maintenance.
+        Problems span the 6 taxonomy axes. Strip "ProtoNet" - each correct answer must still hinge on the specific mechanism (class-centroid in a metric-learned space, add-at-inference, no parameter updates per new class).
       </p>
 
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity and comparison</h3>
+
       <VIS.TrapProblem
-        id="proto-p1"
+        id="proto-a1"
         difficulty="hard"
-        title="P1 — Why does ProtoNet work for fraud typology growth when softmax cannot?"
-        scenario={<>You are explaining to a junior engineer why your team chose ProtoNet over softmax for the fraud-MO classification head. New MOs are discovered approximately once a week. What is the strongest single-sentence justification?</>}
+        title="A1 - Why ProtoNet works for fraud typology growth when softmax cannot"
+        scenario={<>Your lead asks "we already have a softmax fraud classifier - why is ProtoNet different for new MOs?" Pick the real discriminator.</>}
         options={[
-          {key:"a", text:"ProtoNet's encoder learns a metric space where SAME-MO examples cluster and DIFFERENT-MO examples separate; adding a new MO is just one new cluster center, no head retrain required.", correct:true},
-          {key:"b", text:"ProtoNet is more accurate than softmax."},
-          {key:"c", text:"ProtoNet doesn't need any labels."},
-          {key:"d", text:"ProtoNet can handle imbalanced classes natively."},
+          {key:"a", text:"A softmax classifier learns a weight vector W_c per class - the LAST LAYER's parameters encode 'what class C looks like.' Adding class C+1 requires LEARNING W_(C+1), which means retraining (or at least fine-tuning the last layer with held-out data). ProtoNet replaces W_c with the MEAN of support embeddings in a shared metric space; adding class C+1 is just embed + average - no parameters update, no retraining. The architecture changes the unit of representation from a learned weight to a computed centroid.", correct:true},
+          {key:"b", text:"They are the same."},
+          {key:"c", text:"Softmax does not use embeddings."},
+          {key:"d", text:"ProtoNet uses more parameters."},
         ]}
-        trap={<>(b) is an over-claim — accuracy depends on the encoder. (c) is false — you need 5-10 labels per MO. (d) confuses different problems.</>}
-        lens={<>(a). The key idea is that ProtoNet learns a STRUCTURE OF SPACE rather than a fixed set of weight rows. Once the space is good, adding classes is cheap. Softmax bakes the class set into the weight matrix.</>}
-        stretch={<>What happens if the new MO is entirely outside the manifold the encoder learned?</>}
+        trap={<>(b), (c), (d) miss the weight-vs-centroid discriminator.</>}
+        lens={<>The discriminator is REPRESENTATION OF A CLASS: learned weight vs computed centroid. Centroids can be added at inference; weights cannot.</>}
+        stretch={<>Could you add a class to a softmax model without retraining via output-bias tricks?</>}
       />
 
       <VIS.TrapProblem
-        id="proto-p2"
+        id="proto-a2"
         difficulty="hard"
+        title="A2 - Definitional trap: ProtoNet vs k-NN"
+        scenario={<>A teammate says "ProtoNet is just k-NN with a fancy distance function." Distinguish.</>}
+        options={[
+          {key:"a", text:"k-NN stores ALL support points and classifies by majority of the K nearest - the FEATURE SPACE is whatever it is (often raw features). ProtoNet (i) LEARNS the embedding space via episodic training so that points of the same class cluster, (ii) replaces the K stored points with their MEAN (prototype), and (iii) classifies by softmax over negative distance. The metric-learning step is the key - in a learned space, the centroid IS a meaningful class representative; in raw feature space it is not.", correct:true},
+          {key:"b", text:"They are identical."},
+          {key:"c", text:"k-NN uses no metric."},
+          {key:"d", text:"ProtoNet stores all support points like k-NN."},
+        ]}
+        trap={<>(b), (c), (d) confuse the algorithms.</>}
+        lens={<>The metric-learning step distinguishes ProtoNet. Without it, you have k-means clustering on raw features - which doesn't work for fraud.</>}
+        stretch={<>When would k-NN with a strong feature engineer beat ProtoNet?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-a3"
+        difficulty="hard"
+        title="A3 - Counterfactual: no ProtoNet"
+        scenario={<>Without ProtoNet, what is the strongest fallback for fast-growing fraud typology?</>}
+        options={[
+          {key:"a", text:"Stack: (i) a binary fraud classifier (catches whether-fraud at the global level), (ii) a clustering/embedding model that groups labeled examples of each new MO and computes a centroid manually (essentially ProtoNet without episodic training), (iii) MAML for the harder MOs where the centroid is not sufficient. The stack approximates ProtoNet's behaviour but takes more engineering and lacks the learned metric.", correct:true},
+          {key:"b", text:"Retrain softmax weekly per new MO."},
+          {key:"c", text:"You cannot do this without ProtoNet."},
+          {key:"d", text:"Use CAPTCHAs."},
+        ]}
+        trap={<>(b) is operationally painful. (c) overstates ProtoNet's uniqueness.</>}
+        lens={<>The honest fallback is binary + embedding-centroid + MAML stack. ProtoNet consolidates these into one trained model.</>}
+        stretch={<>Which alternative scales worst as the typology grows fastest?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-a4"
+        difficulty="hard"
+        title="A4 - Compose ProtoNet with a binary fraud detector"
+        scenario={<>You stack a binary fraud detector (P(fraud)) with ProtoNet (P(MO_k | fraud)). What is the right framing?</>}
         multiSelect
-        title="P2 — Distance metric: Euclidean, cosine, or Mahalanobis?"
-        scenario={<>Snell et al. originally used squared Euclidean. Cosine is popular in retrieval. Mahalanobis weights by inverse covariance. Which choices are defensible for fraud ProtoNet? Select all that apply.</>}
         options={[
-          {key:"a", text:"Squared Euclidean — the original paper choice; works well when the encoder is trained jointly with the metric.", correct:true},
-          {key:"b", text:"Cosine — natural when you L2-normalise embeddings (common in fraud retrieval pipelines).", correct:true},
-          {key:"c", text:"Mahalanobis with a global covariance estimated from training embeddings — captures axis-wise scale differences.", correct:true},
-          {key:"d", text:"Hamming distance over binary features."},
-          {key:"e", text:"KL divergence between embeddings."},
+          {key:"a", text:"The two scores answer different questions and are nearly orthogonal: binary catches 'is this fraud,' ProtoNet catches 'WHICH fraud.' Combining via product (P(fraud) * P(MO_k | fraud)) gives a per-MO confidence score.", correct:true},
+          {key:"b", text:"ProtoNet's softmax prior assumption (equal MO priors) needs correction by the actual MO base rate before product.", correct:true},
+          {key:"c", text:"If the binary detector is very confident the transaction is fraud but ProtoNet is uncertain about WHICH MO, route to investigator review with a NEW-MO candidate flag - the transaction may be a new MO not yet in the prototype bank.", correct:true},
+          {key:"d", text:"ProtoNet should replace the binary detector."},
         ]}
-        trap={<>(d) only applies to discrete spaces. (e) is a category error — KL is for distributions, not points.</>}
-        lens={<>(a), (b), (c). Pick by what you can train the encoder to optimise. Squared Euclidean is the safest default; cosine is the right choice when you serve embeddings via approximate nearest neighbour (ANN) indexes; Mahalanobis only when you have stable covariance estimates.</>}
-        stretch={<>If you migrate from Euclidean to cosine post-training, what changes in your prototype computation?</>}
+        trap={<>(d) is wrong - ProtoNet does not answer the whether-fraud question well.</>}
+        lens={<>The composition is high-leverage. The product score gives per-MO confidence; low-ProtoNet-confidence on high-binary-confidence is the new-MO signal.</>}
+        stretch={<>What threshold for the new-MO flag would you set?</>}
       />
 
       <VIS.TrapProblem
-        id="proto-p3"
+        id="proto-a5"
         difficulty="hard"
-        title="P3 — A label was wrong in the 10-example support set"
-        scenario={<>An analyst submitted 10 examples for a new MO. After deployment, you discover one of those 10 was actually a different (already-known) MO. The prototype was shifted by ~10 percent off center. What is the cleanest fix?</>}
+        title="A5 - Boundary: where ProtoNet stops working"
+        scenario={<>At what typology size does ProtoNet's add-MO-at-inference advantage break down?</>}
         options={[
-          {key:"a", text:"Retrain the entire encoder."},
-          {key:"b", text:"Recompute the prototype after removing the bad example — cheap and immediate.", correct:true},
-          {key:"c", text:"Add 50 more examples to drown the bad one in good ones."},
-          {key:"d", text:"Switch the prototype from mean to median (more robust to outliers)."},
+          {key:"a", text:"When the prototype count grows large enough that the softmax-over-distances loses discriminative power - the model spreads probability across N prototypes, each gets a small share. With more than approximately 200-500 prototypes, calibration degrades sharply. Fix: cluster prototypes hierarchically (route to a top-level family first, then a leaf prototype) OR re-train the encoder periodically as the typology grows.", correct:true},
+          {key:"b", text:"ProtoNet always works."},
+          {key:"c", text:"At exactly 10 prototypes."},
+          {key:"d", text:"Only on small datasets."},
         ]}
-        trap={<>(a) is overkill. (c) is slow and assumes analyst capacity. (d) is a defensible long-term improvement but the immediate question is fix this prototype now.</>}
-        lens={<>(b). One of ProtoNet's superpowers is that prototypes are stateless — you can recompute one in a second. The bad example is gone the moment you re-aggregate. (d) is a good next-step engineering hardening; (b) is the patch.</>}
-        stretch={<>How would you build an "outlier flag" into the prototype-builder so this is caught automatically?</>}
+        trap={<>(b), (c), (d) miss the prototype-count scaling.</>}
+        lens={<>ProtoNet's softmax-over-prototypes scales sub-linearly in calibration. Hierarchical routing extends the range.</>}
+        stretch={<>How would you implement the hierarchical prototype tree?</>}
       />
 
-      <VIS.TrapProblem
-        id="proto-p4"
-        difficulty="hard"
-        multiSelect
-        title="P4 — Episodic meta-training: which design choices matter most?"
-        scenario={<>You are training the ProtoNet encoder using episodic meta-training. Which design choices materially affect downstream few-shot fraud accuracy? Select all that apply.</>}
-        options={[
-          {key:"a", text:"N-way (how many MOs per episode) — closer to the deployment N is better.", correct:true},
-          {key:"b", text:"K-shot (examples per class per episode) — closer to the deployment K is better.", correct:true},
-          {key:"c", text:"Query-set size per episode — larger gives smoother gradient.", correct:true},
-          {key:"d", text:"The number of episodes per epoch (training schedule).", correct:true},
-          {key:"e", text:"Whether to use Adam or SGD (orthogonal to the meta-training design)."},
-          {key:"f", text:"Whether each episode uses the same loss function."},
-        ]}
-        trap={<>(e) is a general training detail, not ProtoNet-specific. (f) is hand-wavy.</>}
-        lens={<>(a), (b), (c), (d). The matching principle: the more your episodes look like deployment, the better the encoder generalises. If at deployment you have 20 MOs and 5 examples each, train episodes with N=20, K=5. Mismatch costs accuracy.</>}
-        stretch={<>If your deployment will see anywhere from 5 to 200 MOs, what N-way schedule would you adopt?</>}
-      />
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>B. Application</h3>
 
       <VIS.TrapProblem
-        id="proto-p5"
+        id="proto-b1"
         difficulty="medium"
-        title="P5 — Prototype drift: monthly or weekly refresh?"
-        scenario={<>Fraud MOs drift as attackers adapt. Your team debates: refresh prototypes monthly (cheaper, less noisy) or weekly (more responsive). Which signal helps you choose?</>}
+        title="B1 - Pick the right tool given the scenario"
+        scenario={<>Scenario: crypto exchange, new scam variants discovered weekly (60+ MOs and growing), each variant has 5-30 labeled transactions, current softmax model takes 5 days from new-MO discovery to deployment, scoring SLA 50ms, ~80 distinct MOs currently. Pick the next investment.</>}
         options={[
-          {key:"a", text:"Always weekly — fraud changes fast."},
-          {key:"b", text:"Measure prototype-shift magnitude week-over-week on a held-out adjudication stream; pick the cadence where shift is meaningful but not noise-dominated.", correct:true},
-          {key:"c", text:"Always monthly — weekly is too noisy."},
-          {key:"d", text:"Refresh on every new label arrival."},
+          {key:"a", text:"Train ProtoNet on the existing 80 MOs episodically; deploy a prototype-bank service that allows adding new MOs at inference (embed K labels, mean, push to bank). New-MO time-to-deploy drops from 5 days to under 1 hour. The 80 prototypes well within the calibration-stable range; the 50ms SLA absorbs the 80-prototype distance loop.", correct:true},
+          {key:"b", text:"Just retrain softmax weekly."},
+          {key:"c", text:"Use a CAPTCHA."},
+          {key:"d", text:"Wait until each MO has 1000 labels."},
         ]}
-        trap={<>(a) and (c) are dogmatic. (d) creates a noisy moving target.</>}
-        lens={<>(b). Cadence is an empirical choice that depends on your MO-drift rate. Track the L2 distance between successive prototypes; when it exceeds a calibrated threshold, refresh. This is automated drift-triggered refresh, like ADWIN for prototypes.</>}
-        stretch={<>How would you discriminate genuine drift from noise in the prototype-distance time-series?</>}
+        trap={<>(b) keeps the 5-day cycle. (c), (d) ignore the typology-growth problem.</>}
+        lens={<>The scenario is the canonical ProtoNet regime - fast typology growth, low K, well-bounded prototype count.</>}
+        stretch={<>What happens at 500 MOs?</>}
       />
 
       <VIS.TrapProblem
-        id="proto-p6"
+        id="proto-b2"
         difficulty="hard"
+        title="B2 - Sounds reasonable but isn't: 'use median instead of mean for the prototype'"
+        scenario={<>A teammate suggests "use the MEDIAN embedding instead of the mean to make ProtoNet robust to label-noise outliers." Why is this specifically wrong for ProtoNet?</>}
+        options={[
+          {key:"a", text:"The ProtoNet TRAINING objective is to minimise distance to the MEAN-prototype across episodes. The encoder phi is optimised to produce embeddings whose MEAN is class-discriminative. If you swap to median at inference, you are using an objective the encoder was not trained for - the median may not be in the cluster centre of phi's learned space. Either retrain ProtoNet with a median objective (research-level, not standard) or stick with the mean. The label-noise fix is curating the support, not changing the aggregator.", correct:true},
+          {key:"b", text:"Median is always better than mean."},
+          {key:"c", text:"Median requires no training."},
+          {key:"d", text:"Median is identical to mean in embedding space."},
+        ]}
+        trap={<>(b) is the naive belief.</>}
+        lens={<>The encoder is trained for the mean. Changing the aggregator at inference breaks the training-inference consistency.</>}
+        stretch={<>Could you retrain ProtoNet with a median objective? What gradient issue arises?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-b3"
+        difficulty="hard"
+        title="B3 - Pitch ProtoNet to the fraud-ops lead"
+        scenario={<>The fraud-ops lead asks "why ProtoNet and not just retrain the softmax classifier?" Pick the pitch that requires understanding the ProtoNet mechanism.</>}
+        options={[
+          {key:"a", text:"A softmax model encodes each MO as a LEARNED WEIGHT VECTOR. Adding the new pig-butchering variant means RETRAINING that vector - new labels, holdout, validation, deployment - the 5-day cycle. ProtoNet encodes each MO as the AVERAGE of its labeled embeddings in a shared metric space. To add the new MO, we embed the 10 labeled examples we have, average them, and push to the prototype bank. New-MO is online within minutes, not days. The change is the unit of representation - learned weight vs computed centroid.", correct:true},
+          {key:"b", text:"ProtoNet is state of the art."},
+          {key:"c", text:"ProtoNet reduces FPs."},
+          {key:"d", text:"ProtoNet uses fewer parameters."},
+        ]}
+        trap={<>(b), (c), (d) are unspecific.</>}
+        lens={<>The concept-specific pitch names the unit-of-representation change and the cycle-time impact. Strip "ProtoNet" - the listener must understand "centroid in a metric space can be added without retraining" to evaluate.</>}
+        stretch={<>What is the labeled-example minimum that lets you add an MO safely?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-b4"
+        difficulty="hard"
+        title="B4 - When NOT to use ProtoNet"
+        scenario={<>Which scenarios are ProtoNet anti-patterns?</>}
         multiSelect
-        title="P6 — Prototype confidence: how do you say 'I don't know'?"
-        scenario={<>A new transaction's embedding sits far from EVERY known prototype. Vanilla ProtoNet still returns a class (the least-far one). Which mechanisms let you abstain or flag for review? Select all that apply.</>}
         options={[
-          {key:"a", text:"Threshold on the distance to the nearest prototype — if greater than tau, route to human review.", correct:true},
-          {key:"b", text:"Threshold on the SOFTMAX margin between nearest and second-nearest prototype — confident only when well-separated.", correct:true},
-          {key:"c", text:"Maintain a 'no-MO' prototype computed from random legitimate transactions; if the query is closest to that prototype, abstain.", correct:true},
-          {key:"d", text:"Always output a class — abstention is not a ProtoNet capability."},
-          {key:"e", text:"Use temperature scaling on the softmax over distances to get calibrated probabilities, then threshold the max-prob.", correct:true},
+          {key:"a", text:"Stable typology (few MOs, none added in months) - softmax classifier is simpler and stronger.", correct:true},
+          {key:"b", text:"MO distributions are not well-clustered in any embedding space (e.g. an MO has multimodal feature signature) - the mean prototype is not a good representative.", correct:true},
+          {key:"c", text:"Per-MO base rates are heavily imbalanced and you cannot calibrate post-hoc.", correct:true},
+          {key:"d", text:"Continuous typology growth with K=5-30 labels per MO."},
         ]}
-        trap={<>(d) is false — ProtoNet naturally supports abstention through distance thresholding.</>}
-        lens={<>(a), (b), (c), (e). Four orthogonal mechanisms. (a) is the simplest. (b) catches ambiguous cases even when the nearest is close. (c) is a clever trick for distinguishing 'unknown fraud MO' from 'not fraud at all.' (e) gives you calibrated probabilities to feed downstream cost-sensitive decisions.</>}
-        stretch={<>Which of (a)(b)(c)(e) breaks first when MOs start to overlap in embedding space?</>}
+        trap={<>(d) is the canonical ProtoNet-fits regime.</>}
+        lens={<>Three anti-patterns: stable typology, multimodal MOs, severe imbalance without calibration. Each maps to a different alternative.</>}
+        stretch={<>For multimodal MOs, what mechanism would you use instead of a single prototype?</>}
       />
 
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>C. Mechanism</h3>
+
       <VIS.TrapProblem
-        id="proto-p7"
+        id="proto-c1"
         difficulty="hard"
-        title="P7 — ProtoNet on tabular fraud: pre-encoder design"
-        scenario={<>Tabular fraud (numerical + categorical features) does not have an obvious encoder backbone. Which design is the soundest first try?</>}
+        title="C1 - Architectural choice: why Euclidean distance (not cosine)"
+        scenario={<>The original ProtoNet paper uses negative Euclidean distance for the softmax logits. Why not cosine similarity?</>}
         options={[
-          {key:"a", text:"A multi-layer perceptron over standardised numerical features and embedded categoricals, jointly trained with the ProtoNet loss.", correct:true},
-          {key:"b", text:"Borrow a ResNet-50 backbone from vision and feed it tabular rows as images."},
-          {key:"c", text:"Use the raw feature vector as the embedding (no encoder)."},
-          {key:"d", text:"Train an XGBoost model on top of ProtoNet."},
+          {key:"a", text:"Squared Euclidean distance defines a CONVEX clustering problem in the embedding space - the mean is provably the optimal centroid under Euclidean distance. Cosine similarity does NOT have this property - the optimal 'centroid' under cosine is the L2-normalised mean, which differs from the plain mean. Snell et al. (2017) ablated this and Euclidean won on multiple benchmarks. Cosine is fine for ARCS-style face recognition (L2-normalised features) but ProtoNet's prototype-as-mean assumption is cleanest under Euclidean.", correct:true},
+          {key:"b", text:"Cosine is impossible to compute."},
+          {key:"c", text:"They are identical."},
+          {key:"d", text:"Cosine uses no embeddings."},
         ]}
-        trap={<>(b) is cargo-culted from vision and helps with nothing. (c) skips the metric-learning step entirely. (d) is layering for layering's sake.</>}
-        lens={<>(a). The MLP-with-categorical-embeddings is the standard tabular ProtoNet design. Joint training is non-negotiable — the encoder must learn a space where the prototype distance is meaningful. (c) without an encoder degenerates ProtoNet to nearest-centroid on raw features, which is k-NN.</>}
-        stretch={<>What is the smallest MLP that beats a strong XGBoost baseline on a tabular fraud task?</>}
+        trap={<>(b), (c), (d) miss the mean-as-optimal-centroid point.</>}
+        lens={<>The mean is the optimal centroid under Euclidean. Cosine breaks this property; the prototype is no longer optimal.</>}
+        stretch={<>When would cosine ProtoNet be preferable?</>}
       />
 
       <VIS.TrapProblem
-        id="proto-p8"
+        id="proto-c2"
+        difficulty="hard"
+        title="C2 - Loss / objective: episodic training detail"
+        scenario={<>Why is ProtoNet trained EPISODICALLY (sample N classes per episode, K support, M query) rather than as flat classification?</>}
+        options={[
+          {key:"a", text:"Episodic training MATCHES the training distribution to the inference distribution - at inference you have K labels per MO and need to classify a query. Training the encoder phi via episodic batches teaches it to produce embeddings whose mean-centroid is class-discriminative for the SAME K, N, M as inference. Flat classification trains phi to be discriminative GIVEN the full training distribution, not given K support points. The mismatch hurts few-shot performance significantly.", correct:true},
+          {key:"b", text:"Episodic is faster."},
+          {key:"c", text:"They are identical objectives."},
+          {key:"d", text:"Episodic uses no gradient."},
+        ]}
+        trap={<>(b), (c), (d) miss the matching point.</>}
+        lens={<>The train-test matching principle is central. Episodic training is what makes ProtoNet a few-shot learner; non-episodic training is just supervised learning.</>}
+        stretch={<>How do you choose N, K, M for episodic training?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-c3"
+        difficulty="hard"
+        title="C3 - What's dropped vs softmax classifier"
+        scenario={<>What does ProtoNet explicitly drop relative to a softmax classifier?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Per-class learned weight vectors - replaced by computed centroids.", correct:true},
+          {key:"b", text:"Per-class learned bias - the equal-prior assumption is baked in (correct via post-hoc calibration if needed).", correct:true},
+          {key:"c", text:"Full-class supervision - ProtoNet sees only K examples per class per episode.", correct:true},
+          {key:"d", text:"Gradient computation - ProtoNet uses no gradients."},
+        ]}
+        trap={<>(d) is wrong.</>}
+        lens={<>Three drops: weights, bias, full-class supervision. Each is what enables add-at-inference but loses some power.</>}
+        stretch={<>Which drop hurts most when classes are imbalanced?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-c4"
+        difficulty="hard"
+        title="C4 - Which knob mis-set breaks ProtoNet"
+        scenario={<>Rank: (i) episodic N (classes per episode), (ii) episodic K (support per class), (iii) embedding dim, (iv) encoder depth.</>}
+        options={[
+          {key:"a", text:"K > N > encoder depth > embedding dim. K must match the production K at inference - if you train K=20 but production K=5, the encoder learned the wrong few-shot regime. N controls task diversity per episode - too small (under 5) collapses the loss; too large hits memory limits. Encoder depth is standard. Embedding dim is tertiary.", correct:true},
+          {key:"b", text:"Embedding dim dominates."},
+          {key:"c", text:"All equally important."},
+          {key:"d", text:"Encoder depth dominates."},
+        ]}
+        trap={<>(b), (c), (d) miss the K-matching point.</>}
+        lens={<>K is the most production-critical hyperparameter. Match training K to inference K.</>}
+        stretch={<>How do you handle variable K at production?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-c5"
         difficulty="medium"
-        multiSelect
-        title="P8 — Comparing ProtoNet vs MAML for fraud cold-start"
-        scenario={<>You are deciding between ProtoNet and MAML for a fraud-typology cold-start system. Which statements are TRUE? Select all that apply.</>}
+        title="C5 - Data-assumption violation: bi-modal MO"
+        scenario={<>A new MO is bi-modal in feature space (two sub-variants with different signatures). What specifically happens with ProtoNet?</>}
         options={[
-          {key:"a", text:"ProtoNet has no inner-loop adaptation step — inference is one forward pass plus a nearest-neighbour lookup.", correct:true},
-          {key:"b", text:"MAML can in principle adapt to new tasks beyond what ProtoNet can — at the cost of training instability.", correct:true},
-          {key:"c", text:"ProtoNet is usually a stronger BASELINE for tabular tasks and is what teams ship in 12 weeks.", correct:true},
-          {key:"d", text:"MAML always beats ProtoNet on the same task."},
-          {key:"e", text:"Both methods require labelled support sets at inference."},
-          {key:"f", text:"ProtoNet supports continual addition of classes; MAML requires meta-retraining for new tasks of significantly different distribution."},
+          {key:"a", text:"The MEAN of the two sub-variant clusters lands BETWEEN them - in a region that may have no real examples. Both sub-variants are FAR from the prototype; recall on this MO collapses. Fix: split the bi-modal MO into two sub-prototypes manually OR use a Gaussian-mixture or attention-weighted prototype (research-level). ProtoNet's single-centroid assumption requires uni-modal class structure.", correct:true},
+          {key:"b", text:"Performance is unchanged."},
+          {key:"c", text:"ProtoNet auto-splits the MO."},
+          {key:"d", text:"Bi-modal MOs are impossible."},
         ]}
-        trap={<>(d) is the over-claim trap; benchmarks vary.</>}
-        lens={<>(a), (b), (c), (e), (f). The relationship is well-documented: MAML is more flexible but harder to train; ProtoNet is simpler and equally strong on most tabular benchmarks. Both need labelled support at inference. Both are vulnerable to meta-distribution shift, ProtoNet less so because the encoder is the only state.</>}
-        stretch={<>Which method would you pick if engineering team size is 1?</>}
+        trap={<>(b), (c), (d) miss the uni-modal assumption.</>}
+        lens={<>ProtoNet assumes uni-modal class structure. Bi-modal MOs break the prototype-as-representative property.</>}
+        stretch={<>How would you detect bi-modal MOs automatically?</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      <VIS.TrapProblem
+        id="proto-d1"
+        difficulty="hard"
+        title="D1 - 'More support points always make a better prototype'"
+        scenario={<>A junior says "increase K from 10 to 1000 - more support points = better prototype." Where does this intuition break for ProtoNet?</>}
+        options={[
+          {key:"a", text:"The TRAINING was done with episodic K=10 (or similar). The encoder phi learned to produce embeddings whose mean of 10 examples is class-discriminative. Pushing K=1000 at inference invalidates the training distribution and DOES NOT make the prototype categorically better; in some cases it makes it worse (mean of 1000 points includes more outliers and label noise). Additionally K=1000 misses ProtoNet's design goal - few-shot. With 1000 labels per MO you should train a flat classifier on the MO; ProtoNet is not designed for that regime.", correct:true},
+          {key:"b", text:"More is always better."},
+          {key:"c", text:"K does not matter."},
+          {key:"d", text:"K=1000 is the right answer."},
+        ]}
+        trap={<>(b) is the naive belief.</>}
+        lens={<>K is a property of the training regime. Production K should match training K. With 1000 labels per MO, ProtoNet is the wrong tool.</>}
+        stretch={<>At what K does it pay to switch from ProtoNet to a flat classifier?</>}
       />
 
       <VIS.TrapProblem
-        id="proto-p9"
+        id="proto-d2"
         difficulty="hard"
-        title="P9 — Serving 200 prototypes at 50 ms p99"
-        scenario={<>Your fraud taxonomy has grown to 200 active MOs. Each inference must: encode the transaction, compute distance to all 200 prototypes, return the nearest. p99 budget is 50 ms. Which architecture matches?</>}
+        title="D2 - Wrong-assumption cascade: 'prototypes never drift'"
+        scenario={<>You assume "the prototype is computed once at MO creation; it does not need updating." Trace the cascade.</>}
         options={[
-          {key:"a", text:"Brute-force compute all 200 distances in batched matrix multiply — 200 dot products at d=256 is microseconds on a CPU.", correct:true},
-          {key:"b", text:"Use an approximate nearest-neighbour (ANN) index over the 200 prototypes."},
-          {key:"c", text:"Pre-classify into a coarse MO group, then evaluate sub-prototypes."},
-          {key:"d", text:"Train a softmax head over the 200 MOs and abandon ProtoNet."},
+          {key:"a", text:"Adversaries adapt the MO over weeks - new geographic sources, new payment methods, new device fingerprints. The prototype was computed on the FIRST 10 examples (week 1) and never updated. By week 8, the MO's transactions have drifted away from the centroid; ProtoNet recall on this MO drops; investigators escalate; analysis reveals the prototype is stale. Fix: recompute prototypes monthly OR maintain an exponential-moving-average prototype updated from confirmed positives.", correct:true},
+          {key:"b", text:"Nothing happens - prototypes are timeless."},
+          {key:"c", text:"Recall would stay high."},
+          {key:"d", text:"Adversaries cannot adapt."},
         ]}
-        trap={<>(b) over-engineers — ANN is for millions of vectors, not 200. (c) helps only at thousands of classes. (d) throws away the ability to add new MOs without retraining.</>}
-        lens={<>(a). 200 dot products at d=256 is a single 200x256 matrix multiplied against a 256-vector — sub-millisecond on modern CPUs. ANN is overkill until you have thousands of prototypes. The 50ms budget is dominated by the encoder forward pass, not the distance computation.</>}
-        stretch={<>At what number of prototypes does ANN start to pay off?</>}
+        trap={<>(b), (c), (d) miss the drift cascade.</>}
+        lens={<>Prototypes are snapshots. Drift is the production reality; an update mechanism is required.</>}
+        stretch={<>Sketch the EMA-prototype-update.</>}
       />
 
       <VIS.TrapProblem
-        id="proto-p10"
+        id="proto-d3"
         difficulty="hard"
-        multiSelect
-        title="P10 — Failure modes specific to ProtoNet"
-        scenario={<>Which failure modes are SPECIFIC to ProtoNet (not generic supervised pitfalls)? Select all that apply.</>}
+        title="D3 - Junior vs senior on a 'win'"
+        scenario={<>Junior reports ProtoNet beats softmax classifier by 5 AUPRC on a new-MO benchmark. What is the senior question?</>}
         options={[
-          {key:"a", text:"Prototype contamination — a few mislabelled examples per class shift the centroid significantly.", correct:true},
-          {key:"b", text:"Prototype drift — MOs move in embedding space over time but the prototype was computed once.", correct:true},
-          {key:"c", text:"Encoder generalisation collapse — the encoder learned a space that does not separate NEW MOs.", correct:true},
-          {key:"d", text:"Voronoi-boundary instability — when two prototypes are very close, classification flips on tiny embedding noise.", correct:true},
-          {key:"e", text:"Class imbalance hurts ProtoNet more than softmax."},
-          {key:"f", text:"GPU memory fragmentation at training time."},
+          {key:"a", text:"'How recent is the softmax baseline retrain? If softmax was retrained 6 weeks ago and ProtoNet was tested last week, the comparison includes a 6-week typology drift that the softmax has not absorbed. Re-do with softmax retrained on the same week's data. And: how many of the 'new' MOs in the benchmark were ALREADY in the softmax training set? If most, the win is on a misleading subset.'", correct:true},
+          {key:"b", text:"'Use bigger encoder.'"},
+          {key:"c", text:"'Train longer.'"},
+          {key:"d", text:"'Ship it.'"},
         ]}
-        trap={<>(e) is partially true but not ProtoNet-specific — softmax suffers too. (f) is a generic infra issue.</>}
-        lens={<>(a), (b), (c), (d). All four are ProtoNet-specific. (a) and (b) are about prototype hygiene. (c) is a metric-space failure. (d) is geometric: when two prototypes are too close, the Voronoi boundary becomes unstable and predictions flip. Fix: enforce minimum prototype separation in training, or merge MOs that occupy the same neighbourhood.</>}
-        stretch={<>How would you detect (d) automatically in production?</>}
+        trap={<>(b), (c), (d) miss the baseline-freshness question.</>}
+        lens={<>The senior question audits the softmax-baseline retrain cadence. A stale baseline is a sandbagged baseline.</>}
+        stretch={<>What retrain cadence makes the comparison fair?</>}
       />
+
+      <VIS.TrapProblem
+        id="proto-d4"
+        difficulty="hard"
+        title="D4 - Plausible misattribution: precision drops Tuesday"
+        scenario={<>ProtoNet precision drops from 0.78 to 0.31 on a single MO over 48 hours. Causes: (i) the MO's underlying pattern shifted, (ii) the prototype was contaminated by mislabeled negatives, (iii) the encoder retrained and the embedding space changed.</>}
+        options={[
+          {key:"a", text:"(ii) most likely. A precision drop concentrated on one MO with the prototype recently updated points to label contamination in the support set. (i) would show a recall drop, not a precision drop. (iii) would affect ALL prototypes uniformly. Fix: audit the recent labels added to that MO's support; revert to a pre-contamination prototype snapshot.", correct:true},
+          {key:"b", text:"(i) - always pattern shift."},
+          {key:"c", text:"(iii) - encoder change."},
+          {key:"d", text:"Random."},
+        ]}
+        trap={<>(b), (c) are plausible but produce DIFFERENT signatures (recall, or all-MO drop).</>}
+        lens={<>Precision-on-one-MO drop = label contamination signature. Senior MLEs match signature to cause.</>}
+        stretch={<>Build the prototype-snapshot rollback tool.</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>E. Operations</h3>
+
+      <VIS.TrapProblem
+        id="proto-e1"
+        difficulty="hard"
+        title="E1 - ProtoNet-specific gotcha"
+        scenario={<>Pick the gotcha most specific to ProtoNet (would not bite softmax or MAML):</>}
+        options={[
+          {key:"a", text:"Prototype contamination - one mislabeled positive in the K=10 support shifts the centroid measurably; downstream precision on that MO drops without any model retraining. Mitigation: audit support labels before adding to bank; maintain a 'gold' fixed K=10 vs a 'live' EMA-updated prototype for safety.", correct:true},
+          {key:"b", text:"Slow training."},
+          {key:"c", text:"OOM."},
+          {key:"d", text:"GPU memory."},
+        ]}
+        trap={<>(b), (c), (d) are generic.</>}
+        lens={<>Centroid contamination is unique to centroid-based classifiers. Discriminative models average over thousands of examples and absorb single mislabels.</>}
+        stretch={<>How do you flag a suspicious recent label addition automatically?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-e2"
+        difficulty="hard"
+        title="E2 - Friday: cross-MO confusion spike"
+        scenario={<>Friday: confusion matrix shows two formerly-distinct MOs are now classified into each other 30% of the time. No code changes, no encoder retraining. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Two MOs have evolved similar features (adversaries copying each other's playbook OR a tooling change made them look similar). Their prototypes are now close in embedding space; softmax over distances becomes ambiguous. Mitigation: merge the two MOs into a single 'MO-family' prototype, retrain or recompute when sub-variants diverge; investigate the upstream similarity reason.", correct:true},
+          {key:"b", text:"Roll back model."},
+          {key:"c", text:"Add more attention heads."},
+          {key:"d", text:"Increase batch size."},
+        ]}
+        trap={<>(b), (c), (d) miss the MO-convergence signature.</>}
+        lens={<>Prototype convergence over time is a real-world phenomenon in fraud. Monitor inter-prototype distance distributions.</>}
+        stretch={<>How would you alert on inter-prototype convergence?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-e3"
+        difficulty="hard"
+        title="E3 - Eval-protocol audit"
+        scenario={<>Which findings invalidate a ProtoNet report card?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Eval used K=20 support but production K=5 - mis-matching K hides the few-shot brittleness.", correct:true},
+          {key:"b", text:"Eval treated all MOs as equally likely (uniform prior) but production base rates are heavily skewed.", correct:true},
+          {key:"c", text:"Eval did not include 'novel-MO-at-inference' tasks (the entire selling point).", correct:true},
+          {key:"d", text:"ProtoNet outputs are calibrated by construction."},
+        ]}
+        trap={<>(d) is wrong.</>}
+        lens={<>Three audit failures: K mismatch, prior mismatch, no novel-MO eval. All common.</>}
+        stretch={<>Which finding most embarrasses the team after launch?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-e4"
+        difficulty="medium"
+        title="E4 - Rollout sequence: introduce ProtoNet over an existing softmax classifier"
+        scenario={<>Order: (i) full ramp, (ii) shadow scoring on new MOs only, (iii) hybrid (softmax for known MOs, ProtoNet for new), (iv) traffic ramp on full ProtoNet.</>}
+        options={[
+          {key:"a", text:"ii then iii then iv then i. Shadow on new MOs validates the prototype-bank mechanism; hybrid bounds risk by keeping softmax on the well-understood majority; full ramp only after hybrid wins on a holdout.", correct:true},
+          {key:"b", text:"i then ii then iii then iv."},
+          {key:"c", text:"Direct cutover."},
+          {key:"d", text:"iv then i."},
+        ]}
+        trap={<>(b), (c), (d) skip prototype-bank validation.</>}
+        lens={<>Hybrid mode (softmax for known + ProtoNet for new) is the canonical rollout for typology-growth ML.</>}
+        stretch={<>At what stable-MO-share would you complete the cutover?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-e5"
+        difficulty="medium"
+        title="E5 - Reproducibility"
+        scenario={<>Which ProtoNet reproducibility issues are widely known?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Episodic N, K, M are often under-specified in papers, hiding much of the few-shot regime.", correct:true},
+          {key:"b", text:"Distance metric (Euclidean vs cosine) is sometimes ambiguous in implementations.", correct:true},
+          {key:"c", text:"Prototype-bank curation (which examples form each prototype) is rarely disclosed.", correct:true},
+          {key:"d", text:"ProtoNet is fully deterministic."},
+        ]}
+        trap={<>(d) is wrong.</>}
+        lens={<>Three reproducibility issues: episodic params, distance choice, support curation. All affect reproducibility.</>}
+        stretch={<>What is the bare minimum to log per run?</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>F. Failure modes and edge cases</h3>
+
+      <VIS.TrapProblem
+        id="proto-f1"
+        difficulty="hard"
+        title="F1 - Smallest input that breaks ProtoNet's advantage"
+        scenario={<>Construct the smallest scenario where ProtoNet is no better than a softmax classifier.</>}
+        options={[
+          {key:"a", text:"A stable typology with under 5 MOs that has not added an MO in 6+ months. Softmax classifier trains in hours, has been validated, and is more flexible (learned weights vs computed centroids). ProtoNet's add-at-inference advantage is wasted because no new MO arrives. The investment in ProtoNet's episodic training is overhead.", correct:true},
+          {key:"b", text:"At 1 transaction."},
+          {key:"c", text:"On any synthetic data."},
+          {key:"d", text:"On any small dataset."},
+        ]}
+        trap={<>(b), (c), (d) miss the stable-typology framing.</>}
+        lens={<>ProtoNet's advantage requires typology GROWTH. Static surfaces don't benefit.</>}
+        stretch={<>What is the smallest new-MO rate at which ProtoNet pays off?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-f2"
+        difficulty="hard"
+        title="F2 - Adversarial attack on the prototype"
+        scenario={<>Design an attack on ProtoNet specifically.</>}
+        options={[
+          {key:"a", text:"Prototype poisoning: an adversary identifies the K labeled examples used to seed a prototype (often by social engineering of investigators, or by submitting transactions that get manually labeled), then submits FRAUD transactions that are CLOSE to those K examples in the embedding space. The fraud transactions get classified as the same MO (correct prediction) but with very high confidence and high probability - the prototype gets pulled toward the adversary's preferred region if EMA-updated. Defense: control which labels enter the prototype bank; cryptographically log the curator; do not auto-EMA prototypes from unverified positives.", correct:true},
+          {key:"b", text:"No attack possible."},
+          {key:"c", text:"Higher resolution."},
+          {key:"d", text:"Bigger encoder."},
+        ]}
+        trap={<>(b), (c), (d) miss the poisoning surface.</>}
+        lens={<>Prototype poisoning is the centroid-classifier-specific attack. Defense: tight curation + audit log.</>}
+        stretch={<>What logging cadence catches a slow poisoning attack?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-f3"
+        difficulty="hard"
+        title="F3 - Reverse engineering: symptom to design choice"
+        scenario={<>Symptom: precision across ALL prototypes degrades 20% over 4 weeks; the encoder has not been retrained; new MOs have been added. Which ProtoNet design choice causes this?</>}
+        options={[
+          {key:"a", text:"Adding prototypes to a FIXED encoder. As more prototypes accumulate in the bank, the softmax-over-distances spreads probability thinner; each prototype loses absolute confidence. The encoder was trained at a smaller N (number of classes per episode) and is not optimised for the new N. Fix: periodically retrain the encoder on the expanded MO set OR introduce a hierarchical prototype routing.", correct:true},
+          {key:"b", text:"GPU is full."},
+          {key:"c", text:"Random."},
+          {key:"d", text:"Embedding dim is wrong."},
+        ]}
+        trap={<>(b), (c), (d) miss the N-scaling-of-softmax signature.</>}
+        lens={<>Encoder fixed + prototype count growing = ProtoNet's specific calibration degradation. Hierarchical routing or periodic retraining is the fix.</>}
+        stretch={<>What is the encoder-retrain cadence for a doubling-MO-count-per-quarter typology?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-f4"
+        difficulty="medium"
+        title="F4 - Paper-admitted limitation"
+        scenario={<>Which limitation does the original Snell et al. ProtoNet paper acknowledge?</>}
+        options={[
+          {key:"a", text:"Single-centroid representation assumes uni-modal class structure; multi-modal classes are not well represented and the paper suggests Gaussian-mixture extensions for future work.", correct:true},
+          {key:"b", text:"ProtoNet works perfectly at any scale."},
+          {key:"c", text:"Only works for binary classification."},
+          {key:"d", text:"Cannot be deployed."},
+        ]}
+        trap={<>(b), (c), (d) are wrong.</>}
+        lens={<>The paper is honest about the uni-modal assumption. Knowing this signals careful reading.</>}
+        stretch={<>What does the paper NOT predict that production fraud teams hit?</>}
+      />
+
+      <VIS.TrapProblem
+        id="proto-f5"
+        difficulty="hard"
+        title="F5 - Community-found failure: matching networks vs ProtoNet"
+        scenario={<>Recent follow-up work (Matching Networks, Relation Networks, FEAT) found which class of result for ProtoNet?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Matching Networks (with attention over support) match or beat ProtoNet on fine-grained few-shot.", correct:true},
+          {key:"b", text:"FEAT (Few-shot Embedding Adaptation via Transformer) lets the encoder produce class-conditional embeddings, improving on the fixed-encoder ProtoNet.", correct:true},
+          {key:"c", text:"Relation Networks learn a metric instead of relying on Euclidean, sometimes winning on tasks with non-isotropic class clusters.", correct:true},
+          {key:"d", text:"ProtoNet is strictly better than every other few-shot method."},
+        ]}
+        trap={<>(d) is wrong.</>}
+        lens={<>Multiple few-shot methods improve on ProtoNet on specific axes. Senior MLEs benchmark against these before committing.</>}
+        stretch={<>For fraud typology specifically, which of these is the right second-choice?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
         <li>
-          <a href="https://arxiv.org/abs/1703.05175" target="_blank" rel="noopener">
-            <strong>Snell, Swersky, Zemel — Prototypical Networks for Few-shot Learning</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2017)</span>
-          <br/>The original ProtoNet paper. Read section 2 for the few-shot setup and section 4 for the elegant equivalence between squared Euclidean ProtoNet and a linear classifier on the embedding.
+          <a href="https://arxiv.org/abs/1703.05175" target="_blank" rel="noopener"><strong>Snell et al. - Prototypical Networks (NeurIPS 2017)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper)</span>
+          <br/>The original. Episodic training, centroid prototypes, Euclidean distance.
         </li>
         <li>
-          <a href="https://lilianweng.github.io/posts/2018-11-30-meta-learning/" target="_blank" rel="noopener">
-            <strong>Lilian Weng — Meta-Learning: Learning to Learn Fast</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
-          <br/>Covers ProtoNet alongside MAML, Reptile, and Matching Networks. The clearest single-page comparison of meta-learning methods.
+          <a href="https://arxiv.org/abs/1606.04080" target="_blank" rel="noopener"><strong>Vinyals et al. - Matching Networks</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(NeurIPS 2016)</span>
+          <br/>The attention-over-support sibling.
         </li>
         <li>
-          <a href="https://blog.floydhub.com/n-shot-learning/" target="_blank" rel="noopener">
-            <strong>FloydHub blog — N-Shot Learning Explained</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(blog, with PyTorch code)</span>
-          <br/>Hands-on walkthrough of training a ProtoNet from scratch. Useful if you want to run one before designing one.
-        </li>
-        <li>
-          <a href="https://arxiv.org/abs/1904.04232" target="_blank" rel="noopener">
-            <strong>Tian et al. — Rethinking Few-Shot Image Classification: a Good Embedding is All You Need</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, ECCV 2020)</span>
-          <br/>Argues that a good supervised pre-train + simple classifier matches ProtoNet on benchmarks. Read as a sanity-check sceptic before committing to meta-training.
-        </li>
-        <li>
-          <a href="https://www.borealisai.com/research-blogs/tutorial-2-few-shot-learning-and-meta-learning-i/" target="_blank" rel="noopener">
-            <strong>Borealis AI — Tutorial: Few-Shot Learning and Meta-Learning</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(tutorial)</span>
-          <br/>Solid technical tutorial covering ProtoNet, MAML, and Matching Networks side-by-side with diagrams and code pointers.
+          <a href="https://arxiv.org/abs/1812.03664" target="_blank" rel="noopener"><strong>Ye et al. - FEAT</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(CVPR 2020)</span>
+          <br/>Class-conditional embedding adaptation; an improvement on the fixed-encoder ProtoNet.
         </li>
       </ul>
     </VIS.Section>

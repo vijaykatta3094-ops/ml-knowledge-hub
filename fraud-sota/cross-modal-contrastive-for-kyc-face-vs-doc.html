@@ -1414,320 +1414,569 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// Cross-modal contrastive for KYC face-vs-doc — Fraud SOTA · Multimodal fraud
-// Contrastive joint embedding of selfie and ID-document face under spoofing-aware augmentations.
+// Cross-modal contrastive for KYC face-vs-doc (CVPR 2025)
+// v2 redo — 30+ trap problems spanning A-F; every problem hinges on what's
+// distinctive about JOINT contrastive embedding (selfie+ID under spoofing-aware
+// augmentations) vs independent face-match scores or naive siamese face nets.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="Fraud SOTA · Multimodal fraud"
-      title="Cross-modal contrastive for KYC face-vs-doc"
-      subtitle="One joint embedding space for selfie face and ID-document face — trained with spoofing-aware augmentations to defeat morphing attacks."
+      pill="Fraud SOTA · multimodal fraud · KYC"
+      title="Cross-modal contrastive KYC (selfie vs ID-document)"
+      subtitle="Contrastive objective that pulls selfie and ID-doc face embeddings together under spoofing-aware augmentations (morphing, print attack, replay), pushes apart non-matching pairs. One joint embedding for selfie-doc consistency."
       byline={[
-        {label: "Source", value: "Cross-modal KYC (CVPR 2025)"},
+        {label: "Paper", value: "'Cross-modal KYC: Selfie-Document Consistency' (CVPR 2025)"},
         {label: "Year", value: "2025"},
-        {label: "L3", value: "Contrastive face-vs-doc"},
+        {label: "Domain", value: "Identity verification (Onfido/Jumio class)"},
       ]}/>
 
     <VIS.TLDR>
-      Independent face-match scores (FaceNet on selfie, FaceNet on ID, cosine compare) miss{" "}
-      <VIS.Term def="A spoofing attack where two source faces are blended into a single image that triggers high similarity to both identities. A morphed ID can be matched by either source person's selfie.">morphing attacks</VIS.Term>{" "}
-      because the score is computed in a feature space that never saw morphs. A{" "}
-      <VIS.Term def="A representation-learning objective that pulls together embeddings of matched (positive) pairs and pushes apart embeddings of unmatched (negative) pairs, typically using InfoNCE loss. Used in SimCLR, CLIP and the KYC model here.">contrastive objective</VIS.Term>{" "}
-      trained on (selfie, doc-face) positive pairs and spoof-augmented negatives carves out a joint space where morphs separate from genuine matches.
+      Classical <VIS.Term def="Know-Your-Customer — identity verification onboarding flow run by banks, crypto exchanges, fintechs to satisfy regulators. Typically a selfie plus a photo of a government-issued ID.">KYC</VIS.Term> pipelines run face-match independently on the selfie and the ID-doc face, then threshold a cosine similarity. This is fooled by <VIS.Term def="Image-manipulation attack where two people's faces are blended; the resulting morph matches both identities under standard face recognisers. A documented attack class against passport photos.">morphing attacks</VIS.Term>: the attacker blends a legitimate face with an imposter's; both face-match the morphed ID. Joint contrastive embedding learns a representation where selfie-doc CONSISTENCY (not just match) is what is scored, AND it is trained with explicit spoofing-aware augmentations (morphing, print-attack, replay-on-screen) in the negatives. The model sees morphed pairs at training time and learns to repel them. Source: <a href="https://openaccess.thecvf.com/content/CVPR2025" target="_blank" rel="noopener">CVPR 2025</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        At onboarding, a user submits a selfie video and a photo of a government-issued ID. The pipeline detects the face in each, crops, and feeds both into a single shared encoder. The encoder is trained with two losses: (1) an InfoNCE loss that pulls (selfie, doc-face) pairs of the SAME person together and pushes pairs of DIFFERENT people apart, and (2) a spoofing-augmentation term that synthesises morphs, deepfakes and replay artifacts on the fly and labels them as negatives. At inference, the cosine similarity between selfie and doc-face embeddings IS the KYC score.
+        Two-tower encoder: one tower on the live selfie, one tower on the document-extracted face. Joint embedding space trained with a contrastive loss: positives = (selfie, doc-face) of the same legitimate person; negatives = (selfie, doc-face) pairs sampled from a spoofing-aware augmentation pipeline (morphing, print-replay, screen-replay, deepfake video frames). The score at inference is the similarity in the JOINT space (not the independent face-rec similarity).
       </p>
       <VIS.Mermaid chart={`
-flowchart TB
-  SELFIE["Selfie image"] --> ENC1["Shared encoder"]
-  DOC["ID document face"] --> ENC1
-  ENC1 --> E1["Selfie embedding"]
-  ENC1 --> E2["Doc embedding"]
-  E1 --> SIM["Cosine similarity"]
-  E2 --> SIM
-  SIM --> SCORE["KYC score"]
-  AUG["Spoof augmenter"] --> ENC1
-  style ENC1 fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px
-  style AUG fill:#fef3c7,stroke:#b45309,stroke-width:2px
+flowchart LR
+  S["Selfie"]
+  D["Doc face"]
+  ES["Selfie encoder"]
+  ED["Doc encoder"]
+  J["Joint embedding"]
+  L["Contrastive loss\\nwith spoofing-aware negs:\\nmorph, print, replay, deepfake"]
+  C["Cosine similarity\\nin joint space"]
+  S --> ES
+  D --> ED
+  ES --> J
+  ED --> J
+  J --> L
+  J --> C
+  style L fill:#fef3c7,stroke:#d97706,stroke-width:2px
       `} />
-      <p>The shared encoder is the key idea — selfie and doc images live in the SAME space and can be compared directly. The spoof augmenter synthesises adversarial examples during training so the model never has to face a morph at inference for the first time.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from independent face matching">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead>
-          <tr style={{background:"#1f3a5f", color:"#fff"}}>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Independent face match</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Cross-modal contrastive</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Encoders</td>
-            <td style={{padding:"8px 10px"}}>One per modality, frozen</td>
-            <td style={{padding:"8px 10px"}}>Shared, jointly trained</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Sees morphs at train time?</td>
-            <td style={{padding:"8px 10px"}}>No</td>
-            <td style={{padding:"8px 10px"}}>Yes, via augmenter</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Modality gap</td>
-            <td style={{padding:"8px 10px"}}>Compensated via projection</td>
-            <td style={{padding:"8px 10px"}}>Learned end-to-end</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Morphing-attack TPR</td>
-            <td style={{padding:"8px 10px"}}>~65 percent</td>
-            <td style={{padding:"8px 10px"}}>~92 percent (paper)</td>
-          </tr>
-        </tbody>
-      </table>
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from independent face-match and from siamese face-rec">
+      <p>
+        <strong>Independent face-match.</strong> Run face recogniser on selfie and on doc-face separately; threshold cosine. Morphing attacks defeat this: the morphed doc-face is close to both identities.
+      </p>
+      <p>
+        <strong>Siamese face-rec (ArcFace / FaceNet).</strong> Single-tower face recogniser used as a similarity scorer. Trained on identity classification; has no explicit notion of "selfie taken live vs photo of a screen." Not robust to print-replay or screen-replay attacks unless paired with a separate liveness model.
+      </p>
+      <p>
+        <strong>Cross-modal contrastive.</strong> Two towers trained JOINTLY with spoofing-aware negatives. The selfie tower learns to encode "live selfie" properties (lighting, perspective, micro-motion artifacts when video); the doc tower learns "document photo" properties (printed under specific lighting, scanned). The contrastive objective forces consistency across these domains — morphed doc-faces are explicitly pushed apart from any consistent selfie.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick">
-      <ul>
-        <li><strong>High-volume KYC at scale</strong> — Onfido, Jumio, Persona-scale flows where adversarial morphing attacks are a measured threat.</li>
-        <li><strong>You have paired training data</strong> — (selfie, doc-face) labelled pairs are needed. ID issuance partners or historical onboarding data with adjudicated outcomes both work.</li>
-        <li><strong>Regulatory pressure on bias</strong> — joint training lets you control fairness across skin tone with one model rather than two.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick it">
+      <p>
+        Pick cross-modal contrastive KYC when (a) identity verification at scale (Onfido/Jumio/Persona use case), (b) morphing or replay attacks observed in your fraud surface, (c) you can produce labeled spoofing-aware negatives (or buy them — there are commercial datasets), (d) regulatory environment allows the joint biometric (some jurisdictions require explicit consent), (e) you have a fairness-audit budget (the model's joint space can encode skin-tone bias more strongly than independent face-match).
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations &amp; gotchas">
-      <VIS.Callout kind="gotcha" title="Skin-tone and age bias">
-        Face datasets remain biased toward light-skinned, middle-aged adults. A contrastive model trained on the standard mix will under-perform on darker skin tones and the very young / old. Audit equal-opportunity AND equalised-odds across at least 6 demographic strata before shipping. Re-sample or re-weight the training set if gaps exceed 3 percent.
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations and gotchas">
+      <VIS.Callout kind="gotcha" title="Skin-tone bias in the joint space">
+        Independent face-match has documented FNR disparities across skin tones; joint contrastive can AMPLIFY these because spoofing-aware augmentations (lighting, print artifacts) interact with skin-tone-conditional appearance. Fairness audit (FNR-by-tone, FPR-by-tone) is non-negotiable.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="Deepfake video attacks beat single-frame detection">
-        A motion-aware attacker presents a deepfake selfie video that matches the doc face in still frames but has temporally inconsistent lighting / micro-expressions. Single-frame contrastive scoring will miss this. Pair with a liveness model that consumes frames and assesses motion coherence.
+      <VIS.Callout kind="gotcha" title="The morph-attack arms race">
+        Training negatives are static (morph datasets from 2022-2024). Attackers using 2026 diffusion-based morph generation (latent-space morph in StyleGAN3 or SD3.5) produce morphs OUTSIDE the training distribution. Re-train the negative pipeline quarterly with new morph generators.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="Document-side spoofs (printed ID held up to camera)">
-        The doc-face embedding can be from a printed forgery. Add a document-genuineness detector (hologram check, micro-print OCR) upstream of the contrastive scorer; otherwise the joint embedding compares forgery-to-selfie.
+      <VIS.Callout kind="gotcha" title="Document quality dominates the score">
+        Low-quality doc scans (blur, glare, partial occlusion) push the doc-face encoder into a low-confidence region and the joint similarity drops — generating false positives (legitimate users flagged). Always condition the threshold on a doc-quality score.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Ten interview traps on contrastive KYC training, fairness audits, and the morphing-attack threat model.
+        Problems span the 6 taxonomy axes. Strip "cross-modal contrastive KYC" — each correct answer must still hinge on the specific mechanism (joint two-tower embedding + spoofing-aware contrastive negatives).
       </p>
 
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity and comparison</h3>
+
       <VIS.TrapProblem
-        id="kyc-p1"
+        id="kyc-a1"
         difficulty="hard"
+        title="A1 — Cross-modal contrastive vs ArcFace face-match: the real discriminator"
+        scenario={<>Your security lead says "we already run ArcFace cosine on selfie vs doc-face — why is the contrastive model different?" Pick the real discriminator.</>}
+        options={[
+          {key:"a", text:"ArcFace is a single-tower face recogniser trained on IDENTITY classification — given two faces, are they the same person? It has no notion of 'this selfie is live, this doc photo is a print.' Cross-modal contrastive uses TWO towers trained JOINTLY with spoofing-aware negatives (morph, print, replay) sampled at training time, so the model learns to repel morphed-doc/clean-selfie pairs even though ArcFace would score them as 'same identity.'", correct:true},
+          {key:"b", text:"ArcFace and cross-modal contrastive are the same."},
+          {key:"c", text:"ArcFace uses more parameters."},
+          {key:"d", text:"Cross-modal contrastive does not use a neural network."},
+        ]}
+        trap={<>(b), (c), (d) miss the negatives-design discriminator.</>}
+        lens={<>The discriminator is the TRAINING distribution: ArcFace sees identity pairs; cross-modal contrastive sees spoofing-aware pairs. Same architecture would NOT close the gap without the negatives.</>}
+        stretch={<>Could ArcFace + a liveness model match the joint contrastive? What does it lose?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-a2"
+        difficulty="hard"
+        title="A2 — Definitional trap: 'just CLIP for KYC'"
+        scenario={<>A teammate says "CLIP already does cross-modal contrastive learning — we should just fine-tune CLIP for KYC." Distinguish.</>}
+        options={[
+          {key:"a", text:"CLIP aligns IMAGE and TEXT — its negatives are images vs unrelated captions. KYC needs IMAGE-IMAGE alignment (selfie vs doc-face) with SPECIFIC negative classes (morph, print-replay, screen-replay, deepfake). CLIP's pre-training does not include these negatives so fine-tuning CLIP without curating them gives an identity matcher, not a spoofing-aware matcher. The architecture is similar (two towers, contrastive) but the negatives are the entire game.", correct:true},
+          {key:"b", text:"CLIP cannot be fine-tuned."},
+          {key:"c", text:"CLIP is identical to cross-modal contrastive KYC."},
+          {key:"d", text:"CLIP does not use cosine."},
+        ]}
+        trap={<>(b), (c) miss the negatives-design point.</>}
+        lens={<>The architecture is generic; the discriminating feature is the negatives. Two-tower contrastive without spoofing-aware negatives is a face matcher, not a fraud detector.</>}
+        stretch={<>Could you bootstrap KYC negatives from CLIP-style hard negatives?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-a3"
+        difficulty="hard"
+        title="A3 — Counterfactual: no contrastive model available"
+        scenario={<>Without cross-modal contrastive KYC, what is the strongest fallback for morph-attack-robust identity verification?</>}
+        options={[
+          {key:"a", text:"Stack: (i) ArcFace identity match (catches imposter-only attacks), (ii) standalone passive-liveness model (catches print and replay), (iii) Morph Attack Detector — a classifier trained specifically to flag morphed images — applied to the DOC face. The stack works but has three independent calibration points; the contrastive joint model produces ONE score. The stack also misses the cross-modal CONSISTENCY signal (selfie's lighting/perspective compared to doc-face's printing artifacts).", correct:true},
+          {key:"b", text:"Just use ArcFace alone."},
+          {key:"c", text:"You cannot do KYC without contrastive embedding."},
+          {key:"d", text:"Use a CAPTCHA."},
+        ]}
+        trap={<>(b) ignores morph attacks. (c) overstates uniqueness.</>}
+        lens={<>The honest fallback is ArcFace + liveness + MAD stack. The contrastive model consolidates these AND adds the cross-modal consistency signal the stack cannot encode.</>}
+        stretch={<>Which of the three stack components is hardest to keep current as attacks evolve?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-a4"
+        difficulty="hard"
+        title="A4 — Composition: stack contrastive KYC with passive liveness"
+        scenario={<>You add a standalone passive-liveness model on top of cross-modal contrastive. What is the right thinking?</>}
         multiSelect
-        title="P1 — Designing fairness audits for cross-modal KYC under morphing attacks"
-        scenario={<>You ship a cross-modal contrastive KYC model. The pre-launch audit must establish: (a) the model is fair across skin tone / age / gender, and (b) the unfairness story does not flip under morphing attacks (a model that is fair on genuine pairs but UNFAIR on morphs is worse than one fair on both). Which audit elements belong in the launch checklist? Select all that apply.</>}
         options={[
-          {key:"a", text:"Equalised-odds metric (TPR and FPR parity) across at least 6 strata: 3 skin-tone bins x 2 age bins.", correct:true},
-          {key:"b", text:"Run the SAME audit on morphed pairs synthesised from each stratum — confirm parity holds under attack.", correct:true},
-          {key:"c", text:"Per-stratum operating-threshold report (does threshold 0.7 produce the same TPR for every group?).", correct:true},
-          {key:"d", text:"Demographic parity (P(approved) equal across groups) as the primary metric."},
-          {key:"e", text:"Report only aggregate AUC — fine-grained metrics confuse the executive readout."},
-          {key:"f", text:"Disable the model on under-represented strata until more training data is collected."},
+          {key:"a", text:"The liveness model catches attacks (print + replay) that may have been underrepresented in the contrastive negatives, especially for adversaries using NEW capture devices that did not exist in the training data.", correct:true},
+          {key:"b", text:"Independence is partial: the contrastive model also encodes some liveness signal in the selfie tower; you should measure the joint AUPRC, not assume additive gains.", correct:true},
+          {key:"c", text:"Liveness scores need their own calibration; combine via stacking, not raw addition.", correct:true},
+          {key:"d", text:"Liveness adds nothing — contrastive already includes liveness."},
         ]}
-        trap={<>(d) demographic parity is the WRONG metric for KYC — different base rates of genuine identity make it inappropriate. (e) hides exactly the disparities the audit must surface. (f) is the over-correction trap: disabling for under-represented users is itself discriminatory.</>}
-        lens={<>(a), (b), (c). Equalised odds is the right fairness lens for an authentication task; running it on attacks AS WELL AS genuine traffic prevents the "fair on average, unfair under stress" failure; per-stratum thresholds catch the single-threshold trap (one threshold rarely fits all groups equally).</>}
-        stretch={<>If (a), (b) and (c) all pass but a 3 percent TPR gap remains for elderly users, what is the right ship/no-ship call?</>}
+        trap={<>(d) is overconfident.</>}
+        lens={<>Composition pays off when the standalone model covers attacks underrepresented in the contrastive negatives. New capture devices are the canonical example.</>}
+        stretch={<>What attack class would benefit most from adding liveness on top?</>}
       />
 
       <VIS.TrapProblem
-        id="kyc-p2"
+        id="kyc-a5"
         difficulty="hard"
-        title="P2 — InfoNCE temperature: smaller or larger?"
-        scenario={<>Your InfoNCE loss uses temperature tau = 0.07 (CLIP default). On morphing-attack negatives the loss is very small and gradients are noisy. The team proposes tau = 0.5. What do you predict happens?</>}
+        title="A5 — Boundary: where contrastive KYC stops winning"
+        scenario={<>For which user segment does cross-modal contrastive KYC's advantage over plain ArcFace vanish?</>}
         options={[
-          {key:"a", text:"Larger tau softens the softmax, weakens the gradient on hard negatives (exactly the morphs you care about), and KYC accuracy drops.", correct:true},
-          {key:"b", text:"Larger tau focuses gradient on hard negatives — morphing recall improves."},
-          {key:"c", text:"tau has no effect on hard-negative behaviour."},
-          {key:"d", text:"tau only affects training-set memorisation; both values converge."},
+          {key:"a", text:"Segments where the threat model is NOT spoofing-related — e.g. a corporate single-sign-on flow where the user is at a known device and the only adversary is 'wrong person logging in,' not 'morphed ID.' On that surface, ArcFace identity match is sufficient; the contrastive model's morph-defense capacity is unused. Spending the compute on a contrastive model is pure overhead.", correct:true},
+          {key:"b", text:"Contrastive always wins."},
+          {key:"c", text:"At exactly 1M users."},
+          {key:"d", text:"Only on small datasets."},
         ]}
-        trap={<>(b) inverts the relationship. (c) and (d) handwave. The intuition is that small tau makes the softmax sharper, so probability mass concentrates on the closest negative — exactly the hard one.</>}
-        lens={<>(a). Smaller tau = sharper softmax = stronger gradient on the hardest negative. CLIP uses 0.07; many morphing-defence papers find even smaller (0.05) works better at the cost of training instability. tau = 0.5 is the wrong direction.</>}
-        stretch={<>How would you stabilise training at tau = 0.05 without diverging?</>}
+        trap={<>(b), (c), (d) miss the threat-model framing.</>}
+        lens={<>Contrastive KYC's value is tied to the spoofing threat model. If the threat is plain imposter, ArcFace is enough.</>}
+        stretch={<>What is the smallest spoof-attack rate at which contrastive pays off?</>}
       />
 
-      <VIS.TrapProblem
-        id="kyc-p3"
-        difficulty="hard"
-        multiSelect
-        title="P3 — Generating spoof augmentations on the fly: which methods belong?"
-        scenario={<>You are designing the spoof augmenter that synthesises adversarial negatives during training. Which augmentations are aligned with the realistic morphing threat model? Select all that apply.</>}
-        options={[
-          {key:"a", text:"Face-blending of two real identities (50-50 alpha) — classic morphing attack.", correct:true},
-          {key:"b", text:"Diffusion-based face swap (e.g. SimSwap, InsightFace swapper) onto the ID-side image.", correct:true},
-          {key:"c", text:"Print-then-photograph artifact simulation (moire, gloss, edge crop).", correct:true},
-          {key:"d", text:"Replay-attack simulation (camera-on-screen reflections, moire patterns).", correct:true},
-          {key:"e", text:"Random horizontal flip and 90-degree rotation."},
-          {key:"f", text:"Add Gaussian noise to both modalities."},
-        ]}
-        trap={<>(e) and (f) are standard SimCLR augmentations but unrelated to the morphing / spoofing threat model — a fraudster never flips their selfie 90 degrees. Generic augmentation is fine for accuracy but does not defeat morphs.</>}
-        lens={<>(a), (b), (c), (d). The augmenter must mirror REAL attacks. Morphing, face-swap, print attack, replay attack are the four canonical KYC-spoofing classes. Generic image augmentations help with accuracy on natural variation but do nothing against adversarial spoofs.</>}
-        stretch={<>If you can only afford 2 of (a)(b)(c)(d), which two give the best morphing-attack TPR?</>}
-      />
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>B. Application</h3>
 
       <VIS.TrapProblem
-        id="kyc-p4"
-        difficulty="hard"
-        title="P4 — Why a shared encoder beats two separate ones"
-        scenario={<>A junior engineer asks: "Why not just train two separate face encoders — one on selfies, one on doc photos — and compare cosines? It's simpler." What is the strongest single argument for the shared encoder?</>}
-        options={[
-          {key:"a", text:"Two encoders cost more to train."},
-          {key:"b", text:"Two encoders produce embeddings in DIFFERENT spaces; a cosine comparison across spaces is geometrically meaningless without an alignment step. The shared encoder forces a single space by construction.", correct:true},
-          {key:"c", text:"Shared encoders are simpler to deploy."},
-          {key:"d", text:"Two encoders cannot be trained with InfoNCE at all."},
-        ]}
-        trap={<>(a) is a minor practical point. (c) is the opposite of true — separate encoders can be smaller. (d) is false — CLIP famously uses two encoders, but with a projection head that aligns them.</>}
-        lens={<>(b). Two un-aligned encoders learn arbitrary rotations of feature space; their cosines correlate weakly with semantic identity. CLIP-style designs use two encoders but bolt on a projection MLP precisely to recover a shared space — at that point the shared-encoder design wins on parameter efficiency.</>}
-        stretch={<>If you DID use two encoders with a projection MLP, what would you regularise during joint training?</>}
-      />
-
-      <VIS.TrapProblem
-        id="kyc-p5"
+        id="kyc-b1"
         difficulty="medium"
-        title="P5 — Production threshold: TPR-at-FPR or FPR-at-TPR?"
-        scenario={<>You operate at scale: 5M KYC checks per month, 0.05 percent positive (fraud) rate. The compliance team asks "what threshold should we set?" Which framing leads to the right answer?</>}
+        title="B1 — Pick the right tool given the scenario"
+        scenario={<>Scenario: crypto exchange onboarding, 80K KYC sessions/day, 1.2% are suspected morph attacks (real attack-rate confirmed by post-fraud investigation), morph dataset (1M labeled pairs) available via vendor, p95 SLA 3 seconds, fairness audit required by regulator. Pick the next investment.</>}
         options={[
-          {key:"a", text:"Pick the threshold at the elbow of the ROC curve."},
-          {key:"b", text:"Pick the threshold that maximises F1."},
-          {key:"c", text:"Pick FPR first (e.g. 0.5 percent — driven by manual-review capacity), then report the resulting TPR.", correct:true},
-          {key:"d", text:"Pick TPR first (e.g. 95 percent — driven by compliance recall), then report the resulting FPR."},
+          {key:"a", text:"Train cross-modal contrastive on the vendor morph dataset PLUS your own positives, calibrate per ID-document-type, and stratify a fairness audit by skin-tone proxy. The 1.2% morph rate fully justifies the contrastive model; the 3s SLA absorbs the joint encoder; the fairness audit is the hard requirement that the contrastive model needs explicit attention to (it amplifies skin-tone bias relative to ArcFace).", correct:true},
+          {key:"b", text:"Just buy more rules."},
+          {key:"c", text:"Use a CAPTCHA."},
+          {key:"d", text:"Add SMS OTP — it's enough."},
         ]}
-        trap={<>(a) and (b) are metric-driven and ignore the business constraint. (d) is defensible but at 0.05 percent positive rate, a 95 percent TPR target with any reasonable FPR drowns the queue.</>}
-        lens={<>(c). The binding constraint is manual-review capacity. Pick FPR to fit the queue, then size the TPR by the model curve. This is the FPR-first framing used in most KYC ops; (d) makes sense only when capacity is unconstrained.</>}
-        stretch={<>If review capacity doubles next year, which way does the threshold move?</>}
+        trap={<>(b), (c), (d) miss the threat model.</>}
+        lens={<>The 1.2% morph rate combined with the regulatory fairness requirement points to contrastive + audit. Cheaper alternatives do not address morph attacks.</>}
+        stretch={<>What part of the fairness audit must run weekly?</>}
       />
 
       <VIS.TrapProblem
-        id="kyc-p6"
+        id="kyc-b2"
         difficulty="hard"
+        title="B2 — Sounds reasonable but isn't: 'just add more negatives'"
+        scenario={<>A teammate says "if we add 100x more morph negatives to training, the model will be 100x more robust." Why is this specifically wrong for cross-modal contrastive KYC?</>}
+        options={[
+          {key:"a", text:"Negatives have to be DIVERSE across morph-generator family, not just numerous. Adding 100x morphs generated by the SAME morph algorithm trains the model to recognise THAT algorithm; novel generators (StyleGAN3-based morph, SD3.5 latent morph) still bypass it. The right axis is generator-family coverage, not negative count. Equivalently: 1K negatives per generator across 10 generators beats 100K negatives from 1 generator.", correct:true},
+          {key:"b", text:"More negatives always help."},
+          {key:"c", text:"Negatives do not matter."},
+          {key:"d", text:"100x is too few."},
+        ]}
+        trap={<>(b) is the naive belief.</>}
+        lens={<>For adversarial robustness, generator-diversity matters more than absolute count. This is true for adversarial training broadly.</>}
+        stretch={<>How would you measure generator coverage in your negatives?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-b3"
+        difficulty="hard"
+        title="B3 — Pitch cross-modal contrastive to the risk lead"
+        scenario={<>The risk lead asks "why move from ArcFace to a contrastive model?" Pick the pitch that requires understanding the cross-modal contrastive mechanism.</>}
+        options={[
+          {key:"a", text:"ArcFace is trained to answer 'are these two faces the same person?' That is exactly what a morph-attack EXPLOITS — a morphed ID-face is mathematically close to two legitimate identities, so ArcFace says 'same person' to both. The contrastive model is trained on PAIRS where the doc-face has been deliberately morphed and the loss explicitly pushes such pairs APART from clean selfies. The model is learning a different question — 'is this selfie consistent with this UN-tampered document?' — which is what we actually want to know.", correct:true},
+          {key:"b", text:"Contrastive learning is state of the art."},
+          {key:"c", text:"It reduces FPs."},
+          {key:"d", text:"Two towers are better than one."},
+        ]}
+        trap={<>(b) is hype. (c) is generic. (d) is unspecific.</>}
+        lens={<>The concept-specific pitch names the question-difference (identity match vs cross-modal consistency) and the morph-as-exploit-of-ArcFace argument. Strip "contrastive" — the listener must understand "ArcFace answers the wrong question for morph attacks" to evaluate.</>}
+        stretch={<>How would you quantify the FNR gap on morph attacks for the lead?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-b4"
+        difficulty="hard"
+        title="B4 — When NOT to use cross-modal contrastive KYC"
+        scenario={<>Which scenarios are cross-modal contrastive KYC anti-patterns?</>}
         multiSelect
-        title="P6 — Liveness vs morphing detection: which problem does which model solve?"
-        scenario={<>Your KYC stack has three model components: (1) a liveness detector on the selfie video, (2) a doc-genuineness detector on the ID, (3) the cross-modal contrastive scorer. Which threat does each component primarily address? Select all true statements.</>}
         options={[
-          {key:"a", text:"Liveness defeats presentation attacks (photo-of-photo, mask) on the selfie side.", correct:true},
-          {key:"b", text:"Doc-genuineness defeats printed-ID and template-forgery attacks.", correct:true},
-          {key:"c", text:"Contrastive scorer defeats identity-mismatch attacks (different person, real selfie, real doc).", correct:true},
-          {key:"d", text:"Contrastive scorer defeats morphing attacks via the spoof augmenter.", correct:true},
-          {key:"e", text:"Liveness defeats morphing attacks."},
-          {key:"f", text:"Doc-genuineness defeats deepfake selfies."},
+          {key:"a", text:"You cannot produce or buy spoofing-aware negatives (small market, no vendor data) — the contrastive model degenerates to a generic face matcher.", correct:true},
+          {key:"b", text:"Regulator prohibits joint biometric processing (some jurisdictions treat the joint embedding as a separate biometric requiring its own consent flow).", correct:true},
+          {key:"c", text:"Threat model is imposter-only (no morphing) — ArcFace + liveness is sufficient and cheaper.", correct:true},
+          {key:"d", text:"Threat model includes high-quality morph attacks at non-trivial rates."},
         ]}
-        trap={<>(e) liveness checks if the selfie is a live human — a deepfake VIDEO can satisfy liveness. (f) doc-genuineness inspects the document only.</>}
-        lens={<>(a), (b), (c), (d). Each component addresses a distinct threat class; together they form a defence-in-depth stack. The lesson is that ONE model does not solve all spoofing — orthogonal models for orthogonal threats.</>}
-        stretch={<>Which threat does this three-model stack NOT cover, and what would you add?</>}
+        trap={<>(d) is the canonical contrastive-fits regime.</>}
+        lens={<>Three anti-patterns: no negatives, regulatory constraint, no morph threat. Each maps to a cheaper alternative.</>}
+        stretch={<>Could you bootstrap synthetic morphs in-house from open StyleGAN code?</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      <VIS.TrapProblem
+        id="kyc-c1"
+        difficulty="hard"
+        title="C1 — Architectural choice: why two towers (not one)"
+        scenario={<>Why use TWO separate encoder towers (selfie + doc-face) rather than concatenate the images and run one encoder?</>}
+        options={[
+          {key:"a", text:"The selfie and doc-face are in different DOMAINS (live photo vs printed document). A single encoder has to learn both domains AND their alignment simultaneously, and is dominated by whichever domain has more pre-training signal. Two towers let each tower specialise in its domain (selfie tower learns live-photo artifacts; doc tower learns print/scan artifacts), and the contrastive loss ALIGNS the two specialised representations. This is the same reason CLIP uses two towers instead of a single VLM at training time.", correct:true},
+          {key:"b", text:"Two towers train faster."},
+          {key:"c", text:"One encoder is impossible."},
+          {key:"d", text:"Two towers use less memory."},
+        ]}
+        trap={<>(b), (c), (d) miss the domain-specialisation reason.</>}
+        lens={<>Cross-modal alignment via two towers is the canonical pattern when the modalities differ in pre-training signal density. One encoder fails on the under-represented domain.</>}
+        stretch={<>Could the towers share lower layers? What would you lose?</>}
       />
 
       <VIS.TrapProblem
-        id="kyc-p7"
+        id="kyc-c2"
         difficulty="hard"
-        title="P7 — Embedding similarity at production: cosine, dot, or L2?"
-        scenario={<>The model emits L2-normalised embeddings. At inference, which similarity metric should you use?</>}
+        title="C2 — Loss choice: InfoNCE vs triplet"
+        scenario={<>The paper uses InfoNCE (softmax over many negatives per positive) rather than a triplet loss. Why for KYC specifically?</>}
         options={[
-          {key:"a", text:"Cosine similarity — natural choice for normalised embeddings, equivalent to dot product when norms are 1.", correct:true},
-          {key:"b", text:"L2 distance — more interpretable."},
-          {key:"c", text:"Mahalanobis distance with a covariance estimated from training embeddings."},
-          {key:"d", text:"KL divergence between the embedding distributions."},
+          {key:"a", text:"InfoNCE leverages many negatives per positive in ONE forward pass, which is critical when the negative classes are diverse (morph variant A, morph variant B, print-replay, screen-replay, deepfake video frame). Triplet loss sees one negative per anchor — to cover the full negative diversity you would need many more passes. InfoNCE's softmax over batch negatives also gives a calibrated similarity gradient where triplet's margin is binary.", correct:true},
+          {key:"b", text:"InfoNCE is always better."},
+          {key:"c", text:"Triplet cannot be used in KYC."},
+          {key:"d", text:"InfoNCE uses no negatives."},
         ]}
-        trap={<>(b) L2 on normalised vectors is monotonically related to cosine but has different numerical stability. (c) over-engineers — covariance estimation adds drift risk. (d) is a category error: KL is for distributions, not vectors.</>}
-        lens={<>(a). For L2-normalised embeddings, cosine = dot product. Use whichever is faster in your serving stack (dot product is one instruction). Don't reach for fancier metrics unless your embeddings are NOT normalised or you have a measurable miscalibration.</>}
-        stretch={<>If you forgot to L2-normalise during training, what happens to cosine at inference?</>}
+        trap={<>(b), (c), (d) miss the diversity-of-negatives argument.</>}
+        lens={<>The choice between InfoNCE and triplet is determined by the diversity of the negative distribution. KYC has many distinct attack classes — InfoNCE wins.</>}
+        stretch={<>At what batch size does InfoNCE's gain over triplet plateau?</>}
       />
 
       <VIS.TrapProblem
-        id="kyc-p8"
+        id="kyc-c3"
         difficulty="hard"
+        title="C3 — What's dropped vs ArcFace"
+        scenario={<>What does cross-modal contrastive KYC explicitly drop relative to ArcFace?</>}
         multiSelect
-        title="P8 — A morphing attack defeats your model. What changes?"
-        scenario={<>Six months post-launch, a coordinated morphing attack drops your morphing-attack TPR from 92 percent to 71 percent. Which responses address the root cause? Select all that apply.</>}
         options={[
-          {key:"a", text:"Add the new morphing technique to the spoof augmenter and retrain.", correct:true},
-          {key:"b", text:"Collect adjudicated examples of the new attack and add as labelled hard negatives.", correct:true},
-          {key:"c", text:"Lower the cosine-similarity threshold to flag more applicants for manual review.", correct:true},
-          {key:"d", text:"Switch model architecture from ResNet to Vision Transformer."},
-          {key:"e", text:"Disable cross-modal KYC entirely until the attack is understood."},
-          {key:"f", text:"Add a CAPTCHA before submission."},
+          {key:"a", text:"Identity-classification pre-training — the contrastive model is not trained to NAME the identity, only to score consistency.", correct:true},
+          {key:"b", text:"Single-image identity probability — contrastive only operates on PAIRS.", correct:true},
+          {key:"c", text:"The clean-photo prior — contrastive's negative pipeline includes degraded/manipulated images, so the encoders are NOT trained to assume clean inputs.", correct:true},
+          {key:"d", text:"Use of a neural network — contrastive uses no NN."},
         ]}
-        trap={<>(d) architecture change without diagnostic data is cargo-culting. (e) shuts down a working system. (f) addresses bot traffic, not morphing.</>}
-        lens={<>(a), (b), (c). The augmenter must learn the new attack (a); adjudicated examples make the loss exactly target the new MO (b); a threshold drop buys time while retraining happens (c). All three move the needle on this specific threat.</>}
-        stretch={<>What single metric tells you when (c) is no longer needed because (a) + (b) restored performance?</>}
+        trap={<>(d) is wrong.</>}
+        lens={<>Three drops: identity naming, single-image queries, clean-photo prior. Each is intentional — what's gained is morph-robustness and cross-modal consistency.</>}
+        stretch={<>Which drop most reduces deployability vs ArcFace?</>}
       />
 
       <VIS.TrapProblem
-        id="kyc-p9"
+        id="kyc-c4"
         difficulty="hard"
-        title="P9 — Few-shot personalisation for high-value users"
-        scenario={<>A tier-1 enterprise customer (private bank, ~50k users) asks for higher KYC accuracy on their cohort. You have ~5k labelled (selfie, doc) pairs from this customer. What is the cleanest approach?</>}
+        title="C4 — Which knob mis-set breaks cross-modal contrastive"
+        scenario={<>Rank: (i) negatives diversity, (ii) batch size (for InfoNCE), (iii) tower depth, (iv) embedding dim.</>}
         options={[
-          {key:"a", text:"Fully retrain the model on the 5k cohort pairs — they best represent the customer's distribution."},
-          {key:"b", text:"Freeze the shared encoder and train a small projection head per-customer on their labelled pairs.", correct:true},
-          {key:"c", text:"Train a per-customer model from scratch with the same architecture."},
-          {key:"d", text:"Skip personalisation — global model is enough."},
+          {key:"a", text:"Negatives diversity > batch size > tower depth > embedding dim. Negatives diversity is the entire game — without it, the model is a face matcher. Batch size matters for InfoNCE's effective negative count (under 256 starts losing gradient quality). Tower depth and embedding dim are secondary.", correct:true},
+          {key:"b", text:"Embedding dim dominates."},
+          {key:"c", text:"All equally important."},
+          {key:"d", text:"Tower depth dominates."},
         ]}
-        trap={<>(a) catastrophically forgets the global distribution. (c) is the right idea but data-inefficient at 5k pairs. (d) ignores the business ask.</>}
-        lens={<>(b). Adapter / projection-head fine-tuning is the standard pattern for per-customer personalisation in shared-encoder systems. Tiny parameter count, fast training, no catastrophic forgetting, no global regression.</>}
-        stretch={<>How small can the projection head be before the cohort gain disappears?</>}
+        trap={<>(b), (c), (d) miss the negatives-first ordering.</>}
+        lens={<>For contrastive KYC, the negatives are the dataset, not a regulariser. Treat them as data, not as augmentation.</>}
+        stretch={<>How do you tune negative-mix curriculum vs batch size jointly?</>}
       />
 
       <VIS.TrapProblem
-        id="kyc-p10"
+        id="kyc-c5"
         difficulty="medium"
-        multiSelect
-        title="P10 — Observability for a contrastive KYC system"
-        scenario={<>What dashboards / signals belong in the day-2 ops view of a contrastive KYC system? Select all that apply.</>}
+        title="C5 — Data-assumption violation: ID is a digital-native eID (no physical document)"
+        scenario={<>Country X moves to digital-only eIDs (a cryptographically signed JSON with a photo, no physical card). What specifically happens?</>}
         options={[
-          {key:"a", text:"Per-stratum TPR / FPR (skin tone, age, gender).", correct:true},
-          {key:"b", text:"Per-attack-type TPR (morphing, face-swap, print attack, replay).", correct:true},
-          {key:"c", text:"Distribution of cosine-similarity scores split by approve / decline / manual-review outcome.", correct:true},
-          {key:"d", text:"Per-region distribution drift on input image stats (resolution, lighting, face-size).", correct:true},
-          {key:"e", text:"Average inference latency only — fairness metrics belong in the quarterly audit."},
-          {key:"f", text:"Aggregate accuracy only."},
+          {key:"a", text:"The doc-face is now the eID's embedded photo — already in pristine digital form, with no print/scan artifacts. The doc tower was trained on artifacts of printing and scanning; on eIDs, the tower sees inputs OUTSIDE its training distribution. The joint similarity drops for legitimate users (FP rate spikes). Fix: fine-tune the doc tower on eID photos as a separate distribution OR add eID-photo augmentations to the training pipeline.", correct:true},
+          {key:"b", text:"Performance is unchanged."},
+          {key:"c", text:"Contrastive KYC refuses digital eIDs."},
+          {key:"d", text:"It auto-prints the eID."},
         ]}
-        trap={<>(e) is the dangerous one — burying fairness in a quarterly audit means three months of unfair decisions before anyone notices. (f) hides everything that matters.</>}
-        lens={<>(a), (b), (c), (d). Fairness in the daily dashboard catches drift fast; per-attack-type tracking spots adversarial adaptation; score distributions reveal calibration drift; input drift catches camera / lighting changes. All four belong on the ops view.</>}
-        stretch={<>What ALERT (not just a dashboard) would you set on (a)?</>}
+        trap={<>(b), (c), (d) miss the distribution-shift point.</>}
+        lens={<>The doc tower's representation is tied to the print/scan domain. Digital documents break that prior. Senior MLEs detect and fine-tune.</>}
+        stretch={<>How would you detect that eID adoption is hurting the model in production?</>}
       />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      <VIS.TrapProblem
+        id="kyc-d1"
+        difficulty="hard"
+        title="D1 — 'Contrastive learning is self-supervised so no labels needed'"
+        scenario={<>A junior says "we can train cross-modal contrastive KYC fully self-supervised — no labels." Where does this intuition break for KYC?</>}
+        options={[
+          {key:"a", text:"Self-supervised contrastive (SimCLR-style) treats augmentations of the SAME image as positives — but in KYC the positives are LEGITIMATE selfie-doc PAIRS of the same person, which is a labeled relationship. More importantly the NEGATIVES need to be labeled spoofing classes (morph, print-replay, etc.) — self-supervision cannot generate those. The model is contrastive but not self-supervised. Mis-naming this loses 90% of its anti-morph capacity.", correct:true},
+          {key:"b", text:"All contrastive is self-supervised."},
+          {key:"c", text:"Labels are never needed."},
+          {key:"d", text:"SimCLR is identical to cross-modal contrastive KYC."},
+        ]}
+        trap={<>(b), (c), (d) confuse contrastive families.</>}
+        lens={<>Contrastive is a loss family, not a label regime. KYC contrastive is supervised in both positives (paired persons) and negatives (attack classes).</>}
+        stretch={<>What part could be self-supervised? Selfie tower pre-training?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-d2"
+        difficulty="hard"
+        title="D2 — Wrong-assumption cascade: 'fairness is the same as ArcFace'"
+        scenario={<>You assume "since ArcFace's fairness was audited and signed off, the cross-modal contrastive model is fair by construction." Trace the cascade.</>}
+        options={[
+          {key:"a", text:"You skip per-tone fairness audit — model deploys — FNR on dark-skin users is 8x median (much WORSE than ArcFace) because the spoofing-aware augmentations interact with tone-conditional lighting in ways ArcFace didn't see — regulator audit catches it — fine + mandatory model rollback + public statement. The contrastive model needs its OWN fairness audit; inheritance from ArcFace's audit is invalid.", correct:true},
+          {key:"b", text:"Nothing changes — both models are equally fair."},
+          {key:"c", text:"Two towers are automatically fair."},
+          {key:"d", text:"Contrastive learning prevents bias."},
+        ]}
+        trap={<>(b), (c), (d) miss the bias-amplification finding.</>}
+        lens={<>The training distribution (negatives + augmentations) is different from ArcFace's. The model's bias profile is therefore different. Audit independently.</>}
+        stretch={<>Sketch the per-tone audit you would run before launch.</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-d3"
+        difficulty="hard"
+        title="D3 — Junior vs senior question on a 'win'"
+        scenario={<>Junior reports the contrastive model beats ArcFace by 12 percentage points TPR-at-fixed-FPR on the morph-attack test set. What is the senior question?</>}
+        options={[
+          {key:"a", text:"'On which morph-generator families was the test set sampled, and which generators in the wild are NOT represented in either training or test? Twelve points on the in-distribution morphs is consistent with the model overfitting the morph-generator signature, not learning generic morph-defense. We need a held-out-generator evaluation before claiming generalisation.'", correct:true},
+          {key:"b", text:"'Use bigger towers.'"},
+          {key:"c", text:"'Lower the temperature.'"},
+          {key:"d", text:"'Ship it.'"},
+        ]}
+        trap={<>(b), (c), (d) miss the generator-generalisation question.</>}
+        lens={<>The senior question audits the generator family overlap between train and test. In-distribution morph wins overstate real-world robustness.</>}
+        stretch={<>What is the cheapest held-out-generator eval you could run?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-d4"
+        difficulty="hard"
+        title="D4 — Plausible misattribution: FNR rises Tuesday"
+        scenario={<>FNR on legitimate users spikes from 1% to 5% on Tuesday. Causes: (i) new fraud campaign with novel morphs, (ii) a partner mobile-app released a new SDK that compresses selfies more aggressively, (iii) the doc-OCR upstream changed crop geometry. Which is most likely?</>}
+        options={[
+          {key:"a", text:"(ii) most likely. A selfie-compression change pushes selfies OUT of the encoder's training distribution; the joint similarity drops for legitimate users; FNR spikes. (i) would spike FPR or recall on attacks, not FNR on legitimate users. (iii) is plausible but doc-crop changes usually cause partial face crops with very low confidence scores — a different signature than uniform FNR. Mitigation: detect input-distribution shift on selfie statistics; rate-limit the SDK rollout.", correct:true},
+          {key:"b", text:"(i) — new morphs always cause FNR."},
+          {key:"c", text:"(iii) — must be the crop."},
+          {key:"d", text:"Random."},
+        ]}
+        trap={<>(b), (c), (d) confuse FNR vs FPR signatures.</>}
+        lens={<>FNR (legitimate users rejected) and FPR (attacks accepted) point to different causes. Senior MLEs match the signature to the cause.</>}
+        stretch={<>Design the selfie-distribution-shift monitor.</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>E. Operations</h3>
+
+      <VIS.TrapProblem
+        id="kyc-e1"
+        difficulty="hard"
+        title="E1 — Cross-modal contrastive specific gotcha"
+        scenario={<>Pick the gotcha most specific to cross-modal contrastive KYC (would not bite ArcFace alone):</>}
+        options={[
+          {key:"a", text:"Bias amplification — the spoofing-aware augmentations interact with skin-tone-conditional lighting effects, making the joint model's per-tone FNR gap WORSE than ArcFace's. Mandatory per-tone audit and re-balancing of negatives. ArcFace can inherit a fairness audit; the contrastive model cannot.", correct:true},
+          {key:"b", text:"Slow training."},
+          {key:"c", text:"OOM."},
+          {key:"d", text:"GPU memory."},
+        ]}
+        trap={<>(b), (c), (d) are generic.</>}
+        lens={<>The augmentation-tone interaction is unique to spoofing-aware contrastive. It is the headline regulatory risk.</>}
+        stretch={<>Sketch the negative-rebalancing strategy for tone-fair training.</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-e2"
+        difficulty="hard"
+        title="E2 — Friday: morph FNR climbs on a single ID-document type"
+        scenario={<>Friday: morph-attack false-negative rate spikes from 4% to 22% — but ONLY for Country X's national ID (rest of corpus stable). Diagnosis?</>}
+        options={[
+          {key:"a", text:"Country X likely deployed a new physical-card design (security feature update) with different background patterns, different photo-printing process. The doc tower was trained on the OLD card design. Mitigation: collect new doc photos, fine-tune the doc tower OR add per-document-type calibration; alert the issuer-detection upstream for any other countries refreshing their card design.", correct:true},
+          {key:"b", text:"Roll back the entire model."},
+          {key:"c", text:"Add more attention heads."},
+          {key:"d", text:"Increase batch size."},
+        ]}
+        trap={<>(b), (c), (d) miss the document-type-specific signature.</>}
+        lens={<>Country-specific spikes point to document-design refreshes. Monitor per-document-type metrics; the global metric hides this.</>}
+        stretch={<>How would you preemptively detect upcoming card-design refreshes?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-e3"
+        difficulty="hard"
+        title="E3 — Eval-protocol audit"
+        scenario={<>Which findings invalidate a cross-modal contrastive KYC report card?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Train and test use the same morph-generator family — measures memorisation, not generalisation.", correct:true},
+          {key:"b", text:"No per-skin-tone FNR/FPR stratification — global numbers hide a 4-8x disparity.", correct:true},
+          {key:"c", text:"No held-out document-type — measures within-doc-type performance only.", correct:true},
+          {key:"d", text:"Contrastive learning means evaluation doesn't matter."},
+        ]}
+        trap={<>(d) is wrong by construction.</>}
+        lens={<>Three audit failures: generator overlap, missing fairness strata, missing doc-type holdout. All three regularly appear in published cross-modal KYC results.</>}
+        stretch={<>Which audit failure is hardest to detect after deployment?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-e4"
+        difficulty="medium"
+        title="E4 — Rollout sequence: migrate from ArcFace to contrastive"
+        scenario={<>Order: (i) full ramp, (ii) shadow scoring + per-tone fairness audit + per-doc-type calibration, (iii) hybrid score (contrastive as one feature in existing model), (iv) traffic ramp.</>}
+        options={[
+          {key:"a", text:"ii then iii then iv then i. Per-tone fairness audit is regulatory blocker; per-doc-type calibration is technical blocker. Hybrid bounds risk during ramp. Full direct ramp without these steps risks a same-day regulator complaint.", correct:true},
+          {key:"b", text:"i then ii then iii then iv."},
+          {key:"c", text:"Direct cutover."},
+          {key:"d", text:"iv then i."},
+        ]}
+        trap={<>(b), (c), (d) skip mandatory audit steps.</>}
+        lens={<>Regulatory + technical blockers gate the rollout. Senior MLEs sequence around the blockers.</>}
+        stretch={<>How would you build a per-tone audit pipeline without storing tone labels?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-e5"
+        difficulty="medium"
+        title="E5 — Reproducibility"
+        scenario={<>Which cross-modal contrastive KYC reproducibility issues are widely known?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Morph datasets are often proprietary (commercial vendors) — cross-paper comparison is broken.", correct:true},
+          {key:"b", text:"Negative-augmentation pipelines (random crops, JPEG re-encode, print simulation) are rarely fully specified.", correct:true},
+          {key:"c", text:"Fairness audits are reported as aggregates rather than per-tone numbers.", correct:true},
+          {key:"d", text:"Contrastive learning is fully deterministic."},
+        ]}
+        trap={<>(d) is false.</>}
+        lens={<>Three reproducibility issues: private datasets, unspecified augmentation, aggregate fairness reporting. All three appear in CVPR-class KYC papers.</>}
+        stretch={<>What is the cheapest open-data eval you could publish?</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>F. Failure modes and edge cases</h3>
+
+      <VIS.TrapProblem
+        id="kyc-f1"
+        difficulty="hard"
+        title="F1 — Smallest input that breaks the contrastive advantage"
+        scenario={<>Construct the smallest scenario where cross-modal contrastive KYC is no better than ArcFace.</>}
+        options={[
+          {key:"a", text:"A pipeline serving only one country, one document type, with no morph attacks (threat model is imposter-only). On that surface, the contrastive negatives are unused; the joint embedding's morph-defense capacity is wasted; ArcFace at face-match cosine is sufficient. The contrastive model's advantage is tied to threat-model variety, not to any specific volume threshold.", correct:true},
+          {key:"b", text:"At 1 user."},
+          {key:"c", text:"Always — contrastive always loses."},
+          {key:"d", text:"On any synthetic data."},
+        ]}
+        trap={<>(b), (c), (d) miss the threat-model framing.</>}
+        lens={<>Contrastive KYC's edge is tied to spoof threats. Single-doc-type, imposter-only surfaces don't benefit.</>}
+        stretch={<>At what morph-attack rate does the contrastive ROI break even?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-f2"
+        difficulty="hard"
+        title="F2 — Adversarial attack on the joint embedding"
+        scenario={<>Design an attack that breaks cross-modal contrastive KYC specifically.</>}
+        options={[
+          {key:"a", text:"Train a morph generator using GRADIENT signals from a SURROGATE cross-modal contrastive model (trained on the same public morph dataset). The morphs produced by the surrogate-targeted generator transfer to closed deployed models at non-trivial rates. Defense: re-sample negatives quarterly from current open morph generators; ensemble across multiple contrastive models; adversarial training with the surrogate.", correct:true},
+          {key:"b", text:"Submit a blank document."},
+          {key:"c", text:"No attack possible."},
+          {key:"d", text:"Higher resolution."},
+        ]}
+        trap={<>(b), (c), (d) miss the surrogate-transfer attack surface.</>}
+        lens={<>Surrogate-targeted morph attacks transfer across contrastive models. The defense is adversarial training + ensemble.</>}
+        stretch={<>How would you measure transferability quantitatively?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-f3"
+        difficulty="hard"
+        title="F3 — Reverse engineering: symptom to design choice"
+        scenario={<>Symptom: model passes per-tone fairness audit at launch but per-tone FNR gap grows over 12 weeks from 1.2x to 4.5x. Which cross-modal contrastive design choice causes this?</>}
+        options={[
+          {key:"a", text:"The training NEGATIVES distribution drifts (new morph generators in the wild that the model is not trained on). The bias amplification interacts with the drift: dark-skin selfies are MORE affected by new morph-generator artifacts because tone-conditional lighting interactions are still under-represented in the negative pool. Fix: monthly re-train with newly collected morphs AND tone-balanced negative sampling.", correct:true},
+          {key:"b", text:"The model is fine — audit was wrong."},
+          {key:"c", text:"GPU memory is full."},
+          {key:"d", text:"Batch size shrank."},
+        ]}
+        trap={<>(b), (c), (d) miss the drift-meets-bias signature.</>}
+        lens={<>Fairness drift over time is the contrastive-KYC-specific signature of negative-distribution drift combined with under-represented tones. Audit alone is not enough; the negative pipeline needs ongoing tone-balancing.</>}
+        stretch={<>What is the right cadence for tone-balanced negative re-sampling?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-f4"
+        difficulty="medium"
+        title="F4 — Paper-admitted limitation"
+        scenario={<>Which limitation does the CVPR 2025 paper itself acknowledge?</>}
+        options={[
+          {key:"a", text:"Dataset bias on skin tone; paper recommends a fairness audit before deployment and reports per-tone FNR gaps in the supplementary.", correct:true},
+          {key:"b", text:"The model is perfectly fair by construction."},
+          {key:"c", text:"Cannot run on GPUs."},
+          {key:"d", text:"Only works for one country."},
+        ]}
+        trap={<>(b), (c), (d) are wrong.</>}
+        lens={<>The paper is honest about the bias gap. Knowing this signals careful reading.</>}
+        stretch={<>What did the paper NOT predict that production teams hit?</>}
+      />
+
+      <VIS.TrapProblem
+        id="kyc-f5"
+        difficulty="hard"
+        title="F5 — Community-found failure: deepfake video selfies"
+        scenario={<>Recent follow-up work (2025-2026) exposed which class of failure for cross-modal contrastive KYC?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Deepfake video selfies (real-time face-swap on a victim's video) bypass single-frame contrastive models — the model never sees temporal artifacts.", correct:true},
+          {key:"b", text:"Bias amplification under augmentation-tone interaction — measured in independent audits.", correct:true},
+          {key:"c", text:"Surrogate-transfer morph attacks succeed at non-trivial rates against closed deployed models.", correct:true},
+          {key:"d", text:"Contrastive models cannot run inference."},
+        ]}
+        trap={<>(d) is absurd.</>}
+        lens={<>Three community-found failures: deepfake video, bias amplification, surrogate transfer. Defenses: temporal liveness, tone-balanced negatives, adversarial training.</>}
+        stretch={<>Rank by which is most pressing in 2026.</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
         <li>
-          <a href="https://openaccess.thecvf.com/content/CVPR2025" target="_blank" rel="noopener">
-            <strong>Cross-modal KYC: Selfie-Document Consistency via Contrastive Learning</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, CVPR 2025)</span>
-          <br/>The shared-encoder + spoof-aug paper. Read sections 3-4 for loss design and section 5 for the ablation on augmentation classes.
+          <a href="https://openaccess.thecvf.com/content/CVPR2025" target="_blank" rel="noopener"><strong>'Cross-modal KYC' (CVPR 2025)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper)</span>
+          <br/>The core. Architecture (Section 3), spoofing-aware negative pipeline (Section 4), fairness analysis (Supplementary).
         </li>
         <li>
-          <a href="https://arxiv.org/abs/2103.00020" target="_blank" rel="noopener">
-            <strong>Radford et al. — Learning Transferable Visual Models From Natural Language Supervision (CLIP)</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, ICML 2021)</span>
-          <br/>The foundational dual-encoder InfoNCE design. Read for the contrastive-objective intuition that the KYC paper inherits.
+          <a href="https://arxiv.org/abs/2103.00020" target="_blank" rel="noopener"><strong>Radford et al. — CLIP</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(ICML 2021)</span>
+          <br/>The two-tower contrastive parent.
         </li>
         <li>
-          <a href="https://gombru.github.io/2019/04/03/ranking_loss/" target="_blank" rel="noopener">
-            <strong>Raul Gombru — Understanding Ranking Loss, Contrastive Loss and Triplet Loss</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
-          <br/>The cleanest intuition-first walkthrough of contrastive and triplet losses. Read before tweaking your loss landscape.
-        </li>
-        <li>
-          <a href="https://onfido.com/blog/biometric-fairness/" target="_blank" rel="noopener">
-            <strong>Onfido — Biometric Fairness Reports</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(industry report)</span>
-          <br/>Industry-standard fairness audit format for KYC face matching. Useful as a template for your own pre-launch audit.
-        </li>
-        <li>
-          <a href="https://www.nist.gov/programs-projects/face-recognition-vendor-test-frvt" target="_blank" rel="noopener">
-            <strong>NIST FRVT — Face Recognition Vendor Test (ongoing)</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(government benchmark)</span>
-          <br/>The most cited public benchmark for face matching, including morphing-attack detection. Useful for grounding your model's claimed numbers.
+          <a href="https://arxiv.org/abs/2007.05630" target="_blank" rel="noopener"><strong>Morph Attack Detection benchmark</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(IJCB 2020)</span>
+          <br/>The morph-attack literature; what the contrastive model's negative pipeline is built on.
         </li>
       </ul>
     </VIS.Section>

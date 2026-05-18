@@ -1414,325 +1414,571 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// TabPFN for tabular few-shot fraud — Fraud SOTA · Few-shot / meta-learning for fraud
-// Pre-trained transformer doing Bayesian inference over tabular data in one forward pass.
+// TabPFN for tabular few-shot fraud (Hollmann et al. ICLR 2023; v2 NeurIPS 2024)
+// v2 redo - 30+ trap problems spanning A-F. Concept anchor: TabPFN is a
+// pre-trained transformer that takes (X_train, y_train, X_test) as a single
+// sequence and emits posterior predictions over y_test in ONE FORWARD PASS;
+// it performs APPROXIMATE BAYESIAN INFERENCE over a prior of synthetic tabular
+// datasets seen during pre-training. NO per-task gradient updates. Strong at
+// n_train under ~1000-10000 rows; v1 capped at 1K, v2 lifts that. Discriminator
+// vs XGBoost (needs hundreds of examples to start beating defaults; ProtoNet
+// (needs episodic training, fraud-specific); MAML (bi-level instability).
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="Fraud SOTA · Few-shot / meta-learning for fraud"
+      pill="Fraud SOTA - few-shot / meta-learning"
       title="TabPFN for tabular few-shot fraud"
-      subtitle="A pre-trained transformer doing approximate Bayesian inference over tabular tasks — usable at 50 labels where XGBoost is still useless."
+      subtitle="A pre-trained transformer that performs Bayesian inference over tabular data in ONE forward pass. Feed (train rows, labels, test rows) as a sequence; emit predictions. No gradient descent at task time."
       byline={[
-        {label: "Source", value: "Hollmann et al. (ICLR 2023, v2 NeurIPS 2024)"},
+        {label: "Paper", value: "Hollmann et al. (ICLR 2023, v2 NeurIPS 2024)"},
         {label: "Year", value: "2024"},
-        {label: "L3", value: "Few-shot tabular fraud"},
+        {label: "Domain", value: "Tabular few-shot (new fraud verticals)"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="Tabular Prior-Fitted Network — a transformer pre-trained on millions of synthetic tabular tasks drawn from a prior over Structural Causal Models (SCMs). At inference, it ingests labelled support + unlabelled query in one forward pass and emits posterior class probabilities. Hollmann et al., ICLR 2023; v2 NeurIPS 2024.">TabPFN</VIS.Term>{" "}
-      treats a small tabular task (≤1k rows, ≤100 features in v1) as input to a single transformer forward pass. The model has been pre-trained to do approximate{" "}
-      <VIS.Term def="A Bayesian framework where the goal is to predict a held-out value's distribution after conditioning on a small labelled context — equivalent to integrating over the posterior of a model class. TabPFN approximates this for tabular data.">posterior prediction</VIS.Term>{" "}
-      over a wide prior of tabular tasks. At 50-200 labels it beats XGBoost; past ~1000 examples XGBoost catches up.
+      For a new fraud vertical (just launched product line, new region, new payment rail) you have under 500 labeled transactions. <VIS.Term def="Gradient Boosted Decision Trees - XGBoost, LightGBM, CatBoost. The standard tabular ML baseline. Needs hundreds of examples to outperform defaults; thousands to reach asymptotic performance.">GBDT</VIS.Term> (XGBoost, LightGBM) starts losing badly at this scale - too few examples to fit hundreds of trees without overfitting. <VIS.Term def="Tabular Prior-data Fitted Network - a transformer pre-trained on millions of synthetic tabular datasets to perform Bayesian inference over new datasets in one forward pass.">TabPFN</VIS.Term> is a transformer pre-trained on millions of synthetic tabular datasets sampled from a structural-causal-model prior; at inference, it takes the new dataset's (X_train, y_train, X_test) as a SEQUENCE and emits posterior predictions for X_test in ONE forward pass - no SGD, no hyperparameter tuning. Strong at n=50-1000 (v1) or n=50-10K (v2). Caveats: hard caps on n and number of features; tabular-prior limits domain transfer. Source: <a href="https://arxiv.org/abs/2207.01848" target="_blank" rel="noopener">arXiv:2207.01848</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 - What it is">
       <p>
-        TabPFN is pre-trained ONCE on tens of millions of synthetic tabular classification tasks drawn from a prior over plausible data-generating processes (Structural Causal Models with various dependencies, non-linearities and noise levels). The pre-training objective is: given a labelled context (X_train, y_train) and a query x_test, predict P(y_test | x_test, X_train, y_train). At deployment, you do NOT fine-tune — you simply pass your labelled fraud examples as context, your unlabelled transactions as queries, and read off class probabilities.
+        TabPFN is a 25M-parameter transformer pre-trained on ~10M synthetic tabular datasets generated from a Structural Causal Model prior. At task time you concatenate (X_train, y_train) as 'context tokens' and (X_test) as 'query tokens'; one forward pass emits per-row class probabilities for X_test. The model approximates Bayesian model averaging over the synthetic-dataset prior. No SGD, no hyperparameter tuning, no per-task fitting.
       </p>
       <VIS.Mermaid chart={`
-flowchart TB
-  PRETRAIN["Pre-train on millions of synthetic tabular tasks"] --> WEIGHTS["Frozen TabPFN weights"]
-  CTX["Labelled fraud examples (50-1000)"] --> FWD["Single forward pass"]
-  QRY["Unlabelled query transactions"] --> FWD
-  WEIGHTS --> FWD
-  FWD --> PROBS["Posterior P(fraud | x)"]
-  style WEIGHTS fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px
-  style FWD fill:#fef3c7,stroke:#b45309,stroke-width:2px
+flowchart LR
+  C["Context: (X_train, y_train)\\nfor new fraud vertical"]
+  Q["Query: X_test"]
+  T["TabPFN\\n(25M-param transformer\\npre-trained on 10M\\nsynthetic datasets)"]
+  P["Posterior P(y_test | X_test, context)"]
+  C --> T
+  Q --> T
+  T --> P
+  style T fill:#dbeafe,stroke:#1e40af,stroke-width:2px
       `} />
-      <p>The astonishing thing is that there is no training step at deployment — the pre-trained network has learned to approximate Bayesian inference over the prior of plausible tasks, so context-conditioning IS the learning.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from XGBoost on small data">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead>
-          <tr style={{background:"#1f3a5f", color:"#fff"}}>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>XGBoost on small data</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>TabPFN</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Training cost per task</td>
-            <td style={{padding:"8px 10px"}}>Minutes-hours per task</td>
-            <td style={{padding:"8px 10px"}}>Zero (one-time pre-train)</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Accuracy at n=100</td>
-            <td style={{padding:"8px 10px"}}>Weak (high variance)</td>
-            <td style={{padding:"8px 10px"}}>Strong</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Accuracy at n=10k</td>
-            <td style={{padding:"8px 10px"}}>Strong</td>
-            <td style={{padding:"8px 10px"}}>Hits row cap, falls behind</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Row / feature limits</td>
-            <td style={{padding:"8px 10px"}}>None</td>
-            <td style={{padding:"8px 10px"}}>v1: 1k rows / 100 feats; v2: larger</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Hyperparameter tuning</td>
-            <td style={{padding:"8px 10px"}}>Required, expensive</td>
-            <td style={{padding:"8px 10px"}}>None</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Calibration out-of-box</td>
-            <td style={{padding:"8px 10px"}}>Often miscalibrated</td>
-            <td style={{padding:"8px 10px"}}>Generally well-calibrated</td>
-          </tr>
-        </tbody>
-      </table>
+    <VIS.Section id="sec-diff" title="Beat 2 - How it differs from XGBoost, ProtoNet, MAML">
+      <p>
+        <strong>XGBoost / LightGBM.</strong> Fits hundreds of trees via gradient boosting on the new dataset. With n=100, the trees overfit. Defaults are tuned for n=10K+. TabPFN was DESIGNED for the n=100 regime.
+      </p>
+      <p>
+        <strong>ProtoNet.</strong> Centroid-based few-shot for CLASSES. Designed for image few-shot; tabular adaptation requires episodic training on tabular data. TabPFN's pre-training (10M synthetic tabular datasets) is much more comprehensive than a single fraud team can curate.
+      </p>
+      <p>
+        <strong>MAML.</strong> Inner-loop SGD adaptation. Bi-level training instability. TabPFN bypasses this entirely - the 'adaptation' is just a forward pass with context tokens.
+      </p>
+      <p>
+        <strong>TabPFN.</strong> Pre-trained transformer doing in-context Bayesian inference. Zero gradient steps at task time. Cap at n=1K (v1) / 10K (v2) rows and around 100 features.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick">
-      <ul>
-        <li><strong>New fraud vertical with fewer than ~500 labels</strong> — the regime XGBoost overfits and TabPFN dominates.</li>
-        <li><strong>Rapid prototyping</strong> — TabPFN gives a strong baseline in minutes; useful as the gold-standard reference when iterating on features.</li>
-        <li><strong>Calibrated probabilities are important</strong> — TabPFN's posterior is generally well-calibrated, helpful for cost-sensitive decisions.</li>
-        <li><strong>Small feature sets</strong> — TabPFN v1 caps at ~100 features. Pre-select carefully.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 - When to pick it">
+      <p>
+        Pick TabPFN when (a) new fraud vertical with under 500 labels, (b) you have under 100 features that fit TabPFN's cap, (c) the new vertical's data distribution is in TabPFN's SCM-prior coverage (most tabular data is - verify), (d) you can tolerate 1-5 second inference per batch (the transformer forward pass on context+query is not cheap), (e) you have a fallback to GBDT for the regime where data scales past TabPFN's caps.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations &amp; gotchas">
-      <VIS.Callout kind="gotcha" title="Hard caps on rows and features">
-        TabPFN v1: ~1000 rows, ~100 features, ~10 classes. v2 lifts these but still has bounds. Past the cap, you must subsample (lossy) or fall back to XGBoost. For high-dimensional fraud features (thousands of one-hot device fingerprints), apply dimension reduction BEFORE TabPFN.
+    <VIS.Section id="sec-gotchas" title="Beat 4 - Limitations and gotchas">
+      <VIS.Callout kind="gotcha" title="Hard caps on n and feature count">
+        v1: n approximately 1K rows, around 100 features. v2 lifts to around 10K and around 500 features. Beyond the cap, behaviour is undefined - performance degrades sharply. Always check your data fits.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="The prior matters — and you cannot change it">
-        TabPFN's pre-training prior covers plausible SCMs. If your fraud problem has a structure the prior never sampled (e.g. heavy-tailed extreme outliers, time-series dependencies), expect underperformance. The fix is not to retrain TabPFN but to feature-engineer your data into the prior's shape.
+      <VIS.Callout kind="gotcha" title="Cost flips with scale">
+        TabPFN does a forward pass over (n_train + n_test) tokens. At n_test = 1M production scoring, the cost is one forward pass PER batch with ~1M query tokens. GBDT inference is microseconds per row. For high-throughput production scoring, TabPFN is expensive even when it wins on quality at small n.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="Memory blows up with context size">
-        Inference is quadratic in context size (transformer attention). At n=1000 rows the forward pass uses several GB of GPU memory. Batch inference across many queries to amortise context cost.
+      <VIS.Callout kind="gotcha" title="SCM prior is tabular-generic, not fraud-specific">
+        Fraud patterns may have features that the SCM prior does not capture well (heavy-tailed, multi-modal, time-correlated). TabPFN's Bayesian inference is correct under its prior but its prior is not your fraud distribution.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+    <VIS.Section id="sec-drill" title="Drill - trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Ten interview traps on TabPFN, the few-shot tabular regime, and when XGBoost re-takes the lead.
+        Problems span the 6 taxonomy axes. Strip "TabPFN" - each correct answer must still hinge on the specific mechanism (pre-trained tabular transformer doing in-context Bayesian inference in one forward pass, n caps, SCM prior).
       </p>
 
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity and comparison</h3>
+
       <VIS.TrapProblem
-        id="tab-p1"
+        id="tpfn-a1"
         difficulty="hard"
-        title="P1 — TabPFN beats XGBoost at n=100 fraud examples. Why, and when does that flip?"
-        scenario={<>You benchmark TabPFN against XGBoost on a new fraud vertical. At n=100 labels: TabPFN AUC 0.84, XGBoost AUC 0.71. At n=10000: TabPFN cannot run (over row cap), subsampled TabPFN AUC 0.86, XGBoost AUC 0.91. What is the cleanest single-sentence explanation?</>}
+        title="A1 - Why TabPFN beats XGBoost at n=100"
+        scenario={<>Your lead says "we already use XGBoost - why would TabPFN beat it at small n?" Pick the real discriminator.</>}
         options={[
-          {key:"a", text:"TabPFN's pre-trained prior gives strong inductive bias at small n; XGBoost has no prior beyond what 100 examples teach. Past ~1000 examples, the data dominates the prior and the tree-ensemble's flexibility wins.", correct:true},
-          {key:"b", text:"XGBoost has a bug at small n."},
-          {key:"c", text:"TabPFN is just a better algorithm at every n."},
-          {key:"d", text:"The benchmark is unfair to XGBoost."},
+          {key:"a", text:"XGBoost fits hundreds of trees by minimising loss on n=100 training points - too few examples to identify tree splits that generalise; the model overfits. TabPFN was PRE-TRAINED on millions of synthetic tabular datasets - it has already 'seen' thousands of small-n tabular problems and has learned the BAYESIAN POSTERIOR over plausible decision boundaries given a small dataset. The new dataset is processed in-context (as transformer tokens), not learned from scratch. The result is calibrated probabilities WITHOUT fitting from scratch.", correct:true},
+          {key:"b", text:"They are identical."},
+          {key:"c", text:"XGBoost is older."},
+          {key:"d", text:"TabPFN does no inference."},
         ]}
-        trap={<>(b), (c), (d) are dodges.</>}
-        lens={<>(a). The standard Bayesian-vs-frequentist intuition: priors dominate when data is scarce, data dominates when it is abundant. TabPFN bakes the prior into its weights via meta-training; XGBoost has only the data. The crossover is around n ~ 500-1000 for typical tabular fraud tasks.</>}
-        stretch={<>If your fraud problem has 100 labels today and you expect 100k by year-end, which model do you ship today, and what is the migration path?</>}
+        trap={<>(b), (c), (d) miss the pre-training mechanism.</>}
+        lens={<>The discriminator is pre-training-over-prior. XGBoost starts from scratch at n=100; TabPFN starts from a posterior over 10M synthetic small-n datasets.</>}
+        stretch={<>At what n does XGBoost catch up to TabPFN?</>}
       />
 
       <VIS.TrapProblem
-        id="tab-p2"
+        id="tpfn-a2"
         difficulty="hard"
+        title="A2 - Definitional trap: TabPFN vs ProtoNet for tabular few-shot"
+        scenario={<>A teammate says "TabPFN and ProtoNet are both few-shot - pick whichever has nicer code." Distinguish for tabular fraud.</>}
+        options={[
+          {key:"a", text:"ProtoNet is a CENTROID-IN-METRIC-SPACE model designed for CLASS few-shot (new MO at inference). TabPFN is a Bayesian-inference model for FULL-DATASET few-shot (small n_train across all classes). Different problems: ProtoNet answers 'classify into one of K classes given K prototypes'; TabPFN answers 'fit a tabular classifier on this small dataset.' For a new fraud vertical with small total label count, TabPFN is right. For typology growth on an established product with many MOs, ProtoNet is right.", correct:true},
+          {key:"b", text:"They are identical."},
+          {key:"c", text:"ProtoNet works on text only."},
+          {key:"d", text:"TabPFN is a clustering algorithm."},
+        ]}
+        trap={<>(b), (c), (d) confuse the algorithms.</>}
+        lens={<>The distinction is class-few-shot (ProtoNet) vs dataset-few-shot (TabPFN). The data shape decides.</>}
+        stretch={<>Could you stack TabPFN + ProtoNet for a typology-growth + small-dataset use case?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-a3"
+        difficulty="hard"
+        title="A3 - Counterfactual: no TabPFN available"
+        scenario={<>Without TabPFN, what is the strongest fallback for a new fraud vertical with n=100 labels?</>}
+        options={[
+          {key:"a", text:"Stack: (i) heavily regularised XGBoost (max_depth=3, n_estimators=50, regularisation cranked up) - prevents overfitting at small n, (ii) a global-fraud-prior model that the new-vertical model is FINE-TUNED from, (iii) hand-coded rules for the very-low-label first weeks. None matches TabPFN's pre-trained Bayesian-inference quality at the same n, but the combination closes most of the gap.", correct:true},
+          {key:"b", text:"Wait until n=10K."},
+          {key:"c", text:"You cannot do this without TabPFN."},
+          {key:"d", text:"Use a CAPTCHA."},
+        ]}
+        trap={<>(b) ignores the business need to score now. (c) overstates TabPFN's uniqueness.</>}
+        lens={<>Regularised GBDT + transfer-from-global + rules is the honest fallback. TabPFN consolidates these.</>}
+        stretch={<>Which alternative degrades fastest as n shrinks from 500 to 50?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-a4"
+        difficulty="hard"
+        title="A4 - Compose TabPFN with XGBoost via stacking"
+        scenario={<>You stack TabPFN with XGBoost via a meta-learner. What is the right framing?</>}
         multiSelect
-        title="P2 — TabPFN inference cost: what scales how?"
-        scenario={<>You measure TabPFN inference latency. Context size 100 queries 1 row takes 80 ms; context size 1000 queries 1 row takes 1.2 s; context size 100 queries 100 rows takes 100 ms. Which scaling statements are correct? Select all that apply.</>}
         options={[
-          {key:"a", text:"Cost scales quadratically in context size (transformer self-attention).", correct:true},
-          {key:"b", text:"Cost scales roughly linearly in batch (query) size at fixed context.", correct:true},
-          {key:"c", text:"Amortised cost per query drops when batching many queries against the same context.", correct:true},
-          {key:"d", text:"Cost scales linearly in context size and is independent of batch size."},
-          {key:"e", text:"Memory scales quadratically in context size due to attention matrices.", correct:true},
+          {key:"a", text:"At n under ~500, TabPFN dominates - the stacking weight should heavily favour TabPFN. At n over ~5000, XGBoost dominates - the weight flips. A meta-learner that takes n as a feature and outputs the weight is the right design.", correct:true},
+          {key:"b", text:"TabPFN and XGBoost are CONDITIONALLY DEPENDENT (both fit the same labels) - the meta-learner needs out-of-fold predictions to avoid leakage.", correct:true},
+          {key:"c", text:"TabPFN's cost scales with batch size; for large production batches, route via XGBoost and reserve TabPFN for high-uncertainty small batches.", correct:true},
+          {key:"d", text:"TabPFN should always be used regardless of n."},
         ]}
-        trap={<>(d) is the wrong scaling story — many practitioners assume it because transformers feel "linear" superficially.</>}
-        lens={<>(a), (b), (c), (e). Self-attention is O(context^2) in compute and memory. Batching queries amortises the context-encoding cost; this is why production TabPFN serving uses very large query batches against a fixed context.</>}
-        stretch={<>If your production traffic is 100 queries / second with daily-refreshed context, what serving architecture matches?</>}
+        trap={<>(d) ignores the cap regime.</>}
+        lens={<>The composition is straightforward when n is the routing feature. Cost-aware routing is the production refinement.</>}
+        stretch={<>What is the smoothest transition point between the two?</>}
       />
 
       <VIS.TrapProblem
-        id="tab-p3"
+        id="tpfn-a5"
         difficulty="hard"
-        title="P3 — Your fraud features include 10000 one-hot device-IDs"
-        scenario={<>You have 200 labelled fraud examples and 200 legit, plus features: 8 numerical aggregates, 10 categorical (low cardinality), AND a 10000-dim one-hot encoding of device-IDs. TabPFN v1 caps at ~100 features. What ships?</>}
+        title="A5 - Boundary: where TabPFN stops winning"
+        scenario={<>At what n does TabPFN's advantage over a tuned XGBoost vanish?</>}
         options={[
-          {key:"a", text:"Use TabPFN on the 18 numerical + categorical features, drop device-IDs."},
-          {key:"b", text:"Compute a learned embedding of device-IDs (e.g. via a SimCLR pre-train on device co-occurrence), reduce to 16-32 dims, then concatenate with the other features for TabPFN.", correct:true},
-          {key:"c", text:"Skip TabPFN — use XGBoost which has no feature cap."},
-          {key:"d", text:"Apply PCA on the 10000-dim one-hot to keep top 90 components."},
+          {key:"a", text:"Around n=1000-5000 (v1's cap is ~1K; v2 reaches ~10K). Beyond, TabPFN may hit its hard n cap and either truncate or degrade. Tuned XGBoost reaches its asymptotic performance around n=10K. Crossover is between approximately 1K and 5K depending on dataset complexity. Above 10K, XGBoost wins on quality AND cost.", correct:true},
+          {key:"b", text:"TabPFN always wins."},
+          {key:"c", text:"At exactly n=1 million."},
+          {key:"d", text:"Only on small datasets."},
         ]}
-        trap={<>(a) discards the most predictive feature class. (c) is defensible but at n=400 you give up TabPFN's small-data advantage. (d) PCA on one-hots is mathematically odd and rarely useful.</>}
-        lens={<>(b). The standard workflow: high-cardinality categoricals get compressed into a dense embedding via a separate pre-training step (entity embeddings, SimCLR on co-occurrence, or simple PCA on a feature-co-occurrence matrix), then fed into TabPFN at low dimension. Captures the signal while respecting the feature cap.</>}
-        stretch={<>What is the smallest embedding dim that retains useful device signal?</>}
+        trap={<>(b), (c), (d) miss the n-cap argument.</>}
+        lens={<>TabPFN's advantage is bounded by its n cap. Tuned XGBoost catches up at the cap.</>}
+        stretch={<>What is the early-warning that you are about to cross the cap?</>}
       />
 
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>B. Application</h3>
+
       <VIS.TrapProblem
-        id="tab-p4"
+        id="tpfn-b1"
         difficulty="medium"
+        title="B1 - Pick the right tool given the scenario"
+        scenario={<>Scenario: launching a new payment rail (real-time bank-account transfers in a new market), n=180 labeled fraud transactions in week 4, ~40 features (account age, velocity, amount, device-fingerprint signals), p99 scoring SLA 200ms, batch scoring possible (transactions arrive in 50-row batches). Pick the next investment.</>}
+        options={[
+          {key:"a", text:"TabPFN v2 on the 180 labels (well below the ~10K cap; 40 features within the cap); batch-size 50 fits comfortably. Calibrate the output probabilities on a small holdout; build a XGBoost fallback path triggered when n exceeds 5K (give yourself headroom). Sub-second forward pass per batch fits the 200ms SLA.", correct:true},
+          {key:"b", text:"Wait until n=10K."},
+          {key:"c", text:"Use a CAPTCHA."},
+          {key:"d", text:"Just use rules."},
+        ]}
+        trap={<>(b) misses business need. (c), (d) miss the modelling opportunity.</>}
+        lens={<>The scenario matches TabPFN's design point. Cap headroom + SLA both fit; the XGBoost fallback handles the future scale.</>}
+        stretch={<>What do you measure weekly to know when to flip to XGBoost?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-b2"
+        difficulty="hard"
+        title="B2 - Sounds reasonable but isn't: 'pre-process features the way I would for XGBoost'"
+        scenario={<>A teammate suggests "do the usual feature engineering before TabPFN - one-hot encoding, log-transform amounts, target-encode high-cardinality columns." Why is this specifically wrong for TabPFN?</>}
+        options={[
+          {key:"a", text:"TabPFN's pre-training prior models tabular data WITH RAW numerical features and short categorical encodings. Heavy preprocessing (target encoding) introduces leakage and pushes features into shapes the prior never saw. The transformer was trained to handle moderate distribution shapes itself; pre-processing breaks that match. Best practice: minimal preprocessing - missing-value indicator + standardisation. TabPFN was designed to absorb feature engineering, not consume it.", correct:true},
+          {key:"b", text:"Always pre-process."},
+          {key:"c", text:"Pre-processing is identical for all models."},
+          {key:"d", text:"TabPFN refuses pre-processed inputs."},
+        ]}
+        trap={<>(b) is the naive belief.</>}
+        lens={<>TabPFN's prior expects raw features. Heavy preprocessing misaligns input with prior, hurting performance.</>}
+        stretch={<>What is the minimum preprocessing TabPFN actually needs?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-b3"
+        difficulty="hard"
+        title="B3 - Pitch TabPFN to the new-vertical lead"
+        scenario={<>The new-vertical lead asks "why TabPFN instead of just training XGBoost when we have data?" Pick the pitch that requires understanding the TabPFN mechanism.</>}
+        options={[
+          {key:"a", text:"At our scale (n=180), XGBoost is fitting hundreds of trees to a sample size that cannot identify reliable splits - it overfits. TabPFN is a transformer that was pre-trained on millions of synthetic small-n tabular datasets - it has 'practised' Bayesian inference on small-n problems extensively. We are doing transfer learning at the SHAPE level: TabPFN knows what generalises from 180 points to a new vertical because it has been trained to do exactly that. It gives us a Day-1 model that XGBoost can replace once we have 10K labels.", correct:true},
+          {key:"b", text:"TabPFN is a transformer and transformers are best."},
+          {key:"c", text:"TabPFN reduces false positives."},
+          {key:"d", text:"TabPFN uses fewer parameters."},
+        ]}
+        trap={<>(b), (c), (d) are unspecific.</>}
+        lens={<>The concept-specific pitch names the small-n design point and the shape-level transfer learning. Strip TabPFN - the listener must understand "GBDT cannot identify splits at n=180; transformer pre-trained on small-n datasets can" to evaluate.</>}
+        stretch={<>How would you quantify the GBDT-vs-TabPFN gap at n=180 for the lead?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-b4"
+        difficulty="hard"
+        title="B4 - When NOT to use TabPFN"
+        scenario={<>Which scenarios are TabPFN anti-patterns?</>}
         multiSelect
-        title="P4 — Calibration of TabPFN posteriors"
-        scenario={<>You ship TabPFN and downstream decisions are cost-sensitive — you act differently at P(fraud)=0.6 vs 0.9. Which statements about TabPFN calibration are TRUE? Select all that apply.</>}
         options={[
-          {key:"a", text:"TabPFN's outputs are generally better-calibrated out-of-the-box than tree ensembles.", correct:true},
-          {key:"b", text:"Calibration can still drift when the deployment task differs from the pre-training prior.", correct:true},
-          {key:"c", text:"Post-hoc calibration (Platt, isotonic) can be applied on a labelled holdout if drift is observed.", correct:true},
-          {key:"d", text:"TabPFN never needs calibration."},
-          {key:"e", text:"XGBoost is always better-calibrated than TabPFN."},
+          {key:"a", text:"Established product with n more than 100K labels - XGBoost wins on quality and cost.", correct:true},
+          {key:"b", text:"More than 500 features (beyond v2's cap) - TabPFN behaviour is undefined.", correct:true},
+          {key:"c", text:"High-throughput production scoring (millions of predictions/day) - per-batch forward pass cost is prohibitive vs GBDT's microseconds-per-row.", correct:true},
+          {key:"d", text:"New fraud vertical with n=200 labels and 40 features."},
         ]}
-        trap={<>(d) over-claims calibration robustness. (e) reverses the empirical finding.</>}
-        lens={<>(a), (b), (c). TabPFN's Bayesian framing produces well-calibrated outputs in-distribution; calibration drifts under distribution shift like any model; post-hoc recalibration works.</>}
-        stretch={<>How would you measure calibration drift over time without burning your test set?</>}
+        trap={<>(d) is the canonical TabPFN-fits regime.</>}
+        lens={<>Three anti-patterns: large n, large d, high QPS. Each maps to GBDT or another tabular method.</>}
+        stretch={<>Could TabPFN's inference cost drop with newer-generation transformers?</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      <VIS.TrapProblem
+        id="tpfn-c1"
+        difficulty="hard"
+        title="C1 - Architectural choice: why a transformer (not an LSTM)"
+        scenario={<>Why is TabPFN a transformer rather than an LSTM/RNN over the (train, test) sequence?</>}
+        options={[
+          {key:"a", text:"Transformer attention is PERMUTATION-INVARIANT over the training context (row order shouldn't matter for tabular data). An RNN processes sequentially - the model's prediction depends on the order of training rows, which is a wrong inductive bias for i.i.d. tabular data. Transformer attention treats all training rows as a SET and is the right inductive bias for the task.", correct:true},
+          {key:"b", text:"Transformers are always better than RNNs."},
+          {key:"c", text:"RNNs cannot process tabular data."},
+          {key:"d", text:"Transformers use less memory."},
+        ]}
+        trap={<>(b), (c), (d) miss the permutation-invariance argument.</>}
+        lens={<>Architecture is determined by the task's inductive bias - row-order-invariance for tabular. Set transformers / attention are the right fit.</>}
+        stretch={<>Could a Set Transformer be even more aligned than TabPFN's vanilla architecture?</>}
       />
 
       <VIS.TrapProblem
-        id="tab-p5"
+        id="tpfn-c2"
         difficulty="hard"
-        title="P5 — Class imbalance: 1 percent fraud rate, 200 labels"
-        scenario={<>You have 200 labels: 2 fraud, 198 legit. TabPFN's context will be heavily imbalanced. What is the soundest first move?</>}
+        title="C2 - Loss / objective: pre-training over SCM prior"
+        scenario={<>Why does TabPFN pre-train on synthetic data sampled from a Structural Causal Model (SCM) prior rather than on real tabular datasets?</>}
         options={[
-          {key:"a", text:"Pass the 200 labels as-is — TabPFN handles imbalance natively."},
-          {key:"b", text:"Oversample fraud to balance, e.g. include the 2 fraud examples 20 times each."},
-          {key:"c", text:"Augment fraud labels via expert hand-labelling to bring fraud count to ~20-50, then balance the context to ~50/50 in a 100-row subset.", correct:true},
-          {key:"d", text:"Skip the labelling — ship a rule engine."},
+          {key:"a", text:"Pre-training on a SCM prior gives access to 10M+ tabular datasets at any scale needed - real tabular datasets are limited, biased, and inconsistent in format. The SCM prior is also broad enough to cover most real-world tabular shapes (the paper validates this empirically). And: by training on a defined PRIOR, the model learns to do Bayesian inference under that prior - the in-context predictions are calibrated against the prior. Real datasets do not give a defined prior to invert.", correct:true},
+          {key:"b", text:"Synthetic data is always better than real."},
+          {key:"c", text:"Real tabular datasets are forbidden by IP."},
+          {key:"d", text:"SCMs are easier to draw."},
         ]}
-        trap={<>(a) under-uses the context space. (b) is the textbook imbalance fix but multiplying 2 examples into 20 copies leaks no new signal — just amplifies noise. (d) is the give-up.</>}
-        lens={<>(c). 2 examples of fraud is the binding constraint, not the rate. Get to 20-50 fraud labels (expert effort: a day or two) then balance the context. TabPFN benefits more from MORE positives than from REWEIGHTED few positives. Once you have ~50 positives, balance the context for clean Bayesian conditioning.</>}
-        stretch={<>What is the minimum positive count that produces a useful TabPFN fraud model?</>}
+        trap={<>(b), (c), (d) miss the prior-as-mechanism argument.</>}
+        lens={<>The SCM prior is the heart of TabPFN. It defines what the in-context inference is Bayesian WITH RESPECT TO.</>}
+        stretch={<>What would you change in the SCM prior for fraud-specific TabPFN?</>}
       />
 
       <VIS.TrapProblem
-        id="tab-p6"
+        id="tpfn-c3"
         difficulty="hard"
+        title="C3 - What's dropped vs XGBoost"
+        scenario={<>What does TabPFN explicitly drop relative to XGBoost?</>}
         multiSelect
-        title="P6 — Production architecture for TabPFN at 100 queries per second"
-        scenario={<>You decide to ship TabPFN at production scale. Which architecture choices make sense? Select all that apply.</>}
         options={[
-          {key:"a", text:"Cache the encoded context — re-encode only when the labelled context changes (e.g. daily).", correct:true},
-          {key:"b", text:"Run inference on GPU — TabPFN's transformer benefits from accelerator hardware.", correct:true},
-          {key:"c", text:"Batch queries against the cached context — amortises the context-encoding cost.", correct:true},
-          {key:"d", text:"Fall back to a cheaper baseline (XGBoost or rule engine) if TabPFN inference exceeds the latency budget.", correct:true},
-          {key:"e", text:"Re-encode context on every query for freshness."},
-          {key:"f", text:"Serve TabPFN as a per-request training-and-predict cycle."},
+          {key:"a", text:"Per-task gradient descent - all 'learning' happened during pre-training.", correct:true},
+          {key:"b", text:"Tree-based feature interactions - replaced by attention.", correct:true},
+          {key:"c", text:"Scalability to large n - hard cap at ~1K (v1) or ~10K (v2).", correct:true},
+          {key:"d", text:"Use of gradient computation - TabPFN uses no gradients in production."},
         ]}
-        trap={<>(e) and (f) misunderstand how TabPFN works — there is no per-request training.</>}
-        lens={<>(a), (b), (c), (d). Standard serving patterns: cache, accelerate, batch, fall-back. TabPFN's context is the analogue of a trained model — refresh it on a cadence, not per-request.</>}
-        stretch={<>What single signal would tell you the cache refresh cadence is wrong?</>}
+        trap={<>(d) misstates the case - TabPFN uses gradients only at PRE-TRAINING time. At task time it does only a forward pass.</>}
+        lens={<>Three drops: per-task SGD, tree splits, scalability past the cap. Each is what enables one-pass inference.</>}
+        stretch={<>Which drop hurts most as your data grows past 10K rows?</>}
       />
 
       <VIS.TrapProblem
-        id="tab-p7"
+        id="tpfn-c4"
         difficulty="hard"
-        title="P7 — The pre-training prior does not match your task"
-        scenario={<>You deploy TabPFN on a fraud task. The features include heavy-tailed transaction amounts (Pareto, alpha ~1.5). TabPFN performance is mediocre. What is the right move?</>}
+        title="C4 - Which knob mis-set breaks TabPFN"
+        scenario={<>Rank: (i) n_train vs cap, (ii) feature count vs cap, (iii) feature pre-processing, (iv) inference batch size.</>}
         options={[
-          {key:"a", text:"Retrain TabPFN with a heavy-tailed prior."},
-          {key:"b", text:"Feature-engineer to bring the data into the prior's shape — e.g. log-transform the amount before passing to TabPFN.", correct:true},
-          {key:"c", text:"Drop the heavy-tailed feature."},
-          {key:"d", text:"TabPFN cannot handle heavy tails; switch to XGBoost."},
+          {key:"a", text:"n vs cap > feature count vs cap > preprocessing > batch size. Exceeding n cap is catastrophic - undefined behaviour, performance collapse. Exceeding feature count cap is similarly bad. Wrong preprocessing (target encoding, heavy transforms) breaks the prior match. Batch size affects throughput but not quality.", correct:true},
+          {key:"b", text:"Batch size dominates."},
+          {key:"c", text:"All equally important."},
+          {key:"d", text:"Preprocessing dominates."},
         ]}
-        trap={<>(a) is conceptually right but the pre-train is a multi-week effort no team will undertake. (c) discards signal. (d) is the easy give-up.</>}
-        lens={<>(b). Feature engineering — log, rank, winsorize — bring heavy-tailed features into a Gaussian-ish range that the pre-training prior covers well. This is the standard practical fix and is much cheaper than retraining.</>}
-        stretch={<>What features would you log-transform vs rank-transform vs leave alone?</>}
+        trap={<>(b), (c), (d) miss the hard-cap priority.</>}
+        lens={<>The n and feature caps are HARD constraints. Treat them as deployment gates, not soft hyperparameters.</>}
+        stretch={<>How would you instrument cap-violation as an alert?</>}
       />
 
       <VIS.TrapProblem
-        id="tab-p8"
+        id="tpfn-c5"
         difficulty="medium"
-        multiSelect
-        title="P8 — When to escalate from TabPFN to XGBoost"
-        scenario={<>You started with TabPFN at n=200. Six months later you have n=20000. Which signals tell you it is time to escalate to XGBoost? Select all that apply.</>}
+        title="C5 - Data-assumption violation: time-correlated features"
+        scenario={<>Your fraud features include time-of-day, day-of-week, and a 24-hour rolling velocity. What specifically happens with TabPFN?</>}
         options={[
-          {key:"a", text:"TabPFN's row cap forces you to subsample; AUC on subsampled context plateaus while held-out test grows.", correct:true},
-          {key:"b", text:"Labelled budget is large enough that XGBoost CV beats TabPFN on a head-to-head.", correct:true},
-          {key:"c", text:"Latency budget no longer accommodates O(n^2) context encoding.", correct:true},
-          {key:"d", text:"You added many high-cardinality categoricals that bust the feature cap.", correct:true},
-          {key:"e", text:"You upgraded to a newer GPU."},
-          {key:"f", text:"TabPFN authors released a new version."},
+          {key:"a", text:"TabPFN's SCM prior treats features as i.i.d. conditional on the label; it does not model TIME CORRELATION between features OR rows. Predictions are still valid (the model treats time-of-day as just another numeric feature) but the model cannot exploit the temporal structure. A time-aware model (sequence model, or GBDT with explicit lag features) does better here. Mitigation: explicit lag features fed as columns; TabPFN handles them as i.i.d. but you have given it the structure.", correct:true},
+          {key:"b", text:"Performance is unchanged."},
+          {key:"c", text:"TabPFN automatically models time."},
+          {key:"d", text:"Time features must be removed before TabPFN."},
         ]}
-        trap={<>(e) and (f) are unrelated to the escalation decision.</>}
-        lens={<>(a), (b), (c), (d). The four legitimate escalation triggers. Each corresponds to a fundamental scaling limit of TabPFN.</>}
-        stretch={<>If all four signals fire at once, how do you sequence the migration?</>}
+        trap={<>(b), (c), (d) miss the prior-assumption point.</>}
+        lens={<>The SCM prior is i.i.d.-tabular. Temporal structure has to be encoded as features, not exploited automatically.</>}
+        stretch={<>What features would you engineer to give TabPFN temporal signal?</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      <VIS.TrapProblem
+        id="tpfn-d1"
+        difficulty="hard"
+        title="D1 - 'TabPFN scales like a transformer so it scales with more data'"
+        scenario={<>A junior says "TabPFN is a transformer - more context = better, like LLMs." Where does this intuition break?</>}
+        options={[
+          {key:"a", text:"TabPFN was pre-trained with a FIXED context-length distribution (e.g. up to 1K context tokens in v1). At inference, exceeding that context length is OUT-OF-DISTRIBUTION for the model - the positional embeddings degrade, the attention's effective range was not trained for that length, and performance collapses. Unlike LLMs which scale context with techniques like RoPE-scaling, TabPFN's context cap is hard. v2 raised the cap by re-training with larger contexts, not by inference-time scaling tricks.", correct:true},
+          {key:"b", text:"More context always helps."},
+          {key:"c", text:"TabPFN can do infinite context."},
+          {key:"d", text:"Context length is irrelevant."},
+        ]}
+        trap={<>(b) is the LLM-intuition trap.</>}
+        lens={<>TabPFN's context cap is a TRAINING-TIME property, not an inference-time setting. LLM scaling tricks don't apply.</>}
+        stretch={<>What would it take to scale TabPFN to 1M-row context?</>}
       />
 
       <VIS.TrapProblem
-        id="tab-p9"
+        id="tpfn-d2"
         difficulty="hard"
-        title="P9 — Hybrid: TabPFN as a feature, not a final classifier"
-        scenario={<>Senior engineer suggests: instead of replacing XGBoost, USE TabPFN as one signal (its output probability) among many features fed into XGBoost. Sound?</>}
+        title="D2 - Wrong-assumption cascade: 'no preprocessing needed'"
+        scenario={<>You assume "TabPFN is end-to-end - we feed raw features and skip all preprocessing." Trace the cascade.</>}
         options={[
-          {key:"a", text:"Useless — two probabilistic classifiers stacked add nothing."},
-          {key:"b", text:"Genuinely useful when TabPFN encodes prior knowledge XGBoost cannot derive from the available data — but mind the leakage when constructing the training set.", correct:true},
-          {key:"c", text:"Always worse than either alone."},
-          {key:"d", text:"Only useful if the two models share architectures."},
+          {key:"a", text:"Raw features include a high-cardinality merchant_id with ~10K unique values - TabPFN's feature encoding may treat it as a numeric or low-dim categorical, losing the discriminative signal - AUPRC drops 0.15 vs proper categorical encoding - team blames the model - real fix is to provide a hash-encoded or target-encoded-with-CV merchant_id BEFORE the TabPFN call. 'End-to-end' does not mean 'no feature engineering' - it means 'no per-task model fitting.'", correct:true},
+          {key:"b", text:"Nothing changes - end-to-end means no engineering."},
+          {key:"c", text:"TabPFN automatically handles all features."},
+          {key:"d", text:"High-cardinality features are forbidden."},
         ]}
-        trap={<>(a) misses that the two models use different inductive biases. (c) and (d) are dogmatic.</>}
-        lens={<>(b). Stacking is a legitimate ensembling pattern when the constituent models capture different inductive biases. The trap is leakage: TabPFN's output is fitted on a context — if any of the XGBoost training rows are IN the TabPFN context, you leak labels. Use out-of-fold TabPFN predictions for the XGBoost training set.</>}
-        stretch={<>Describe a fold scheme that prevents the leakage.</>}
+        trap={<>(b), (c), (d) miss the high-cardinality cascade.</>}
+        lens={<>End-to-end means no fitting. Feature engineering for shape match is still needed.</>}
+        stretch={<>How would you encode merchant_id for TabPFN without leakage?</>}
       />
 
       <VIS.TrapProblem
-        id="tab-p10"
+        id="tpfn-d3"
         difficulty="hard"
-        multiSelect
-        title="P10 — Failure modes specific to TabPFN"
-        scenario={<>Which failure modes are SPECIFIC to TabPFN (not generic supervised pitfalls)? Select all that apply.</>}
+        title="D3 - Junior vs senior on a 'win'"
+        scenario={<>Junior reports TabPFN beats XGBoost by 9 AUPRC at n=200. What is the senior question?</>}
         options={[
-          {key:"a", text:"Hard row / feature caps cause silent performance cliffs when exceeded via subsampling.", correct:true},
-          {key:"b", text:"Pre-training prior mismatch (heavy tails, time-series structure, hierarchical features).", correct:true},
-          {key:"c", text:"O(n^2) memory blow-up at the row cap on commodity GPUs.", correct:true},
-          {key:"d", text:"You cannot iterate on the model — only on features and context.", correct:true},
-          {key:"e", text:"Class imbalance hurts every supervised method."},
-          {key:"f", text:"Slow training time — TabPFN trains for hours per task."},
+          {key:"a", text:"'What XGBoost regularisation did you use? Default XGBoost overfits at n=200. A correctly regularised XGBoost (max_depth=3, low n_estimators, high min_child_weight, with cross-validated hyperparameters) closes most of the gap. The 9 AUPRC win against DEFAULT XGBoost is real but misleading; against tuned XGBoost the gap is typically 2-4 AUPRC.'", correct:true},
+          {key:"b", text:"'Use a bigger transformer.'"},
+          {key:"c", text:"'Train longer.'"},
+          {key:"d", text:"'Ship it.'"},
         ]}
-        trap={<>(e) is generic. (f) is exactly backwards — TabPFN has zero per-task training cost.</>}
-        lens={<>(a), (b), (c), (d). Each is a TabPFN-specific constraint: caps, prior fit, memory, frozen model. Senior teams pick TabPFN with full eyes on these four; junior teams trip on each in order.</>}
-        stretch={<>Which of these four is most likely to surprise a team three months into deployment?</>}
+        trap={<>(b), (c), (d) miss the baseline-tuning question.</>}
+        lens={<>The senior question audits XGBoost regularisation. A default-tuned baseline at small n is sandbagged.</>}
+        stretch={<>What XGBoost CV-tuning protocol gives a fair comparison?</>}
       />
+
+      <VIS.TrapProblem
+        id="tpfn-d4"
+        difficulty="hard"
+        title="D4 - Plausible misattribution: production AUPRC drops"
+        scenario={<>TabPFN production AUPRC drops from 0.61 to 0.42 over 4 weeks. Causes: (i) feature drift, (ii) n_train grew past the cap, (iii) a feature was silently dropped from the input.</>}
+        options={[
+          {key:"a", text:"(ii) most likely. As labeled data accumulates over weeks, n_train naturally grows; once it crosses TabPFN's cap, the model behaviour becomes undefined and degrades. This is unique to TabPFN's hard-cap architecture - GBDT degrades gracefully. Verify by checking n_train; if at cap, either down-sample to fit or migrate to XGBoost. (i) and (iii) would produce different signatures - feature drift is slower; dropped feature shows as a step change.", correct:true},
+          {key:"b", text:"(i) - always feature drift."},
+          {key:"c", text:"(iii) - dropped feature."},
+          {key:"d", text:"Random."},
+        ]}
+        trap={<>(b), (c) are plausible but produce DIFFERENT signatures.</>}
+        lens={<>The n-cap crossing is unique to TabPFN. Monitor n_train as a first-class metric.</>}
+        stretch={<>How would you instrument cap-proximity alerting?</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>E. Operations</h3>
+
+      <VIS.TrapProblem
+        id="tpfn-e1"
+        difficulty="hard"
+        title="E1 - TabPFN-specific gotcha"
+        scenario={<>Pick the gotcha most specific to TabPFN (would not bite XGBoost or ProtoNet):</>}
+        options={[
+          {key:"a", text:"Silent n-cap violation: as labeled data accumulates, n_train crosses TabPFN's hard cap (~1K v1 / ~10K v2) and behaviour becomes undefined - performance drops without any model retraining or code change. GBDT has no such hard cap - it just runs longer. Mitigation: monitor n_train as a deployment metric; cap-enforce at the input or migrate to a different model at the threshold.", correct:true},
+          {key:"b", text:"Slow training."},
+          {key:"c", text:"OOM at inference."},
+          {key:"d", text:"GPU memory."},
+        ]}
+        trap={<>(b), (c), (d) are generic.</>}
+        lens={<>Hard caps are unique to TabPFN. Treat the cap as a deployment SLO.</>}
+        stretch={<>Sketch the cap-monitoring dashboard.</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-e2"
+        difficulty="hard"
+        title="E2 - Friday: TabPFN scoring latency cliff"
+        scenario={<>Friday: TabPFN p99 scoring latency jumps from 400ms to 6 seconds. Production batch size is unchanged at 50; n_train approximately 5K; no code changes. Diagnosis?</>}
+        options={[
+          {key:"a", text:"Likely a labeling-pipeline backfill - more labeled examples were added overnight; n_train grew from 5K to ~9K (approaching the v2 cap). The transformer's forward-pass cost is O((n_train + n_test)^2) for attention. Doubling n_train roughly quadruples attention cost; latency explodes. Mitigation: cap n_train deliberately (sample the most-informative 5K instead of using all labels); switch to a more compact set of context examples.", correct:true},
+          {key:"b", text:"GPU prices went up."},
+          {key:"c", text:"Roll back model."},
+          {key:"d", text:"Add more attention heads."},
+        ]}
+        trap={<>(b), (c), (d) miss the attention-cost-quadratic signature.</>}
+        lens={<>TabPFN's attention scales quadratically in n_train. Context-set curation is critical at scale.</>}
+        stretch={<>How would you select the 'most-informative' 5K of 9K labels?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-e3"
+        difficulty="hard"
+        title="E3 - Eval-protocol audit"
+        scenario={<>Which findings invalidate a TabPFN report card?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Eval at n far below the production cap - hides the n-cap behaviour you will hit in 6 months.", correct:true},
+          {key:"b", text:"XGBoost baseline was un-tuned (default hyperparameters) - sandbagged.", correct:true},
+          {key:"c", text:"Eval features include synthetic features the SCM prior happens to cover well but production has none.", correct:true},
+          {key:"d", text:"TabPFN does not need evaluation."},
+        ]}
+        trap={<>(d) is wrong.</>}
+        lens={<>Three audit failures: easy-n eval, sandbagged GBDT, prior-friendly synthetic features. All inflate TabPFN's apparent edge.</>}
+        stretch={<>What is the right eval n-grid for a TabPFN deployment?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-e4"
+        difficulty="medium"
+        title="E4 - Rollout sequence: introduce TabPFN for new verticals"
+        scenario={<>Order: (i) full ramp, (ii) shadow scoring + n-cap calibration, (iii) hybrid (TabPFN for n under cap; XGBoost for n above cap), (iv) traffic ramp on TabPFN.</>}
+        options={[
+          {key:"a", text:"ii then iii then iv then i. Shadow validates the TabPFN forward pass on production batches and measures actual cap-proximity; hybrid bounds risk; ramp on TabPFN-only only after hybrid wins. Full direct ramp risks hitting the cap on Day 1.", correct:true},
+          {key:"b", text:"i then ii then iii then iv."},
+          {key:"c", text:"Direct cutover."},
+          {key:"d", text:"iv then i."},
+        ]}
+        trap={<>(b), (c), (d) skip cap validation.</>}
+        lens={<>TabPFN needs cap-aware shadow validation before traffic. The cap is the unique deployment risk.</>}
+        stretch={<>How would you simulate cap-crossing in shadow?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-e5"
+        difficulty="medium"
+        title="E5 - Reproducibility"
+        scenario={<>Which TabPFN reproducibility issues are widely known?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"The SCM prior used in pre-training is described in the paper but not always perfectly reproducible from scratch.", correct:true},
+          {key:"b", text:"v1 vs v2 results are not directly comparable - the n cap, feature cap, and prior all changed.", correct:true},
+          {key:"c", text:"Feature preprocessing choices change results by 5-10 AUPRC and are often unspecified.", correct:true},
+          {key:"d", text:"TabPFN is fully deterministic at any input."},
+        ]}
+        trap={<>(d) is false - inference is deterministic, pre-training is not.</>}
+        lens={<>Three reproducibility issues: SCM prior, version differences, preprocessing. Mitigation: pin version and preprocessing.</>}
+        stretch={<>What is the bare minimum to log per TabPFN evaluation?</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>F. Failure modes and edge cases</h3>
+
+      <VIS.TrapProblem
+        id="tpfn-f1"
+        difficulty="hard"
+        title="F1 - Smallest input that breaks the TabPFN advantage"
+        scenario={<>Construct the smallest scenario where TabPFN is no better than tuned XGBoost.</>}
+        options={[
+          {key:"a", text:"A dataset where the feature distribution is far OUTSIDE the SCM prior - e.g. all features are heavy-tailed (log-normal with infinite variance), highly multi-modal, or contain text embeddings. TabPFN's pre-training prior does not cover this distribution; in-context Bayesian inference is wrong-prior. Tuned XGBoost with appropriate regularisation matches or beats TabPFN there. The advantage is tied to PRIOR MATCH.", correct:true},
+          {key:"b", text:"At n=1."},
+          {key:"c", text:"On any synthetic data."},
+          {key:"d", text:"Only at high dim."},
+        ]}
+        trap={<>(b), (c), (d) miss the prior-match framing.</>}
+        lens={<>TabPFN's advantage is bounded by the SCM prior. Out-of-prior data breaks the advantage.</>}
+        stretch={<>What test would tell you your features are out-of-prior?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-f2"
+        difficulty="hard"
+        title="F2 - Adversarial attack on TabPFN"
+        scenario={<>Design an attack on TabPFN specifically.</>}
+        options={[
+          {key:"a", text:"Context-set poisoning: an adversary submits transactions that they know will be labeled as fraud (or non-fraud) and become part of the context (X_train, y_train). Carefully crafted poisoned context points pull the in-context Bayesian inference toward the adversary's preferred prediction for the adversary's actual fraud transactions. The attack is unique to in-context-learning models that consume training data at inference. Defense: vet new label additions; cryptographically sign the labeler; do not include unverified positives in context.", correct:true},
+          {key:"b", text:"No attack possible."},
+          {key:"c", text:"Higher resolution."},
+          {key:"d", text:"Submit blank rows."},
+        ]}
+        trap={<>(b), (c), (d) miss the context-poisoning surface.</>}
+        lens={<>In-context-learning models inherit the adversarial-input attack surface at INFERENCE TIME. Defense: label provenance.</>}
+        stretch={<>How would you detect context poisoning automatically?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-f3"
+        difficulty="hard"
+        title="F3 - Reverse engineering: symptom to design choice"
+        scenario={<>Symptom: TabPFN predictions are uniformly confident (always around 0.95 or always around 0.05) - no useful gradation. Which TabPFN design choice causes this?</>}
+        options={[
+          {key:"a", text:"Severe class imbalance combined with the model's prior expecting near-balanced classes. TabPFN's SCM prior was trained with a balanced class distribution across synthetic datasets; at fraud's natural imbalance (1% positive), the in-context inference defaults to high confidence on the majority class for all queries. Fix: balance the context set (over-sample positives), OR apply post-hoc isotonic calibration on a held-out set.", correct:true},
+          {key:"b", text:"GPU is full."},
+          {key:"c", text:"Embedding dim is wrong."},
+          {key:"d", text:"Random."},
+        ]}
+        trap={<>(b), (c), (d) miss the imbalance-vs-prior point.</>}
+        lens={<>TabPFN's prior assumes balanced classes. Fraud's natural imbalance breaks that assumption; balance the context or calibrate.</>}
+        stretch={<>What is the right positive ratio in the context set?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-f4"
+        difficulty="medium"
+        title="F4 - Paper-admitted limitation"
+        scenario={<>Which limitation does the TabPFN paper itself acknowledge?</>}
+        options={[
+          {key:"a", text:"Hard cap at n approximately 1K rows and around 100 features (v1); v2 lifts but still limited. The paper explicitly recommends switching to a different method beyond the cap.", correct:true},
+          {key:"b", text:"TabPFN works perfectly at any scale."},
+          {key:"c", text:"Only works on synthetic data."},
+          {key:"d", text:"Cannot be deployed."},
+        ]}
+        trap={<>(b), (c), (d) are wrong.</>}
+        lens={<>The paper is honest about the cap. Knowing this signals careful reading.</>}
+        stretch={<>What does the paper NOT predict that production teams hit?</>}
+      />
+
+      <VIS.TrapProblem
+        id="tpfn-f5"
+        difficulty="hard"
+        title="F5 - Community-found failure: out-of-prior tabular data"
+        scenario={<>Recent follow-up work and benchmarks exposed which class of failure for TabPFN?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"On tabular data with heavy-tailed features (financial returns, network packet counts), TabPFN's prior fits poorly and tuned LightGBM beats it.", correct:true},
+          {key:"b", text:"At imbalance ratios beyond 1:100, TabPFN's confidence saturates without calibration.", correct:true},
+          {key:"c", text:"Inference cost scales quadratically in context length - prohibitive at high QPS.", correct:true},
+          {key:"d", text:"TabPFN works perfectly on all tabular data."},
+        ]}
+        trap={<>(d) is the wrong belief.</>}
+        lens={<>Three community-found failures: heavy-tail, imbalance, cost. Each is a known TabPFN-specific limitation.</>}
+        stretch={<>Rank by how often you would expect to face them in fraud.</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
         <li>
-          <a href="https://arxiv.org/abs/2207.01848" target="_blank" rel="noopener">
-            <strong>Hollmann et al. — TabPFN: A Transformer That Solves Small Tabular Classification</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, ICLR 2023; v2 NeurIPS 2024)</span>
-          <br/>The original TabPFN paper. Read sections 3-4 for the prior-fitting framework and section 5 for the benchmark vs XGBoost / AutoGluon.
+          <a href="https://arxiv.org/abs/2207.01848" target="_blank" rel="noopener"><strong>Hollmann et al. - TabPFN (ICLR 2023, v2 NeurIPS 2024)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper)</span>
+          <br/>The core. SCM prior, transformer architecture, n-cap, in-context Bayesian inference.
         </li>
         <li>
-          <a href="https://github.com/automl/TabPFN" target="_blank" rel="noopener">
-            <strong>AutoML group — TabPFN GitHub repository</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(code + examples)</span>
-          <br/>The reference implementation. The README has a one-line scikit-learn-style example you can run in 30 seconds. Notebooks demonstrate scaling beyond the cap via ensembling.
+          <a href="https://arxiv.org/abs/2207.08815" target="_blank" rel="noopener"><strong>Grinsztajn et al. - Why GBDT still beats deep learning on tabular</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(NeurIPS 2022)</span>
+          <br/>The opposing view; useful context for when TabPFN does NOT win.
         </li>
         <li>
-          <a href="https://www.youtube.com/watch?v=-uujmrnEKhU" target="_blank" rel="noopener">
-            <strong>Frank Hutter — TabPFN talk at ICLR</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(video, ~20 min)</span>
-          <br/>Author-led intuition for prior-fitted networks and why they outperform tree ensembles at small n. Watch before reading the paper.
-        </li>
-        <li>
-          <a href="https://www.openml.org/auto" target="_blank" rel="noopener">
-            <strong>OpenML AutoML benchmark</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(benchmark hub)</span>
-          <br/>The community benchmark used in the TabPFN paper. Useful for grounding your own evaluation in standard tasks before deploying to fraud.
-        </li>
-        <li>
-          <a href="https://parameterfree.com/2023/03/15/tabpfn/" target="_blank" rel="noopener">
-            <strong>Francesco Orabona — TabPFN: a transformer learning to do Bayesian inference</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
-          <br/>A sceptical, mathematically grounded read on whether TabPFN really is doing Bayesian inference. Useful counterweight before you over-sell to leadership.
+          <a href="https://arxiv.org/abs/2305.18446" target="_blank" rel="noopener"><strong>FT-Transformer / TabBERT</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(2023)</span>
+          <br/>The standard-supervised-transformer alternative for larger n.
         </li>
       </ul>
     </VIS.Section>

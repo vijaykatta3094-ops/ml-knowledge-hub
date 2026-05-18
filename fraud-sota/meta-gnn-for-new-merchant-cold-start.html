@@ -1414,321 +1414,576 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// Meta-GNN for new-merchant cold-start — Fraud SOTA · Few-shot / meta-learning for fraud
-// MAML over merchant-conditional fraud tasks; new merchant scoring at ~10 labels.
+// Meta-GNN for new-merchant cold-start (Zhang et al. WWW 2024 adaptation)
+// v2 redo — 30+ trap problems spanning A-F. Concept anchor: MAML over MERCHANT-
+// conditional fraud TASKS (each merchant = a task); the bi-level outer loop
+// learns an INITIALISATION that adapts to a new merchant with ~10 labeled
+// transactions. Discriminator vs ProtoNet (no inner-loop), vanilla transfer
+// fine-tune (single-task overfit at K=10), and full retraining (intractable
+// per new merchant).
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="Fraud SOTA · Few-shot / meta-learning for fraud"
+      pill="Fraud SOTA · few-shot / meta-learning"
       title="Meta-GNN for new-merchant cold-start"
-      subtitle="MAML over merchant-conditional fraud tasks — new merchants score from ~10 labelled transactions instead of ~10k."
+      subtitle="MAML over merchant-conditional fraud tasks. Bi-level training learns an initialisation that adapts to a new merchant with ~10 labeled transactions via a few inner-loop SGD steps."
       byline={[
-        {label: "Source", value: "Few-Shot Fraud for New Merchants (WWW 2024)"},
+        {label: "Paper", value: "Zhang et al. Meta-GNN (CIKM 2019) + 'Few-Shot Fraud for New Merchants' (WWW 2024)"},
         {label: "Year", value: "2024"},
-        {label: "L3", value: "Meta-learning on graphs"},
+        {label: "Domain", value: "Marketplaces with merchant onboarding"},
       ]}/>
 
     <VIS.TLDR>
-      Onboarding a new merchant onto a fraud system is a cold-start problem: zero labels for hours, ~10 labels for days, hundreds only after weeks. Standard fine-tune of a global graph neural net on 10 labels{" "}
-      <VIS.Term def="When a model loses test accuracy by memorising the small labelled set instead of generalising. Standard fine-tunes of a large GNN on ~10 labels are textbook examples.">overfits</VIS.Term>{" "}
-      catastrophically.{" "}
-      <VIS.Term def="Model-Agnostic Meta-Learning — trains a model initialisation such that a SMALL number of gradient steps on a new task gives strong performance. The 'learning to learn' algorithm by Finn et al., ICML 2017.">MAML</VIS.Term>{" "}
-      trains an initialisation that adapts to a new merchant in a handful of steps, giving usable fraud scoring from day one.
+      Marketplaces onboard new merchants continuously. Each new merchant has fewer than 50 labeled fraud transactions in the first weeks — too few to fine-tune a vanilla GNN (it overfits at K=10). <VIS.Term def="Model-Agnostic Meta-Learning — bi-level optimisation where the outer loop learns an initialisation theta such that, after a few inner-loop gradient steps on a tiny support set, the model adapts to a new task with low loss.">MAML</VIS.Term> formulates each MERCHANT as a TASK; the outer loop learns an initialisation that, after k inner-loop steps on the new merchant's 10 labeled transactions, fits the merchant's fraud pattern. Trained across hundreds of mature merchants; deployed on Day-1 new merchants. Sibling: <VIS.Term def="Prototypical Networks — represent each class as the mean of its support embeddings; new instances are classified by nearest prototype. No inner-loop gradient steps.">ProtoNet</VIS.Term>, which often beats MAML in practice for fraud-typology growth and is more stable to train. Source: <a href="https://dl.acm.org/doi/10.1145/3637528.3672005" target="_blank" rel="noopener">WWW 2024</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        The training loop treats EACH merchant as a separate few-shot task. For each merchant m, sample a support set (10 labelled transactions) and a query set (50 more). Inner loop: take a few gradient steps on the support set starting from the global GNN parameters. Outer loop: evaluate on the query set and update the GLOBAL parameters so that this adaptation works well on average across all merchants. After training, a brand-new merchant arrives, you take 5-10 gradient steps on their first 10 labels, and you have a personalised fraud model.
+        Each merchant defines a TASK with its own positive/negative fraud distribution. Training: sample N merchants per batch; for each merchant sample a support set (K labels) and a query set; do k inner-loop SGD steps on the support; compute the query loss; backprop through the inner loop to update theta (the meta-init). Inference: given a new merchant with K=10 labels, take k inner-loop steps starting from theta; score the merchant's transactions with the adapted model.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  TASKS["Sample merchant tasks"] --> INNER["Inner loop adapt"]
-  GLOBAL["Global init theta"] --> INNER
-  INNER --> QUERY["Eval on query set"]
-  QUERY --> OUTER["Outer loop update theta"]
-  OUTER --> GLOBAL
-  NEW["New merchant 10 labels"] --> ADAPT["Adapt from theta"]
-  GLOBAL --> ADAPT
-  ADAPT --> MODEL["Per-merchant model"]
-  style GLOBAL fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px
-  style ADAPT fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+  T["Theta meta-init\\n(learned across merchants)"]
+  N["New merchant:\\n10 labeled transactions"]
+  I["Inner-loop SGD\\n(k=1..5 steps)\\non new merchant support"]
+  A["Adapted model"]
+  Q["Score new transactions"]
+  T --> I
+  N --> I
+  I --> A
+  A --> Q
+  style T fill:#dbeafe,stroke:#1e40af,stroke-width:2px
       `} />
-      <p>The trick is the bi-level optimisation: theta is the init, and adaptation happens IN gradient space. The global model never produces predictions directly — it produces a base from which a tiny number of steps yields strong predictions.</p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from vanilla transfer fine-tune">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead>
-          <tr style={{background:"#1f3a5f", color:"#fff"}}>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Vanilla transfer fine-tune</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Meta-GNN (MAML)</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Objective</td>
-            <td style={{padding:"8px 10px"}}>Minimise loss on all data pooled</td>
-            <td style={{padding:"8px 10px"}}>Minimise loss AFTER adaptation</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Behaviour at 10 labels</td>
-            <td style={{padding:"8px 10px"}}>Overfits or stays at global mean</td>
-            <td style={{padding:"8px 10px"}}>Adapts in a few steps</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Init purpose</td>
-            <td style={{padding:"8px 10px"}}>Good predictions out-of-the-box</td>
-            <td style={{padding:"8px 10px"}}>Good gradient-direction signal</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>Training cost</td>
-            <td style={{padding:"8px 10px"}}>Single-level, fast</td>
-            <td style={{padding:"8px 10px"}}>Bi-level, ~3-5x slower</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Adaptation cost</td>
-            <td style={{padding:"8px 10px"}}>None (use global)</td>
-            <td style={{padding:"8px 10px"}}>5-10 gradient steps per new merchant</td>
-          </tr>
-        </tbody>
-      </table>
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from vanilla transfer, full retrain, and ProtoNet">
+      <p>
+        <strong>Vanilla transfer fine-tune.</strong> Train a single classifier on pooled merchant data; fine-tune on the new merchant's 10 labels. At K=10 the fine-tune overfits the support set (gradient signal dominated by random noise in the support); query AUPRC collapses.
+      </p>
+      <p>
+        <strong>Full retrain per merchant.</strong> Intractable: one new merchant per minute means one model retrain per minute. Cost and feedback-loop incompatible with marketplace scale.
+      </p>
+      <p>
+        <strong>ProtoNet.</strong> No inner-loop. Embeds the K support points; takes class means as prototypes; classifies queries by nearest prototype. Stable to train (no bi-level optimisation). Often beats MAML in practice on fraud typology because fraud patterns are well-clustered in embedding space, but loses on merchants with VERY different fraud distributions that require parameter adaptation, not just prototype shift.
+      </p>
+      <p>
+        <strong>Meta-GNN (MAML over GNN).</strong> Inner-loop SGD lets the model parameters themselves adapt to merchant-specific feature interactions — e.g. a merchant where 'subscription chargeback' fraud has a different graph signature than the global pattern. Pays for it with bi-level instability at scale.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick">
-      <ul>
-        <li><strong>Marketplaces with continuous merchant onboarding</strong> — Shopify, Stripe, Adyen, Uber Eats — where new merchants arrive weekly and fraud rules vary by vertical.</li>
-        <li><strong>Per-task heterogeneity is large</strong> — different merchants have different fraud MOs (subscription fraud vs item-not-received vs friendly fraud). One global model under-fits.</li>
-        <li><strong>You have many historical merchants to meta-train on</strong> — MAML needs thousands of tasks. If you have fewer than ~1k historical merchants with labelled data, ProtoNet or simple multi-task learning is more practical.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick it">
+      <p>
+        Pick Meta-GNN when (a) continuous merchant onboarding with under 50 labels per merchant on Day-1, (b) merchant-specific fraud patterns DIVERGE meaningfully across merchants (verified — if patterns are similar, ProtoNet wins), (c) you can run bi-level training stably at your scale (this is the hard part), (d) latency budget allows k inner-loop steps at inference (or you cache the adapted theta), (e) you have hundreds of mature merchants for the outer loop training.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations &amp; gotchas">
-      <VIS.Callout kind="gotcha" title="MAML training is unstable at scale">
-        Second-order gradients (gradient of gradient) explode in deep GNNs. First-order MAML (FOMAML) trades a bit of accuracy for stability. Reptile (Nichol et al.) is even simpler and often equivalent in practice.
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations and gotchas">
+      <VIS.Callout kind="gotcha" title="MAML instability at production scale">
+        Bi-level training has nested gradients; second-order terms (or FOMAML approximation) make training unstable across 1K+ merchant tasks. NaN loss, divergence, mode collapse are common. ProtoNet has none of these issues.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="ProtoNet is often a stronger practical baseline">
-        Prototypical Networks compute class prototypes per task and classify by nearest-prototype distance. Simpler, faster to train, frequently matches or beats MAML on tabular tasks. Always include it as a baseline.
+      <VIS.Callout kind="gotcha" title="The support-set is adversarially controllable">
+        New merchants curate their own first 10 labels. An adversarial merchant onboards looking 'clean' (10 carefully chosen non-fraud labels) so the inner-loop adapted model is permissive. The static theta does not protect against this; you need merchant-level audit before allowing adaptation.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="Task definition is the load-bearing decision">
-        How you define a "task" (per-merchant? per-vertical? per-payment-method?) determines what the model meta-learns. Per-merchant tasks teach merchant-specific patterns; per-vertical tasks teach industry patterns. Wrong granularity wastes the entire training budget.
+      <VIS.Callout kind="gotcha" title="Inner-loop step count is a knife-edge">
+        k=1: under-adapts, merchant-specific patterns missed. k=5+: overfits the K=10 support. Optimal k is per-merchant and per-batch; static k loses 20-40% AUPRC vs adaptive k.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Ten interview traps on MAML, ProtoNet, and cold-start fraud architecture.
+        Problems span the 6 taxonomy axes. Strip "Meta-GNN" — each correct answer must still hinge on the specific mechanism (MAML's bi-level outer-init + inner-loop SGD over merchant-conditional fraud tasks).
       </p>
 
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity and comparison</h3>
+
       <VIS.TrapProblem
-        id="mgnn-p1"
+        id="mgnn-a1"
         difficulty="hard"
-        title="P1 — MAML vs ProtoNet for new-merchant fraud cold-start: which would you ship?"
-        scenario={<>You have 12 weeks to ship a new-merchant fraud cold-start model. Historical data: 3k merchants with 10k+ labelled transactions each. New merchants typically have ~10 labelled transactions in their first week, ~100 by week 3. Engineering team: 2 people. Which approach ships safely in 12 weeks AND meets the latency budget (50 ms p99 at inference)?</>}
+        title="A1 — Meta-GNN vs vanilla fine-tune: the real discriminator"
+        scenario={<>Your lead says "we already fine-tune on the new merchant's labels — Meta-GNN is just fancier fine-tuning." Pick the real discriminator.</>}
         options={[
-          {key:"a", text:"MAML with second-order gradients — best accuracy, worth the training instability."},
-          {key:"b", text:"ProtoNet — prototypes per merchant, nearest-prototype inference. Simpler, faster training, faster inference, and at 3k tasks it usually matches MAML on tabular fraud.", correct:true},
-          {key:"c", text:"First-order MAML — cheaper than full MAML and almost as accurate."},
-          {key:"d", text:"Skip few-shot — train a single global GNN and rely on more data."},
+          {key:"a", text:"Vanilla fine-tune starts from a SINGLE init (pre-trained on pooled data) and runs full SGD on the new merchant's K labels. At K=10 this overfits — the gradient noise dominates the signal. Meta-GNN's outer loop learns a SPECIAL init theta such that a SHORT inner-loop trajectory (k=1..5 steps) lands in a good place on ANY merchant's K=10. Same architecture, different initial point; the difference is the bi-level training.", correct:true},
+          {key:"b", text:"They are identical."},
+          {key:"c", text:"Fine-tuning uses no gradients."},
+          {key:"d", text:"Meta-GNN has more parameters."},
         ]}
-        trap={<>(a) is the textbook answer but training instability burns weeks of dev time with two engineers. (c) is reasonable but adds adaptation latency at inference. (d) misses the point of the cold-start problem.</>}
-        lens={<>(b). Engineering reality: ProtoNet typically matches MAML on tabular fraud benchmarks, trains in a single pass, and has no per-merchant adaptation step at inference (just nearest-prototype lookup). MAML is the academic gold but ProtoNet is the senior-MLE ship choice given the 12-week window.</>}
-        stretch={<>Under what conditions would you flip and ship MAML over ProtoNet?</>}
+        trap={<>(b), (c), (d) miss the init-quality story.</>}
+        lens={<>The discriminator is INIT QUALITY. The vanilla init is fine for K=1000, terrible for K=10; the MAML init is purpose-built for K=10.</>}
+        stretch={<>Could you approximate Meta-GNN by running fine-tune with stronger regularisation?</>}
       />
 
       <VIS.TrapProblem
-        id="mgnn-p2"
+        id="mgnn-a2"
         difficulty="hard"
+        title="A2 — Definitional trap: MAML vs ProtoNet for cold-start"
+        scenario={<>A teammate says "MAML and ProtoNet do the same thing — few-shot learning, pick whichever has nicer code." Distinguish.</>}
+        options={[
+          {key:"a", text:"MAML adapts the MODEL PARAMETERS via inner-loop SGD; ProtoNet does NOT update the model — it embeds support points and classifies queries by nearest class prototype. For merchant cold-start: MAML accommodates merchants whose fraud distribution requires PARAMETER changes (different graph weights for subscription vs marketplace fraud). ProtoNet works when the merchant-specific pattern can be captured as a shift of the class prototype in the FIXED embedding space. ProtoNet is stable; MAML is more expressive but less stable.", correct:true},
+          {key:"b", text:"MAML and ProtoNet are the same algorithm."},
+          {key:"c", text:"ProtoNet uses gradients; MAML does not."},
+          {key:"d", text:"MAML cannot do few-shot."},
+        ]}
+        trap={<>(b), (c), (d) confuse the algorithms.</>}
+        lens={<>The distinction is PARAMETER ADAPTATION (MAML) vs PROTOTYPE SHIFT (ProtoNet). The data property that decides is: does each new merchant need a different parameter, or just a different prototype?</>}
+        stretch={<>How would you test which regime your marketplace is in?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-a3"
+        difficulty="hard"
+        title="A3 — Counterfactual: no MAML available"
+        scenario={<>Without Meta-GNN, what is the strongest fallback for new-merchant fraud cold-start with K=10 labels?</>}
+        options={[
+          {key:"a", text:"Stack: (i) ProtoNet on a graph encoder (simpler, more stable than MAML, often within 1-2 AUPRC), (ii) a global GNN whose score is THRESHOLDED CONSERVATIVELY for new merchants and overridden only by ProtoNet for high-confidence merchant-specific scores, (iii) a hand-crafted rule engine for the first week. Combination matches Meta-GNN in many regimes without the bi-level training cost.", correct:true},
+          {key:"b", text:"You cannot do cold-start without MAML."},
+          {key:"c", text:"Use a CAPTCHA."},
+          {key:"d", text:"Wait until you have 1000 labels."},
+        ]}
+        trap={<>(b) overstates MAML uniqueness. (d) ignores the business need to score Day-1.</>}
+        lens={<>The honest fallback is ProtoNet + thresholded global + rules. Meta-GNN is justified only when the merchant-distribution variance forces parameter adaptation.</>}
+        stretch={<>What metric tells you ProtoNet is enough?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-a4"
+        difficulty="hard"
+        title="A4 — Compose Meta-GNN with active labeling"
+        scenario={<>You stack Meta-GNN with an active labeling loop (the system asks the merchant to label uncertain transactions). What is the right framing?</>}
         multiSelect
-        title="P2 — Bi-level optimisation: which gradients are computed?"
-        scenario={<>In standard (second-order) MAML, what gradients are needed during training? Select all true statements.</>}
         options={[
-          {key:"a", text:"Gradient of the support-set loss with respect to theta (inner loop).", correct:true},
-          {key:"b", text:"Gradient of the query-set loss with respect to the ADAPTED parameters theta_prime (outer loop).", correct:true},
-          {key:"c", text:"Gradient of theta_prime with respect to theta (the Jacobian of the inner-loop update) — this is the second-order term.", correct:true},
-          {key:"d", text:"Gradient of the support-set loss with respect to theta_prime."},
-          {key:"e", text:"Gradient of the global validation loss with respect to learning rate."},
+          {key:"a", text:"Active labeling chooses which K examples form the support set. Different support sets land the inner-loop in different parameter regions; the choice matters more under MAML than under a vanilla fine-tune.", correct:true},
+          {key:"b", text:"The active-learning acquisition function should be MAML-aware — pick examples that MAXIMISE the inner-loop gradient norm, not just plain entropy.", correct:true},
+          {key:"c", text:"You can adversarially exploit active labeling: a malicious merchant could decline to label certain transactions to bias the support.", correct:true},
+          {key:"d", text:"Active labeling cannot be combined with MAML."},
         ]}
-        trap={<>(d) inverts which parameter the loss is differentiated with respect to. (e) is a hyperparameter-tuning concept unrelated to the MAML training step.</>}
-        lens={<>(a), (b), (c). The inner-loop gradient takes one or more SGD steps from theta to theta_prime. The outer-loop gradient evaluates the query loss at theta_prime, but updates theta — which requires differentiating through the inner-loop steps. That's the Jacobian d theta_prime / d theta — the source of the famous "second-order" cost.</>}
-        stretch={<>What does FOMAML drop from this list, and what does it lose by dropping it?</>}
+        trap={<>(d) is wrong.</>}
+        lens={<>The composition is powerful — MAML's inner-loop sensitivity to support choice makes active labeling much higher leverage than under flat fine-tune.</>}
+        stretch={<>Design a MAML-aware acquisition function.</>}
       />
 
       <VIS.TrapProblem
-        id="mgnn-p3"
+        id="mgnn-a5"
         difficulty="hard"
-        title="P3 — Defining the 'task' for meta-training"
-        scenario={<>You decide on per-merchant tasks. Within each merchant, you sample support = 10 labels, query = 50 labels. The team proposes adding a per-merchant-per-month task definition — one task per (merchant, month) pair. What happens to meta-training?</>}
+        title="A5 — Boundary: where Meta-GNN stops winning"
+        scenario={<>For which merchant population does Meta-GNN's advantage over ProtoNet vanish?</>}
         options={[
-          {key:"a", text:"More tasks always help — definitely ship the finer split."},
-          {key:"b", text:"Finer task splits fragment the label budget — many (merchant, month) pairs have less than 10 labels and become impossible tasks. Support-set quality dominates over task count.", correct:true},
-          {key:"c", text:"No effect — task count is irrelevant to MAML."},
-          {key:"d", text:"Finer split improves only because it injects temporal signal."},
+          {key:"a", text:"Populations where the merchant-conditional fraud distributions are NEAR each other in feature space — e.g. all merchants are mid-size US e-commerce with similar fraud patterns. There, ProtoNet's prototype shift in a shared embedding captures everything; MAML's parameter adaptation is unused capacity. The opposite regime — VERY heterogeneous merchants (subscription vs marketplace vs gig-economy) — is where MAML pays off.", correct:true},
+          {key:"b", text:"MAML always wins."},
+          {key:"c", text:"At exactly 1M merchants."},
+          {key:"d", text:"Only on small datasets."},
         ]}
-        trap={<>(a) is the "more data is more data" reflex. (c) and (d) misread how MAML consumes tasks.</>}
-        lens={<>(b). Each meta-task needs enough labels to compute a meaningful inner-loop gradient. Fragmenting beyond the minimum makes most tasks degenerate. Per-merchant is usually the sweet spot for tabular fraud.</>}
-        stretch={<>What is the minimum (support + query) size below which the task becomes useless?</>}
+        trap={<>(b), (c), (d) miss the merchant-variance framing.</>}
+        lens={<>MAML's edge is tied to MERCHANT VARIANCE. Measure it: cosine spread of merchant prototypes in a baseline embedding.</>}
+        stretch={<>What is the threshold variance at which MAML's cost is justified?</>}
       />
 
-      <VIS.TrapProblem
-        id="mgnn-p4"
-        difficulty="hard"
-        multiSelect
-        title="P4 — Why a vanilla transfer fine-tune overfits at 10 labels"
-        scenario={<>Your baseline is: train a global GNN on the merchant pool, then fine-tune on the new merchant's 10 labels. Test AUC is no better than the un-tuned global model. Why? Select all true diagnoses.</>}
-        options={[
-          {key:"a", text:"With 10 labels and ~1M GNN parameters, the fine-tune memorises the support set; the gradient is dominated by support-set noise.", correct:true},
-          {key:"b", text:"The global init was trained for prediction quality, not for adaptation quality. Its gradient direction for a new merchant is roughly random.", correct:true},
-          {key:"c", text:"Standard cross-entropy at 10 labels has zero gradient near the optimum of the global model."},
-          {key:"d", text:"Adam's adaptive learning rate underflows at such small batches.", correct:true},
-          {key:"e", text:"GNNs cannot be fine-tuned at all."},
-        ]}
-        trap={<>(c) is hand-wavy — the gradient is non-zero but noisy. (e) is obviously wrong.</>}
-        lens={<>(a), (b), (d). Capacity vs labels overfitting; init was not chosen for gradient direction; small-batch Adam is unstable. All three feed each other. MAML solves (b) directly; smaller adapter layers and bigger learning rate solve (a) and (d) partially.</>}
-        stretch={<>Which of (a)(b)(d) does ProtoNet (no fine-tune at inference) avoid entirely?</>}
-      />
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>B. Application</h3>
 
       <VIS.TrapProblem
-        id="mgnn-p5"
+        id="mgnn-b1"
         difficulty="medium"
-        title="P5 — First-order MAML: what does it drop?"
-        scenario={<>First-order MAML (FOMAML) is widely used in practice. What does it approximate, and what does it gain?</>}
+        title="B1 — Pick the right tool given the scenario"
+        scenario={<>Scenario: a payments marketplace, 30 new merchants/day, each with 0-50 labeled transactions in week 1, fraud rates DIVERGE 10x across merchant verticals (subscription vs gig vs marketplace), p99 scoring SLA 100ms, you have a team that has shipped MAML before. Pick the next investment.</>}
         options={[
-          {key:"a", text:"FOMAML ignores the Jacobian d theta_prime / d theta — pretends adaptation is identity. Loses some second-order signal but gains big speed and memory savings.", correct:true},
-          {key:"b", text:"FOMAML uses the full Hessian, not just gradients."},
-          {key:"c", text:"FOMAML skips the inner loop entirely."},
-          {key:"d", text:"FOMAML uses Adam in the outer loop."},
+          {key:"a", text:"Meta-GNN with FOMAML (first-order approximation for stability) over verticals as task strata. The 10x cross-vertical variance is the regime MAML's parameter adaptation pays for. Cache the per-merchant adapted theta to keep scoring at less than 100ms. Have ProtoNet shipped in parallel as a fallback in case bi-level training destabilises.", correct:true},
+          {key:"b", text:"Just buy more rules."},
+          {key:"c", text:"Wait until each merchant has 1000 labels."},
+          {key:"d", text:"Cold-start with the global model."},
         ]}
-        trap={<>(b) and (c) are wrong directions on what 'first-order' means. (d) is unrelated.</>}
-        lens={<>(a). FOMAML treats the inner-loop update as if it were detached from the graph — gradient flows only through theta_prime values, not through how theta_prime was produced. Reptile is essentially FOMAML's discrete version (move theta toward theta_prime). In tabular fraud, FOMAML usually matches MAML within 1-2 percent AUC at one-third the training cost.</>}
-        stretch={<>Why does FOMAML often work nearly as well — what does that say about MAML's second-order term?</>}
+        trap={<>(b), (c), (d) ignore the divergent-vertical signal.</>}
+        lens={<>The scenario gives you the merchant variance (10x) AND the team capability — those are the two preconditions for Meta-GNN.</>}
+        stretch={<>What is your contingency if FOMAML training diverges?</>}
       />
 
       <VIS.TrapProblem
-        id="mgnn-p6"
+        id="mgnn-b2"
         difficulty="hard"
+        title="B2 — Sounds reasonable but isn't: 'more inner-loop steps = better adaptation'"
+        scenario={<>A teammate says "increase the inner-loop step count k from 3 to 20 — the model will adapt better." Why is this specifically wrong for Meta-GNN on K=10?</>}
+        options={[
+          {key:"a", text:"With K=10 labels, 20 inner-loop SGD steps OVERFITS the support set — the model memorises the specific 10 examples (gradient signal from 10 points cannot generalise after 20 steps). The bi-level training was OPTIMISED for k=3 (a hyperparameter of the outer loop); changing k at inference invalidates the theta. Optimal k is the k used in outer-loop training; deviating loses the benefit.", correct:true},
+          {key:"b", text:"More steps always help."},
+          {key:"c", text:"k=20 is the right answer."},
+          {key:"d", text:"k=20 needs different parameters."},
+        ]}
+        trap={<>(b) is the naive belief.</>}
+        lens={<>k is a property of the outer-loop training; inference-time k must match. This is unique to MAML.</>}
+        stretch={<>If you needed to change k, what would you have to retrain?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-b3"
+        difficulty="hard"
+        title="B3 — Pitch Meta-GNN to the marketplace risk lead"
+        scenario={<>The risk lead asks "why MAML and not just fine-tune?" Pick the pitch that requires understanding the MAML mechanism.</>}
+        options={[
+          {key:"a", text:"Day-1 fine-tuning on 10 labels overfits — gradient noise from 10 points dominates the signal so the model latches on to spurious features. MAML's outer loop learns an INITIAL POINT in parameter space such that a few SGD steps from there land in the right neighbourhood for ANY new merchant. We pay once at training (run MAML); we get K=10 onboarding for free at inference. The win is not a fancier model — it is a purpose-built starting point.", correct:true},
+          {key:"b", text:"MAML is state of the art."},
+          {key:"c", text:"MAML reduces FPs."},
+          {key:"d", text:"MAML uses fewer parameters."},
+        ]}
+        trap={<>(b) is hype. (c), (d) are unspecific.</>}
+        lens={<>The concept-specific pitch names the INIT QUALITY argument. Strip MAML — the listener must understand "good init beats fine-tune at K=10" to evaluate.</>}
+        stretch={<>How would you quantify the K=10 fine-tune gap for the lead?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-b4"
+        difficulty="hard"
+        title="B4 — When NOT to use Meta-GNN"
+        scenario={<>Which scenarios are Meta-GNN anti-patterns?</>}
         multiSelect
-        title="P6 — Production rollout: what infra do you need for MAML at serving time?"
-        scenario={<>You ship MAML. At inference, each new merchant gets 5-10 SGD steps from theta_global on their first 10 labels. Then their adapted theta_prime is used to score traffic. Which infra components are mandatory? Select all that apply.</>}
         options={[
-          {key:"a", text:"Per-merchant theta_prime storage (~MB per merchant).", correct:true},
-          {key:"b", text:"A pipeline to run the 5-10 adaptation steps when the merchant's 10th label arrives.", correct:true},
-          {key:"c", text:"A fallback to theta_global for merchants with fewer than 10 labels.", correct:true},
-          {key:"d", text:"A re-adaptation policy when new labels arrive (continuous? batched daily? threshold-based?).", correct:true},
-          {key:"e", text:"GPU at inference time."},
+          {key:"a", text:"Few mature merchants (under 100) — the outer-loop training set is too small to learn a useful theta.", correct:true},
+          {key:"b", text:"Low merchant-variance — ProtoNet suffices.", correct:true},
+          {key:"c", text:"Team without MAML production experience — bi-level instability kills the project.", correct:true},
+          {key:"d", text:"Continuous merchant onboarding with under 50 labels per merchant and high vertical-variance."},
         ]}
-        trap={<>(e) is over-spec — inference on a small per-merchant model is CPU-friendly. The expensive bit is the offline adaptation step.</>}
-        lens={<>(a), (b), (c), (d). The four pillars of a meta-trained serving system: parameter store, adaptation pipeline, fallback policy, re-adaptation policy. (e) is nice-to-have only if your base GNN is very large.</>}
-        stretch={<>What does ProtoNet replace from this list?</>}
+        trap={<>(d) is the canonical Meta-GNN-fits regime.</>}
+        lens={<>Three anti-patterns: small outer-loop pool, low variance, missing MAML expertise. Each maps to a simpler alternative.</>}
+        stretch={<>Could you bootstrap the outer-loop pool with synthetic merchants?</>}
       />
 
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>C. Mechanism</h3>
+
       <VIS.TrapProblem
-        id="mgnn-p7"
+        id="mgnn-c1"
         difficulty="hard"
-        title="P7 — Distribution shift between meta-train and meta-test merchants"
-        scenario={<>Your meta-training set is 3k merchants from 2024. You deploy to merchants onboarding in 2026. New merchant verticals (BNPL, crypto exchanges) appear post-2024. What is the right framing?</>}
+        title="C1 — Architectural choice: why FOMAML (first-order) in production"
+        scenario={<>Why does the WWW 2024 paper use FOMAML (first-order approximation) instead of the original second-order MAML for production?</>}
         options={[
-          {key:"a", text:"MAML generalises — the meta-trained init handles any new task by design."},
-          {key:"b", text:"Meta-test distribution shift breaks the central MAML guarantee. Periodically retrain the meta-model on a refreshed merchant pool; monitor adaptation-loss-after-N-steps as a drift signal.", correct:true},
-          {key:"c", text:"Switch to ProtoNet — it has no distribution-shift problem."},
-          {key:"d", text:"Use larger learning rate at adaptation time to compensate."},
+          {key:"a", text:"Second-order MAML requires the Hessian of the inner-loop trajectory through the GNN. Hessians of GNN layers explode memory at scale (1000+ merchant tasks per outer step). FOMAML drops the Hessian term — empirically loses 0.5-1.5 AUPRC but enables training at marketplace scale. The tradeoff is correctness for tractability; in practice the FOMAML-trained theta is good enough.", correct:true},
+          {key:"b", text:"FOMAML is more accurate than second-order MAML."},
+          {key:"c", text:"GNNs do not support second-order gradients."},
+          {key:"d", text:"FOMAML uses no gradients."},
         ]}
-        trap={<>(a) is the canonical MAML over-claim. (c) is wrong — every learning method has a distribution-shift problem; ProtoNet just hides it as prototype drift. (d) is a hack.</>}
-        lens={<>(b). MAML's generalisation depends on the new task being drawn from the same distribution as the meta-training tasks. Periodic re-meta-training is non-negotiable. Adaptation loss at step N is the cleanest drift signal — when it climbs, the meta-init no longer covers new merchants.</>}
-        stretch={<>What is the meta-equivalent of a chargeback feedback loop?</>}
+        trap={<>(b), (c), (d) miss the memory-vs-accuracy tradeoff.</>}
+        lens={<>FOMAML is the standard production approximation when second-order MAML's memory is prohibitive. The accuracy loss is small in practice.</>}
+        stretch={<>At what scale does Reptile become preferable to FOMAML?</>}
       />
 
       <VIS.TrapProblem
-        id="mgnn-p8"
+        id="mgnn-c2"
+        difficulty="hard"
+        title="C2 — Loss / objective: query loss vs support loss"
+        scenario={<>In Meta-GNN training, the OUTER loop optimises the QUERY loss (after the inner-loop adaptation), not the support loss. Why?</>}
+        options={[
+          {key:"a", text:"The outer loop's goal is to make the post-adaptation model GENERALISE — i.e. perform well on unseen transactions of the merchant (the query set). Optimising the support loss would teach theta to land in a place that fits the K=10 perfectly (a memoriser); the query loss enforces that the adaptation TRANSFERS to held-out transactions. This is the entire point of bi-level optimisation.", correct:true},
+          {key:"b", text:"Support and query losses are the same."},
+          {key:"c", text:"Query loss is faster to compute."},
+          {key:"d", text:"Support loss is forbidden by MAML."},
+        ]}
+        trap={<>(b), (c), (d) miss the generalisation point.</>}
+        lens={<>The bi-level structure separates 'fit support' (inner) from 'generalise' (outer). This is exactly what produces a meta-init useful for unseen merchants.</>}
+        stretch={<>What happens if you accidentally optimise support loss in the outer loop?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-c3"
+        difficulty="hard"
+        title="C3 — What's dropped vs full retrain"
+        scenario={<>What does Meta-GNN explicitly drop relative to retraining per merchant?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Full convergence on each merchant — MAML adapts for k steps only.", correct:true},
+          {key:"b", text:"Merchant-specific hyperparameter selection — MAML shares hyperparameters across all merchants.", correct:true},
+          {key:"c", text:"Merchant-specific feature schema — MAML expects a fixed shared feature space.", correct:true},
+          {key:"d", text:"Gradients — MAML uses no gradients."},
+        ]}
+        trap={<>(d) is wrong.</>}
+        lens={<>Three drops: full convergence, per-merchant hyperparams, schema flexibility. Each is the tax for tractability.</>}
+        stretch={<>Which drop hurts most when a merchant has truly anomalous features?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-c4"
+        difficulty="hard"
+        title="C4 — Which knob mis-set breaks Meta-GNN"
+        scenario={<>Rank: (i) inner-loop step count k, (ii) outer learning rate, (iii) embedding dim, (iv) GNN depth.</>}
+        options={[
+          {key:"a", text:"k > outer LR > GNN depth > embedding dim. k is the inner/outer-loop pacing — k=1 under-adapts, k=10 overfits. Outer LR drives whether bi-level training converges (too high → diverge; too low → never learn a useful theta). GNN depth matters but secondary. Embedding dim is tertiary.", correct:true},
+          {key:"b", text:"Embedding dim dominates."},
+          {key:"c", text:"All equally important."},
+          {key:"d", text:"GNN depth dominates."},
+        ]}
+        trap={<>(b), (c), (d) miss the k-first ordering.</>}
+        lens={<>For MAML, the inner/outer pacing is the central tradeoff. Treat k as a first-class hyperparameter.</>}
+        stretch={<>How do you tune k and outer LR jointly?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-c5"
         difficulty="medium"
-        multiSelect
-        title="P8 — Reading MAML training curves"
-        scenario={<>You plot two curves during meta-training: (i) query-set loss BEFORE adaptation (using theta directly), (ii) query-set loss AFTER N adaptation steps. Healthy training shows what?</>}
+        title="C5 — Data-assumption violation: merchant with K=2 labels"
+        scenario={<>A new merchant has only 2 labeled transactions in their first 48 hours. What specifically happens with a Meta-GNN trained with K=10 support sets?</>}
         options={[
-          {key:"a", text:"Pre-adaptation loss may stay high — that's expected, theta is not a predictor.", correct:true},
-          {key:"b", text:"Post-adaptation loss should drop steadily — that IS what MAML optimises.", correct:true},
-          {key:"c", text:"Gap between pre- and post-adaptation should GROW over training.", correct:true},
-          {key:"d", text:"Pre-adaptation loss should drop faster than post-adaptation loss."},
-          {key:"e", text:"Both losses should converge to similar values at the end."},
+          {key:"a", text:"The inner loop runs on 2 points instead of 10 — gradient signal is much noisier than the outer loop expected; the adapted theta lands far from the intended neighbourhood; AUPRC collapses. Fix: fall back to ProtoNet (more stable at very low K) OR mix the merchant's 2 labels with hard-negative labels from sibling merchants OR delay scoring until K hits 8-10.", correct:true},
+          {key:"b", text:"Performance is unchanged."},
+          {key:"c", text:"The model auto-generates labels."},
+          {key:"d", text:"Meta-GNN refuses to score."},
         ]}
-        trap={<>(d) reverses what you should see. (e) implies adaptation does nothing.</>}
-        lens={<>(a), (b), (c). MAML's job is to make the gap big — theta is a good STARTING POINT, theta_prime is a good predictor. If pre and post converge, you have a regular fine-tune in MAML clothing.</>}
-        stretch={<>What does it mean if post-adaptation loss starts rising mid-training?</>}
+        trap={<>(b), (c), (d) miss the K-mismatch point.</>}
+        lens={<>The outer loop is trained with a specific K; deviating at inference breaks the contract. Senior MLEs build a K-gated routing layer.</>}
+        stretch={<>How would you train a multi-K Meta-GNN that handles K=2, 5, 10 uniformly?</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      <VIS.TrapProblem
+        id="mgnn-d1"
+        difficulty="hard"
+        title="D1 — 'MAML always beats ProtoNet because it has more capacity'"
+        scenario={<>A junior says "MAML adapts parameters so it has strictly more capacity than ProtoNet — it should always win." Where does this intuition break?</>}
+        options={[
+          {key:"a", text:"More capacity is paid for with training instability. MAML's bi-level optimisation requires Hessian-like terms (or FOMAML approximation), is sensitive to inner-loop k, suffers from NaN loss at scale, and is dataset-fragile. ProtoNet has none of these — its 'capacity' is the embedding space, which is shared across tasks. In practice ProtoNet wins on fraud-typology growth where the typology shifts in embedding space; MAML wins only when merchant-specific PARAMETER adaptation is needed. Capacity is not utility.", correct:true},
+          {key:"b", text:"MAML always wins because capacity wins."},
+          {key:"c", text:"ProtoNet has more capacity than MAML."},
+          {key:"d", text:"Capacity is irrelevant."},
+        ]}
+        trap={<>(b) is the naive belief.</>}
+        lens={<>For meta-learning, training stability is a first-class concern. ProtoNet often wins in practice despite lower nominal capacity.</>}
+        stretch={<>What is a benchmark task where MAML provably beats ProtoNet?</>}
       />
 
       <VIS.TrapProblem
-        id="mgnn-p9"
+        id="mgnn-d2"
         difficulty="hard"
-        title="P9 — Inner-loop steps: 1, 5, or 20?"
-        scenario={<>The number of inner-loop adaptation steps K is a hyperparameter. K = 1 is fast; K = 20 explores more of the local landscape. Which is the sound rule of thumb for fraud cold-start?</>}
+        title="D2 — Wrong-assumption cascade: 'tasks are i.i.d. across merchants'"
+        scenario={<>You assume "merchant tasks are i.i.d. — so MAML's outer loop converges." Trace the cascade.</>}
         options={[
-          {key:"a", text:"K = 1 always — keeps training cheap."},
-          {key:"b", text:"K = 5-10. Larger K explodes memory (full computation graph through K steps), and the marginal accuracy gain past K = 10 is small.", correct:true},
-          {key:"c", text:"K = 20+ — more steps = better adaptation."},
-          {key:"d", text:"K should equal the number of inference-time adaptation steps."},
+          {key:"a", text:"Merchant tasks are NOT i.i.d. — they're correlated by vertical, region, season. The outer loop's gradient estimate has high variance from the correlated batches; theta drifts; new-merchant performance degrades over time. Fix: stratify outer-loop sampling by vertical/region; use a curriculum that orders tasks by similarity to the most-recent additions; monitor outer-loop gradient norm distribution for distribution shift.", correct:true},
+          {key:"b", text:"Tasks are always i.i.d."},
+          {key:"c", text:"Nothing changes."},
+          {key:"d", text:"MAML cannot handle non-i.i.d. tasks."},
         ]}
-        trap={<>(a) under-trains. (c) blows up memory. (d) is a sensible-sounding heuristic but not strictly necessary — Reptile and FOMAML don't need this equality.</>}
-        lens={<>(b). 5-10 inner steps is the empirical sweet spot. Memory scales linearly with K under second-order MAML; the marginal accuracy gain plateaus quickly. FOMAML lets you crank K higher cheaply but you usually do not need to.</>}
-        stretch={<>What changes if you switch from second-order MAML to FOMAML?</>}
+        trap={<>(b), (c), (d) miss the correlation cascade.</>}
+        lens={<>Task correlation is the realistic structure. Stratification and curricula matter at production scale.</>}
+        stretch={<>Sketch the curriculum.</>}
       />
 
       <VIS.TrapProblem
-        id="mgnn-p10"
+        id="mgnn-d3"
         difficulty="hard"
-        multiSelect
-        title="P10 — Failure modes specific to Meta-GNNs"
-        scenario={<>Which failure modes are SPECIFIC to MAML / Meta-GNN as opposed to vanilla fine-tune? Select all that apply.</>}
+        title="D3 — Junior vs senior on a 'win'"
+        scenario={<>Junior reports Meta-GNN beats vanilla fine-tune by 7 AUPRC on new-merchant scoring. What is the senior question?</>}
         options={[
-          {key:"a", text:"Inner-loop divergence — adaptation steps walk away from the init when support-set is noisy.", correct:true},
-          {key:"b", text:"Meta-overfitting — theta over-specialises to the meta-training tasks and fails on novel ones.", correct:true},
-          {key:"c", text:"Second-order gradient explosion in deep networks.", correct:true},
-          {key:"d", text:"Class imbalance in the support set causes the inner-loop to collapse to majority class.", correct:true},
-          {key:"e", text:"Label noise — affects every supervised method equally."},
-          {key:"f", text:"Out-of-memory at serving time."},
+          {key:"a", text:"'Did you compare to ProtoNet, which trains in hours instead of days and has none of MAML's instability? And: is the win concentrated in a specific vertical (where merchant-variance is highest), or uniform across verticals? If uniform, ProtoNet probably matches it; if concentrated, MAML is buying real adaptation. Without that breakdown the win is unactionable.'", correct:true},
+          {key:"b", text:"'Use bigger GNN.'"},
+          {key:"c", text:"'Train longer.'"},
+          {key:"d", text:"'Ship it.'"},
         ]}
-        trap={<>(e) is true of all methods, so not MAML-specific. (f) is only an issue if your base model is huge — not a MAML-specific failure.</>}
-        lens={<>(a), (b), (c), (d). These are MAML-specific: adaptation can walk off, meta-init can over-specialise, second-order gradients are numerically tricky, and inner-loop class imbalance is amplified because you only see the support set. Each has a documented fix (gradient clipping, larger meta-training pool, FOMAML, balanced support sampling).</>}
-        stretch={<>Which of these is the single biggest reason teams switch from MAML to ProtoNet in production?</>}
+        trap={<>(b), (c), (d) miss the ProtoNet-baseline question.</>}
+        lens={<>The senior question demands ProtoNet baseline AND per-vertical decomposition. Without it, the win could be entirely on the easy verticals.</>}
+        stretch={<>How big does the per-vertical eval need to be to be statistically meaningful?</>}
       />
+
+      <VIS.TrapProblem
+        id="mgnn-d4"
+        difficulty="hard"
+        title="D4 — Plausible misattribution: AUPRC drop after retraining"
+        scenario={<>After a monthly Meta-GNN retrain, new-merchant AUPRC drops 0.06. Causes: (i) outer-loop diverged, (ii) merchant vertical mix shifted, (iii) inner-loop k changed silently in the config.</>}
+        options={[
+          {key:"a", text:"(iii) most likely. A k change is a one-line config diff that silently breaks the theta-k contract; the outer-loop-trained theta now adapts differently at inference. (i) and (ii) would show different signatures — (i) is a training-loss spike visible in logs; (ii) is a per-vertical drop. Fix: gate config changes through a regression test on a fixed held-out merchant set; pin k.", correct:true},
+          {key:"b", text:"(i) — must be divergence."},
+          {key:"c", text:"(ii) — vertical mix always shifts."},
+          {key:"d", text:"Random fluctuation."},
+        ]}
+        trap={<>(b), (c) are plausible but produce DIFFERENT log signatures.</>}
+        lens={<>k-change is the silent-config-bug that uniquely affects Meta-GNN. Gate config changes; alert on k diffs.</>}
+        stretch={<>Design the regression-test fixture.</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>E. Operations</h3>
+
+      <VIS.TrapProblem
+        id="mgnn-e1"
+        difficulty="hard"
+        title="E1 — Meta-GNN-specific gotcha"
+        scenario={<>Pick the gotcha most specific to Meta-GNN (would not bite ProtoNet or vanilla fine-tune):</>}
+        options={[
+          {key:"a", text:"Bi-level training instability: NaN loss and outer-loop divergence at 1K+ merchant tasks per batch. Mitigation: FOMAML approximation, gradient clipping on BOTH inner and outer loops, learning-rate schedule on outer LR. ProtoNet has none of these issues because there is no inner loop.", correct:true},
+          {key:"b", text:"Slow inference."},
+          {key:"c", text:"OOM at inference."},
+          {key:"d", text:"GPU memory."},
+        ]}
+        trap={<>(b), (c), (d) are generic.</>}
+        lens={<>Bi-level instability is unique to MAML. ProductionMaml engineers spend most of their time on training stability.</>}
+        stretch={<>What is your monitoring dashboard for outer-loop health?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-e2"
+        difficulty="hard"
+        title="E2 — Friday: adapted theta drifts toward null"
+        scenario={<>Friday: new-merchant AUPRC drops to chance over a 24-hour window. Outer-loop training has been running continuously; loss curve is flat. Diagnosis?</>}
+        options={[
+          {key:"a", text:"The outer loop is converging to a TRIVIAL theta where the inner-loop adapts equally well to all merchants — i.e. theta encodes the global average and inner-loop SGD just re-fits to the support. This is the MAML 'mode collapse' failure mode: the meta-init becomes uninformative. Fix: stratify outer-loop sampling by merchant variance; introduce a regularisation term that penalises theta near the global-pooled init.", correct:true},
+          {key:"b", text:"GPU is full."},
+          {key:"c", text:"Data is missing."},
+          {key:"d", text:"Roll back."},
+        ]}
+        trap={<>(b), (c), (d) miss the mode-collapse signature.</>}
+        lens={<>MAML mode collapse is a specific failure mode where theta loses its meta-init quality. Detect via comparing theta to pooled-train init.</>}
+        stretch={<>Design the mode-collapse detector.</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-e3"
+        difficulty="hard"
+        title="E3 — Eval-protocol audit"
+        scenario={<>Which findings invalidate a Meta-GNN report card?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Eval did not compare to ProtoNet (the practical baseline).", correct:true},
+          {key:"b", text:"Eval used a fixed K=10 but production K varies 2-50.", correct:true},
+          {key:"c", text:"Eval's 'new merchants' were sampled from the SAME verticals as training merchants — measures within-vertical performance only.", correct:true},
+          {key:"d", text:"Meta-learning means eval is irrelevant."},
+        ]}
+        trap={<>(d) is wrong.</>}
+        lens={<>Three audit failures: missing ProtoNet baseline, fixed-K eval, vertical overlap. All common in MAML papers.</>}
+        stretch={<>Which finding hurts most when the model goes to production?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-e4"
+        difficulty="medium"
+        title="E4 — Rollout sequence: introduce Meta-GNN for new merchants"
+        scenario={<>Order: (i) full ramp, (ii) shadow scoring + per-vertical calibration, (iii) hybrid (Meta-GNN score combined with global score), (iv) traffic ramp on Meta-GNN-only.</>}
+        options={[
+          {key:"a", text:"ii then iii then iv then i. Shadow scoring measures the per-vertical performance distribution; hybrid bounds risk during ramp; full direct ramp would expose the bi-level instability without a safety net.", correct:true},
+          {key:"b", text:"i then ii then iii then iv."},
+          {key:"c", text:"Direct cutover."},
+          {key:"d", text:"iv then i."},
+        ]}
+        trap={<>(b), (c), (d) skip stability validation.</>}
+        lens={<>Meta-GNN needs shadow-scored stability validation before traffic. Bi-level training surprises are common; hybrid is the cheap insurance.</>}
+        stretch={<>How long should shadow scoring run before hybrid?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-e5"
+        difficulty="medium"
+        title="E5 — Reproducibility"
+        scenario={<>Which Meta-GNN reproducibility issues are widely known?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Inner-loop k, outer LR schedule, FOMAML-vs-second-order choice are often under-specified in papers.", correct:true},
+          {key:"b", text:"Task-sampling strategy (random vs stratified) changes results by 3-5 AUPRC and is rarely documented.", correct:true},
+          {key:"c", text:"Bi-level training is run-to-run unstable — re-running the same code with different seeds gives different theta.", correct:true},
+          {key:"d", text:"MAML is fully deterministic."},
+        ]}
+        trap={<>(d) is wrong.</>}
+        lens={<>Three reproducibility issues: under-specified hyperparams, unspecified task sampling, run-to-run instability. Mitigation: publish full configs and report seed variance.</>}
+        stretch={<>How many seeds do you need for trustworthy MAML numbers?</>}
+      />
+
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>F. Failure modes and edge cases</h3>
+
+      <VIS.TrapProblem
+        id="mgnn-f1"
+        difficulty="hard"
+        title="F1 — Smallest input that breaks the Meta-GNN advantage"
+        scenario={<>Construct the smallest scenario where Meta-GNN is no better than vanilla fine-tune.</>}
+        options={[
+          {key:"a", text:"A single-vertical marketplace with merchants that all have identical fraud distribution shape (the merchants only differ in label volume, not pattern). On that surface, the outer loop learns a theta that is essentially the pooled-train init — no inner-loop adaptation is needed because all merchants are the same task. Vanilla fine-tune at K=10 is equally good. Meta-GNN's advantage is tied to task variance.", correct:true},
+          {key:"b", text:"At 1 merchant."},
+          {key:"c", text:"On any synthetic data."},
+          {key:"d", text:"On any small dataset."},
+        ]}
+        trap={<>(b), (c), (d) miss the variance argument.</>}
+        lens={<>Meta-GNN's edge requires task variance. Homogeneous surfaces collapse the advantage.</>}
+        stretch={<>What variance metric would you measure?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-f2"
+        difficulty="hard"
+        title="F2 — Adversarial attack on the support set"
+        scenario={<>Design an attack that breaks Meta-GNN specifically.</>}
+        options={[
+          {key:"a", text:"A malicious merchant onboards and curates their first 10 labels to all be CLEARLY-LEGITIMATE transactions (large amount, well-known counter-party, normal time-of-day). The inner-loop adapts theta to a permissive region; the merchant then runs fraud through accounts that look similar to those 10 templates. The static theta does not protect against this; vanilla fine-tune has the same problem but MAML's adaptation magnifies it (the inner loop moves further than fine-tune would). Defense: require the system — not the merchant — to choose the K support labels; audit merchant-level adapted scores against the global model.", correct:true},
+          {key:"b", text:"No attack possible."},
+          {key:"c", text:"Submit a blank label."},
+          {key:"d", text:"Higher batch size."},
+        ]}
+        trap={<>(b), (c), (d) miss the adversarial-support attack surface.</>}
+        lens={<>Adversarially curated support sets are unique to inner-loop adaptive models. The defense is system-controlled support sampling and global-vs-adapted score audits.</>}
+        stretch={<>How would you measure the adapted-vs-global drift to detect this?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-f3"
+        difficulty="hard"
+        title="F3 — Reverse engineering: symptom to design choice"
+        scenario={<>Symptom: outer-loop loss decreases monotonically but new-merchant AUPRC degrades over the same period. Which Meta-GNN design choice causes this divergence?</>}
+        options={[
+          {key:"a", text:"The outer-loop QUERY-loss formulation may have a systematic mismatch with new-merchant AUPRC — the outer loop is optimising loss on QUERY transactions drawn from EXISTING merchants, which may have different fraud distribution than truly NEW merchants. The model is mode-collapsing onto existing-merchant patterns. Fix: hold out merchants entirely (not just transactions per merchant) for query-set construction.", correct:true},
+          {key:"b", text:"GPU is full."},
+          {key:"c", text:"Embedding dim is wrong."},
+          {key:"d", text:"Random."},
+        ]}
+        trap={<>(b), (c), (d) miss the merchant-vs-transaction holdout point.</>}
+        lens={<>The outer-loop holdout granularity matters — per-merchant holdout is the right level. Per-transaction holdout leaks existing-merchant signal.</>}
+        stretch={<>How do you choose the merchant-holdout split?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-f4"
+        difficulty="medium"
+        title="F4 — Paper-admitted limitation"
+        scenario={<>Which limitation does the WWW 2024 Meta-GNN paper itself acknowledge?</>}
+        options={[
+          {key:"a", text:"MAML training instability at scale; the paper recommends FOMAML and discusses ProtoNet as a more stable but less expressive baseline.", correct:true},
+          {key:"b", text:"MAML works perfectly at any scale."},
+          {key:"c", text:"Only works for binary classification."},
+          {key:"d", text:"Cannot be deployed."},
+        ]}
+        trap={<>(b), (c), (d) are wrong.</>}
+        lens={<>The paper is honest about instability. Knowing this signals careful reading.</>}
+        stretch={<>What does the paper NOT predict that production teams hit?</>}
+      />
+
+      <VIS.TrapProblem
+        id="mgnn-f5"
+        difficulty="hard"
+        title="F5 — Community-found failure: Reptile matches MAML at less cost"
+        scenario={<>Recent follow-up work (Reptile, 2018; Meta-Curvature 2019) found which class of result for Meta-GNN?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Reptile (a simpler first-order meta-learner with no inner-loop Hessian) often matches MAML at much lower training cost.", correct:true},
+          {key:"b", text:"ProtoNet often matches MAML on tasks where task variance is well-clustered.", correct:true},
+          {key:"c", text:"Meta-Curvature improves on FOMAML at the cost of more memory.", correct:true},
+          {key:"d", text:"MAML is strictly better than every other meta-learner."},
+        ]}
+        trap={<>(d) is the wrong belief.</>}
+        lens={<>Community has found multiple lower-cost meta-learners that match MAML on practical tasks. Senior MLEs benchmark against these before committing to MAML.</>}
+        stretch={<>Rank Reptile, ProtoNet, Meta-Curvature by production-readiness.</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
         <li>
-          <a href="https://dl.acm.org/doi/10.1145/3637528.3672005" target="_blank" rel="noopener">
-            <strong>Few-Shot Fraud for New Merchants</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, WWW 2024)</span>
-          <br/>The paper adapting MAML to merchant fraud cold-start. Read section 4 for the task-definition tradeoff and section 6 for the benchmarks vs ProtoNet and vanilla transfer.
+          <a href="https://dl.acm.org/doi/10.1145/3637528.3672005" target="_blank" rel="noopener"><strong>WWW 2024 — Few-Shot Fraud for New Merchants</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper)</span>
+          <br/>The fraud-domain Meta-GNN adaptation. FOMAML training, per-vertical results.
         </li>
         <li>
-          <a href="https://arxiv.org/abs/1703.03400" target="_blank" rel="noopener">
-            <strong>Finn, Abbeel, Levine — Model-Agnostic Meta-Learning (MAML)</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, ICML 2017)</span>
-          <br/>The original MAML paper. Read sections 2-3 for the bi-level optimisation derivation. Skim section 4 for the few-shot vision benchmarks that motivated the method.
+          <a href="https://arxiv.org/abs/1905.09718" target="_blank" rel="noopener"><strong>Zhang et al. — Meta-GNN (CIKM 2019)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper)</span>
+          <br/>The original Meta-GNN. MAML over graph node-classification tasks.
         </li>
         <li>
-          <a href="https://lilianweng.github.io/posts/2018-11-30-meta-learning/" target="_blank" rel="noopener">
-            <strong>Lilian Weng — Meta-Learning: Learning to Learn Fast</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
-          <br/>The cleanest survey of MAML, Reptile, ProtoNet, and Matching Networks. Read this first if you want intuition before equations.
+          <a href="https://arxiv.org/abs/1703.03400" target="_blank" rel="noopener"><strong>Finn et al. — MAML</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(ICML 2017)</span>
+          <br/>The bi-level meta-learning origin.
         </li>
         <li>
-          <a href="https://www.cs.toronto.edu/~rgrosse/courses/csc2541_2022/readings/L13_meta_learning.pdf" target="_blank" rel="noopener">
-            <strong>Roger Grosse — Meta-Learning lecture notes</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(lecture, U of Toronto)</span>
-          <br/>Rigorous lecture-notes treatment of the bi-level optimisation, second-order vs first-order, and connections to implicit differentiation.
-        </li>
-        <li>
-          <a href="https://arxiv.org/abs/1803.02999" target="_blank" rel="noopener">
-            <strong>Nichol, Achiam, Schulman — On First-Order Meta-Learning Algorithms (Reptile)</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, OpenAI 2018)</span>
-          <br/>The simpler cousin of MAML — no inner-loop unrolling required. Strong baseline whenever MAML is unstable.
+          <a href="https://arxiv.org/abs/1803.02999" target="_blank" rel="noopener"><strong>Nichol et al. — Reptile</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(2018)</span>
+          <br/>The first-order alternative often used in practice.
         </li>
       </ul>
     </VIS.Section>
