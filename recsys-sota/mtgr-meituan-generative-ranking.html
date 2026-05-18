@@ -1605,17 +1605,17 @@ flowchart TB
       <VIS.TrapProblem
         id="mtgr-b3"
         difficulty="medium"
-        title="B3 — Pitch MTGR to a CTO with a mature DLRM"
-        scenario={<>CTO: "Why MTGR over our DLRM?" Pick the strongest pitch.</>}
+        title="B3 — Pitch MTGR to a CTO (must require knowing what GLN actually does)"
+        scenario={<>CTO with a mature DLRM asks: "Why MTGR over plain HSTU?" Give the 1-sentence pitch that *only* works if the listener understands GLN's role — i.e. an explanation that would fail if MTGR were just "HSTU at Meituan."</>}
         options={[
-          {key:"a", text:"'Keep every cross-feature investment intact; gain HSTU's power-law scaling; published production result is +1.22% conversion at training-cost-parity and inference-cost-down at Meituan.'", correct:true},
-          {key:"b", text:"'Transformers everywhere.'"},
-          {key:"c", text:"'It's a CIKM paper.'"},
-          {key:"d", text:"'NDCG up 1%.'"},
+          {key:"a", text:"'Preserve every cross-feature investment + gain HSTU scaling — generic cross-modernization play.' (Could be HSTU+ or any cross-recovery design.)"},
+          {key:"b", text:"'In MTGR, cross-feature tokens and action-sequence tokens live in <em>separate normalization sub-spaces via Group-Layer Normalization (GLN)</em> — that is what keeps the high-frequency action-token statistics from contaminating the sparse cross-feature signals when they share the same transducer; without GLN, re-injecting crosses into HSTU regresses because LayerNorm pools their statistics together.'", correct:true},
+          {key:"c", text:"'Transformers everywhere.'"},
+          {key:"d", text:"'NDCG up 1% on the offline eval.'"},
         ]}
-        trap={<>(b), (c), (d) miss the cross-preservation angle.</>}
-        lens={<>Mature-DLRM teams have invested heavily in crosses; the MTGR pitch is "don't throw them out, scale them."</>}
-        stretch={<>What's the cost-side of the pitch?</>}
+        trap={<>(a) is the trap — it's a generic "preserve crosses + add scaling" line that fits MTGR, HSTU+, or any cross-recovery research; redaction-substitute MTGR and (a) is unchanged. (b) is the only pitch that <em>fails</em> if you don't know GLN: it requires the listener to grasp that GLN isolates heterogeneous token sub-spaces inside one shared stack. Drop GLN and re-injected crosses get washed out.</>}
+        lens={<>MTGR = HSTU + cross-feature recovery. The cross-feature recovery isn't "concatenate crosses back in" — it's *separate normalization statistics per token group* via GLN. That's what makes the +1.22% real instead of a wash. The pitch must turn on this specific mechanism.</>}
+        stretch={<>If your DLRM crosses currently live in a sparse parameter server, what does GLN's sub-space requirement imply for how you feed them into the MTGR token stream?</>}
       />
 
       {/* B4 */}
@@ -2219,17 +2219,17 @@ flowchart TB
       <VIS.TrapProblem
         id="mtgr-a5b"
         difficulty="hard"
-        title="A5b — MTGR vs Meta's HSTU+ variants"
-        scenario={<>Meta has its own follow-up to HSTU (HSTU+; addressing crosses). How does MTGR compare?</>}
+        title="A5b — MTGR vs vanilla HSTU: GLN's compatibility with sparse-DLRM-era feature stores"
+        scenario={<>Your platform has a mature sparse-DLRM-era feature store: <strong>hashed cross-feature embeddings</strong> served from a parameter server, accessed via <code>(cross_key → embedding)</code> at request time. You want to move to a generative ranker. Pick the *specific, verifiable* property of MTGR (vs. vanilla HSTU) that makes the migration cheap.</>}
         options={[
-          {key:"a", text:"MTGR's GLN-based group normalization is published with concrete production results (+1.22%) at Meituan; Meta's follow-ups, where published, use different mechanisms (e.g., separate cross MLP heads) and report different deltas on different surfaces. The architectural choice is contested; pick the one that matches your serving infra and feature set.", correct:true},
-          {key:"b", text:"MTGR is the same as HSTU+."},
-          {key:"c", text:"HSTU+ is strictly better."},
-          {key:"d", text:"They don't exist."},
+          {key:"a", text:"MTGR's GLN treats each cross-feature group as its own normalization sub-space, so existing sparse cross-embeddings can be projected in as a separate token group <em>without</em> rescaling their statistics into the action-token regime — i.e. the existing parameter-server pipeline becomes one MTGR token group, no co-training of stats. Vanilla HSTU has no per-group norm, so the same drop-in would require renormalizing or re-embedding every cross.", correct:true},
+          {key:"b", text:"MTGR has more parameters than HSTU."},
+          {key:"c", text:"MTGR runs faster on GPUs than HSTU."},
+          {key:"d", text:"There is no real architectural difference."},
         ]}
-        trap={<>(b), (c), (d) over-claim.</>}
-        lens={<>Multiple research groups are converging on the cross-recovery problem; MTGR is one specific solution. The right framing is "which cross-recovery design fits your platform?"</>}
-        stretch={<>What's the chief difference between MTGR's GLN and a separate cross MLP?</>}
+        trap={<>(b), (c) are unverified/generic claims. (d) is false. (a) cites a concrete named mechanism (GLN's per-group statistics) and ties it to a concrete platform asset (the sparse cross-feature parameter server) — redaction-substitute "MTGR" with "Model X" and (a) only works if Model X has per-group norm, so the answer genuinely depends on MTGR's mechanism. This avoids the prior framing's "unspecified Meta follow-up" hedge.</>}
+        lens={<>The sharp, verifiable property: *GLN keeps per-token-group normalization statistics separate*, which is exactly what lets a sparse-DLRM-era cross-feature store plug in as a token group with no statistical contamination. Vanilla HSTU's shared norm makes the same drop-in lossy. This is a platform-migration property, not a paper-vs-paper hedge.</>}
+        stretch={<>If your cross store ships embeddings at a different dim than HSTU's hidden size, what's the minimal shim — and does GLN still hold its sub-space property after the projection?</>}
       />
 
     </VIS.Section>

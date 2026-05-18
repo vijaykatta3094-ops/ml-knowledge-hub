@@ -1608,17 +1608,17 @@ flowchart TB
       <VIS.TrapProblem
         id="tiger-b3"
         difficulty="medium"
-        title="B3 — Pitch TIGER to a Director of Eng"
-        scenario={<>Director asks: "Why TIGER over the two-tower + HNSW we already have?" Pick the operational pitch.</>}
+        title="B3 — Pitch TIGER to a Director (must require knowing how Semantic-ID prefixes replace ANN)"
+        scenario={<>Director asks: "Why TIGER over the two-tower + HNSW we already have?" Give the 1-sentence pitch that *only works if the director understands TIGER's mechanism* — i.e. an explanation that fails if TIGER were just "a better embedding model."</>}
         options={[
-          {key:"a", text:"'Retire one production system (HNSW re-index pipeline + ANN service), eliminate cold-start retraining cycles, gain content-aware generalization to new items for free.'", correct:true},
-          {key:"b", text:"'Use transformers like ChatGPT.'"},
-          {key:"c", text:"'It's a generative model.'"},
-          {key:"d", text:"'NDCG goes up 2%.'"},
+          {key:"a", text:"'Retire the HNSW re-index pipeline and ANN serving tier entirely: TIGER decodes Semantic-ID codebook prefixes autoregressively, so the index *is* the decoder — there is no separate "embedding → ANN" hop, which is why new items become retrievable the moment they have a codebook prefix (no re-index, no warmup).'", correct:true},
+          {key:"b", text:"'Better embeddings, lower latency, modern stack.' (Generic — works for any retrieval upgrade.)"},
+          {key:"c", text:"'It uses transformers like ChatGPT.'"},
+          {key:"d", text:"'NDCG goes up 2% on the offline eval.'"},
         ]}
-        trap={<>(b), (c) are buzz. (d) doesn't move directors.</>}
-        lens={<>Directors fund infrastructure simplification + cold-start solutions, not 2% NDCG.</>}
-        stretch={<>What's the cost side of the pitch?</>}
+        trap={<>(b) is the trap — it sounds like a director-grade infra pitch but applies to any "swap retrieval system" project; redaction-substitute TIGER and (b) is unchanged. The only pitch that <em>requires</em> knowing TIGER's mechanism is (a), because it ties the retire-the-ANN-tier claim to *codebook-prefix decoding* — drop that mechanism and the pitch evaporates (a better dense embedding still needs an ANN index).</>}
+        lens={<>The pitch must turn on the *specific* TIGER property that no two-tower upgrade has: the index is *not* a separate data structure, it's prefix-conditioned autoregressive decoding over Semantic IDs. That's what eliminates the HNSW service, the re-index cron, and cold-start retraining in one move.</>}
+        stretch={<>What's the failure mode if the director hears (a) but the team can't actually retire the ANN tier in year 1? How do you set the migration milestone?</>}
       />
 
       {/* axis: B4 */}
@@ -2167,17 +2167,17 @@ flowchart TB
       <VIS.TrapProblem
         id="tiger-a4b"
         difficulty="hard"
-        title="A4b — TIGER + diffusion models"
-        scenario={<>You add a small diffusion head over TIGER's beam outputs to generate diverse candidate Semantic IDs. Does this help?</>}
+        title="A4b — MMR rerank vs prefix-sampling for diversity on TIGER's beams"
+        scenario={<>You want more diverse top-K from TIGER. The two candidate moves are: <strong>(i) MMR-style reranker on TIGER's beam outputs</strong> (off-the-shelf diversity rerank), or <strong>(ii) prefix-sampling at decode time</strong> (sample first-codebook tokens then expand). Pick the one that is genuinely additive vs. one that largely duplicates a property TIGER already has — and explain *why* MMR's i.i.d.-candidates assumption interacts badly with autoregressive decoding.</>}
         options={[
-          {key:"a", text:"Yes for diversity, no for relevance: diffusion broadens the candidate distribution (good for exploration) but doesn't change the underlying decode probability. Net: better novelty metrics, marginal recall change. Constrain output to valid IDs.", correct:true},
-          {key:"b", text:"Yes, always better."},
-          {key:"c", text:"No, hurts always."},
-          {key:"d", text:"Not possible to combine."},
+          {key:"a", text:"Prefix-sampling is largely redundant — TIGER's beams already differ by codebook-prefix, so sampling first-codebook tokens just re-derives diversity TIGER produces structurally. MMR rerank is the additive move: it diversifies the *final* item embeddings (post-decode), catching cases where two distinct Semantic-ID prefixes still resolve to semantically near items.", correct:true},
+          {key:"b", text:"MMR is largely redundant — TIGER's beams are already i.i.d. samples; MMR over autoregressive beams gives no signal. Prefix-sampling is additive.", correct:false},
+          {key:"c", text:"Both are additive — stack them.", correct:false},
+          {key:"d", text:"Neither helps; TIGER diversity is fixed at training time.", correct:false},
         ]}
-        trap={<>(b), (c), (d) over-generalize.</>}
-        lens={<>Diffusion adds diversity but doesn't fix underlying TIGER metrics.</>}
-        stretch={<>How would you measure the novelty/recall tradeoff?</>}
+        trap={<>(b) is the trap — MMR *assumes* i.i.d. candidates and TIGER's beams are not i.i.d. (they share prefixes), so one might intuit MMR is wasted; but MMR operates on the *post-decode item embedding*, not on the beam-token distribution, so it still adds signal where two prefixes map to near items. (c) double-counts. (d) is wrong — diversity can be shaped at decode/rerank. The redaction-substitute test: replace "TIGER" with "generic two-tower + ANN" and the answer flips (MMR becomes the obvious move, prefix-sampling is meaningless without codebooks), so the question genuinely depends on TIGER's mechanism.</>}
+        lens={<>The decisive fact is *codebook-prefix structure*: TIGER's beams are structurally diverse at the prefix level for free, so the marginal diversity move must operate at a layer the prefix structure does *not* already diversify — i.e. final item embeddings, which is where MMR lives. Diversity rerankers that assume i.i.d. candidates need to be re-examined for autoregressive generators in general.</>}
+        stretch={<>If you push the diversity into decoding (temperature on first codebook), what offline metric will mislead you? Why is the i.i.d. assumption load-bearing for off-the-shelf diversity metrics?</>}
       />
 
       {/* axis: E2b */}

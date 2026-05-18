@@ -1630,17 +1630,17 @@ flowchart TB
       <VIS.TrapProblem
         id="hstu-b3"
         difficulty="medium"
-        title="B3 — Pitch HSTU to a PM in one sentence"
-        scenario={<>Your PM asks why HSTU is worth a 6-month migration. The metric lift in the paper is ~10% NDCG, which doesn't excite them. Pick the *business* framing, not the academic one.</>}
+        title="B3 — Pitch HSTU to a CTO (must require knowing HSTU's mechanism)"
+        scenario={<>Your CTO asks why HSTU is worth a 6-month migration when DLRM is fine. Give the 1-sentence business case that *requires* understanding HSTU's action-token power-law scaling — the case that fails if HSTU were just "a bigger transformer."</>}
         options={[
-          {key:"a", text:"'Power-law scaling laws over user actions.'"},
-          {key:"b", text:"'We replace dozens of cross-feature pipelines and a multi-model ranker stack with a single transducer that improves with FLOPs — fewer eng hands per quality point, predictable roadmap.'", correct:true},
+          {key:"a", text:"'Replace pipelines with a single transformer that improves with FLOPs.' (Generic — applies to any big transformer migration.)"},
+          {key:"b", text:"'HSTU's action-token vocabulary follows a power-law NDCG vs. FLOPs/sequence-length curve that DLRM provably cannot reach — every FLOP doubling moves a metric the CFO can read on a chart, so the 6-month spend has a quantifiable lift curve, not a "we'll see" delta.'", correct:true},
           {key:"c", text:"'It uses transformers like ChatGPT.'"},
-          {key:"d", text:"'NDCG up 10%.'"},
+          {key:"d", text:"'NDCG up 10% on the offline eval.'"},
         ]}
-        trap={<>(a) is the engineer's framing — PMs don't optimize for scaling laws. (c) is the worst kind of "AI hype" pitch. (d) is exactly what the PM said wasn't compelling.</>}
-        lens={<>The business case is operational simplicity at scale: one model + more compute replaces a sprawling feature factory + multi-model stack. The headline isn't the 10% metric lift; it's the *roadmap predictability* — every FLOP doubling reliably moves quality, so you can plan.</>}
-        stretch={<>What's the *risk* sentence in this pitch? What goes wrong with this framing if HSTU underperforms?</>}
+        trap={<>(a) is the trap — it sounds like the right pitch but it works for *any* big-transformer migration; redaction-substitute the model name and the sentence is unchanged. (c) is hype. (d) is the offline-only number the CTO already discounted. Only (b) depends on the *action-token scaling law* — drop that mechanism and the pitch evaporates.</>}
+        lens={<>The pitch must turn on the *specific* HSTU finding: action sequences scale like language tokens (power-law on FLOPs), and the unit of scaling is the action token, not parameters alone. That's what lets you draw a real lift-vs-spend curve. A generic "single model, more compute" pitch doesn't — DLRM-v2 can also be made bigger.</>}
+        stretch={<>If you can't show the scaling-law curve on your own surface (e.g. you don't have a 100M-event slice yet), what do you ask for in the next 30 days before re-pitching?</>}
       />
 
       {/* axis: B4 (when NOT to use) */}
@@ -2077,38 +2077,21 @@ flowchart TB
       <VIS.TrapProblem
         id="hstu-e7"
         difficulty="hard"
-        title="E7 — Item-embedding table size at scale"
-        scenario={<>You scale HSTU to a 50M-item catalog. Item-embedding table dominates parameters. What's the production move to keep it tractable?</>}
+        title="E7 — HSTU's heterogeneous vocab → sub-table sharding policy"
+        scenario={<>HSTU's action vocabulary is heterogeneous: <strong>action-type tokens</strong> (~10s, every step), <strong>item-ID tokens</strong> (~50M, sparse hot/cold), <strong>contextual tokens</strong> (~1Ks, surface-dependent). At 50M items the table is too big for one GPU. Which sub-table needs which sharding strategy?</>}
         options={[
-          {key:"a", text:"Embedding hash tricks + sharded embedding table (DLRM-v2 pattern) — orthogonal to HSTU's transducer; embedding mgmt is unchanged from DLRM-v2's playbook.", correct:true},
-          {key:"b", text:"Replace with content-tower embeddings — but HSTU has no content tower."},
-          {key:"c", text:"Reduce HSTU layers."},
-          {key:"d", text:"Use float8."},
+          {key:"a", text:"Action-type sub-table → fully replicate on every shard (tiny, hot every step; replication beats network hops). Item-ID sub-table → row-wise shard by frequency-aware hash with hot rows mirrored (Pareto access). Contextual sub-table → column-wise shard or co-locate with action-type since access is bursty + low-cardinality.", correct:true},
+          {key:"b", text:"Shard every sub-table the same way DLRM-v2 shards its single embedding table — HSTU adds no new constraint."},
+          {key:"c", text:"Replicate all three sub-tables on every shard."},
+          {key:"d", text:"Row-shard all three by item-ID."},
         ]}
-        trap={<>(b) requires HSTU+RQ-VAE composition, which is its own design effort. (c) and (d) are blunt levers.</>}
-        lens={<>HSTU's transducer-side params are *small* relative to the embedding table at production catalog scale. Embedding mgmt (sharding, hashing, mixed precision) is unchanged from DLRM-v2 — HSTU doesn't help, doesn't hurt.</>}
-        stretch={<>Where does HSTU give you embedding-table savings? Where does it cost more?</>}
+        trap={<>(b) is the trap — it's the DLRM-v2 playbook and ignores that HSTU's vocab is *not* one table but three sub-vocabs with very different access patterns; redaction-substitute "HSTU" with "Model X" and (b) becomes plausible only if Model X has a single homogeneous table, which HSTU doesn't. (c) blows up memory on the item sub-table. (d) treats action-type tokens (10s) like item-IDs (50M) — disastrous all-to-all traffic on every step.</>}
+        lens={<>HSTU's heterogeneous action vocab forces *per-sub-table* sharding policies that DLRM-v2's single-table playbook never had to address. The access-pattern asymmetry (action-type every step, item-IDs Pareto, contextual bursty) is the load-bearing fact; sharding by that asymmetry is the HSTU-specific move.</>}
+        stretch={<>If you add a 4th sub-table (e.g. creator-IDs at 5M cardinality, frequent for follow-feed users), what's the right starting policy and what would force you to revisit it?</>}
       />
 
       {/* ============== F. Failure modes ============== */}
       <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
-
-      {/* axis: F1 (edge case) */}
-      <VIS.TrapProblem
-        id="hstu-f1"
-        difficulty="hard"
-        title="F1 — Shortest history that regresses HSTU below DLRM"
-        scenario={<>What median user-history length is the rough threshold below which HSTU starts regressing below a well-tuned DLRM offline, and why?</>}
-        options={[
-          {key:"a", text:"~50 events — scaling-law gains require sequence length; below ~50 tokens HSTU is effectively a small transformer with worse inductive bias than DLRM's hand-engineered crosses.", correct:true},
-          {key:"b", text:"~5 events"},
-          {key:"c", text:"~5000 events"},
-          {key:"d", text:"~50000 events"},
-        ]}
-        trap={<>(b) over-claims HSTU's range. (c), (d) under-claim.</>}
-        lens={<>~50 is the empirical rough crossover. Not sharp — vocab cardinality and action-type richness shift it. The architectural reason matters more than the number: HSTU pays a fixed inductive-bias cost (no crosses) and only earns it back at sequence length.</>}
-        stretch={<>If you concatenate sessions across days to artificially lengthen sequences, do you recover HSTU's advantage? Why or why not?</>}
-      />
 
       {/* axis: F2 (adversarial test) */}
       <VIS.TrapProblem
@@ -2199,17 +2182,17 @@ flowchart TB
       <VIS.TrapProblem
         id="hstu-f3b"
         difficulty="hard"
-        title="F3b — Training loss decreasing, NDCG flat"
-        scenario={<>HSTU training: cross-entropy loss decreases monotonically; eval NDCG@10 plateaus after epoch 3. Which HSTU-specific cause is most likely?</>}
+        title="F3b — Per-action-token loss magnitudes differ wildly (training-only symptom)"
+        scenario={<>You instrument HSTU's training and break the cross-entropy loss out *per action type*: <code>L_click</code>, <code>L_watch</code>, <code>L_skip</code>, <code>L_like</code>. You observe magnitudes differ by ~10×: <code>L_click ≈ 4.2</code>, <code>L_watch ≈ 0.4</code>, <code>L_skip ≈ 3.8</code>, <code>L_like ≈ 5.1</code>. Online NDCG looks fine. Which symptom is *training-only*, would never appear in DLRM's discriminative training, and is a *direct* consequence of HSTU's heterogeneous action vocab?</>}
         options={[
-          {key:"a", text:"Action-vocab mode collapse — softmax concentrates on a few high-frequency actions; CE drops but ranking quality on the long tail doesn't improve.", correct:true},
-          {key:"b", text:"Standard overfitting."},
-          {key:"c", text:"Learning rate too low."},
-          {key:"d", text:"Batch size too small."},
+          {key:"a", text:"The per-action-token loss spread itself — DLRM's pointwise BCE has one scalar loss per (user, item) example, so it cannot produce per-action-class loss magnitudes; the spread exists *because* HSTU shares one softmax across action types with very different base rates and entropies. Watch-events are predictable (low entropy → low L); like-events are rare and bursty (high entropy → high L). The loss curve looks healthy in aggregate, hiding that the model is essentially solving the easy class.", correct:true},
+          {key:"b", text:"Overall loss not decreasing — generic ML issue, would appear in DLRM too."},
+          {key:"c", text:"Validation gradient norms exploding — generic, not HSTU-specific."},
+          {key:"d", text:"Memory pressure on the embedding table — orthogonal to loss shape."},
         ]}
-        trap={<>(b), (c), (d) are generic ML diagnoses — they don't explain why CE keeps dropping while NDCG doesn't.</>}
-        lens={<>The CE-vs-NDCG decoupling is HSTU-specific when the action vocab is imbalanced — most of the loss reduction comes from getting the high-frequency action right; NDCG is dominated by the long tail. Fix: rebalance the loss across action types or include long-tail-aware eval.</>}
-        stretch={<>What loss reweighting would close this gap? What's the cost?</>}
+        trap={<>(b), (c), (d) are diagnoses that DLRM training surfaces just as readily; redaction-substitute "HSTU" with "Model X" and they remain valid. Only (a) requires HSTU's specific architectural choice: <em>one shared softmax over a heterogeneous action vocab</em>. DLRM's per-target BCE heads simply cannot exhibit this spread.</>}
+        lens={<>The heterogeneous action vocab is the load-bearing fact. The aggregate CE is a misleading dashboard; the right HSTU-era training dashboards must report per-action-class loss + per-class accuracy/recall. The fix is class-balanced loss reweighting or per-class temperature on the action-vocab softmax — not LR/batch tuning.</>}
+        stretch={<>If you class-reweight the softmax to equalize per-class loss magnitudes, what new failure mode does that introduce on the offline-online gap?</>}
       />
 
       {/* axis: F2 — privacy adversarial */}

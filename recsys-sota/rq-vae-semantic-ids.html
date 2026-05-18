@@ -1608,17 +1608,17 @@ flowchart TB
       <VIS.TrapProblem
         id="rqvae-b3"
         difficulty="medium"
-        title="B3 — Pitch RQ-VAE to a Director"
-        scenario={<>"Why RQ-VAE Semantic IDs over random IDs?"</>}
+        title="B3 — Pitch RQ-VAE to a Director (must require knowing residual-prefix structure)"
+        scenario={<>Director asks: "Why RQ-VAE Semantic IDs over random hashed IDs?" Give the 1-sentence pitch that *only* works if the director understands the *residual-prefix structure* — i.e. an explanation that would fail if RQ-VAE were just "any neural tokenizer."</>}
         options={[
-          {key:"a", text:"'Cold-start works zero-shot for content-rich items; downstream generative models (TIGER, OneRec) work out of the box; one shared tokenization across retrieval + ranking; retire one custom ID-management system.'", correct:true},
-          {key:"b", text:"'It uses VAEs.'"},
-          {key:"c", text:"'Fewer parameters.'"},
-          {key:"d", text:"'NDCG up 2%.'"},
+          {key:"a", text:"'Cold-start works zero-shot, downstream models plug in, retire one ID system.' (Generic — applies to any neural tokenizer; redaction-test fails.)"},
+          {key:"b", text:"'RQ-VAE assigns Semantic IDs as <em>codebook prefixes from residual quantization</em>, so two items that share their first 2 (of 4) codes are semantically close <em>without ever co-occurring in training</em> — that's why a brand-new item gets useful retrieval the moment its content embeddings exist (it inherits the prefix's neighborhood). A random-ID system has zero prefix-shared semantics; a flat content embedding has no prefix at all and so cannot feed an autoregressive decoder.'", correct:true},
+          {key:"c", text:"'It uses VAEs, which are modern.'"},
+          {key:"d", text:"'NDCG up 2% on the offline eval.'"},
         ]}
-        trap={<>(b), (c) miss the consumer-model story.</>}
-        lens={<>RQ-VAE's value is leveraged via downstream consumers. The pitch is "enable a whole class of architectures" not "improve metric X."</>}
-        stretch={<>What's the org cost of switching tokenization?</>}
+        trap={<>(a) is the trap — the standard "cold-start + downstream-model + retire-a-system" director pitch fits any tokenizer (HashEmbed, content-tower, learned-ID); redaction-substitute "RQ-VAE" with "Model X" and (a) is unchanged. (b) is the only pitch that <em>requires</em> the residual-prefix mechanism: shared first-k codes ⇒ shared semantic neighborhood ⇒ cold-start generalization at the prefix level. Drop the residual-prefix structure and the cold-start story evaporates.</>}
+        lens={<>Cold-start zero-shot retrieval doesn't come from "neural tokenizer." It comes specifically from *codebook prefixes encoding hierarchical semantics via residual quantization* — that's why TIGER can decode them autoregressively and why a brand-new item's prefix already places it in the right neighborhood. The pitch must turn on this mechanism.</>}
+        stretch={<>If two new items share their first code by coincidence (not semantics), how does the prefix-shared neighborhood fail? What's the codebook-utilization diagnostic that catches this?</>}
       />
 
       {/* B4 */}
@@ -1731,17 +1731,17 @@ flowchart TB
       <VIS.TrapProblem
         id="rqvae-c1b"
         difficulty="hard"
-        title="C1b — Why K=4 codebooks?"
-        scenario={<>TIGER uses K=4. Why not K=2 or K=8?</>}
+        title="C1b — K vs catalog cardinality: when does K=4 stop being enough?"
+        scenario={<>Codebook size per level is fixed at <code>|V|=256</code>. You compare two catalogs at the *same* K=8 codebook depth: <strong>10M items</strong> vs <strong>1B items</strong>. Same model architecture, same training recipe. Which regime makes K=4 vs K=16 a *different* tradeoff, and what is the catalog-size threshold that flips the recommendation?</>}
         options={[
-          {key:"a", text:"K=2: collisions explode at large catalogs (2-tuple of 256 codes = 65K combos, too few for a 1M-item catalog). K=8: each additional codebook beyond 4 sees vanishing residuals (the residual gets too small to quantize meaningfully) AND adds decode latency. K=4 is the empirical sweet spot.", correct:true},
-          {key:"b", text:"K=4 is arbitrary."},
-          {key:"c", text:"K=8 always better."},
-          {key:"d", text:"K=2 always better."},
+          {key:"a", text:"At 10M items, K=4 (≈|V|^4 = 4.3B prefix combos) leaves >400× headroom over the catalog; collisions are negligible and K=16 just adds decode latency + vanishing-residual codebooks → use K=4. At 1B items, K=4 still gives 4× headroom in *combinatorial* terms but the *effective* utilized prefix space is far smaller (codebook utilization is rarely uniform), so collision-rate among popular items climbs sharply → K=8 or K=16 wins despite the residual-vanishing cost. The flip happens roughly when catalog size approaches ~1% of |V|^K — i.e. between 100M and 1B items for K=4 at |V|=256.", correct:true},
+          {key:"b", text:"K=4 is always right regardless of catalog size — TIGER's empirical sweet spot."},
+          {key:"c", text:"K=16 is always right — more codebooks ⇒ always more capacity."},
+          {key:"d", text:"Catalog size doesn't affect the K choice; only residual variance does."},
         ]}
-        trap={<>(b), (c), (d) misread.</>}
-        lens={<>K trades capacity vs latency vs codebook utilization. 4 balances all three.</>}
-        stretch={<>For a 10B-item catalog, would K=5 be necessary?</>}
+        trap={<>(b) is the trap — it's the canned "TIGER uses K=4" answer that ignores that the right K is a function of catalog cardinality vs codebook utilization, not a constant; this is exactly what differentiates this problem from tiger-c4 (which compares K=2/4/16 at one catalog scale). (c) over-claims. (d) ignores collision rate, the dominant term at large catalogs.</>}
+        lens={<>The collision-rate-vs-residual-vanishing tradeoff is *scale-dependent*. At small catalogs K=4 wins because the codebook prefix space is wildly over-provisioned and the marginal residual at K=5+ is mostly noise. At large catalogs, non-uniform codebook utilization (a real, measurable property) shrinks the effective prefix space, so you must compensate with more codebooks even though they have less to quantize.</>}
+        stretch={<>Measure your codebook utilization (entropy over codes per level). What entropy threshold tells you that K=4 has effectively become K=3.x and you need to add a level?</>}
       />
 
       <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>

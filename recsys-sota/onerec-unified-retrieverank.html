@@ -1608,17 +1608,17 @@ flowchart TB
       <VIS.TrapProblem
         id="onerec-b3"
         difficulty="medium"
-        title="B3 — Pitch OneRec to a VP"
-        scenario={<>VP asks: "Why OneRec over the cascade we already run?" Pick the strongest pitch.</>}
+        title="B3 — Pitch OneRec to a VP (must require knowing iterative DPO over watch-time)"
+        scenario={<>VP asks: "Why OneRec over the cascade we already run?" Give the 1-sentence pitch that *only works if the VP understands OneRec's specific integration unlock* — i.e. an explanation that would fail if OneRec were just "a bigger end-to-end ranker."</>}
         options={[
-          {key:"a", text:"'Retire 2 of 3 ranker stages, eliminate cross-stage debug burden, single optimization target tied directly to watch-time, ~10× cost reduction at Kuaishou's measured deployment.'", correct:true},
-          {key:"b", text:"'It uses transformers.'"},
-          {key:"c", text:"'NDCG up 2%.'"},
-          {key:"d", text:"'It's a Kuaishou paper.'"},
+          {key:"a", text:"'Retire 2 of 3 stages by collapsing the cascade — same as any unification project.' (Generic — applies to any consolidation.)"},
+          {key:"b", text:"'OneRec uses iterative DPO directly against watch-time preferences over generated session-rollouts — the optimizer's objective <em>is</em> the business metric, so removing the retrieve→coarse-rank→fine-rank cascade isn't lossy because there are no proxy losses left to align across stages. That's what makes the consolidation safe; a generic end-to-end ranker without preference alignment regresses on the long tail.'", correct:true},
+          {key:"c", text:"'It uses transformers.'"},
+          {key:"d", text:"'NDCG up 2% on the offline eval.'"},
         ]}
-        trap={<>(b), (c), (d) miss the org-cost story.</>}
-        lens={<>VPs fund retirements, not features. The pitch is cost + simplicity, not capability.</>}
-        stretch={<>What's the risk side of the pitch?</>}
+        trap={<>(a) is the trap — it's the standard "kill the cascade" VP pitch and would fit any unification (a single big DLRM, a single big transformer, anything). Redaction-substitute "OneRec" with "Model X" and (a) is unchanged. Only (b) requires knowing OneRec's specific RLHF-style mechanism: <em>iterative DPO over watch-time</em>. Drop the DPO and the consolidation is unsafe — that's the load-bearing piece.</>}
+        lens={<>The pitch must turn on the fact that OneRec's training objective is preference-aligned to the business metric (watch-time), not on size or end-to-end-ness. That's what neutralizes the "we'll lose stage-specific signal" objection — there is no proxy loss to lose.</>}
+        stretch={<>If the VP comes back: "we don't have logged watch-time preferences at session granularity" — what's the 30-day data pre-requisite that unlocks the DPO loop?</>}
       />
 
       {/* B4 */}
