@@ -1414,250 +1414,735 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// Conformal Prediction for ranker uncertainty
+// v2 redo — 30+ trap problems across all six axes (A-F).
+// Concept anchor: split-conformal calibration produces a finite-sample, distribution-free MARGINAL
+// coverage guarantee on a prediction SET (not a point) using a held-out residual quantile.
+// Every trap turns on (a) prediction SET vs point, (b) MARGINAL coverage, (c) exchangeability assumption,
+// (d) the residual / non-conformity score choice. Generic "uncertainty quantification" answers must lose.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Calibration"
+      pill="RecSys SOTA · Calibration & uncertainty"
       title="Conformal prediction for ranker uncertainty"
-      subtitle="Distribution-free prediction sets with finite-sample coverage guarantees — no retraining of the ranker required."
+      subtitle="Wrap any black-box ranker with a held-out non-conformity quantile to get a finite-sample, distribution-free coverage guarantee on a prediction set — no model retraining."
       byline={[
-        {label: "Paper", value: "Cocheteux et al., WACV 2025; 2025 recsys adaptations"},
-        {label: "Domain", value: "Uncertainty quantification for production rankers"},
+        {label: "Paper", value: "Cocheteux et al., WACV 2025 (and 2024-25 recsys adaptations)"},
+        {label: "Year", value: "2025"},
+        {label: "Domain", value: "Distribution-free uncertainty for rankers"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="A framework that converts any black-box predictor into a set predictor with a coverage guarantee: with probability at least 1 - alpha, the prediction set contains the true label.">Conformal prediction</VIS.Term> wraps any frozen ranker with a calibration step that produces a prediction set guaranteed to cover the true label at a target rate (e.g. 90&#37;) under exchangeability — marginally. The coverage guarantee is marginal, not conditional, so it can be vacuous on tail segments.
+      <VIS.Term def="Compute non-conformity scores on a held-out calibration set; take their (1 - alpha) empirical quantile; at inference, return every label whose score is below the quantile.">Split-conformal prediction</VIS.Term> gives you a <strong>prediction set</strong> — at confidence 1 - alpha, the true label falls inside the set with probability at least 1 - alpha, finite-sample, distribution-free. The guarantee holds <strong>marginally over the calibration distribution under exchangeability</strong>, not <strong>conditionally on a covariate</strong>. That asymmetry is where every conformal failure in production lives. Reference: <a href="https://openaccess.thecvf.com/content/WACV2025/papers/Cocheteux_Uncertainty-Aware_Online_Extrinsic_Calibration_A_Conformal_Prediction_Approach_WACV_2025_paper.pdf" target="_blank" rel="noopener">Cocheteux et al., WACV 2025</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        Suppose the ranker outputs a softmax over actions. Conformal prediction takes a held-out calibration set, computes a <VIS.Term def="A scalar that measures how 'odd' a (x, y) pair is relative to the model. Common choice: 1 - p_model(y|x). Higher means more surprising.">nonconformity score</VIS.Term> per example, then sets a threshold q_hat at the (1 - alpha) empirical quantile. At inference, the prediction set is all actions whose nonconformity score is below q_hat. By construction, this set covers the true label with probability at least 1 - alpha across the calibration distribution.
+        Conformal turns a point predictor into a set predictor. Given a frozen ranker that outputs a score, define a <VIS.Term def="A function whose value is large when the prediction disagrees with the label — e.g. 1 - p_hat(true_class) for classification, |y - y_hat| for regression.">non-conformity score</VIS.Term> on each calibration example. Take the (1 - alpha) quantile of those scores. At inference, output the set of labels whose non-conformity is below that quantile.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  R["Frozen ranker f(x)"]
-  C["Calibration set (x, y)"]
-  S["Nonconformity scores"]
-  Q["Quantile q_hat"]
-  X["New input x_test"]
-  PS["Prediction set"]
-  R --> S
-  C --> S --> Q
-  R --> X
-  X --> PS
-  Q --> PS
+  M["Frozen ranker (no retrain)"] --> S["Score s(x, y)"]
+  Cal["Held-out calibration set"] --> NC["Non-conformity scores"]
+  NC --> Q["(1 - alpha) quantile"]
+  S --> P["Prediction set: y with s below quantile"]
+  Q --> P
+  style P fill:#dbeafe,stroke:#1e40af
       `} />
-      <VIS.Equation display tex="\hat{q} = \text{Quantile}_{1-\alpha}\bigl(\{s_i\}_{i=1}^n\bigr),\quad \mathcal{C}(x) = \{\,y : s(x,y) \le \hat{q}\,\}" />
       <p>
-        The split-conformal recipe: split data into train + calibration; fit the ranker on train; compute nonconformity scores on calibration; pick q_hat at the 1-alpha quantile. The coverage guarantee holds for any nonconformity score, but tighter scores produce smaller prediction sets.
+        The miraculous property: under exchangeability (calibration and test data drawn IID from the same distribution), <code>P(y_true in set) is at least 1 - alpha</code> — finite-sample, distribution-free, no parametric form, no priors. The cost: it's a <em>set</em>, not a point. And the guarantee is <em>marginal</em>, not conditional.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from Platt / isotonic">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Platt / Isotonic</th><th style={{textAlign:"left",padding:8}}>Conformal</th></tr></thead>
-        <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Output</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Pointwise probability</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Prediction set with coverage</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Distribution assumption</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Implicit</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Exchangeability only</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Finite-sample guarantee</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Yes (marginal)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Conditional guarantee</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No (vanilla split-conformal)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Retraining needed</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>No</td></tr>
-        </tbody>
-      </table>
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from Platt / Bayesian / temperature">
+      <p>
+        <strong>Platt / isotonic.</strong> Map raw score to a calibrated point probability. No interval. No coverage guarantee. Marginal calibration on the distribution.
+      </p>
+      <p>
+        <strong>Bayesian / MC-dropout.</strong> Gives a per-prediction credible interval. Requires modeling assumptions (priors, dropout as approximate Bayes). No finite-sample guarantee.
+      </p>
+      <p>
+        <strong>Temperature scaling.</strong> Single scalar that softens / sharpens a softmax distribution. No interval, no set.
+      </p>
+      <p>
+        <strong>Conformal.</strong> Distribution-free, finite-sample coverage on a SET. The price is set-size: when the model is uncertain, the set is large; when confident, the set is small. Set size IS the uncertainty signal.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>When downstream consumers need a coverage guarantee, not just a point probability (e.g. risk-aware bidding, abstention thresholds).</li>
-        <li>When the ranker is a black box (third-party API, frozen production model) — conformal needs no gradients.</li>
-        <li>For high-stakes recsys decisions: medical, financial, legal recs where set predictions can fall back to a human reviewer.</li>
-        <li>Stacked on top of Platt / isotonic — calibrated probabilities make tighter nonconformity scores, smaller sets.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick it">
+      <VIS.Mermaid chart={`
+flowchart TB
+  D["Downstream consumer needs..."]
+  D -->|Point probability| PL["Platt or isotonic"]
+  D -->|Coverage on a set| CP["Conformal"]
+  D -->|Per-prediction interval| BAYES["Bayesian / quantile regression"]
+  CP --> Q["Is calibration data exchangeable with serving?"]
+  Q -->|Yes| OK["Plain split-conformal"]
+  Q -->|No (covariate shift)| ADAPT["Weighted conformal (Tibshirani et al.)"]
+      `} />
+      <p>
+        Conformal is the right tool when (a) the downstream consumer can act on a set (top-k retrieval that allows variable k, a risk-aware allocator that needs upper-confidence bounds), (b) you cannot retrain the ranker, (c) exchangeability roughly holds. It is the wrong tool when you need conditional coverage on a tail segment (out of the box) or when set-output is incompatible with the consumer.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Marginal coverage only</strong> — 90&#37; coverage over the full population can mean 99&#37; on the head and 50&#37; on a 1&#37; tail segment.</li>
-        <li><strong>Exchangeability</strong> — coverage breaks when the test distribution drifts from calibration (seasonality, new-user surges).</li>
-        <li><strong>Set size variance</strong> — for hard inputs the set can balloon to the full action space, providing no information.</li>
-        <li><strong>Single-label setting</strong> — top-K recsys with multiple correct labels needs Mondrian or multi-label conformal extensions.</li>
-      </ul>
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
       <VIS.Callout kind="gotcha" title="Marginal coverage is not conditional coverage">
-        A conformal predictor with alpha = 0.1 guarantees the prediction set covers the true label 90&#37; of the time AVERAGED over the calibration distribution. It does NOT guarantee 90&#37; coverage on any particular slice. A 1&#37; high-value segment can have 40&#37; coverage and the global 90&#37; still holds. For conditional guarantees you need Mondrian conformal (stratify the quantile per group) or localized conformal methods.
+        Plain split-conformal guarantees that <em>across the whole distribution</em> the set contains the true label with probability at least 1 - alpha. It says <em>nothing</em> about whether the high-value 1 percent segment also has that coverage — that segment might have 50 percent coverage while the bulk has 98 percent. The aggregate guarantee still holds. This is the most common reason "conformal failed" in production: someone expected segment-level coverage from a method that only promises marginal.
       </VIS.Callout>
+      <p>
+        Other named traps: (1) violating exchangeability (concept drift, online learning loops) silently invalidates the guarantee; (2) the non-conformity score choice dominates set size — bad score = vacuous sets; (3) ties in the empirical quantile produce off-by-one set members; (4) the guarantee covers true label inclusion, not RANK — conformal does not tell you which item in the set is best.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        30+ problems spanning the six taxonomy axes. Redaction litmus: substitute "conformal prediction" with "Method X" — if generic uncertainty knowledge suffices, the problem is concept-as-costume.
+      </p>
 
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity &amp; comparison</h3>
+
+      {/* axis: A1 — sibling discriminator */}
       <VIS.TrapProblem
-        id="cp-p1" difficulty="hard"
-        title="P1 — Marginal-calibrated ranker, mis-calibrated tail segment"
-        scenario={<>Your ranker has marginal ECE of 0.4&#37; (great). On a 1&#37; high-value segment, ECE is 7&#37;. Will plain split-conformal at alpha=0.1 fix this segment?</>}
+        id="cp-a1"
+        difficulty="hard"
+        title="A1 — Conformal vs Platt: the actual delta"
+        scenario={<>Your tech lead asks "we already have Platt-calibrated probabilities; why add conformal?" Pick the discriminator. <em>Discriminating insight: Platt gives marginal pointwise calibration; conformal gives finite-sample distribution-free coverage on a SET.</em></>}
         options={[
-          {key:"a", text:"No — split-conformal only guarantees marginal coverage; the tail segment can have arbitrarily bad conditional coverage and still satisfy the marginal bound.", correct:true},
-          {key:"b", text:"Yes — conformal coverage is a strict guarantee everywhere."},
-          {key:"c", text:"Yes, but only after retraining the ranker."},
-          {key:"d", text:"Only if alpha is set to 0.01."},
+          {key:"a", text:"Platt produces a calibrated point probability with no formal coverage guarantee. Conformal produces a prediction SET with finite-sample, distribution-free marginal coverage at level 1 - alpha — different output type, different guarantee.", correct:true},
+          {key:"b", text:"Conformal is Bayesian; Platt is frequentist."},
+          {key:"c", text:"Conformal retrains the model; Platt does not."},
+          {key:"d", text:"They are equivalent in the limit."},
         ]}
-        trap={<>(b) confuses marginal with conditional. (c)(d) miss that conformal is post-hoc and the gap is structural.</>}
-        lens={<>Split-conformal coverage is averaged over the calibration distribution. A small high-value slice with mis-calibrated probabilities will have its own coverage rate that can be far below 1-alpha. Fix: Mondrian conformal — partition the calibration set by segment and compute one q_hat per segment. Trades coverage tightness for conditional guarantees.</>}
-        stretch={<>What is the minimum segment size for Mondrian to give a stable q_hat?</>}
+        trap={<>(b) is wrong — conformal is purely frequentist. (c) inverts: BOTH are post-hoc, neither retrains. (d) ignores the output-type difference.</>}
+        lens={<>The output type is the discriminator. Anything that consumes a set (k-way retrieval, allocator with capacity, risk-aware auction) wants conformal. Anything that consumes a scalar (CTR-to-bid) wants Platt.</>}
+        stretch={<>Could you build a "conformal point predictor" by always picking the most likely member of the conformal set? What guarantee survives?</>}
       />
 
+      {/* axis: A2 — definitional trap */}
       <VIS.TrapProblem
-        id="cp-p2" difficulty="medium"
-        title="P2 — Conformal vs Platt: when to add which?"
-        scenario={<>You already ship Platt calibration. A new downstream system wants &quot;95&#37; coverage that the user&apos;s preferred item is in the top-K shown.&quot; Which do you add?</>}
+        id="cp-a2"
+        difficulty="medium"
+        title="A2 — 'Conformal is just bootstrap'"
+        scenario={<>A junior says "conformal sets are just bootstrap confidence intervals on the prediction." Name the actual deltas. <em>Discriminating insight: bootstrap is asymptotic and depends on the resampling distribution; conformal is finite-sample and only assumes exchangeability.</em></>}
+        multiSelect
         options={[
-          {key:"a", text:"Conformal — Platt gives pointwise probabilities, conformal gives a set with a coverage guarantee.", correct:true},
-          {key:"b", text:"Isotonic — strictly better than Platt, no further work needed."},
-          {key:"c", text:"Retrain the ranker with a coverage-aware loss."},
-          {key:"d", text:"Cap top-K at K=10 and call it covered."},
+          {key:"a", text:"Conformal gives a finite-sample guarantee (holds for any N, including N = 50); bootstrap is asymptotic.", correct:true},
+          {key:"b", text:"Conformal only assumes exchangeability of calibration and test data; bootstrap re-samples and depends on the sampling distribution.", correct:true},
+          {key:"c", text:"Conformal output is a set of labels; bootstrap output is a parameter interval.", correct:true},
+          {key:"d", text:"Bootstrap is distribution-free; conformal requires Gaussian residuals."},
+          {key:"e", text:"Conformal requires retraining the model on bootstrap resamples."},
         ]}
-        trap={<>(b) does not produce sets. (c) is expensive. (d) has no coverage guarantee.</>}
-        lens={<>Platt makes the score-to-probability mapping faithful. Conformal converts that into a set with a coverage guarantee. They compose: Platt-then-conformal gives smaller sets than raw-logits-then-conformal because tighter probabilities yield tighter nonconformity scores. Always layer.</>}
-        stretch={<>What is the nonconformity score after Platt?</>}
+        trap={<>(d) inverts (conformal is distribution-free; bootstrap depends on the sampling distribution). (e) is false (split conformal does not retrain).</>}
+        lens={<>Three real deltas: finite-sample vs asymptotic, exchangeability vs resampling, label-set vs parameter-interval. Each maps to a different downstream consequence.</>}
+        stretch={<>Which downstream consumer cares most about finite-sample guarantees vs asymptotic?</>}
       />
 
+      {/* axis: A3 — counterfactual */}
       <VIS.TrapProblem
-        id="cp-p3" difficulty="hard" multiSelect
-        title="P3 — Conformal breaks under which conditions?"
-        scenario={<>The exchangeability assumption underlying conformal coverage breaks in several practical settings. Select all that apply.</>}
+        id="cp-a3"
+        difficulty="hard"
+        title="A3 — If conformal didn't exist"
+        scenario={<>Counterfactual: split-conformal was never invented. To get a coverage-style guarantee on a recsys uncertainty band, what would teams do, and at what cost? <em>Discriminating insight: alternatives are deep ensembles, MC-dropout, Bayesian last-layer — all far more compute and weaker guarantees.</em></>}
         options={[
-          {key:"a", text:"Seasonality — test traffic differs from the calibration window.", correct:true},
-          {key:"b", text:"Concept drift — user preferences shift over time.", correct:true},
-          {key:"c", text:"Adversarial inputs that look unlike calibration data.", correct:true},
-          {key:"d", text:"Larger test set than calibration set."},
-          {key:"e", text:"Different random seed for the ranker."},
+          {key:"a", text:"Deep ensembles (train 5-10 rankers; use variance as uncertainty) — 5-10x training cost, no finite-sample coverage guarantee, only empirical heuristic. Or Bayesian last-layer / MC-dropout — modeling-assumption-laden, no distribution-free guarantee. Conformal is the only post-hoc, distribution-free, finite-sample option.", correct:true},
+          {key:"b", text:"Production would just use Platt and rename point probabilities as 'intervals'."},
+          {key:"c", text:"Conformal is irreplaceable; there are no alternatives."},
+          {key:"d", text:"You'd use Gaussian Processes."},
         ]}
-        trap={<>(d) is a non-issue; coverage is a property of the calibration set size, not the test set size. (e) does not break exchangeability if the model is fixed before calibration.</>}
-        lens={<>Exchangeability says the calibration and test points come from the same distribution. Drift, seasonality, and adversarial shifts all violate this. Test set size and seed do not. Fixes for drift: rolling re-calibration, weighted conformal with importance ratios, or online conformal.</>}
-        stretch={<>How often should you re-calibrate under daily seasonality?</>}
+        trap={<>(b) ignores that "interval" without a guarantee is a lie. (c) overstates — alternatives exist; they're expensive. (d) is impractical at recsys scale.</>}
+        lens={<>Conformal's strategic value is the combination: post-hoc, distribution-free, finite-sample. Removing any one and you have an existing alternative. The 3-way combination is unique.</>}
+        stretch={<>For which downstream consumer is deep ensemble enough? For which do you need the guarantee?</>}
       />
 
+      {/* axis: A4 — composition */}
       <VIS.TrapProblem
-        id="cp-p4" difficulty="medium"
-        title="P4 — Reading a 0.1 alpha guarantee"
-        scenario={<>A conformal predictor at alpha = 0.1 has empirical coverage of 92&#37; on a held-out test set. Is the system working?</>}
+        id="cp-a4"
+        difficulty="hard"
+        title="A4 — Conformal on Platt-calibrated probabilities"
+        scenario={<>You stack conformal on top of Platt-calibrated outputs. What survives, what breaks, what double-counts? <em>Discriminating insight: Platt's monotonic re-mapping preserves the order — conformal is invariant to monotonic transforms of the non-conformity score, so Platt does nothing here.</em></>}
         options={[
-          {key:"a", text:"Yes — the guarantee is at least 1-alpha = 90&#37;, and slight over-coverage is expected from finite-sample effects.", correct:true},
-          {key:"b", text:"No — coverage should be exactly 90&#37;."},
-          {key:"c", text:"No — coverage should be 100&#37; for alpha = 0.1."},
-          {key:"d", text:"Not enough information."},
+          {key:"a", text:"The coverage guarantee is invariant to monotonic re-scaling of the non-conformity score — Platt before conformal is a no-op on the coverage. It can, however, change set sizes slightly (different quantile interpretation), but the 1 - alpha guarantee holds for the conformal step alone.", correct:true},
+          {key:"b", text:"The combination doubles the coverage."},
+          {key:"c", text:"Conformal breaks because Platt makes scores non-exchangeable."},
+          {key:"d", text:"Set sizes shrink to zero."},
         ]}
-        trap={<>(b)(c) misread the guarantee. (d) is a cop-out.</>}
-        lens={<>The conformal guarantee is one-sided: coverage is at least 1-alpha. Over-coverage is acceptable and expected; the bound is tight in expectation but slightly conservative in finite samples. Under-coverage by more than the finite-sample slack (~1/sqrt(n_cal)) is the real alarm.</>}
-        stretch={<>How wide is the finite-sample slack with n_cal = 10K?</>}
+        trap={<>(b) misunderstands stacking. (c) is wrong — Platt is deterministic and preserves exchangeability. (d) is anti-physical.</>}
+        lens={<>The monotonic-invariance fact is the senior-level conformal property to know. It tells you that the score-shape doesn't matter for the coverage — only the choice of <em>which</em> non-conformity function and which calibration data.</>}
+        stretch={<>When does the non-conformity choice matter? What does it affect, if not coverage?</>}
       />
 
+      {/* axis: A5 — boundary */}
       <VIS.TrapProblem
-        id="cp-p5" difficulty="hard"
-        title="P5 — When the set explodes"
-        scenario={<>For 5&#37; of test inputs, the conformal set contains the entire action space (10K actions). What is happening and what do you do?</>}
+        id="cp-a5"
+        difficulty="hard"
+        title="A5 — When conformal coverage is vacuous"
+        scenario={<>Name the regime where conformal's coverage guarantee is technically satisfied but practically useless. <em>Discriminating insight: when set size approaches the full label space — the guarantee holds trivially, the set tells you nothing.</em></>}
         options={[
-          {key:"a", text:"The ranker is highly uncertain on those inputs — likely out-of-distribution; reroute to a fallback (human review or a default ranking).", correct:true},
-          {key:"b", text:"The coverage guarantee is broken."},
-          {key:"c", text:"alpha is too small; increase it."},
-          {key:"d", text:"The nonconformity score is wrong."},
+          {key:"a", text:"When the underlying ranker is very uncertain, the (1 - alpha) quantile of non-conformity is large, and the prediction set contains most of the label space. Coverage 1 - alpha is met trivially; the set is uninformative. Improving the underlying ranker (or the non-conformity score) is the only fix.", correct:true},
+          {key:"b", text:"When alpha is too small."},
+          {key:"c", text:"When the calibration set is too large."},
+          {key:"d", text:"Conformal is never vacuous."},
         ]}
-        trap={<>(b) the guarantee is intact; large sets are part of the design. (c) trades coverage for tightness, a business decision. (d) is plausible but the more likely explanation is OOD.</>}
-        lens={<>Conformal sets balloon when the ranker assigns flat scores across actions — typically OOD inputs or rare contexts. The right move is to use set size as an OOD signal and reroute. Don&apos;t fight the symptom; treat the cause.</>}
-        stretch={<>What set-size threshold triggers fallback in your pipeline?</>}
+        trap={<>(b) is partially related but conflates parameter choice with model quality. (c) is wrong — more calibration data tightens, not loosens, the quantile. (d) is the marketing reading.</>}
+        lens={<>Coverage is a guarantee, not a quality metric. A perfect coverage guarantee on the trivial set 'all labels' is useless. Senior MLEs report coverage AND mean set size as a pair.</>}
+        stretch={<>What's the trade-off curve between alpha and mean set size?</>}
       />
 
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      {/* axis: B1 — when to use */}
       <VIS.TrapProblem
-        id="cp-p6" difficulty="medium" multiSelect
-        title="P6 — Picking a nonconformity score"
-        scenario={<>Pick the legitimate nonconformity scores for a softmax classifier. Select all that apply.</>}
+        id="cp-b1"
+        difficulty="hard"
+        title="B1 — Risk-aware ad allocator that needs an upper bound"
+        scenario={<>Your ad allocator needs an upper-confidence bound on P(click) to budget conservatively. Three options: (a) Platt + 1-sigma heuristic, (b) MC-dropout intervals, (c) conformal upper bound on the prediction set. Pick. <em>Discriminating insight: only conformal gives a finite-sample, distribution-free upper bound; Platt has no interval; MC-dropout has no guarantee.</em></>}
         options={[
-          {key:"a", text:"s(x, y) = 1 - p_model(y|x).", correct:true},
-          {key:"b", text:"s(x, y) = -log p_model(y|x).", correct:true},
-          {key:"c", text:"s(x, y) = rank of y in the predicted scores.", correct:true},
-          {key:"d", text:"s(x, y) = a random number."},
-          {key:"e", text:"s(x, y) = p_model(y|x) (high score = more conforming)."},
+          {key:"a", text:"Platt + 1-sigma heuristic — heuristic, no coverage guarantee."},
+          {key:"b", text:"MC-dropout intervals — depends on dropout-as-Bayes approximation; no finite-sample guarantee."},
+          {key:"c", text:"Conformal upper bound — finite-sample distribution-free guarantee on coverage at the chosen alpha; suitable for risk-aware budgeting.", correct:true},
+          {key:"d", text:"Skip uncertainty; bid the point estimate."},
         ]}
-        trap={<>(d) gives a valid but useless predictor (covers but set = everything). (e) inverts the convention; coverage still holds but the threshold direction flips, often a bug.</>}
-        lens={<>Coverage holds for ANY score function under exchangeability — that is the magic of conformal. But set tightness depends on score informativeness. Random scores satisfy coverage with maximal sets. Sign mistakes silently invert the threshold. The standard choices are 1-p, -log p, or APS (adaptive prediction sets).</>}
-        stretch={<>What is APS and why does it help on long-tail classes?</>}
+        trap={<>(a), (b) sound similar but lack the guarantee. (d) is what most allocators do today — and what conformal is designed to replace when the consequence matters.</>}
+        lens={<>The downstream consumer determines the choice. A risk-aware allocator is consuming a coverage guarantee; only conformal provides it.</>}
+        stretch={<>What's the practical cost of the conformal upper bound vs the point estimate? Bid pace, revenue lost?</>}
       />
 
+      {/* axis: B2 — sounds reasonable, isn't */}
       <VIS.TrapProblem
-        id="cp-p7" difficulty="hard"
-        title="P7 — Calibration vs test split sizing"
-        scenario={<>You have 100K held-out events. You can use them as calibration, test, or both. What is the right split?</>}
+        id="cp-b2"
+        difficulty="hard"
+        title="B2 — 'Conformal fixes my 1 percent segment miscalibration'"
+        scenario={<>Your ranker is marginally Platt-calibrated but mis-calibrated for a 1 percent high-value segment. Conformal fix? <em>Discriminating insight: plain split-conformal only guarantees marginal coverage; the segment can have arbitrarily worse coverage — Mondrian / class-conditional conformal is needed.</em></>}
         options={[
-          {key:"a", text:"~80&#37; calibration (for tight q_hat), ~20&#37; test (for empirical coverage check). Adjust based on alpha and finite-sample bounds.", correct:true},
-          {key:"b", text:"50/50 always."},
-          {key:"c", text:"All 100K as calibration; no need for test."},
-          {key:"d", text:"All 100K as test; calibration only needs 100 events."},
+          {key:"a", text:"Plain split-conformal still only guarantees marginal coverage across the whole distribution; the 1 percent segment can have coverage well below 1 - alpha. Fix is Mondrian conformal (one quantile per segment) or class-conditional / group-conditional conformal.", correct:true},
+          {key:"b", text:"Yes — conformal automatically fixes all segment miscalibration."},
+          {key:"c", text:"No — conformal is incompatible with segments."},
+          {key:"d", text:"Conformal makes segment miscalibration worse."},
         ]}
-        trap={<>(b) is a heuristic, not optimal. (c) leaves no way to verify coverage. (d) gives loose q_hat.</>}
-        lens={<>Calibration set size drives q_hat precision: error in q_hat decays as 1/sqrt(n_cal). For alpha=0.1 and tight finite-sample slack, n_cal in the tens of thousands is standard. Keep 10-20&#37; for test so you can verify the empirical coverage matches the guarantee on fresh data.</>}
-        stretch={<>What if you also need to estimate set size variance?</>}
+        trap={<>(b) is the seductive over-sell. (c), (d) are false negatives.</>}
+        lens={<>This is THE conformal trap. The marginal-vs-conditional distinction is the same one Platt has — conformal doesn't fix it for free. Mondrian conformal requires enough samples per segment to fit a quantile.</>}
+        stretch={<>How many samples per segment do you need for Mondrian conformal at alpha=0.05?</>}
       />
 
+      {/* axis: B3 — concept-unique stakeholder pitch */}
       <VIS.TrapProblem
-        id="cp-p8" difficulty="hard" mode="ordered"
-        title="P8 — Order the conformal-with-drift recipe"
-        scenario={<>You want to deploy conformal coverage under daily seasonality. Order the steps. Wrong moves are unranked.</>}
+        id="cp-b3"
+        difficulty="medium"
+        title="B3 — Pitch conformal to a Risk PM"
+        scenario={<>Risk PM asks why conformal over the team's "just report 1-sigma above the point estimate" plan. Give the 1-sentence pitch that <em>requires</em> conformal's specific properties — fails if you redact "conformal" to "Method X." <em>Discriminating insight: the pitch must turn on finite-sample distribution-free coverage at user-chosen alpha — none of which 1-sigma has.</em></>}
         options={[
-          {key:"a", text:"Define an exchangeability assumption window (e.g. rolling 24h).", order:1},
-          {key:"b", text:"Pull held-out (x, y) from inside that window.", order:2},
-          {key:"c", text:"Compute nonconformity scores; pick q_hat at 1-alpha.", order:3},
-          {key:"d", text:"Serve sets at inference; log empirical coverage.", order:4},
-          {key:"e", text:"Re-fit q_hat on every window boundary.", order:5},
-          {key:"f", text:"Use all-time historical data as calibration to maximize n."},
-          {key:"g", text:"Skip empirical coverage logging because the bound is theoretical."},
+          {key:"a", text:"'It gives a tighter upper bound than 1-sigma.' (Generic, redacts cleanly.)"},
+          {key:"b", text:"'Conformal's split-conformal construction guarantees that across our calibration distribution the prediction set contains the true label with finite-sample probability of at least 1 - alpha for whatever alpha we pick — distribution-free, no Gaussian-residual assumption that 1-sigma relies on — so we can promise a 95-percent-or-better coverage in our SLA, not just an empirical 1-sigma heuristic.'", correct:true},
+          {key:"c", text:"'It is the modern technique.' (Authority.)"},
+          {key:"d", text:"'It avoids retraining.' (True but works for Platt too.)"},
         ]}
-        trap={<>(f) violates exchangeability (older data is from a different season). (g) loses your detection signal for drift.</>}
-        lens={<>Under drift, conformal coverage is local: rolling windows, rolling q_hat. Long-tail historical data violates exchangeability. Empirical coverage logging is non-negotiable; it&apos;s how you detect that the bound is broken.</>}
-        stretch={<>What if drift is faster than your re-fit cadence?</>}
+        trap={<>(a) is the textbook B3 trap — it survives redaction. (d) survives redaction too (works for any post-hoc method). Only (b) requires conformal's specific finite-sample distribution-free coverage on a set.</>}
+        lens={<>B3 pitches must fail under redaction. (b) does (distribution-free finite-sample coverage on a set is conformal's unique selling point). Generic "tighter bounds" / "avoids retraining" pitches don't.</>}
+        stretch={<>If the consumer only cared about empirical coverage (not the guarantee), what method would suffice?</>}
       />
 
+      {/* axis: B4 — when NOT to use */}
       <VIS.TrapProblem
-        id="cp-p9" difficulty="medium"
-        title="P9 — Conformal vs Bayesian posteriors"
-        scenario={<>How does conformal differ from a Bayesian posterior predictive?</>}
+        id="cp-b4"
+        difficulty="hard"
+        title="B4 — Real-time bidding with hard per-request latency"
+        scenario={<>p99 budget is 30ms. Each conformal inference computes the non-conformity score on every candidate. Practical? <em>Discriminating insight: conformal inference scales linearly with candidate set size; the quantile is precomputed, but per-candidate scoring is unavoidable — fine if you already score them anyway.</em></>}
         options={[
-          {key:"a", text:"Conformal is distribution-free and finite-sample; Bayesian needs a prior and is asymptotic. Both produce sets, with different assumptions.", correct:true},
-          {key:"b", text:"They are mathematically identical."},
-          {key:"c", text:"Bayesian is always better."},
-          {key:"d", text:"Conformal is always tighter."},
+          {key:"a", text:"Fine — the (1 - alpha) quantile is precomputed once per refresh; per-request cost is one threshold compare per candidate (you already score them anyway). The set construction is O(n) with a tiny constant.", correct:true},
+          {key:"b", text:"Impractical — conformal requires O(n^2) per request."},
+          {key:"c", text:"Impractical — conformal must retrain at every request."},
+          {key:"d", text:"Skip uncertainty; latency wins."},
         ]}
-        trap={<>(b)(c)(d) overstate one side.</>}
-        lens={<>Conformal needs only exchangeability and produces a coverage guarantee in finite samples without a prior. Bayesian needs a prior + likelihood + computational tractability, gives full posterior probability for any question, but coverage of credible intervals is only asymptotic and prior-dependent. Conformal is the right tool when you cannot defend a prior; Bayesian is the right tool when you can and you want richer downstream queries.</>}
-        stretch={<>When does a Bayesian credible interval coincide with a conformal interval?</>}
+        trap={<>(b) is wrong — split conformal is O(n) at inference. (c) confuses split with full conformal (full IS expensive but no one uses it in production). (d) is the "give up" answer.</>}
+        lens={<>Split-conformal is essentially free at inference. The cost is the held-out calibration set and the quantile compute, both offline.</>}
+        stretch={<>When IS conformal a latency problem? What variant becomes expensive?</>}
       />
 
+      {/* axis: B5 — slate ranking */}
       <VIS.TrapProblem
-        id="cp-p10" difficulty="hard" multiSelect
-        title="P10 — Production monitoring for conformal predictors"
-        scenario={<>Pick the metrics that belong on a conformal predictor&apos;s production dashboard. Select all that apply.</>}
+        id="cp-b5"
+        difficulty="hard"
+        title="B5 — Top-k retrieval with variable k from conformal sets"
+        scenario={<>Retrieval surfaces typically use a fixed top-k. You want k to vary by uncertainty (small when confident, larger when not). Can conformal do this? <em>Discriminating insight: yes — the conformal set size IS the uncertainty signal; you can use it as variable-k natively.</em></>}
         options={[
-          {key:"a", text:"Empirical coverage on a fresh test stream.", correct:true},
-          {key:"b", text:"Average set size.", correct:true},
-          {key:"c", text:"Conditional coverage by user / item segment.", correct:true},
-          {key:"d", text:"Drift detector on the nonconformity score distribution.", correct:true},
-          {key:"e", text:"GPU utilization."},
+          {key:"a", text:"Yes — the conformal set size is precisely the variable-k signal. For confident queries the set is small (tight uncertainty); for uncertain queries it's larger. You serve the set directly OR cap it at k_max for cost control.", correct:true},
+          {key:"b", text:"No — conformal sets are always the same size."},
+          {key:"c", text:"Only if you discard the coverage guarantee."},
+          {key:"d", text:"Yes but requires retraining."},
         ]}
-        trap={<>(e) is a serving health metric, not a calibration health metric.</>}
-        lens={<>Conformal monitoring is about the guarantee staying honest. Empirical coverage detects exchangeability violation. Set size tracks usefulness. Conditional coverage flags slice-level under-coverage. Drift on the nonconformity distribution is the leading indicator of an upcoming guarantee break.</>}
-        stretch={<>What alert threshold do you set on empirical coverage?</>}
+        trap={<>(b) is the most common misunderstanding. (c), (d) are wrong.</>}
+        lens={<>This is conformal's killer application for retrieval: the set size IS the uncertainty, so the system gets adaptive-k for free.</>}
+        stretch={<>What happens when you cap the set at k_max? Does coverage survive?</>}
       />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      {/* axis: C1 — algorithmic detail */}
+      <VIS.TrapProblem
+        id="cp-c1"
+        difficulty="hard"
+        title="C1 — Why split-conformal vs full conformal"
+        scenario={<>The original conformal paper proposes "full" conformal (retrain at each test point). Split-conformal trades efficiency for what? <em>Discriminating insight: split-conformal sacrifices statistical efficiency (sample utilization) for computational tractability — the same guarantee at higher quantile variance.</em></>}
+        options={[
+          {key:"a", text:"Split-conformal uses a single fixed held-out calibration set, eliminating the per-test-point retrain (O(N) instead of O(N^2)). Cost: higher variance in the quantile because only the calibration split is used. Guarantee shape is identical (marginal, finite-sample).", correct:true},
+          {key:"b", text:"Split-conformal has weaker guarantee."},
+          {key:"c", text:"Split-conformal requires Bayesian assumptions."},
+          {key:"d", text:"Split-conformal is approximate; full is exact."},
+        ]}
+        trap={<>(b), (c), (d) are common misunderstandings.</>}
+        lens={<>Same guarantee, more efficient compute, higher quantile variance. The variance is the price; modern jackknife+ and cross-conformal variants reduce it.</>}
+        stretch={<>What variant cuts the quantile variance without going full O(N^2)?</>}
+      />
+
+      {/* axis: C2 — non-conformity score */}
+      <VIS.TrapProblem
+        id="cp-c2"
+        difficulty="hard"
+        title="C2 — Choosing the non-conformity score for ranking"
+        scenario={<>Your ranker outputs a real-valued score s(x, y). What's a good non-conformity score for split-conformal in a ranker setting? <em>Discriminating insight: the non-conformity score affects set SIZE not COVERAGE — choose to minimize expected set size, not for unbiasedness.</em></>}
+        options={[
+          {key:"a", text:"For ranking: non-conformity is 1 - rank_normalized(score) or -score directly; either works for the guarantee. The choice affects how tight the prediction sets are (mean set size), not whether the coverage guarantee holds.", correct:true},
+          {key:"b", text:"You must use cross-entropy."},
+          {key:"c", text:"You must use 1 - p_hat."},
+          {key:"d", text:"The choice affects coverage."},
+        ]}
+        trap={<>(d) is the most-common wrong answer — students often think the non-conformity choice determines coverage; it doesn't. (b), (c) over-prescribe.</>}
+        lens={<>This is the senior conformal insight: any non-conformity function preserves the coverage guarantee (under exchangeability). The choice is purely about set-size efficiency. Better non-conformity = smaller sets = more informative output.</>}
+        stretch={<>What's a worse-than-baseline non-conformity choice that demonstrates this?</>}
+      />
+
+      {/* axis: C3 — what's dropped */}
+      <VIS.TrapProblem
+        id="cp-c3"
+        difficulty="hard"
+        title="C3 — What information does conformal discard?"
+        scenario={<>List what conformal throws away from the full ranker output. <em>Discriminating insight: relative ordering WITHIN the prediction set, point probabilities, asymmetric loss tradeoffs.</em></>}
+        multiSelect
+        options={[
+          {key:"a", text:"Relative ordering within the prediction set — the set is unordered; ranking by score must be done separately if needed.", correct:true},
+          {key:"b", text:"Point probability per item — conformal gives a binary inclusion decision, not a probability.", correct:true},
+          {key:"c", text:"Asymmetric loss handling — a single alpha is symmetric across labels; weighted variants are needed for asymmetric costs.", correct:true},
+          {key:"d", text:"The labels themselves."},
+          {key:"e", text:"The non-conformity scores."},
+        ]}
+        trap={<>(d), (e) are inputs to conformal, not outputs.</>}
+        lens={<>Three concrete drops, each pointing to a variant: ordered conformal, conformal predictive distributions, weighted conformal. Knowing what's dropped tells you when to reach for a variant.</>}
+        stretch={<>Which of these is the easiest to recover post-hoc?</>}
+      />
+
+      {/* axis: C4 — hyperparameter */}
+      <VIS.TrapProblem
+        id="cp-c4"
+        difficulty="hard"
+        mode="ordered"
+        title="C4 — Rank knobs by 'breaks production if mis-set'"
+        scenario={<>Order from most-catastrophic: (a) alpha, (b) calibration set exchangeability with serving, (c) non-conformity score family, (d) calibration set size. <em>Discriminating insight: exchangeability is the load-bearing assumption; violating it invalidates the guarantee silently.</em></>}
+        options={[
+          {key:"a", text:"Exchangeability with serving — violated under covariate shift; coverage guarantee silently breaks. No alarm.", order:1},
+          {key:"b", text:"Alpha — wrong alpha gives wrong coverage; obvious from monitor.", order:2},
+          {key:"c", text:"Calibration size — too small inflates quantile variance; mean coverage holds, set sizes wobble.", order:3},
+          {key:"d", text:"Non-conformity family — affects set size, not coverage.", order:4},
+        ]}
+        trap={<>Many candidates rank alpha highest because it's the most "conformal-y" knob. In production exchangeability is the silent killer.</>}
+        lens={<>Exchangeability is the single fragile assumption of conformal. Detect violations via drift monitors; fix via weighted conformal.</>}
+        stretch={<>What's the cheapest exchangeability check you can run nightly?</>}
+      />
+
+      {/* axis: C5 — data assumption */}
+      <VIS.TrapProblem
+        id="cp-c5"
+        difficulty="hard"
+        title="C5 — What breaks conformal under online learning"
+        scenario={<>Your recsys does online learning (model updates every 30 min). Calibration set is from yesterday. What about the guarantee? <em>Discriminating insight: model updates between calibration and inference break exchangeability — guarantee is voided unless calibration is refit alongside.</em></>}
+        options={[
+          {key:"a", text:"The ranker that produced calibration scores is no longer the ranker producing inference scores; exchangeability of non-conformity scores is broken; the (1 - alpha) coverage guarantee is voided. Fix: refit the calibration quantile after every model update, OR use online-conformal (Gibbs et al.) which adapts alpha.", correct:true},
+          {key:"b", text:"Nothing — conformal is robust to model updates."},
+          {key:"c", text:"Only set size changes; coverage holds."},
+          {key:"d", text:"Conformal forces you to freeze the model."},
+        ]}
+        trap={<>(b), (c) are over-sold conformal claims. (d) overshoots.</>}
+        lens={<>This is the senior conformal insight: the guarantee is invariant to monotonic transforms, but NOT invariant to the model that produced the scores changing. Calibration must move with the model.</>}
+        stretch={<>What's the simplest online-conformal scheme that adapts under drift?</>}
+      />
+
+      {/* axis: C6 — Mondrian / group-conditional */}
+      <VIS.TrapProblem
+        id="cp-c6"
+        difficulty="hard"
+        title="C6 — Mondrian conformal: fix per-segment coverage"
+        scenario={<>You want per-segment coverage. Mondrian conformal partitions the calibration set by segment and fits one quantile per segment. What's the cost? <em>Discriminating insight: per-segment quantile needs enough calibration samples per segment; sparse segments inflate the quantile and produce vacuous sets.</em></>}
+        options={[
+          {key:"a", text:"Mondrian needs enough calibration samples per segment to fit a stable quantile; sparse segments produce a very high empirical quantile (variance) and a near-vacuous prediction set. Sub-segment hierarchies or shrinkage to the global quantile help.", correct:true},
+          {key:"b", text:"Mondrian is identical to split-conformal."},
+          {key:"c", text:"Mondrian has weaker coverage."},
+          {key:"d", text:"Mondrian requires Bayesian priors."},
+        ]}
+        trap={<>(b), (c), (d) are misreadings.</>}
+        lens={<>Mondrian gives per-segment guarantees AT THE COST of more calibration data per segment. The trade-off mirrors per-segment Platt — granular calibration costs samples.</>}
+        stretch={<>What's the minimum N per segment to get a stable alpha=0.05 quantile?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      {/* axis: D1 — intuitive but wrong */}
+      <VIS.TrapProblem
+        id="cp-d1"
+        difficulty="hard"
+        title="D1 — 'Conformal gives a probability'"
+        scenario={<>Junior says "conformal gives me P(label | x)." Why is this wrong? <em>Discriminating insight: conformal outputs a binary set membership at level alpha — not a probability; the only probability statement is the marginal coverage.</em></>}
+        options={[
+          {key:"a", text:"Conformal outputs a binary inclusion decision at level alpha — 'label y is in or out of the (1 - alpha)-confidence set.' It does NOT output P(y | x). The only probability statement is the marginal coverage P(y_true in set) is at least 1 - alpha.", correct:true},
+          {key:"b", text:"Conformal probability is the alpha quantile."},
+          {key:"c", text:"Conformal IS a probability."},
+          {key:"d", text:"Conformal probability equals 1 - alpha."},
+        ]}
+        trap={<>(b), (c), (d) confuse the coverage statement (over the distribution) with a per-point probability.</>}
+        lens={<>This is the conformal-as-probability trap. Senior MLEs use conformal exactly because the output is NOT a probability — it's a coverage-guaranteed set, which is a different commodity.</>}
+        stretch={<>What variant DOES output per-point probabilities (conformal predictive distributions)?</>}
+      />
+
+      {/* axis: D2 — wrong-assumption cascade */}
+      <VIS.TrapProblem
+        id="cp-d2"
+        difficulty="hard"
+        title="D2 — 'My coverage guarantee implies tight sets'"
+        scenario={<>CTO sees 95 percent coverage on the dashboard and concludes "uncertainty is well-handled." List the downstream wrong consequences. <em>Discriminating insight: coverage 95 percent says nothing about set SIZE — sets could be near-vacuous and still cover.</em></>}
+        multiSelect
+        options={[
+          {key:"a", text:"Set sizes can be near the full label space — 95 percent coverage with mean set size 80 percent of catalog is useless.", correct:true},
+          {key:"b", text:"Per-segment coverage can be much worse than the marginal 95 percent.", correct:true},
+          {key:"c", text:"Coverage assumes exchangeability — under drift, 95 percent dashboard is a lie.", correct:true},
+          {key:"d", text:"Conformal latency is high."},
+          {key:"e", text:"Conformal sets are always optimal."},
+        ]}
+        trap={<>(d) is operational and orthogonal. (e) is the over-sell.</>}
+        lens={<>Coverage is necessary but not sufficient. Always pair coverage with mean set size + per-segment coverage + drift detector. Aggregate-only dashboards lie.</>}
+        stretch={<>Design a 4-metric conformal dashboard. What goes on each axis?</>}
+      />
+
+      {/* axis: D3 — senior vs junior */}
+      <VIS.TrapProblem
+        id="cp-d3"
+        difficulty="hard"
+        title="D3 — Junior: add conformal. Senior: ?"
+        scenario={<>Allocator complains about over-bidding under uncertainty. Junior reflex: add conformal. What's the senior move? <em>Discriminating insight: senior asks "is the consumer set-aware? Will set output break their interface?" Adding conformal upstream of a point-consumer is a no-op or worse.</em></>}
+        options={[
+          {key:"a", text:"Audit the downstream consumer: can the allocator consume a set / interval / upper bound? If not, conformal output must be reduced to a scalar (which loses most of conformal's value). If yes, integrate. Adding conformal upstream of a consumer that expects a point is wasted complexity.", correct:true},
+          {key:"b", text:"Add conformal."},
+          {key:"c", text:"Conformal is always the right answer."},
+          {key:"d", text:"Conformal is never useful."},
+        ]}
+        trap={<>(b), (c), (d) miss the interface question.</>}
+        lens={<>The senior question is always "what does the consumer want?" Adding a set predictor in front of a point-consumer is no better than the underlying ranker.</>}
+        stretch={<>Sketch a refactor that lets the allocator consume a conformal upper bound.</>}
+      />
+
+      {/* axis: D4 — plausible misattribution */}
+      <VIS.TrapProblem
+        id="cp-d4"
+        difficulty="hard"
+        title="D4 — Coverage drops on Monday morning"
+        scenario={<>Coverage was 95.2 percent Friday. Monday morning it's 88 percent. Three plausible causes: (1) traffic distribution shift over the weekend, (2) calibration set staleness, (3) ranker silently retrained. Which? <em>Discriminating insight: any of the three would break exchangeability; all three are conformal-specific failure modes; the fix is recompute calibration quantile.</em></>}
+        options={[
+          {key:"a", text:"Any of the three would break exchangeability between calibration and serving and invalidate the marginal coverage guarantee. The first action is to recompute the quantile on fresh data; the second is to add a drift monitor that detects the shift before coverage drops.", correct:true},
+          {key:"b", text:"Random fluctuation."},
+          {key:"c", text:"GPU thermal."},
+          {key:"d", text:"Conformal is broken on Mondays."},
+        ]}
+        trap={<>(b), (c), (d) are non-explanations.</>}
+        lens={<>Exchangeability is the load-bearing fragility. Detect via raw-score-distribution KL; fix via refit; long-term move to weighted or online conformal.</>}
+        stretch={<>Design the alarm. What's the threshold?</>}
+      />
+
+      {/* axis: D5 — wrong-confidence intuition */}
+      <VIS.TrapProblem
+        id="cp-d5"
+        difficulty="medium"
+        title="D5 — 'Lower alpha = better'"
+        scenario={<>You set alpha = 0.01 (99 percent coverage). The team complains the sets are huge. Why is alpha = 0.01 not always better? <em>Discriminating insight: alpha trades coverage for set size monotonically — coverage tightening produces larger sets, eventually vacuous.</em></>}
+        options={[
+          {key:"a", text:"Lower alpha tightens coverage but inflates set size; at alpha = 0.01 the (1 - alpha) quantile is in the deep tail and the set can grow to most of the label space. The right alpha is a business decision: how often can you tolerate a true-label miss, and how large a set can the consumer handle.", correct:true},
+          {key:"b", text:"Lower alpha is always better."},
+          {key:"c", text:"Higher alpha is always better."},
+          {key:"d", text:"Alpha has no effect on set size."},
+        ]}
+        trap={<>(b), (c), (d) are absolutist misreadings.</>}
+        lens={<>Alpha is a business knob, not a model knob. Senior MLEs pick alpha based on consumer cost function, not "more coverage = better."</>}
+        stretch={<>How would you tune alpha to minimize a known consumer cost?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      {/* axis: E1 — production gotcha */}
+      <VIS.TrapProblem
+        id="cp-e1"
+        difficulty="hard"
+        title="E1 — Calibration set leaks into training"
+        scenario={<>You discover the held-out calibration set was accidentally included in the ranker's training data. What does this do to coverage? <em>Discriminating insight: ranker overfits the calibration examples; non-conformity scores are artificially low; quantile is too tight; coverage drops below 1 - alpha.</em></>}
+        options={[
+          {key:"a", text:"The ranker overfits calibration examples; their non-conformity scores are artificially LOW; the empirical (1 - alpha) quantile is too tight; on truly held-out test data coverage drops below 1 - alpha. The exchangeability assumption is also broken.", correct:true},
+          {key:"b", text:"Nothing — calibration is post-hoc."},
+          {key:"c", text:"Coverage goes UP."},
+          {key:"d", text:"Set sizes shrink to zero."},
+        ]}
+        trap={<>(b) is the textbook misreading — split-conformal is post-hoc but still requires NON-overlap with training. (c) inverts.</>}
+        lens={<>Data leakage is the silent killer of conformal. The fix is strict pipeline separation; the diagnostic is a non-conformity score distribution that's too left-tailed.</>}
+        stretch={<>How do you detect leakage from the score distribution alone?</>}
+      />
+
+      {/* axis: E2 — failure on Friday */}
+      <VIS.TrapProblem
+        id="cp-e2"
+        difficulty="hard"
+        title="E2 — Friday 3am: 95 percent coverage on dashboard, allocator over-bidding"
+        scenario={<>Dashboard reads 95.2 percent coverage. Allocator is over-bidding. <em>Discriminating insight: coverage is marginal; allocator queries a specific high-value segment whose coverage is much lower — the aggregate hides it.</em></>}
+        options={[
+          {key:"a", text:"Marginal coverage 95 percent does NOT imply 95 percent on the segment the allocator queries; the segment can have coverage well below alpha. Fix: per-segment (Mondrian) coverage dashboard; add per-segment alarms.", correct:true},
+          {key:"b", text:"Random."},
+          {key:"c", text:"GPU thermal."},
+          {key:"d", text:"Coverage is wrong."},
+        ]}
+        trap={<>(b), (c), (d) are non-explanations.</>}
+        lens={<>The marginal-vs-conditional distinction lives here. Senior dashboards always show stratified coverage, not just the aggregate.</>}
+        stretch={<>What's the right per-segment alarm threshold?</>}
+      />
+
+      {/* axis: E3 — implementation specifics */}
+      <VIS.TrapProblem
+        id="cp-e3"
+        difficulty="hard"
+        title="E3 — Empirical quantile off-by-one"
+        scenario={<>You compute the (1 - alpha) quantile via NumPy's <code>quantile</code>. Coverage is slightly below 1 - alpha. Why? <em>Discriminating insight: conformal requires the CEIL quantile (ceil((n+1)(1-alpha))/n); NumPy default interpolates linearly and gives a slightly looser quantile.</em></>}
+        options={[
+          {key:"a", text:"Conformal's finite-sample guarantee requires the ceil((n+1)(1-alpha))/n empirical quantile — slightly higher than NumPy's default linear-interpolation quantile. Use the ceil formula explicitly for the guarantee.", correct:true},
+          {key:"b", text:"NumPy has a bug."},
+          {key:"c", text:"You need more samples."},
+          {key:"d", text:"Switch to scipy."},
+        ]}
+        trap={<>(b), (c), (d) are non-fixes.</>}
+        lens={<>This is the most common conformal implementation bug. The off-by-one is exact and known; the fix is one line of code.</>}
+        stretch={<>What's the magnitude of the coverage shortfall as a function of N and alpha?</>}
+      />
+
+      {/* axis: E4 — rollout */}
+      <VIS.TrapProblem
+        id="cp-e4"
+        difficulty="hard"
+        mode="ordered"
+        title="E4 — Order the conformal-rollout phases"
+        scenario={<>Phases: (a) offline coverage validation on historical replays, (b) shadow log with prediction sets (don't serve), (c) mirror serving (consumer sees both point and set), (d) full traffic with consumer migrated to set interface. <em>Discriminating insight: consumer interface migration must happen BEFORE conformal serves — otherwise the set is wasted.</em></>}
+        options={[
+          {key:"a", text:"Offline replay validate coverage.", order:1},
+          {key:"b", text:"Shadow log prediction sets.", order:2},
+          {key:"c", text:"Mirror serving with consumer seeing both.", order:3},
+          {key:"d", text:"Full traffic, consumer migrated.", order:4},
+          {key:"e", text:"Skip shadow."},
+          {key:"f", text:"Migrate consumer before validating."},
+        ]}
+        trap={<>(f) is the seductive order — but if the consumer can't handle sets yet, migrating first creates outage risk.</>}
+        lens={<>Conformal rollouts are interface-migrations as much as model-migrations. The consumer's contract is the bottleneck.</>}
+        stretch={<>What's the rollback at each ramp?</>}
+      />
+
+      {/* axis: E5 — reproducibility */}
+      <VIS.TrapProblem
+        id="cp-e5"
+        difficulty="hard"
+        title="E5 — Reproducing the WACV 2025 numbers"
+        scenario={<>Cocheteux et al. report 4 percent coverage gain over Platt at alpha=0.05. You can't reproduce. Which experimental property must match? <em>Discriminating insight: their non-conformity choice, calibration set size, and exchangeability assumption — all critical to set-size and coverage gap reproduction.</em></>}
+        multiSelect
+        options={[
+          {key:"a", text:"Non-conformity score function used (affects set size but not coverage).", correct:true},
+          {key:"b", text:"Calibration set size (affects quantile variance).", correct:true},
+          {key:"c", text:"Exchangeability of their test distribution (their result is on online-extrinsic-calibration data, possibly non-exchangeable).", correct:true},
+          {key:"d", text:"GPU vendor."},
+          {key:"e", text:"Random seed."},
+        ]}
+        trap={<>(d) is irrelevant. (e) is minor.</>}
+        lens={<>Conformal benchmarks transfer better than Platt's (coverage is exchangeability-bound, not data-property-bound) but set-size comparisons depend heavily on non-conformity choice — usually under-specified in papers.</>}
+        stretch={<>What's a benchmark spec that DOES transfer cleanly?</>}
+      />
+
+      {/* axis: E6 — monitoring */}
+      <VIS.TrapProblem
+        id="cp-e6"
+        difficulty="hard"
+        title="E6 — The right conformal monitor"
+        scenario={<>Pick the monitor that detects conformal failure soonest. <em>Discriminating insight: empirical coverage IS the monitor — track it daily; pair with mean set size and stratified coverage; KL-divergence on non-conformity is the leading indicator.</em></>}
+        options={[
+          {key:"a", text:"Three-pane: (1) empirical coverage vs target 1 - alpha (rolling), (2) mean set size (rolling), (3) KL divergence of non-conformity score distribution between calibration and serving windows (leading indicator).", correct:true},
+          {key:"b", text:"Latency only."},
+          {key:"c", text:"GPU util."},
+          {key:"d", text:"Click-through volume."},
+        ]}
+        trap={<>(b), (c), (d) are operational, not conformal-specific.</>}
+        lens={<>The KL on non-conformity is the canonical leading indicator — catches exchangeability violations before coverage drops.</>}
+        stretch={<>What KL threshold to alarm on?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      {/* axis: F1 — noisy labels */}
+      <VIS.TrapProblem
+        id="cp-f1"
+        difficulty="hard"
+        title="F1 — Label noise inflates set size, not coverage"
+        scenario={<>Labels are 40 percent noisy. What happens to conformal? <em>Discriminating insight: coverage guarantee for the OBSERVED label distribution still holds; sets grow large because non-conformity is high; coverage of TRUE labels can be wrong.</em></>}
+        options={[
+          {key:"a", text:"Coverage is guaranteed for the OBSERVED label distribution (which is the noisy one); sets are larger because non-conformity is larger. Coverage of the TRUE underlying label can be below 1 - alpha if noise is asymmetric. Fix: de-noise labels or use a noise-aware non-conformity.", correct:true},
+          {key:"b", text:"Conformal is robust to noise."},
+          {key:"c", text:"Coverage drops to 0."},
+          {key:"d", text:"Set size shrinks under noise."},
+        ]}
+        trap={<>(b) is the over-sell. (c), (d) are incorrect.</>}
+        lens={<>Conformal inherits the label distribution it was calibrated against. Noise in labels = noise in the guarantee target.</>}
+        stretch={<>Sketch a noise-aware non-conformity score.</>}
+      />
+
+      {/* axis: F2 — adversarial */}
+      <VIS.TrapProblem
+        id="cp-f2"
+        difficulty="hard"
+        title="F2 — Adversarial calibration-set poisoning"
+        scenario={<>Adversary injects N_poison high-non-conformity examples into the calibration set. What happens? <em>Discriminating insight: the empirical quantile gets pushed up; sets at inference grow larger (vacuous), coverage stays at 1 - alpha.</em></>}
+        options={[
+          {key:"a", text:"Empirical quantile inflates; sets at inference become near-vacuous; the (1 - alpha) marginal coverage guarantee still holds technically because the calibration distribution shifted along with the test distribution (if the attacker's examples are also in test). The system becomes safe but useless.", correct:true},
+          {key:"b", text:"Coverage drops."},
+          {key:"c", text:"Conformal is robust to poisoning."},
+          {key:"d", text:"Sets shrink."},
+        ]}
+        trap={<>(b), (c), (d) are wrong.</>}
+        lens={<>The "fail-safe" property of conformal is also its vulnerability: the system never violates coverage, but the attack makes it useless. Senior MLEs monitor set size as an attack indicator.</>}
+        stretch={<>What's the minimum N_poison for this attack at given calibration size?</>}
+      />
+
+      {/* axis: F3 — paper-named failure */}
+      <VIS.TrapProblem
+        id="cp-f3"
+        difficulty="hard"
+        title="F3 — Vacuous-on-tail named failure mode"
+        scenario={<>Conformal literature (Romano et al., Barber et al.) names a failure mode: vacuous sets on the conditional tail. Explain. <em>Discriminating insight: marginal coverage on imbalanced label distributions concentrates set membership on the head; tail-label coverage can be near zero.</em></>}
+        options={[
+          {key:"a", text:"Under marginal coverage, the (1 - alpha) quantile is dominated by the head of the label distribution; tail labels have systematically lower coverage. Fix: class-conditional / Mondrian conformal, or adaptive conformal that tracks conditional miss rate.", correct:true},
+          {key:"b", text:"Tail labels have higher coverage."},
+          {key:"c", text:"Conformal handles tails automatically."},
+          {key:"d", text:"There is no such failure mode."},
+        ]}
+        trap={<>(b), (c), (d) are misreadings.</>}
+        lens={<>The single most-cited conformal failure mode in the academic literature. The fix is conditional conformal at the cost of more calibration samples per stratum.</>}
+        stretch={<>What's the simplest paper-cited fix?</>}
+      />
+
+      {/* axis: F4 — covariate shift */}
+      <VIS.TrapProblem
+        id="cp-f4"
+        difficulty="hard"
+        title="F4 — Covariate shift between calibration and serving"
+        scenario={<>Test distribution drifts (new users, new content). What happens to coverage? <em>Discriminating insight: covariate shift breaks exchangeability; plain split-conformal coverage no longer holds; weighted conformal (Tibshirani et al. 2019) restores it.</em></>}
+        options={[
+          {key:"a", text:"Covariate shift breaks exchangeability; the 1 - alpha guarantee no longer holds. Weighted conformal re-weights calibration scores by an estimate of the density ratio between serving and calibration — restoring the guarantee under known shift.", correct:true},
+          {key:"b", text:"Conformal is invariant to covariate shift."},
+          {key:"c", text:"Coverage gets stronger under shift."},
+          {key:"d", text:"You need to retrain the ranker."},
+        ]}
+        trap={<>(b), (c) are over-sells. (d) is impractical.</>}
+        lens={<>Weighted conformal is the canonical fix; it requires a density ratio estimator (which itself can be wrong, but at least the failure is now visible).</>}
+        stretch={<>Sketch the density ratio estimator.</>}
+      />
+
+      {/* axis: F5 — community-found */}
+      <VIS.TrapProblem
+        id="cp-f5"
+        difficulty="hard"
+        title="F5 — Online learning + conformal"
+        scenario={<>Why is online learning a particular nightmare for conformal? <em>Discriminating insight: the model that produced calibration scores is no longer the inference model; exchangeability breaks at every update.</em></>}
+        options={[
+          {key:"a", text:"Online updates change the model between calibration and inference; calibration non-conformity scores were computed against an older model, and exchangeability with current-model inference scores no longer holds. The guarantee silently breaks at every update. Online conformal (Gibbs et al.) adapts alpha at every step but loses the finite-sample guarantee.", correct:true},
+          {key:"b", text:"Online learning is incompatible with conformal."},
+          {key:"c", text:"Online learning makes conformal stronger."},
+          {key:"d", text:"There is no interaction."},
+        ]}
+        trap={<>(b), (c), (d) miss the exchangeability mechanism.</>}
+        lens={<>This is the major open research direction. Production teams either freeze the model during calibration windows or accept asymptotic-only guarantees from online conformal.</>}
+        stretch={<>What's the simplest production compromise?</>}
+      />
+
+      {/* axis: F6 — debugging */}
+      <VIS.TrapProblem
+        id="cp-f6"
+        difficulty="hard"
+        title="F6 — Coverage 95 percent, allocator complains about over-confident bids"
+        scenario={<>Coverage is on target. Allocator says bids are over-confident on 'expensive' queries. Diagnose. <em>Discriminating insight: coverage on labels does not imply coverage on cost-weighted labels; expensive queries need cost-weighted conformal.</em></>}
+        options={[
+          {key:"a", text:"Coverage 95 percent on labels does not guarantee 95 percent on cost-weighted labels. Expensive queries need cost-weighted conformal — re-weight calibration by cost so the (1 - alpha) quantile reflects expected cost not expected error count.", correct:true},
+          {key:"b", text:"Allocator is wrong."},
+          {key:"c", text:"Random."},
+          {key:"d", text:"Conformal is unreliable."},
+        ]}
+        trap={<>(b), (c), (d) are non-diagnostics.</>}
+        lens={<>Cost-weighted conformal is the underused production variant. Coverage on the right metric is what matters; senior MLEs pick the metric, not just the alpha.</>}
+        stretch={<>Sketch a cost-weighted conformal procedure.</>}
+      />
+
+      {/* axis: F7 — practical regression */}
+      <VIS.TrapProblem
+        id="cp-f7"
+        difficulty="hard"
+        title="F7 — Set size doubles after a ranker upgrade"
+        scenario={<>You upgrade the ranker. Conformal mean set size doubles. Coverage unchanged. Diagnose. <em>Discriminating insight: new ranker is less confident on calibration distribution — non-conformity scores larger, quantile larger, sets larger — exchangeability still holds but set size signal degraded.</em></>}
+        options={[
+          {key:"a", text:"The new ranker is less discriminative on the calibration distribution; non-conformity scores are larger; the (1 - alpha) quantile is larger; sets grow. Coverage is preserved (still 1 - alpha by construction) but the system is now less useful. Diagnose with a side-by-side non-conformity distribution plot.", correct:true},
+          {key:"b", text:"The new ranker is worse."},
+          {key:"c", text:"Coverage drift."},
+          {key:"d", text:"GPU thermal."},
+        ]}
+        trap={<>(b) is partial. (c), (d) are wrong.</>}
+        lens={<>Set size is the secondary metric — coverage holds but utility drops. Senior dashboards track set size with coverage.</>}
+        stretch={<>How to validate before launch?</>}
+      />
+
+      {/* axis: F8 — downstream interplay */}
+      <VIS.TrapProblem
+        id="cp-f8"
+        difficulty="hard"
+        title="F8 — Stacking conformal AFTER distillation"
+        scenario={<>You distill teacher into student. Where to fit conformal? <em>Discriminating insight: conformal must be fit on the student's own non-conformity scores; teacher's quantile is wrong for student outputs.</em></>}
+        options={[
+          {key:"a", text:"Fit conformal on the student's non-conformity scores using fresh held-out data. Teacher's quantile was computed against teacher's scores; it does not transfer. Distillation breaks the score distribution; conformal's quantile must move with it.", correct:true},
+          {key:"b", text:"Reuse teacher's quantile."},
+          {key:"c", text:"Conformal is identical for teacher and student."},
+          {key:"d", text:"Distillation breaks conformal entirely."},
+        ]}
+        trap={<>(b), (c), (d) are misreadings.</>}
+        lens={<>Conformal quantile is model-specific. Any model change (distillation, quantization, retrain) requires a quantile refit on the new model's scores.</>}
+        stretch={<>What's the smallest fresh hold-out for a student conformal refit?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://arxiv.org/abs/2107.07511" target="_blank" rel="noopener">Angelopoulos &amp; Bates — <em>A Gentle Introduction to Conformal Prediction and Distribution-Free Uncertainty Quantification</em> (arXiv, 2022)</a> — best single-source primer with worked examples.</li>
-        <li><a href="https://people.eecs.berkeley.edu/~angelopoulos/blog/posts/gentle-intro/" target="_blank" rel="noopener">Anastasios Angelopoulos — <em>A Gentle Introduction to Conformal Prediction</em> (blog)</a> — readable tour by the field&apos;s clearest writer.</li>
-        <li><a href="https://openaccess.thecvf.com/content/WACV2025/papers/Cocheteux_Uncertainty-Aware_Online_Extrinsic_Calibration_A_Conformal_Prediction_Approach_WACV_2025_paper.pdf" target="_blank" rel="noopener">Cocheteux et al. — <em>Uncertainty-Aware Online Extrinsic Calibration: A Conformal Prediction Approach</em> (WACV 2025, paper)</a> — the source paper this entry adapts.</li>
-        <li><a href="https://valeman.medium.com/" target="_blank" rel="noopener">Valery Manokhin — <em>Awesome Conformal Prediction</em> (curated index)</a> — frequently updated curation of papers, code, talks.</li>
-        <li><a href="https://www.youtube.com/watch?v=nql000Lu_iE" target="_blank" rel="noopener">Anastasios Angelopoulos — <em>Conformal prediction tutorial</em> (video)</a> — one-hour tutorial covering split-conformal, Mondrian, and online variants.</li>
+        <li>
+          <a href="https://openaccess.thecvf.com/content/WACV2025/papers/Cocheteux_Uncertainty-Aware_Online_Extrinsic_Calibration_A_Conformal_Prediction_Approach_WACV_2025_paper.pdf" target="_blank" rel="noopener"><strong>Cocheteux et al. — Uncertainty-Aware Online Extrinsic Calibration</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(WACV 2025)</span>
+          <br/>The recsys-adjacent paper that re-popularized conformal for online calibration use cases.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2107.07511" target="_blank" rel="noopener"><strong>Angelopoulos and Bates — Gentle Introduction to Conformal Prediction</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(arXiv 2021)</span>
+          <br/>Foundational pedagogical reference; split-conformal, non-conformity choice, Mondrian.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/1904.06019" target="_blank" rel="noopener"><strong>Tibshirani et al. — Conformal Prediction Under Covariate Shift</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(NeurIPS 2019)</span>
+          <br/>Weighted conformal; the standard fix for exchangeability violations.
+        </li>
       </ul>
     </VIS.Section>
   </main>
 );
+
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 
 </script>

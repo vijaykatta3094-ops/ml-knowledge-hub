@@ -1414,246 +1414,733 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
+// Isotonic / Platt baseline — Calibration & uncertainty
+// v2 redo — 30+ trap problems across all six axes (A-F).
+// Concept anchor: marginal monotonic re-mapping (isotonic = PAV staircase, Platt = sigmoid) from raw
+// ranker score to calibrated probability. Every trap hinges on a property unique to isotonic/Platt —
+// not generic calibration platitudes.
+
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA &middot; Calibration"
+      pill="RecSys SOTA · Calibration & uncertainty"
       title="Isotonic / Platt baseline"
-      subtitle="Map raw ranker scores to calibrated probabilities so downstream auctions and pacing systems can treat them as real CTRs."
+      subtitle="The production-default post-hoc calibration pair — non-parametric staircase (isotonic) vs parametric sigmoid (Platt) — that maps raw ranker scores to marginally-calibrated probabilities."
       byline={[
-        {label: "Source", value: "Industry practice; 2024 surveys"},
-        {label: "Domain", value: "Probability calibration of rankers"},
+        {label: "Source", value: "Standard practice; surveyed in 2024 industry blogs"},
+        {label: "Year", value: "2024"},
+        {label: "Domain", value: "Post-hoc calibration of CTR/CVR rankers"},
       ]}/>
 
     <VIS.TLDR>
-      <VIS.Term def="Platt scaling fits a sigmoid (a + b * score) to map raw model scores to probabilities. Isotonic regression fits a non-decreasing step function — more flexible, fewer assumptions, but needs more data.">Isotonic and Platt</VIS.Term> are the two workhorse marginal calibrators. Both make the dataset-wide average predicted CTR match the actual CTR. Neither guarantees that any particular slice (new users, expensive ads, weekend traffic) is also calibrated — that&apos;s the trap.
+      A ranker's raw logits are not probabilities — they preserve <em>order</em> but not <em>scale</em>. <VIS.Term def="Pool Adjacent Violators — fits a non-parametric, piecewise-constant, monotonically-non-decreasing staircase mapping raw scores to calibrated probabilities.">Isotonic regression (PAV)</VIS.Term> and <VIS.Term def="Fits a two-parameter logistic curve P(y=1|s) = 1/(1+exp(a*s+b)) on a held-out calibration set.">Platt scaling</VIS.Term> are the two canonical post-hoc fixes. Both give <strong>marginal</strong> calibration (the population aggregate matches realized rates). Neither gives <strong>conditional</strong> calibration (per-segment / per-slice). That asymmetry is where auctions and budget-pacers actually fail. Reference: <a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener">Eugene Yan — Calibrated probabilities for production</a>.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        A ranker like a deep CTR model produces a raw score. The score might rank items correctly, but the number itself is rarely a probability. A logit of 2.3 does not mean 91&#37; click probability — it just means &quot;higher than logit 1.8&quot;. Yet downstream consumers (auction allocators, budget pacers, expected-revenue calculators) need real probabilities. <VIS.Term def="A monotonic mapping from raw scores to probabilities that minimizes squared error subject to staying non-decreasing. Fit by pool-adjacent-violators in O(n).">Isotonic regression</VIS.Term> and <VIS.Term def="A logistic regression with one input (the raw score) and two parameters (a, b). Fits a sigmoid through the raw scores to produce probabilities.">Platt scaling</VIS.Term> are post-hoc fits on held-out data that solve this.
+        Both methods take the model's raw score <code>s</code> and learn a monotonic function <code>f(s)</code> on a held-out calibration split, such that the empirical fraction of positives in each predicted-probability bucket matches the bucket's predicted probability.
       </p>
       <VIS.Mermaid chart={`
-flowchart TB
-  R["Ranker raw score s"]
-  C["Calibrator g(s)"]
-  P["Calibrated p in [0,1]"]
-  A["Auction / pacer"]
-  R --> C --> P --> A
-  H["Held-out logs (s, y)"]
-  H --> C
+flowchart LR
+  R["Ranker (frozen)"] --> S["Raw score s"]
+  S --> P["Platt: sigmoid(a*s + b)"]
+  S --> I["Isotonic: PAV staircase"]
+  P --> C["Calibrated p-hat"]
+  I --> C
+  C --> A["Auction or pacing"]
+  style P fill:#dbeafe,stroke:#1e40af
+  style I fill:#dbeafe,stroke:#1e40af
       `} />
-      <VIS.Equation display tex="\hat{p} = g(s)\quad\text{s.t.}\quad \mathbb{E}[\,y \mid \hat{p}=p\,] = p" />
       <p>
-        The calibrator g is fit on a held-out set of (score, label) pairs, never the training data. Platt fits a sigmoid with two parameters; isotonic fits a non-decreasing step function with no parametric form. Both are cheap to refresh and cheap to serve.
+        <strong>Platt</strong> is parametric (two scalars <code>a, b</code>): tight, low variance, but mis-fits when the score-vs-probability curve is non-sigmoidal. <strong>Isotonic</strong> is non-parametric (one bin per distinct score in the worst case): flexible, but variance-heavy on small calibration sets and prone to step-function artifacts at the extremes.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from no calibration">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
-        <thead><tr style={{background:"#f1f5f9"}}><th style={{textAlign:"left",padding:8}}>Property</th><th style={{textAlign:"left",padding:8}}>Raw logits</th><th style={{textAlign:"left",padding:8}}>Platt / Isotonic</th></tr></thead>
-        <tbody>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Marginal calibration</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Usually broken</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Restored by construction</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Segment calibration</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Not guaranteed</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Not guaranteed</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Ranking order</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Preserved</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Preserved (monotone)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Data needed</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>None</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Held-out (~1M events)</td></tr>
-          <tr><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Flexibility</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>N/A</td><td style={{padding:8,borderTop:"1px solid #e2e8f0"}}>Isotonic &gt; Platt</td></tr>
-        </tbody>
-      </table>
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from temperature / Bayes / conformal">
+      <p>
+        <strong>Temperature scaling.</strong> One-parameter restriction of Platt (only divides logits by T, no intercept). Cheaper, less expressive — sometimes preferred for deep classifiers where the only miscalibration is overconfidence.
+      </p>
+      <p>
+        <strong>Bayesian / MC-dropout uncertainty.</strong> Models epistemic uncertainty (per-prediction interval). Isotonic/Platt only re-map the point estimate — they don't add an interval.
+      </p>
+      <p>
+        <strong>Conformal prediction.</strong> Gives a finite-sample, distribution-free coverage guarantee on a prediction <em>set</em>. Isotonic/Platt give pointwise probabilities with <em>no</em> coverage guarantee — only marginal calibration on the training distribution.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick / where it wins">
-      <ul>
-        <li>Anywhere downstream consumes a probability: <VIS.Term def="A market mechanism that allocates impressions to bidders based on expected value = predicted CTR * bid. Mis-calibrated CTRs distort all bids equally and break revenue accounting.">second-price auctions</VIS.Term>, budget pacing, expected-revenue dashboards.</li>
-        <li>When training loss (e.g. cross-entropy after label smoothing or temperature) leaves logits off-scale.</li>
-        <li>As the cheapest production fix before considering full retraining or focal loss adjustments.</li>
-        <li>Isotonic over Platt when held-out data is plentiful and the score-vs-CTR curve is not sigmoidal.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick which">
+      <VIS.Mermaid chart={`
+flowchart TB
+  D["Calibration set size?"]
+  D -->|small N| PL["Platt (low variance)"]
+  D -->|large N| ISO["Isotonic (flexible)"]
+  D -->|mid N| BOTH["Both; pick by reliability diagram"]
+  ISO --> Q1{"Score-prob curve sigmoidal?"}
+  Q1 -->|Yes| PL2["Platt is enough"]
+  Q1 -->|No| ISO2["Isotonic captures kinks"]
+      `} />
+      <p>
+        Rule of thumb: Platt below ~1k positives, isotonic above ~10k. Between, fit both and compare reliability diagrams; isotonic's flexibility only pays off when the score-vs-probability curve has structure Platt can't capture (e.g. a flat plateau then a steep rise).
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <ul>
-        <li><strong>Marginal != segment</strong> — overall ECE can be 0.5&#37; while a 1&#37; high-value segment is off by 5&#37;. Auction allocators feel the segment, not the average.</li>
-        <li><strong>Drift</strong> — calibrators must be re-fit as the ranker is retrained or as the population shifts; stale calibrators silently degrade.</li>
-        <li><strong>Isotonic step artifacts</strong> — at sparse score ranges, isotonic can produce flat plateaus that snap probabilities to discrete levels.</li>
-        <li><strong>Platt mis-shape</strong> — if the true score-to-CTR map is not sigmoidal (e.g. has a plateau), Platt over-smooths and under-fits the tails.</li>
-      </ul>
-      <VIS.Callout kind="gotcha" title="Marginal calibration is a population-level illusion">
-        Marginal calibration only says: across all events, predicted-and-actual CTR averages match. A single conditional-on-segment failure (say, mobile + new-user + premium ad) can persist undetected. The allocator routes spend by segment, not by the marginal average, so it &quot;sees&quot; the mis-calibration even when your dashboard does not. Always slice ECE by the segments your auction uses as bid keys.
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
+      <VIS.Callout kind="gotcha" title="Marginal versus conditional — the segment trap">
+        Isotonic/Platt fit the marginal joint of (score, label). They guarantee that across the <em>full</em> calibration set the predicted and realized probabilities agree on average — they say <em>nothing</em> about whether each segment (geo, device, user tenure decile) is individually calibrated. An auction-allocator complaining about over/under-pacing on a high-value segment is almost always seeing this gap, not a defect in the underlying ranker.
       </VIS.Callout>
+      <p>
+        Other named traps: (1) isotonic's piecewise-constant output produces ties at score boundaries, breaking tie-aware auction logic that expects unique probabilities; (2) Platt assumes the score-vs-probability relationship is sigmoidal — false for heavily-engineered LTR scores with kinks; (3) refitting on data the ranker was trained on leaks; (4) both methods are static — they don't adapt to distribution shift.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
-      <p style={{color:"#475569"}}>Pick, then reveal.</p>
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        30+ problems spanning the six taxonomy axes. Each must pass the redaction litmus: substitute "isotonic / Platt" with "Calibrator X" — if generic calibration knowledge suffices, the problem is concept-as-costume.
+      </p>
 
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity &amp; comparison</h3>
+
+      {/* axis: A1 (distinguish from sibling) */}
       <VIS.TrapProblem
-        id="ipb-p1" difficulty="hard"
-        title="P1 — Auction allocator complaint after marginal calibration"
-        scenario={<>You ship isotonic calibration and dataset-wide ECE drops from 4&#37; to 0.5&#37;. The auction allocator team says expected revenue still over-predicts on premium inventory by 8&#37;. Diagnosis?</>}
+        id="iso-a1"
+        difficulty="hard"
+        title="A1 — Isotonic vs Platt: the actual discriminator"
+        scenario={<>Your TL says "isotonic and Platt are both monotonic post-hoc calibrators — does it matter which?" State the discriminator that drives the choice in production, not the family resemblance. <em>Discriminating insight: Platt is a 2-param parametric sigmoid; isotonic is a non-parametric PAV staircase — the choice is variance vs flexibility on the calibration set.</em></>}
         options={[
-          {key:"a", text:"Marginal calibration is restored but segment calibration on premium inventory is not. The allocator routes by segment, not by population average.", correct:true},
-          {key:"b", text:"Isotonic regression is fundamentally biased on small data."},
-          {key:"c", text:"You need to switch from sigmoid to softmax."},
-          {key:"d", text:"The ranker needs retraining from scratch."},
+          {key:"a", text:"Platt fits a two-parameter logistic on raw scores: low variance, fails on non-sigmoidal score-vs-prob curves. Isotonic fits a non-parametric PAV staircase: flexible, but variance-heavy on small calibration sets and produces piecewise-constant outputs with ties.", correct:true},
+          {key:"b", text:"Isotonic uses Bayesian priors; Platt is frequentist."},
+          {key:"c", text:"Both produce identical outputs in the limit."},
+          {key:"d", text:"Platt requires more compute than isotonic."},
         ]}
-        trap={<>(b) is false — isotonic is non-parametric, not biased. (c)(d) ignore that the marginal ECE looks fine; the issue is conditional ECE.</>}
-        lens={<>Marginal ECE = E[|p - y_avg|p]] averaged over all events. Conditional ECE conditions on a slice. A calibrator can fix the first while leaving the second broken because the population average mixes well-calibrated and badly-calibrated segments. Fix: stratify the calibrator (e.g. separate isotonic per segment) or use multi-calibration techniques.</>}
-        stretch={<>What metric measures conditional calibration without enumerating every slice?</>}
+        trap={<>(b) is wrong — neither is Bayesian. (c) is false: they converge only when the true score-prob curve <em>is</em> sigmoidal. (d) inverts the truth — PAV is O(n log n), Platt is two scalars.</>}
+        lens={<>The bias-variance tradeoff is the actual discriminator. Platt has high bias if the curve isn't sigmoidal but low variance everywhere. Isotonic has low bias (can fit any monotonic shape) but high variance at the tails.</>}
+        stretch={<>Below what calibration-set size does isotonic's variance dominate Platt's bias on a typical CTR surface?</>}
       />
 
+      {/* axis: A2 (definitional trap) */}
       <VIS.TrapProblem
-        id="ipb-p2" difficulty="medium"
-        title="P2 — When Platt beats isotonic"
-        scenario={<>You have only 50K held-out calibration events. Which fitter should you prefer and why?</>}
+        id="iso-a2"
+        difficulty="medium"
+        title="A2 — 'Isotonic is just histogram binning'"
+        scenario={<>A staff eng dismisses isotonic as "histogram binning with extra steps." Name the actual deltas. <em>Discriminating insight: histogram binning ignores order; PAV enforces monotonicity, which is the whole point on a ranker's score.</em></>}
+        multiSelect
         options={[
-          {key:"a", text:"Platt — two parameters, low variance, works when the score-to-CTR curve is roughly sigmoidal.", correct:true},
-          {key:"b", text:"Isotonic — always strictly better with any held-out size."},
-          {key:"c", text:"Neither — fall back to raw logits."},
-          {key:"d", text:"A 20-layer MLP calibrator."},
+          {key:"a", text:"Isotonic (PAV) enforces a monotonic non-decreasing constraint on the fitted curve; histogram binning does not.", correct:true},
+          {key:"b", text:"Bin widths are data-adaptive in PAV (variable-width pools form via pool-adjacent-violators); histogram binning has fixed-width or quantile bins.", correct:true},
+          {key:"c", text:"Histogram binning gives a continuous output; PAV gives a step function."},
+          {key:"d", text:"PAV runs in O(n squared); histogram binning is O(n)."},
+          {key:"e", text:"Histogram binning generalizes better on small data."},
         ]}
-        trap={<>(b) ignores that isotonic over-fits at 50K. (c)(d) miss the point.</>}
-        lens={<>Isotonic is non-parametric and over-fits when data is thin (50K is thin in CTR). Platt&apos;s two-parameter sigmoid has low variance and is the right choice in small-data regimes. The crossover is typically around 100K-500K events depending on the score histogram.</>}
-        stretch={<>How do you decide the crossover empirically?</>}
+        trap={<>(c) inverts: PAV is piecewise constant, histogram is also piecewise constant. (d) overstates PAV cost. (e) is unsupported.</>}
+        lens={<>The monotonicity constraint is the load-bearing fact. On a ranker score, the order is meaningful (higher score implies more likely positive); a calibrator that breaks that order would be worse than no calibration.</>}
+        stretch={<>If you observe a non-monotonic score-prob curve in raw data, what does that imply about your ranker?</>}
       />
 
+      {/* axis: A3 (counterfactual) */}
       <VIS.TrapProblem
-        id="ipb-p3" difficulty="hard" multiSelect
-        title="P3 — Which slices to monitor for calibration drift?"
-        scenario={<>Your team ships calibration weekly. Pick the slices that should be on the calibration drift dashboard. Select all that apply.</>}
+        id="iso-a3"
+        difficulty="hard"
+        title="A3 — If neither isotonic nor Platt existed"
+        scenario={<>Counterfactual: post-hoc monotonic calibration was never invented. What would production rankers do instead, and at what cost? <em>Discriminating insight: the alternative is in-training proper-scoring losses + per-segment monitoring — much more expensive to refit.</em></>}
         options={[
-          {key:"a", text:"By traffic segment used as a bid key in the auction (geo, device, hour).", correct:true},
-          {key:"b", text:"By new-user vs returning-user cohort.", correct:true},
-          {key:"c", text:"By score decile to catch tail mis-calibration.", correct:true},
-          {key:"d", text:"By the ad creative&apos;s primary color."},
-          {key:"e", text:"By the ranker&apos;s training-run ID."},
+          {key:"a", text:"Train rankers with a proper scoring rule (log-loss / Brier) end-to-end and rely on the optimizer alone for calibration. Cost: every score-shape change (new features, new architecture) requires a full retrain. Platt/isotonic decouple calibration from the ranker so you can refit nightly on a few thousand examples.", correct:true},
+          {key:"b", text:"Production would be uncalibrated and auctions would just adapt."},
+          {key:"c", text:"You'd switch entirely to conformal prediction."},
+          {key:"d", text:"You'd Bayesian-average several rankers."},
         ]}
-        trap={<>(d) is noise. (e) is a model-version axis, not a population axis — useful for rollout tracking but not for calibration drift.</>}
-        lens={<>The dashboard must mirror the segmentation the downstream consumer uses. Auctions use bid-key segments. Pacers use cohort and time-of-day. Tail calibration matters because the top score decile drives revenue. Color of the creative is irrelevant unless it is a bid key.</>}
-        stretch={<>What threshold on slice-ECE triggers a recalibration job?</>}
+        trap={<>(b) ignores that auction mechanisms (second-price, GSP) literally require calibrated probabilities to compute optimal bids. (c) is anachronistic for the pre-2010 era. (d) is expensive and orthogonal.</>}
+        lens={<>The strategic value of Platt/isotonic is the <em>decoupling</em>: you can refit the calibrator in seconds on a fresh held-out slice without touching the ranker. That cadence is what enables nightly recalibration in production.</>}
+        stretch={<>What property of the auction makes calibration non-optional? Could you redesign the auction to accept ordinal scores?</>}
       />
 
+      {/* axis: A4 (composition) */}
       <VIS.TrapProblem
-        id="ipb-p4" difficulty="medium"
-        title="P4 — Why fit on a held-out set?"
-        scenario={<>A teammate proposes fitting the isotonic calibrator on the same training data as the ranker. Why is that wrong?</>}
+        id="iso-a4"
+        difficulty="hard"
+        title="A4 — Stack Platt on top of isotonic"
+        scenario={<>An engineer proposes fitting Platt on the output of isotonic. Does this help, hurt, or no-op? <em>Discriminating insight: isotonic's output is already in [0,1] and L2-optimal monotonic; a sigmoid on top can only re-distort it.</em></>}
         options={[
-          {key:"a", text:"The ranker over-fits its training data, so its scores are over-confident there; calibrating against those biased scores propagates the over-confidence.", correct:true},
-          {key:"b", text:"It is cheaper to use the training data."},
-          {key:"c", text:"Held-out fitting is forbidden by recent regulations."},
-          {key:"d", text:"Held-out data adds noise."},
+          {key:"a", text:"Strictly hurts on the calibration set (cannot improve loss — isotonic is the unconstrained best monotonic fit), and on held-out it adds variance from the Platt parameters without expressive gain.", correct:true},
+          {key:"b", text:"Helps by averaging two estimates."},
+          {key:"c", text:"No-op because both are monotonic."},
+          {key:"d", text:"Helps because Platt smooths isotonic's step function."},
         ]}
-        trap={<>(b)(c)(d) are wrong or fabricated.</>}
-        lens={<>The training data sees over-fit scores: the ranker scored each training example confidently because it memorized it. The calibrator would map those over-fit scores to over-fit labels and learn a bad mapping that does not transfer. Held-out data has the same score-to-label relationship the calibrator will face in production.</>}
-        stretch={<>What if the held-out set is itself non-stationary?</>}
+        trap={<>(d) is the seductive answer — yes Platt smooths, but it can only smooth in a sigmoidal shape, which is a constrained subspace of monotonic functions; the smoothing destroys the kinks isotonic captured. (b) ignores that they're correlated (same data). (c) misses that composition matters even with two monotonic maps.</>}
+        lens={<>Stacking calibrators is almost always a smell. PAV's piecewise-constant output is a feature (it captures kinks the parametric Platt cannot). If you want smoothness, use a regularized variant (e.g. kernel-density-smoothed isotonic), not Platt-on-isotonic.</>}
+        stretch={<>What's the right way to smooth isotonic's step function without losing the kinks?</>}
       />
 
+      {/* axis: A5 (boundary) */}
       <VIS.TrapProblem
-        id="ipb-p5" difficulty="hard"
-        title="P5 — Distilled student calibration"
-        scenario={<>You distill a calibrated teacher (ECE 0.5&#37;) into a smaller student. The student has ECE 3&#37;. What do you do first?</>}
+        id="iso-a5"
+        difficulty="hard"
+        title="A5 — Where Platt strictly dominates isotonic"
+        scenario={<>Name the regime where Platt is empirically better than isotonic on held-out Brier score, robustly. <em>Discriminating insight: tiny calibration sets + sigmoidal score-prob curve = Platt wins; everywhere else isotonic ties or beats.</em></>}
         options={[
-          {key:"a", text:"Re-fit a fresh calibrator on the student&apos;s held-out outputs; distillation changes the score distribution.", correct:true},
-          {key:"b", text:"Copy the teacher&apos;s calibrator parameters onto the student."},
-          {key:"c", text:"Increase the student&apos;s capacity until ECE matches the teacher."},
-          {key:"d", text:"Ignore — 3&#37; ECE is acceptable."},
+          {key:"a", text:"Small calibration set (a few hundred positives) AND the underlying score-vs-probability relationship is approximately sigmoidal (e.g. a well-tuned LR ranker). Platt's 2-param fit has lower variance and asymptotes to the right answer; isotonic overfits.", correct:true},
+          {key:"b", text:"Large calibration set, sigmoidal curve — isotonic always wins."},
+          {key:"c", text:"Any setting where Brier score is the metric."},
+          {key:"d", text:"Only when latency is the binding constraint."},
         ]}
-        trap={<>(b) is the common bug; calibrators do not transfer because the student logits live on a different scale. (d) is wrong because 3&#37; mis-calibration distorts downstream auctions.</>}
-        lens={<>Distillation softens the score distribution (temperature, KL loss) and the student lands on a different output scale than the teacher. The teacher&apos;s calibrator is fit to the teacher&apos;s scale; re-using it on the student is a category error. Always recalibrate after any change to the ranker — distillation, quantization, retraining.</>}
-        stretch={<>What if the student was trained with focal loss?</>}
+        trap={<>(b) inverts. (c) overgeneralizes. (d) is irrelevant — both calibrators are sub-microsecond at inference.</>}
+        lens={<>The two regimes where Platt wins are (i) small N (variance dominates) and (ii) sigmoidal truth (bias is zero). When neither holds, isotonic ties or beats. This is exactly the bias-variance corner each method is designed for.</>}
+        stretch={<>How does the crossover shift if positives are rare (e.g. CVR at 0.5 percent)?</>}
       />
 
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      {/* axis: B1 (when to use over alternatives) */}
       <VIS.TrapProblem
-        id="ipb-p6" difficulty="medium" multiSelect
-        title="P6 — Symptoms of stale calibrator"
-        scenario={<>Pick the symptoms of a calibrator that has not been refreshed for two months. Select all that apply.</>}
+        id="iso-b1"
+        difficulty="hard"
+        title="B1 — DSP with sparse impressions per advertiser"
+        scenario={<>You operate a DSP; bids depend on calibrated P(click). The ranker is a GBDT. Many advertisers have fewer than 200 positives in the last 7 days. Pick the production calibrator. <em>Discriminating insight: sparse positives + per-advertiser segments = Platt's low variance beats isotonic's flexibility.</em></>}
         options={[
-          {key:"a", text:"Marginal ECE creeps up week over week.", correct:true},
-          {key:"b", text:"Auction allocator over-predicts revenue.", correct:true},
-          {key:"c", text:"Budget pacer overspends on the morning peak.", correct:true},
-          {key:"d", text:"Recall at K stays the same (calibration does not change ranking)."},
-          {key:"e", text:"The ranker&apos;s log-loss on training data drops."},
+          {key:"a", text:"Platt per advertiser with shrinkage to a global prior — low variance survives sparse-positive segments.", correct:true},
+          {key:"b", text:"Isotonic per advertiser — non-parametric is always safer."},
+          {key:"c", text:"One global isotonic across all advertisers."},
+          {key:"d", text:"Skip calibration; let the auction handle it."},
         ]}
-        trap={<>(d) is technically true (calibration is monotone) but reads like a symptom — it is a non-symptom and listing it correctly is part of the question. (e) is unrelated; calibrator does not touch training.</>}
-        lens={<>Calibration drift hits any system that consumes the probability. Recall does not move because monotone calibration preserves ranking. Training metrics do not move because calibrator is post-hoc. The visible symptoms are ECE, allocator revenue prediction error, and pacer overspending.</>}
-        stretch={<>Set a freshness SLA for the calibrator?</>}
+        trap={<>(b) overfits per-advertiser when N is small. (c) gives marginal calibration but mis-prices per-advertiser bids — the exact failure mode the question is testing. (d) is wrong: second-price auctions need calibrated p, not ranks.</>}
+        lens={<>Per-segment calibration on sparse data is exactly where Platt's parametric form pays off; isotonic's flexibility becomes variance. The shrinkage prior closes the small-N gap without losing per-segment signal.</>}
+        stretch={<>How do you tune the shrinkage strength? What's the diagnostic?</>}
       />
 
+      {/* axis: B2 (sounds reasonable, isn't) */}
       <VIS.TrapProblem
-        id="ipb-p7" difficulty="hard"
-        title="P7 — Isotonic flat plateaus at the tail"
-        scenario={<>You inspect the isotonic calibration curve and see a flat plateau at the top decile: scores in [0.85, 0.99] all map to predicted CTR = 0.42. What is happening?</>}
+        id="iso-b2"
+        difficulty="hard"
+        title="B2 — 'Just bin and average — same as isotonic'"
+        scenario={<>A junior says "I fit calibration by binning scores into deciles and averaging realized labels per bin. That's the same as isotonic, right?" Why is this wrong? <em>Discriminating insight: decile binning is not monotonicity-constrained — bins can produce a non-monotonic curve under noise.</em></>}
         options={[
-          {key:"a", text:"Sparse data at the top decile forces isotonic to pool many score ranges into one constant level.", correct:true},
-          {key:"b", text:"Isotonic is broken; switch to Platt."},
-          {key:"c", text:"The ranker is over-fitted at the top."},
-          {key:"d", text:"This is the expected behavior of any calibrator."},
+          {key:"a", text:"Decile-binning does not enforce monotonicity — empirical noise on a high-score decile can produce a lower bin-average than a lower decile, yielding a non-monotonic calibrator that re-orders predictions. PAV's pool-adjacent-violators step is exactly what fixes that.", correct:true},
+          {key:"b", text:"Decile binning needs more data."},
+          {key:"c", text:"They're equivalent in expectation."},
+          {key:"d", text:"Decile binning ignores the labels."},
         ]}
-        trap={<>(b) over-corrects; (c) confuses ranker vs calibrator; (d) is false for Platt.</>}
-        lens={<>Isotonic uses pool-adjacent-violators: when adjacent score bins have non-monotone empirical CTRs, they get pooled into one level. Sparse top-decile data triggers this aggressively, producing flat plateaus. Fixes: more held-out data, smoothing (e.g., spline isotonic), or fall back to Platt for the tail.</>}
-        stretch={<>How would you smooth the plateau without losing monotonicity?</>}
+        trap={<>(c) is true only in the infinite-data limit; finite noise makes them very different in practice. (d) is just wrong. (b) is plausible but secondary.</>}
+        lens={<>Monotonicity isn't a nice-to-have on a ranker — it's the structural constraint that makes calibration meaningful. PAV is the cheap, correct enforcement.</>}
+        stretch={<>If you observe a non-monotonic raw bin curve, is the right fix "more data" or "use isotonic"?</>}
       />
 
+      {/* axis: B3 (business framing — concept-unique anchor) */}
       <VIS.TrapProblem
-        id="ipb-p8" difficulty="hard" mode="ordered"
-        title="P8 — Order the calibration release steps"
-        scenario={<>You are rolling out a fresh isotonic calibrator. Order the steps. Wrong moves are unranked.</>}
+        id="iso-b3"
+        difficulty="medium"
+        title="B3 — Pitch isotonic to your VP of Ad Engineering"
+        scenario={<>VP asks why isotonic over the team's "just retrain the ranker with log-loss" plan. Give the one-sentence pitch that <em>requires</em> understanding isotonic's specific properties (PAV's monotonicity plus non-parametric flexibility on a held-out set). <em>Discriminating insight: the pitch must turn on the decoupling and the kink-capturing — not on generic "more accurate probabilities".</em></>}
         options={[
-          {key:"a", text:"Pull held-out (score, label) data fresh from the last 7 days.", order:1},
-          {key:"b", text:"Fit isotonic; verify marginal ECE drops on a held-out fold.", order:2},
-          {key:"c", text:"Compute slice-ECE on auction bid keys; verify no slice regresses.", order:3},
-          {key:"d", text:"Shadow-deploy: log new and old predicted CTRs on live traffic; compare drift.", order:4},
-          {key:"e", text:"Ramp 1&#37; -&gt; 10&#37; -&gt; 50&#37; -&gt; 100&#37; with allocator revenue and pacer overspend as guardrails.", order:5},
-          {key:"f", text:"Fit on the same training data as the ranker to save time."},
-          {key:"g", text:"Skip slice-ECE because marginal ECE is the only metric that matters."},
+          {key:"a", text:"'We get nightly post-hoc calibration on a 10k-sample held-out slice — improves probabilities without touching the ranker.' (Generic; works for any calibrator including Platt or a sigmoid head.)"},
+          {key:"b", text:"'Isotonic (PAV) captures the kinks our GBDT score creates at decision-tree split boundaries — a parametric sigmoid cannot — and it refits in seconds on a 10k held-out slice without retraining the GBDT, so we can fix calibration nightly without owning a model-retrain cycle.'", correct:true},
+          {key:"c", text:"'It is the industry standard.' (Authority, not mechanism.)"},
+          {key:"d", text:"'Brier score will drop.' (Metric-only; doesn't justify the choice over Platt.)"},
         ]}
-        trap={<>(f) and (g) are the textbook traps.</>}
-        lens={<>The right sequence: fresh held-out data, fit, marginal ECE, slice ECE, shadow, ramp with guardrails. Fitting on training data (f) over-fits the calibrator. Skipping slice ECE (g) leaves the auction allocator pain undetected.</>}
-        stretch={<>What happens if step 4 reveals 5&#37; drift on one slice?</>}
+        trap={<>(a) is the redaction trap — strip "isotonic" and "GBDT", insert "Calibrator X" and "Model Y", and (a) still reads correctly; the pitch is generic. Only (b) requires GBDT's kinks AND PAV's non-parametric monotonicity to make sense.</>}
+        lens={<>A B3 pitch must fail when the model name is redacted. (b) fails redaction (kinks at split boundaries is GBDT-specific; PAV is isotonic-specific). The other options survive redaction and therefore aren't testing the concept.</>}
+        stretch={<>If your ranker were a logistic regression (no kinks), how would the pitch change?</>}
       />
 
+      {/* axis: B4 (when NOT to use) */}
       <VIS.TrapProblem
-        id="ipb-p9" difficulty="medium"
-        title="P9 — ECE vs Brier score"
-        scenario={<>Your dashboard tracks ECE = 0.5&#37; but Brier score creeps up. Why?</>}
+        id="iso-b4"
+        difficulty="hard"
+        title="B4 — 100M items, per-item bid pacing"
+        scenario={<>You bid-pace per item. Each item has only a handful of impressions/day. Pick the calibrator policy. <em>Discriminating insight: per-item isotonic is infeasible (variance) — must shrink to a population calibrator or fit a covariate-aware variant.</em></>}
         options={[
-          {key:"a", text:"ECE measures calibration only; Brier blends calibration with discrimination (resolution). The ranker may be losing ranking quality while staying calibrated.", correct:true},
-          {key:"b", text:"Brier is biased on imbalanced data."},
-          {key:"c", text:"ECE and Brier always move together."},
-          {key:"d", text:"Brier is a deprecated metric."},
+          {key:"a", text:"Fit isotonic per item."},
+          {key:"b", text:"Fit a single global isotonic; accept that per-item pacing will be miscalibrated and add a multiplicative pacing PID loop downstream to correct.", correct:true},
+          {key:"c", text:"Skip calibration."},
+          {key:"d", text:"Fit Platt per item with strong shrinkage to global."},
         ]}
-        trap={<>(b)(c)(d) are wrong.</>}
-        lens={<>Brier = calibration + refinement (or equivalently calibration + resolution). A model whose scores are calibrated but uninformative (always predicts the base rate) has perfect ECE but a high Brier. Tracking both flags the &quot;calibrated but useless&quot; failure mode that ECE alone misses.</>}
-        stretch={<>What metric isolates resolution from calibration?</>}
+        trap={<>(a) is the seductive "more granular is better" reflex; per-item N is too small. (d) is closer but still wastes parameters when N=5. (c) breaks the auction.</>}
+        lens={<>Marginal-only calibration is a hard ceiling of Platt/isotonic. When you need per-item, you must either (i) add a downstream control loop, or (ii) move to a covariate-aware calibrator (e.g. multi-class isotonic, calibrated probability tree). Knowing the ceiling is the senior signal.</>}
+        stretch={<>Sketch the PID loop. What's its setpoint and what's the controlled variable?</>}
       />
 
+      {/* axis: B5 (adversarial application) */}
       <VIS.TrapProblem
-        id="ipb-p10" difficulty="hard" multiSelect
-        title="P10 — Logging invariants for calibration"
-        scenario={<>What must your serving infra log so calibration is auditable later? Select all that apply.</>}
+        id="iso-b5"
+        difficulty="hard"
+        title="B5 — Calibrating an LTR pairwise ranker"
+        scenario={<>Your ranker is trained pairwise (LambdaMART). It optimizes ranking metric, not log-loss. Raw scores are not probabilities by construction. Can you Platt/isotonic-calibrate it? <em>Discriminating insight: yes — Platt/isotonic only require monotone scores, not probabilistic ones; that's the whole point.</em></>}
         options={[
-          {key:"a", text:"Raw pre-calibration score s alongside calibrated probability p.", correct:true},
-          {key:"b", text:"The calibrator version ID active at serving time.", correct:true},
-          {key:"c", text:"The ranker version ID active at serving time.", correct:true},
-          {key:"d", text:"The user&apos;s click history for the last 90 days."},
-          {key:"e", text:"The serving GPU&apos;s temperature."},
+          {key:"a", text:"Yes — Platt/isotonic are post-hoc; they only need monotonic raw scores. Fit on (score, realized binary label) on a held-out set. The pairwise training objective is orthogonal.", correct:true},
+          {key:"b", text:"No — pairwise loss makes scores non-probabilistic, calibration is impossible."},
+          {key:"c", text:"Yes but only after switching to a pointwise loss."},
+          {key:"d", text:"Only Platt works; isotonic requires probabilistic input."},
         ]}
-        trap={<>(d) and (e) are useful for other things but irrelevant for calibration audits.</>}
-        lens={<>To audit calibration you must reconstruct what the score WAS and what the calibrator DID. That means logging both the raw score and the calibrated probability with version tags for both the ranker and the calibrator. Anything else (click history, GPU temp) is downstream context, not calibration provenance.</>}
-        stretch={<>Which version pair is hardest to retrofit?</>}
+        trap={<>(b), (c) confuse training objective with calibration input. (d) is false — both need only score-label pairs.</>}
+        lens={<>This is the headline use case for post-hoc calibration: LTR rankers are systematically uncalibrated because their loss doesn't care about scale. Platt/isotonic exist to bridge that gap without retraining.</>}
+        stretch={<>What's the practical risk if you calibrate an LTR ranker that has very low score variance?</>}
       />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      {/* axis: C1 (algorithmic detail) */}
+      <VIS.TrapProblem
+        id="iso-c1"
+        difficulty="hard"
+        title="C1 — Why PAV's pool-adjacent-violators step"
+        scenario={<>PAV repeatedly pools adjacent bins whose averages violate monotonicity. Why this specific algorithm — why not, e.g., constrained quadratic programming? <em>Discriminating insight: PAV is the L2-optimal monotonic fit in O(n) amortized — QP gives the same answer at higher cost.</em></>}
+        options={[
+          {key:"a", text:"PAV is provably L2-optimal among monotonic step functions and runs in O(n) after sorting — it is exactly the constrained QP solution, just computed by a specialized linear-time algorithm.", correct:true},
+          {key:"b", text:"PAV is heuristic; QP gives a better answer."},
+          {key:"c", text:"PAV doesn't actually enforce monotonicity strictly."},
+          {key:"d", text:"PAV requires labels to be binary."},
+        ]}
+        trap={<>(b) confuses heuristic with linear-time-exact. (c), (d) are false.</>}
+        lens={<>The optimality result (PAV = isotonic = L2-best monotonic fit) is why the algorithm survived 70 years. Knowing this prevents the trap of replacing it with "better optimizers" that just rediscover the same answer slower.</>}
+        stretch={<>What changes if your loss is L1 instead of L2? Is there an analogous fast algorithm?</>}
+      />
+
+      {/* axis: C2 (Platt's loss) */}
+      <VIS.TrapProblem
+        id="iso-c2"
+        difficulty="hard"
+        title="C2 — What loss does Platt scaling minimize?"
+        scenario={<>You're refitting Platt scaling. What's the optimizer doing? <em>Discriminating insight: Platt fits parameters by MLE on a sigmoid-of-score model — it's NOT minimizing Brier directly.</em></>}
+        options={[
+          {key:"a", text:"Maximum likelihood (equivalently, log-loss) on P(y|s) = sigmoid(a*s + b) over the held-out (s, y) pairs.", correct:true},
+          {key:"b", text:"Brier score directly."},
+          {key:"c", text:"Hinge loss."},
+          {key:"d", text:"Whatever loss the underlying ranker used."},
+        ]}
+        trap={<>(b) is the appealing wrong answer — Brier could be the calibration metric but Platt's original paper fits by MLE. The two losses give similar but not identical params. (d) is the redaction-failing answer — it would be true of any calibrator if it were true at all.</>}
+        lens={<>Platt's MLE choice introduces a small but real bias on the calibration set; it's known that Platt slightly over-confidences extreme probabilities. Calibration-aware variants (e.g. Platt with Laplace smoothing on the targets) reduce this — that's the "Platt smoothing trick" from the original paper.</>}
+        stretch={<>What is the Laplace smoothing trick in Platt's original 1999 paper, and why does it matter?</>}
+      />
+
+      {/* axis: C3 (what's dropped) */}
+      <VIS.TrapProblem
+        id="iso-c3"
+        difficulty="hard"
+        title="C3 — What information do Platt/isotonic discard?"
+        scenario={<>List what these post-hoc calibrators throw away from the ranker's full score distribution. <em>Discriminating insight: only the monotone projection survives — feature-conditional structure, uncertainty, multi-modality are all collapsed.</em></>}
+        multiSelect
+        options={[
+          {key:"a", text:"Per-feature contribution to the score (Platt/isotonic see one scalar s, not the input vector).", correct:true},
+          {key:"b", text:"Epistemic uncertainty (no interval, just point estimate).", correct:true},
+          {key:"c", text:"Non-monotonic structure in the score-prob curve (PAV pools any violators).", correct:true},
+          {key:"d", text:"The ranker's gradient information."},
+          {key:"e", text:"All of the labels."},
+        ]}
+        trap={<>(d) is true but irrelevant (calibration is post-hoc; gradients are training-time). (e) is just false — labels are exactly what's used.</>}
+        lens={<>Three concrete losses, all flowing from the design choice of "post-hoc, score to prob, monotonic." Knowing what's discarded tells you when to reach for a more expressive calibrator (per-segment, covariate-aware, conformal).</>}
+        stretch={<>Which of the three discarded properties is the most expensive to recover via downstream systems?</>}
+      />
+
+      {/* axis: C4 (hyperparameter sensitivity) */}
+      <VIS.TrapProblem
+        id="iso-c4"
+        difficulty="hard"
+        mode="ordered"
+        title="C4 — Rank knobs by 'breaks production if mis-set'"
+        scenario={<>Order from most-catastrophic to least: (a) calibration-set freshness, (b) calibration-set size, (c) which subgroup the calibration set is sampled from, (d) Platt vs isotonic choice. <em>Discriminating insight: subgroup-sampling bias is dominant; family choice is a 1-2 percent Brier gap.</em></>}
+        options={[
+          {key:"a", text:"Subgroup sampling — if calibration set under-represents a high-value segment, you get marginal-calibrated, segment-miscalibrated outputs and silent revenue loss.", order:1},
+          {key:"b", text:"Freshness — distribution shift between calibration fit and serving makes the fitted map stale; cost grows linearly with staleness.", order:2},
+          {key:"c", text:"Size — too small inflates variance (isotonic) or under-fits (Platt); detectable on reliability diagrams.", order:3},
+          {key:"d", text:"Platt vs isotonic — usually a 1-2 percent Brier gap; less dangerous than the above."},
+        ]}
+        trap={<>Many candidates rank Platt-vs-isotonic high because it's the most "calibration-y" choice. In practice the sampling-bias and freshness knobs dominate by orders of magnitude.</>}
+        lens={<>The Platt-vs-isotonic choice is downstream of getting the calibration <em>set</em> right. Senior MLEs spend more time on data than on family choice.</>}
+        stretch={<>How do you detect subgroup-sampling bias in your calibration set before it bites?</>}
+      />
+
+      {/* axis: C5 (data assumption violation) */}
+      <VIS.TrapProblem
+        id="iso-c5"
+        difficulty="hard"
+        title="C5 — What assumption breaks under feedback loops?"
+        scenario={<>You fit Platt nightly. Predictions feed an auction. The auction selectively shows high-predicted-CTR items; realized clicks therefore over-represent high-score items. What goes wrong? <em>Discriminating insight: the calibration set inherits selection bias from the system the calibrator serves — IID assumption breaks.</em></>}
+        options={[
+          {key:"a", text:"The held-out (s, y) pairs are no longer IID from the population; they're conditioned on the system having previously shown the item. Platt/isotonic learn the conditional, not the marginal — when serving on the full candidate pool, they're miscalibrated.", correct:true},
+          {key:"b", text:"Nothing — Platt is robust to feedback."},
+          {key:"c", text:"Only isotonic is affected."},
+          {key:"d", text:"The labels become noisier."},
+        ]}
+        trap={<>(b), (c) are false. (d) is a downstream symptom, not the mechanism.</>}
+        lens={<>This is the canonical "calibration on logged data" problem. Fixes: (i) IPS-weighted refit (re-weight by 1/propensity), (ii) reserved exploration traffic to fit on. The post-hoc calibrator inherits whatever bias the data-collection policy has.</>}
+        stretch={<>Sketch the IPS-weighted Platt fit. What propensity do you need?</>}
+      />
+
+      {/* axis: C6 (algorithmic edge case) */}
+      <VIS.TrapProblem
+        id="iso-c6"
+        difficulty="hard"
+        title="C6 — Isotonic's tie-handling at the boundary"
+        scenario={<>Two different raw scores get mapped to the same calibrated probability by isotonic (PAV pools them). Downstream auction logic uses calibrated p to break ties. What's the consequence? <em>Discriminating insight: PAV's pooling collapses ranking information that the raw ranker had — auctions need a tie-breaker upstream of the calibrator.</em></>}
+        options={[
+          {key:"a", text:"Auction tie-breaking now arbitrarily orders items the ranker had clearly distinguished — revenue loss from sub-optimal ranking within tied buckets. Fix: keep the raw score as a tie-breaker downstream of the calibrated p, or use kernel-smoothed isotonic.", correct:true},
+          {key:"b", text:"No issue — ties are handled by the auction."},
+          {key:"c", text:"Always switch to Platt to avoid this."},
+          {key:"d", text:"Re-fit isotonic with more bins."},
+        ]}
+        trap={<>(c) over-corrects (Platt fits a sigmoid that may not fit the data). (d) misunderstands PAV — it pools because the data demands it, not because of bin count.</>}
+        lens={<>PAV is L2-optimal monotonic, but it intentionally pools statistically-indistinguishable bins. That's correct for calibration; wrong for tie-breaking. Two-key sort (calibrated p first, raw s second) is the standard production fix.</>}
+        stretch={<>Does Platt have an analogous issue? Why or why not?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      {/* axis: D1 (intuitive but wrong) */}
+      <VIS.TrapProblem
+        id="iso-d1"
+        difficulty="hard"
+        title="D1 — 'More flexible = better calibrator'"
+        scenario={<>Junior intuition: "isotonic is more flexible than Platt, so always pick isotonic." Why is this often wrong? <em>Discriminating insight: flexibility is bias-reducing but variance-inflating; on small calibration sets Platt strictly dominates.</em></>}
+        options={[
+          {key:"a", text:"Flexibility trades bias for variance. On small calibration sets (a few hundred positives) isotonic's variance dominates Platt's bias, especially in the tails where PAV pools across very few observations.", correct:true},
+          {key:"b", text:"Isotonic is always better."},
+          {key:"c", text:"Platt has higher capacity."},
+          {key:"d", text:"Isotonic ignores the labels."},
+        ]}
+        trap={<>(b), (c), (d) are textbook wrong. (b) is the trap intuition the question targets.</>}
+        lens={<>The bias-variance frame is the right mental model. Calibrators are estimators, and estimators tradeoff. PAV's variance at the tails is the production failure mode.</>}
+        stretch={<>How does the optimal Platt-vs-isotonic crossover scale with positives count?</>}
+      />
+
+      {/* axis: D2 (wrong-assumption cascade) */}
+      <VIS.TrapProblem
+        id="iso-d2"
+        difficulty="hard"
+        title="D2 — 'Marginally calibrated = well calibrated'"
+        scenario={<>Your CTO sees the reliability diagram is flat and concludes "we're calibrated." List the downstream wrong consequences. <em>Discriminating insight: marginal calibration says nothing about per-segment; auctions / pacers / budget allocators all need segment-level.</em></>}
+        multiSelect
+        options={[
+          {key:"a", text:"Per-segment auction bids will be systematically wrong on segments under-represented in the calibration set.", correct:true},
+          {key:"b", text:"Budget pacing over-spends on segments where realized CTR exceeds predicted.", correct:true},
+          {key:"c", text:"Cohort-level lifts in A/B tests will look noisier than they actually are.", correct:true},
+          {key:"d", text:"The ranker itself is now overfitted."},
+          {key:"e", text:"Latency increases."},
+        ]}
+        trap={<>(d), (e) are unrelated.</>}
+        lens={<>Marginal calibration is necessary but not sufficient for any decision that conditions on a segment. The CTO's "we're good" needs a per-slice reliability dashboard, not the aggregate.</>}
+        stretch={<>What's the single best automated check that catches segment-level miscalibration?</>}
+      />
+
+      {/* axis: D3 (senior-vs-junior signal) */}
+      <VIS.TrapProblem
+        id="iso-d3"
+        difficulty="hard"
+        title="D3 — Junior: fit Platt. Senior: ?"
+        scenario={<>Your CTR predictions drift right by 15 percent. Junior reflex: refit Platt nightly. What does the senior do first? <em>Discriminating insight: senior asks "why did the score distribution shift?" — recalibration treats the symptom; root cause is upstream feature drift.</em></>}
+        options={[
+          {key:"a", text:"Diagnose the source of the score distribution shift — feature drift, label drift, retrieval-set change — before refitting. Recalibrating a broken ranker hides upstream rot.", correct:true},
+          {key:"b", text:"Refit Platt and ship."},
+          {key:"c", text:"Switch to isotonic."},
+          {key:"d", text:"Add more parameters to Platt."},
+        ]}
+        trap={<>(b), (c), (d) treat calibration as the lever when it's the diagnostic.</>}
+        lens={<>Calibration drift is a high-signal alarm. The senior reads the alarm and traces upstream; the junior silences it. Knowing what the alarm actually <em>means</em> is the senior skill.</>}
+        stretch={<>Name three upstream causes of a 15 percent CTR prediction drift.</>}
+      />
+
+      {/* axis: D4 (plausible misattribution) */}
+      <VIS.TrapProblem
+        id="iso-d4"
+        difficulty="hard"
+        title="D4 — Tail miscalibration after retraining"
+        scenario={<>You retrain the ranker (no changes to calibrator). Marginal reliability is flat, but the top 1 percent of predictions over-predict by 8 points. Three causes: (1) Platt's sigmoidal mis-fit at tail, (2) isotonic's tail-pooling sparsity, (3) ranker now has bimodal score distribution. Diagnose. <em>Discriminating insight: Platt cannot fit S-curves with extreme-tail kinks; ranker bimodality is the upstream cause.</em></>}
+        options={[
+          {key:"a", text:"If using Platt: tail miscalibration is structural — the sigmoid family cannot fit the bimodal-ranker tail. Switch to isotonic OR fit a tail-aware variant (Platt + extra extreme-tail param).", correct:true},
+          {key:"b", text:"Always isotonic's fault — refit isotonic."},
+          {key:"c", text:"Always ranker's fault — undo the retrain."},
+          {key:"d", text:"Always sample size — get more data."},
+        ]}
+        trap={<>(b), (c), (d) over-blame one factor.</>}
+        lens={<>Tail miscalibration with marginal-flat reliability is a Platt-shape mismatch tell. Diagnose by plotting per-decile reliability, not just the aggregate diagram.</>}
+        stretch={<>What's the cheapest fix that keeps Platt's variance benefits at the tails?</>}
+      />
+
+      {/* axis: D5 (temperature is enough) */}
+      <VIS.TrapProblem
+        id="iso-d5"
+        difficulty="medium"
+        title="D5 — 'Temperature scaling = Platt for CTR rankers'"
+        scenario={<>A deep-CTR paper uses temperature scaling and claims it's "Platt-equivalent." When does this break? <em>Discriminating insight: temperature is 1-param Platt without the intercept — fine for symmetric miscalibration, wrong when the ranker is over/under-confident asymmetrically.</em></>}
+        options={[
+          {key:"a", text:"Temperature scaling is Platt with the intercept term forced to zero — it can correct symmetric over/under-confidence but cannot shift the decision boundary. Asymmetric miscalibration (over-predict highs, under-predict lows) needs the full 2-param Platt.", correct:true},
+          {key:"b", text:"They're equivalent always."},
+          {key:"c", text:"Temperature doesn't apply to non-deep models."},
+          {key:"d", text:"Platt only works on deep models."},
+        ]}
+        trap={<>(b) is the seductive paper-claim. (c), (d) confuse model family.</>}
+        lens={<>Temperature is a special case of Platt. Knowing the constraint (intercept = 0) tells you when it suffices and when you need the second parameter.</>}
+        stretch={<>Sketch a CTR score distribution where temperature fails but Platt succeeds.</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      {/* axis: E1 (production gotcha) */}
+      <VIS.TrapProblem
+        id="iso-e1"
+        difficulty="hard"
+        title="E1 — Nightly Platt refit on a logged sample — what breaks?"
+        scenario={<>You refit Platt nightly on a uniform sample of yesterday's served impressions. Predictions drift right over a week. Why? <em>Discriminating insight: served impressions are NOT a uniform sample — they're conditioned on the ranker's own choices; calibrator inherits selection bias.</em></>}
+        options={[
+          {key:"a", text:"Logged-impression sampling is biased by the policy that did the serving — high-score items are over-represented. The Platt fit is on a conditional distribution, not the marginal; serving applies it to the full candidate pool, where it mis-calibrates the low-score side.", correct:true},
+          {key:"b", text:"Platt drifts naturally."},
+          {key:"c", text:"Isotonic would have been stable."},
+          {key:"d", text:"GPU clock drift."},
+        ]}
+        trap={<>(c) is wrong — isotonic has the same problem on the same data. (b), (d) are non-explanations.</>}
+        lens={<>The fix is fitting on a reserved exploration slice (small fraction of traffic served by uniform sampling), or IPS-weighted refit. Either way, recognize that "calibrate on logged data" is a biased estimator without correction.</>}
+        stretch={<>What size of exploration slice is enough? How do you bound the cost?</>}
+      />
+
+      {/* axis: E2 (failure-on-Friday) */}
+      <VIS.TrapProblem
+        id="iso-e2"
+        difficulty="hard"
+        title="E2 — Friday 3am: Brier OK, segment alerts firing"
+        scenario={<>Your model's marginal Brier is unchanged. But three high-value advertiser segments are off-pacing by 12-25 percent. Latency, eval, GPU all fine. Why isotonic-specifically and not raw-score? <em>Discriminating insight: isotonic guarantees only marginal calibration; segment off-pacing is the canonical isotonic failure that raw scores don't even pretend to fix.</em></>}
+        options={[
+          {key:"a", text:"Isotonic was fit on aggregate data; it's marginally calibrated but the per-segment reliability has drifted. The raw ranker had no calibration claim at all, so it cannot be the source of a regression that started after the isotonic refit.", correct:true},
+          {key:"b", text:"GPU thermal."},
+          {key:"c", text:"Random."},
+          {key:"d", text:"Calibration always drifts on Fridays."},
+        ]}
+        trap={<>(b), (c), (d) are red herrings.</>}
+        lens={<>The page is the segment-miscalibration alarm; the fix is per-segment calibration with shrinkage (covariate-aware isotonic, or per-segment Platt). The mistake to avoid is "refit isotonic on more data" — more aggregate data doesn't fix segment-level structure.</>}
+        stretch={<>Sketch the per-segment calibration pipeline. What's the shrinkage target?</>}
+      />
+
+      {/* axis: E3 (implementation specifics) */}
+      <VIS.TrapProblem
+        id="iso-e3"
+        difficulty="hard"
+        title="E3 — scikit-learn IsotonicRegression default that bites"
+        scenario={<>You use <code>sklearn.isotonic.IsotonicRegression</code>. There's a default that silently breaks production. Which? <em>Discriminating insight: out_of_bounds is 'nan' by default — out-of-range scores at serving return NaN instead of clipping, taking down the downstream auction.</em></>}
+        options={[
+          {key:"a", text:"`out_of_bounds='nan'` — at serving time, scores beyond the calibration set's range return NaN instead of clipping. Set `out_of_bounds='clip'` (or rebuild bounds on streaming data).", correct:true},
+          {key:"b", text:"`increasing=True` — default is False."},
+          {key:"c", text:"`y_min=0` — default is None."},
+          {key:"d", text:"It uses log-space by default."},
+        ]}
+        trap={<>(b) is the inverse of true (default is 'auto'). (c), (d) are misreadings.</>}
+        lens={<>This default has killed at least one production bid pipeline mid-shift. Always set `out_of_bounds='clip'` for production isotonic.</>}
+        stretch={<>What's the diagnostic that catches this before launch?</>}
+      />
+
+      {/* axis: E4 (rollout) */}
+      <VIS.TrapProblem
+        id="iso-e4"
+        difficulty="hard"
+        mode="ordered"
+        title="E4 — Order the calibrator-rollout phases"
+        scenario={<>Phases: (a) shadow log calibrated probabilities (don't serve), (b) mirror auction (both calibrators score; old serves; you compare bid impact), (c) small-traffic ramp, (d) full traffic + retire old calibrator. <em>Discriminating insight: mirror auction is where you measure bid-impact — skip it and Friday-3am pages happen.</em></>}
+        options={[
+          {key:"a", text:"Shadow log — verify the new calibrator runs at production load without affecting users.", order:1},
+          {key:"b", text:"Mirror auction — fit and validate calibrated bids against realized outcomes.", order:2},
+          {key:"c", text:"Small-traffic ramp.", order:3},
+          {key:"d", text:"Full traffic + retire old calibrator.", order:4},
+          {key:"e", text:"Skip shadow — go straight to ramp."},
+          {key:"f", text:"Retire old calibrator first."},
+        ]}
+        trap={<>Many candidates skip mirror auction or fit during ramp. The mirror is where you have aligned (old_bid, new_bid, realized) tuples — that's the only place to safely validate bid impact.</>}
+        lens={<>Calibrator rollouts mirror model rollouts but the alarm window is faster (revenue impact in hours, not days). Mirror auction is non-optional.</>}
+        stretch={<>What's the rollback SLO at each ramp step?</>}
+      />
+
+      {/* axis: E5 (reproducibility) */}
+      <VIS.TrapProblem
+        id="iso-e5"
+        difficulty="hard"
+        title="E5 — Reproducing 'isotonic beats Platt by 4 percent Brier'"
+        scenario={<>A 2024 industry blog claims isotonic gives 4 percent lower Brier than Platt on their CTR data. You can't reproduce. Which experimental property must match? <em>Discriminating insight: gap depends on (1) calibration-set size, (2) score-prob curve shape — both unique to their data, neither published.</em></>}
+        multiSelect
+        options={[
+          {key:"a", text:"Their calibration set size — gap shrinks with N and may invert at small N.", correct:true},
+          {key:"b", text:"Their underlying ranker's score-vs-prob curve shape (sigmoidal favors Platt; kinked favors isotonic).", correct:true},
+          {key:"c", text:"Their Brier metric variant (binary vs multi-class).", correct:true},
+          {key:"d", text:"Their GPU vendor."},
+          {key:"e", text:"Their random seed."},
+        ]}
+        trap={<>(d) is irrelevant. (e) is a minor effect.</>}
+        lens={<>Calibration benchmarks rarely transfer — the gap is dominated by data properties the blog probably didn't publish. Treat such numbers as upper bounds on your own.</>}
+        stretch={<>Design a benchmark that DOES transfer between teams. What does it sample over?</>}
+      />
+
+      {/* axis: E6 (staleness monitor) */}
+      <VIS.TrapProblem
+        id="iso-e6"
+        difficulty="hard"
+        title="E6 — Monitoring Platt for staleness"
+        scenario={<>Pick the monitor that detects calibrator staleness fastest. <em>Discriminating insight: marginal reliability diagrams are slow; raw-score-distribution KL-shift catches it before labels arrive.</em></>}
+        options={[
+          {key:"a", text:"Raw-score-distribution KL divergence between training and serving windows — catches upstream feature/ranker shifts the calibrator hasn't seen, hours before they manifest as miscalibration on labels.", correct:true},
+          {key:"b", text:"Daily marginal Brier."},
+          {key:"c", text:"Weekly reliability diagram."},
+          {key:"d", text:"Click-through volume."},
+        ]}
+        trap={<>(b), (c) catch the problem only after labels arrive (lag of hours-to-days). (d) is a downstream symptom.</>}
+        lens={<>The senior monitoring move is to catch the <em>cause</em> (input distribution shift) before the <em>effect</em> (label-mediated miscalibration). KL on raw scores is the canonical leading indicator.</>}
+        stretch={<>What's the right KL threshold to alarm on? How do you calibrate it?</>}
+      />
+
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      {/* axis: F1 (high-noise data) */}
+      <VIS.TrapProblem
+        id="iso-f1"
+        difficulty="hard"
+        title="F1 — Calibrating on noisy labels (autoplay clicks)"
+        scenario={<>40 percent of your 'click' labels are autoplay accidents. You fit Platt nightly. What's the specific failure? <em>Discriminating insight: Platt fits the noisy joint, not the true conditional — calibrated outputs over-predict click rates by exactly the noise floor.</em></>}
+        options={[
+          {key:"a", text:"Platt minimizes log-loss against the observed label distribution, which includes the 40 percent noise. The fitted calibrator therefore systematically over-predicts P(real click) by the noise floor. Fix: de-noise labels upstream (action-vocab discrimination) or fit on a cleaner label proxy.", correct:true},
+          {key:"b", text:"Platt is robust to label noise."},
+          {key:"c", text:"Isotonic would have been fine."},
+          {key:"d", text:"Noise washes out at scale."},
+        ]}
+        trap={<>(b) is false. (c) is identical-failure-different-method. (d) is wrong: bias from label noise is asymptotic, not vanishing.</>}
+        lens={<>Calibrators inherit label-noise bias. The cure is upstream (de-noise the labels) or a noise-aware objective (e.g. fit on label-confidence-weighted examples).</>}
+        stretch={<>How would you weight examples by label confidence in a Platt fit?</>}
+      />
+
+      {/* axis: F2 (adversarial) */}
+      <VIS.TrapProblem
+        id="iso-f2"
+        difficulty="hard"
+        title="F2 — Adversarial input that breaks isotonic specifically"
+        scenario={<>Construct an attack that degrades isotonic more than Platt. <em>Discriminating insight: small-N tail injection — adding a few high-score positives to the calibration set forces PAV to pool the entire top decile.</em></>}
+        options={[
+          {key:"a", text:"Inject a small number of high-score positive examples into the calibration set. PAV's tail-pooling step collapses the entire top decile into one calibrated value, destroying the ranker's discrimination at the top. Platt is parametric and only shifts the sigmoid parameters slightly.", correct:true},
+          {key:"b", text:"Random noise."},
+          {key:"c", text:"Adversarial gradients."},
+          {key:"d", text:"Empty calibration set."},
+        ]}
+        trap={<>(b), (c), (d) hurt every calibrator. The asymmetry on the tail is isotonic-specific.</>}
+        lens={<>PAV's L2-optimal-monotonic property is its strength on clean data and its weakness on adversarial tails. Knowing this tells you to monitor pool sizes per decile, not just the marginal reliability.</>}
+        stretch={<>What monitor would have caught this attack?</>}
+      />
+
+      {/* axis: F3 (paper-named failure) */}
+      <VIS.TrapProblem
+        id="iso-f3"
+        difficulty="hard"
+        title="F3 — Marginal-only failure flagged in calibration literature"
+        scenario={<>Calibration papers (Naeini et al. 2015; recent industry blogs) name a specific failure mode of Platt/isotonic that fundamentally cannot be fixed post-hoc. Which? <em>Discriminating insight: conditional miscalibration (per-segment) — Platt/isotonic operate on the scalar score only, can't condition on segment features.</em></>}
+        options={[
+          {key:"a", text:"Per-segment miscalibration in the presence of marginal calibration — flagged repeatedly in the calibration literature. The fix requires moving from score-only post-hoc calibrators to covariate-aware ones (per-segment fit, conditional isotonic, calibrated probability trees).", correct:true},
+          {key:"b", text:"Latency."},
+          {key:"c", text:"Compute."},
+          {key:"d", text:"Memory."},
+        ]}
+        trap={<>(b), (c), (d) are operational concerns, not the literature's named flaw.</>}
+        lens={<>This is the single most-cited limitation. The fix requires giving the calibrator covariates, not more data on the same scalar.</>}
+        stretch={<>What's the simplest covariate-aware extension that doesn't blow up the calibration sample size?</>}
+      />
+
+      {/* axis: F4 (multi-objective failure) */}
+      <VIS.TrapProblem
+        id="iso-f4"
+        difficulty="hard"
+        title="F4 — Calibrating a multi-objective ranker"
+        scenario={<>Ranker outputs three scores (P(click), P(watch &gt; 30s), P(share)). Fit a separate Platt per objective. Recombine via weighted sum. What breaks? <em>Discriminating insight: per-head Platts are not jointly calibrated — sum-of-calibrated is not calibrated-sum.</em></>}
+        options={[
+          {key:"a", text:"Each Platt is marginally calibrated for its own head; the weighted sum is NOT calibrated for any joint quantity. The auction (which consumes the sum) sees a miscalibrated bid. Fix: fit a joint calibrator on the recombined score, or use a multi-head proper-scoring loss.", correct:true},
+          {key:"b", text:"Weighted sums are always calibrated."},
+          {key:"c", text:"Only the click head matters."},
+          {key:"d", text:"Latency triples."},
+        ]}
+        trap={<>(b) is the textbook reflex. (c) is wrong. (d) is irrelevant to calibration.</>}
+        lens={<>This is the multi-objective gotcha: composing calibrated heads is not calibration-preserving. Fit downstream of the combiner, not upstream.</>}
+        stretch={<>Sketch the right architecture: where should the calibrator sit?</>}
+      />
+
+      {/* axis: F5 (community-found) */}
+      <VIS.TrapProblem
+        id="iso-f5"
+        difficulty="hard"
+        title="F5 — Why the conformal-prediction wave threatens Platt"
+        scenario={<>Why is industry shifting attention from Platt/isotonic to conformal prediction in 2024-2025? <em>Discriminating insight: Platt gives pointwise probabilities without coverage guarantees; conformal gives finite-sample distribution-free coverage — what auctions and risk-aware allocators want.</em></>}
+        options={[
+          {key:"a", text:"Platt/isotonic give a point probability with no uncertainty bound; conformal gives a finite-sample, distribution-free coverage guarantee on a prediction set. Downstream risk-aware decisions (auction, budget pacing, regulatory) need the interval, not the point.", correct:true},
+          {key:"b", text:"Conformal is faster."},
+          {key:"c", text:"Platt is being deprecated by scikit-learn."},
+          {key:"d", text:"Conformal works on smaller data."},
+        ]}
+        trap={<>(b), (c), (d) are non-answers. The coverage guarantee is the real driver.</>}
+        lens={<>Conformal isn't replacing Platt; it's complementing it. The industry is realizing that auctions and pacers want intervals, not points. Senior MLEs know which downstream consumer needs which.</>}
+        stretch={<>For which downstream consumers is conformal worth the cost? For which is Platt enough?</>}
+      />
+
+      {/* axis: F6 (debugging) */}
+      <VIS.TrapProblem
+        id="iso-f6"
+        difficulty="hard"
+        title="F6 — Reliability diagram looks perfect; clicks still mis-priced"
+        scenario={<>Your aggregate reliability diagram is dead flat. Auction logic is still over-bidding by 8 percent on certain queries. Diagnose. <em>Discriminating insight: aggregate reliability hides query-level heterogeneity; the diagram is the wrong tool for segment-level calibration.</em></>}
+        options={[
+          {key:"a", text:"Aggregate reliability is the marginal — it cannot detect per-query miscalibration. Plot reliability diagrams stratified by query type / segment to find the leak.", correct:true},
+          {key:"b", text:"Reliability diagrams are unreliable."},
+          {key:"c", text:"Switch to Brier."},
+          {key:"d", text:"Refit Platt."},
+        ]}
+        trap={<>(b), (c), (d) are non-diagnostics.</>}
+        lens={<>The marginal-vs-conditional distinction shows up here as "the standard dashboard hides the failure." Stratified reliability is the standard production add-on.</>}
+        stretch={<>How many segments is enough? At what point does stratification become noise?</>}
+      />
+
+      {/* axis: F7 (silent regression) */}
+      <VIS.TrapProblem
+        id="iso-f7"
+        difficulty="hard"
+        title="F7 — Isotonic refit at midnight, regression at noon"
+        scenario={<>Isotonic refits at midnight. By noon, predicted CTR overshoots realized on the morning cohort. <em>Discriminating insight: the midnight calibration set is over-represented by evening-cohort traffic; morning users have a different score distribution.</em></>}
+        options={[
+          {key:"a", text:"The calibration set sampled from the previous evening over-represents one diurnal cohort. Morning traffic has a different score distribution; the fitted isotonic over-shoots. Fix: stratified-by-hour sampling, or hourly micro-refits.", correct:true},
+          {key:"b", text:"Isotonic always degrades by noon."},
+          {key:"c", text:"GPU thermal."},
+          {key:"d", text:"More data."},
+        ]}
+        trap={<>(b), (c), (d) are non-explanations.</>}
+        lens={<>Diurnal sampling bias in the calibration set is the most common, least-discussed isotonic failure mode in production. Cure is stratified sampling, not more data.</>}
+        stretch={<>What sample size per hour stratum is enough? How do you decide?</>}
+      />
+
+      {/* axis: F8 (distillation interplay) */}
+      <VIS.TrapProblem
+        id="iso-f8"
+        difficulty="hard"
+        title="F8 — Distillation undoes Platt"
+        scenario={<>You distill the teacher (Platt-calibrated) into a student. Student's reliability diagram is now miscalibrated. Why? <em>Discriminating insight: distillation softens output distributions — student's logits are not on the same scale as teacher's, so teacher's Platt parameters don't transfer.</em></>}
+        options={[
+          {key:"a", text:"Distillation with temperature softens probabilities so the student's output is on a different logit scale than the teacher's. The Platt parameters (a, b) were fit on teacher logits; they're wrong for student logits. The student needs its own Platt refit on fresh held-out data.", correct:true},
+          {key:"b", text:"Student is always miscalibrated."},
+          {key:"c", text:"Temperature scaling fixes it automatically."},
+          {key:"d", text:"Distillation preserves calibration."},
+        ]}
+        trap={<>(d) is the seductive textbook reflex; it's false.</>}
+        lens={<>This is the bridge to the post-distillation-calibration concept. Senior MLEs know that any compression/distillation step requires a fresh calibrator fit.</>}
+        stretch={<>What's the smallest held-out set size that lets you safely refit Platt on the student?</>}
+      />
+
     </VIS.Section>
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://scikit-learn.org/stable/modules/calibration.html" target="_blank" rel="noopener">scikit-learn user guide — <em>Probability calibration</em> (docs)</a> — worked examples of isotonic vs Platt with reliability diagrams.</li>
-        <li><a href="https://eugeneyan.com/writing/calibration-of-probabilistic-models/" target="_blank" rel="noopener">Eugene Yan — <em>Calibration of Probabilistic Models</em> (blog)</a> — practitioner tour of ECE, reliability plots, multi-calibration.</li>
-        <li><a href="https://arxiv.org/abs/1706.04599" target="_blank" rel="noopener">Guo, Pleiss, Sun, Weinberger — <em>On Calibration of Modern Neural Networks</em> (ICML 2017, paper)</a> — temperature scaling vs Platt vs isotonic for deep nets.</li>
-        <li><a href="https://www.fharrell.com/post/calibration/" target="_blank" rel="noopener">Frank Harrell — <em>Statistically Efficient Ways to Quantify Added Predictive Value</em> (blog)</a> — calibration in clinical risk models, transfers to recsys.</li>
-        <li><a href="https://www.youtube.com/watch?v=AunotauS5yI" target="_blank" rel="noopener">Adrian Olszewski — <em>Reliability diagrams and ECE</em> (video)</a> — visual primer on calibration metrics.</li>
+        <li>
+          <a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener"><strong>Eugene Yan — System design for discovery</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(blog, 2024)</span>
+          <br/>Practical engineering lens on where Platt / isotonic sit in a production recsys stack.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/1706.04599" target="_blank" rel="noopener"><strong>Guo et al. — On Calibration of Modern Neural Networks</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(ICML 2017)</span>
+          <br/>Foundational treatment of temperature scaling vs Platt; reliability diagrams; ECE.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2107.07511" target="_blank" rel="noopener"><strong>Angelopoulos and Bates — Gentle Introduction to Conformal Prediction</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(arXiv 2021)</span>
+          <br/>The next-step alternative to Platt/isotonic for downstream consumers that need coverage, not point estimates.
+        </li>
       </ul>
     </VIS.Section>
   </main>
 );
+
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 
 </script>
