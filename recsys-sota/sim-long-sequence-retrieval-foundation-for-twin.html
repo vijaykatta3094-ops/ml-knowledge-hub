@@ -1414,298 +1414,592 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// SIM (Search-based Interest Model) — foundational long-sequence retrieval for CTR.
+// SIM — Search-based User Interest Modeling (Alibaba, CIKM 2020 → industry baseline 2024)
+// v2 redo — 30+ trap problems spanning A-F taxonomy axes, redaction-litmus passed.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · Lifelong sequence models"
-      title="SIM — Search-based Interest Model (foundation for TWIN)"
-      subtitle="Two-stage attention over a user's lifetime: cheap category retrieval first, expensive attention second."
+      title="SIM — Search-based User Interest Modeling"
+      subtitle="Retrieve-then-attend over lifelong user history. The two-stage GSU+ESU recipe that made TWIN possible."
       byline={[
-        {label: "Paper", value: "Pi et al., CIKM 2020"},
-        {label: "Use", value: "Industry baseline through 2024"},
+        {label: "Paper", value: "Pi et al., CIKM 2020 (Alibaba)"},
+        {label: "Year", value: "2020 (industry baseline through 2024)"},
+        {label: "Domain", value: "Lifelong sequential CTR"},
       ]}/>
 
     <VIS.TLDR>
-      Instead of attending over a user's last K events (like <VIS.Term def="Deep Interest Network — applies attention from the candidate item over a user's recent behavior sequence (typically K=100-1000).">DIN</VIS.Term>),
-      SIM keeps the entire <strong>lifelong</strong> history (often 10K-50K events) and uses a two-stage shortlist:
-      a hard category filter (<strong>GSU</strong>) followed by candidate-conditioned attention (<strong>ESU</strong>).
-      You get most of the signal of attending over everything at 1% of the FLOPs.
+      <VIS.Term def="Deep Interest Network — Alibaba's target-attention CTR model that scores against the last ~50-200 user actions.">DIN</VIS.Term> truncates the user history to the last K actions; SIM keeps the full lifelong sequence (10³-10⁴ events) by inserting a cheap <strong>General Search Unit (GSU)</strong> that retrieves a target-relevant subset before DIN-style <strong>Exact Search Unit (ESU)</strong> attention runs. Hard-search GSU matches by item category; soft-search uses pre-trained embeddings. SIM's GSU/ESU space mismatch is exactly what TWIN/TWIN-V2 were built to fix.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        A user's lifelong behavior sequence is <em>too long</em> to attend over directly — 50K events × 64-dim embedding × ~256 candidates per request blows the latency budget by 100×.
-        <VIS.Term def="Search-based Interest Model — Alibaba 2020. Two-stage attention over lifelong user history: hard or soft retrieval first, then candidate-conditioned attention over the shortlist.">SIM</VIS.Term> solves this with a two-stage architecture:
+        SIM is a two-stage CTR ranker. Given a request (user, target_item), the GSU retrieves a target-relevant subset of the user's lifelong behaviors (10³-10⁴ events compressed to ~50-200); the ESU then runs DIN-style target attention over that subset and produces a pointwise CTR score.
       </p>
-      <ol>
-        <li><strong><VIS.Term def="General Search Unit — the first stage of SIM. Retrieves a short relevant subsequence from the user's lifelong history using a cheap signal (typically category match between candidate and history items).">GSU (General Search Unit)</VIS.Term></strong> — given a candidate item, retrieve the K' (~100-200) most relevant events from the user's lifelong history. SIM-Hard uses inverted-index lookup on category/tag id; SIM-Soft uses a coarse embedding similarity.</li>
-        <li><strong><VIS.Term def="Exact Search Unit — the second stage of SIM. Runs full candidate-conditioned attention (DIN-style) over the K' items retrieved by GSU.">ESU (Exact Search Unit)</VIS.Term></strong> — run the expensive DIN-style attention over the short K' shortlist.</li>
-      </ol>
-
       <VIS.Mermaid chart={`
 flowchart TB
-  U["Lifelong history<br/>10K-50K events"]
-  C["Candidate item"]
-  C --> GSU["GSU: hard or soft retrieval"]
-  U --> GSU
-  GSU --> SHORT["Shortlist K' = 100-200"]
-  C --> ESU["ESU: DIN-style attention"]
-  SHORT --> ESU
-  ESU --> INT["User interest vector"]
-  INT --> CTR["CTR head"]
-  style GSU fill:#fef3c7,stroke:#d97706,stroke-width:2px
+  H["User lifelong history (1e3 to 1e4 events)"]
+  T["Target item"]
+  H --> GSU["GSU: retrieve top-K behaviors relevant to target"]
+  T --> GSU
+  GSU --> SUB["Behavior subset (50 to 200)"]
+  SUB --> ESU["ESU: DIN target attention"]
+  T --> ESU
+  ESU --> CTR["Pointwise CTR head"]
+  style GSU fill:#dbeafe,stroke:#1e40af,stroke-width:2px
   style ESU fill:#dcfce7,stroke:#16a34a,stroke-width:2px
       `} />
-      <p style={{color: "#475569", fontSize: 14}}>The GSU is the latency win: it turns an O(N) attention into O(K') by pre-filtering N→K' with a cheap index.</p>
+      <p>
+        Hard-search GSU is a category-match lookup (no learnable params, CPU-friendly). Soft-search GSU uses pre-trained embedding inner-products with an optional ANN backend.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-differs" title="How it differs from DIN and YouTubeDNN">
-      <table style={{width: "100%", borderCollapse: "collapse", fontSize: 14}}>
-        <thead><tr style={{background: "#1f3a5f", color: "white"}}>
-          <th style={{padding: 8, textAlign: "left"}}>Approach</th>
-          <th style={{padding: 8, textAlign: "left"}}>History length</th>
-          <th style={{padding: 8, textAlign: "left"}}>Retrieval signal</th>
-          <th style={{padding: 8, textAlign: "left"}}>Compute per candidate</th>
-        </tr></thead>
-        <tbody>
-          <tr><td style={{padding: 8}}>YouTubeDNN avg-pool</td><td style={{padding: 8}}>~50 (truncated)</td><td style={{padding: 8}}>none — flat avg</td><td style={{padding: 8}}>O(1)</td></tr>
-          <tr style={{background: "#e8f0fa"}}><td style={{padding: 8}}>DIN</td><td style={{padding: 8}}>last 100-1000</td><td style={{padding: 8}}>attention</td><td style={{padding: 8}}>O(K) with K=100-1000</td></tr>
-          <tr><td style={{padding: 8}}><strong>SIM-Hard</strong></td><td style={{padding: 8}}><strong>10K-50K (lifelong)</strong></td><td style={{padding: 8}}>category-id inverted index</td><td style={{padding: 8}}>O(K') with K'≈100</td></tr>
-          <tr style={{background: "#e8f0fa"}}><td style={{padding: 8}}><strong>SIM-Soft</strong></td><td style={{padding: 8}}>lifelong</td><td style={{padding: 8}}>coarse embedding sim</td><td style={{padding: 8}}>O(N) coarse + O(K') exact</td></tr>
-          <tr><td style={{padding: 8}}>TWIN</td><td style={{padding: 8}}>lifelong</td><td style={{padding: 8}}>shared QK projection</td><td style={{padding: 8}}>O(N) but cheap</td></tr>
-        </tbody>
-      </table>
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from DIN, TWIN, HSTU">
+      <p>
+        <strong>DIN.</strong> Target attention over the last K actions, K~50-200. Lifelong context lost by truncation.
+      </p>
+      <p>
+        <strong>SIM.</strong> Two-stage: retrieve target-relevant slice of lifelong history, then DIN-style attention. CPU-deployable in hard-search mode.
+      </p>
+      <p>
+        <strong>TWIN / TWIN-V2.</strong> Unifies the GSU and ESU into a single embedding space, removing SIM's target-conditional retrieval bias. TWIN-V2 adds clustering inside the retrieved subset for recall.
+      </p>
+      <p>
+        <strong>HSTU.</strong> Drops the retrieve-then-attend pattern entirely; uses a custom attention kernel that scales to long sequences natively, with a generative loss. SIM's "long sequence" handling is external retrieval; HSTU's is internal.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick SIM">
-      <ul>
-        <li><strong>Pre-TWIN baseline.</strong> Most production CTR systems should start here before TWIN V2 — SIM-Hard is a one-week build on top of an inverted-index store you probably already have.</li>
-        <li><strong>CPU-only serving.</strong> SIM-Hard's GSU is a category-id lookup — no GPU needed. ESU runs on ~K'=100 items so a small MLP+attention fits comfortably on CPU.</li>
-        <li><strong>Catalog with strong category structure.</strong> E-commerce, news, video — anywhere items have meaningful taxonomy that overlaps with intent.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick it">
+      <p>
+        Pick SIM when (a) the lifelong-history signal is real (10³+ events per user), (b) GPU budget is tight (hard-search is CPU-only), (c) the catalog has a clean category taxonomy. Skip SIM when the catalog has no taxonomy (hard-search collapses), when histories are short (just use DIN), or when you can afford TWIN-V2's unified-space training.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations">
-      <VIS.Callout kind="gotcha" title="Hard-search blind spot">
-        SIM-Hard's category match misses semantic neighbors with different categories. A user who watches Marvel movies (category=Action) won't have Pixar (category=Animation) surfaced by GSU even if they'd love it. TWIN's shared-QK-projection retrieval recovers this.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Category-tree drift">
-        Your retrieval quality is now bottlenecked by your category taxonomy. When the catalog team adds 200 new sub-categories overnight, GSU recall changes silently. Monitor "items eligible at GSU stage" alongside CTR.
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
+      <p>
+        SIM's defining failure mode is the GSU/ESU space mismatch: the GSU's target-conditional retrieval makes the ESU's input distribution depend on the target item, which silently biases offline metrics computed against the retrieved subset rather than the full history. This is exactly what TWIN was built to fix.
+      </p>
+      <VIS.Callout kind="gotcha" title="The category cold-start trap">
+        Launch a new item category on Friday → hard-search GSU returns empty for items in that category → ESU sees no behaviors → CTR collapses on the new category until users start clicking. A DLRM with dense feature crosses doesn't have this failure mode.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-problems" title="Drill — trap problems">
-      <p style={{color:"#475569", marginBottom: 16}}>Twelve senior-MLE prompts on SIM and its tradeoffs vs DIN / TWIN.</p>
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        30+ problems spanning the 6 taxonomy axes. Each passes the redaction litmus: substitute "Model X" for "SIM" and a generic-ML candidate cannot answer correctly.
+      </p>
 
+      {/* ============== A. Identity & comparison ============== */}
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity &amp; comparison</h3>
+
+      {/* axis: A1 */}
       <VIS.TrapProblem
-        id="sim-p1"
+        id="sim-a1"
         difficulty="hard"
-        title="P1 — CPU-only serving, 50K history, 30ms p99"
-        scenario={<>Short-form video CTR ranker. You serve on CPU only (no GPU in the ranking tier). User lifelong history p99 = 50K events. Latency budget for the user-interest module is 30ms p99 per request, ~256 candidates scored per request. Three options on the table.</>}
+        title="A1 — SIM vs TWIN: what TWIN was built to fix"
+        scenario={<>Your director asks "If we adopted SIM last year, why are people now talking about TWIN-V2 as the upgrade?" Which statement captures the specific gap TWIN was designed to close?</>}
         options={[
-          {key:"a", text:"DIN over last 1000 events — proven, simple, gives you most of the signal."},
-          {key:"b", text:"SIM-Hard with category-id inverted index, K'=100 ESU shortlist.", correct:true},
-          {key:"c", text:"TWIN V2 — better retrieval quality, recovers semantic neighbors."},
-          {key:"d", text:"Avg-pool over the full 50K — embarrassingly parallel on CPU."},
+          {key:"a", text:"SIM uses CPU; TWIN uses GPU — TWIN is purely a hardware win."},
+          {key:"b", text:"SIM's GSU and ESU embed in separate spaces, so the retrieved subset has a target-conditional bias; TWIN trains a single unified space so retrieval and ranking see the same geometry.", correct:true},
+          {key:"c", text:"SIM cannot handle long histories; TWIN can. SIM caps at 200 events."},
+          {key:"d", text:"TWIN replaces target attention with self-attention."},
         ]}
-        trap={<>(c) is the textbook "best" model but TWIN V2 needs full QK attention over N events per candidate — that's 50K × 256 candidates × 64-dim per request. Without a GPU you blow the latency budget by ~100×. (a) truncates to 1K which abandons the lifelong signal that's the entire reason to consider these models. (d) avg-pooling 50K events drops the per-candidate signal — every candidate gets the same user vector.</>}
-        lens={<>SIM-Hard is the right CPU-budget answer. GSU is a single inverted-index lookup per (user, candidate-category) — microseconds. ESU runs DIN-style attention over K'=100 items, which fits comfortably in 30ms p99 on CPU. Upgrade to TWIN later when you can afford the GPU tier.</>}
-        stretch={<>If you could add ONE GPU instance to the ranking tier, would you spend it on TWIN or on a deeper ranker? Why?</>}
+        trap={<>(a) inverts: hard-search SIM is the CPU option; soft-search SIM and TWIN both want GPU. (c) inverts the architecture — SIM was the original lifelong solution. (d) is fabricated.</>}
+        lens={<>The discriminator is the embedding space. SIM's GSU is a separate retrieval (category match or a different pre-trained embedding); the subset it retrieves is target-biased in a way the ESU was never trained to correct. TWIN folds both into one trained representation so the retrieval distribution is the distribution the ranker scores in.</>}
+        stretch={<>What does TWIN-V2 add on top of TWIN, and what specific failure mode of SIM does that V2 step address?</>}
       />
 
+      {/* axis: A2 */}
       <VIS.TrapProblem
-        id="sim-p2"
-        difficulty="hard"
-        title="P2 — Cold-category items get zero GSU retrieval"
-        scenario={<>SIM-Hard in production for 6 months. PM complains: a new merchant category ("vintage watches") launched 2 weeks ago has 10× lower CTR than existing comparable categories. Investigation: items in this category never appear in any user's GSU shortlist, so ESU never sees them as relevant history. Root cause + fix?</>}
-        options={[
-          {key:"a", text:"Bug in inverted index — rebuild it nightly."},
-          {key:"b", text:"GSU is keyed on user history × candidate category; no user has 'vintage watches' history yet, so no shortlist contains them — cold-category cold-start. Add a fallback path (SIM-Soft embedding retrieval or broader parent-category match).", correct:true},
-          {key:"c", text:"Add more training data for the new category."},
-          {key:"d", text:"Reduce K' from 100 to 50 to force tighter matches."},
-        ]}
-        trap={<>(a) blames infra when the design is doing exactly what it was specified to do. (c) and (d) don't address that GSU has STRUCTURAL recall=0 for any user-category pair where the user has never interacted with that category. The first time anyone sees vintage watches, they don't have vintage-watch history, so GSU returns empty, so ESU has nothing to attend over, so the user-interest signal collapses to a zero vector.</>}
-        lens={<>This is the canonical hard-search blind spot. The cure is a fallback retrieval path: SIM-Soft (coarse embedding similarity) catches the user who has "luxury accessories" history even without "vintage watches" specifically. Production deployments typically run BOTH in parallel and union the shortlists.</>}
-        stretch={<>If you could only deploy one of SIM-Hard or SIM-Soft (not both), which catches more long-tail items and which has lower latency?</>}
-      />
-
-      <VIS.TrapProblem
-        id="sim-p3"
+        id="sim-a2"
         difficulty="medium"
+        title="A2 — Hard-search vs soft-search GSU"
+        scenario={<>Engineer claims "soft-search GSU is strictly better than hard-search — more recall, more nuanced retrieval." Which statements are accurate critiques of that claim?</>}
         multiSelect
-        title="P3 — What does the GSU actually retrieve?"
-        scenario={<>Junior on your team is reading the SIM paper for the first time. They ask: "For SIM-Hard with category-id matching, when a candidate item arrives, what does the GSU return?" Select all that apply.</>}
         options={[
-          {key:"a", text:"The K' most recent items in the user's lifelong history whose category matches the candidate's category.", correct:true},
-          {key:"b", text:"The K' items most similar to the candidate by full embedding distance."},
-          {key:"c", text:"The K' items in the user's history with highest historical CTR."},
-          {key:"d", text:"Items keyed by category-id; a recency or relevance ranking inside that bucket gives the final K'.", correct:true},
+          {key:"a", text:"Soft-search adds ANN infra (HNSW/IVF) and a pre-trained embedding refresh pipeline that hard-search avoids.", correct:true},
+          {key:"b", text:"Hard-search is zero-parameter — category-match inverted-index lookup; soft-search needs embedding training and staleness management.", correct:true},
+          {key:"c", text:"Soft-search recall lift over hard-search is often under 2 percent offline and washes out online once serving cost is accounted for.", correct:true},
+          {key:"d", text:"Soft-search ignores the target item entirely."},
+          {key:"e", text:"Hard-search cannot deploy on CPU."},
         ]}
-        trap={<>(b) describes SIM-Soft, not SIM-Hard. (c) confuses GSU (per-user index) with a global popularity prior. Both (a) and (d) describe correct variants of the hard-search policy — recency is the canonical implementation.</>}
-        lens={<>SIM-Hard maintains a per-user inverted index: category-id → list-of-events-by-recency. At query time you take the candidate's category, look up the user's history under that key, and return the top-K' by recency. The ESU then attends over those K'.</>}
-        stretch={<>Why might "top-K' by recency" be a worse policy than "top-K' by attention score from a cheap teacher model"?</>}
+        trap={<>(d) and (e) are factually wrong — soft-search uses target embedding inner-product against history embeddings, and hard-search is the CPU-only mode.</>}
+        lens={<>Hard-search is the production default precisely because it is cheap, deterministic, and CPU-deployable. Soft-search is justified only when the catalog has weak categories AND you already have an ANN index in production.</>}
       />
 
+      {/* axis: A3 */}
       <VIS.TrapProblem
-        id="sim-p4"
+        id="sim-a3"
         difficulty="hard"
-        title="P4 — SIM-Soft index drift"
-        scenario={<>SIM-Soft in production. The coarse embedding used for GSU retrieval is from a model trained 4 months ago and has not been refreshed. The ESU attention model is retrained weekly. You notice the gap between training NDCG and serving NDCG is widening by ~0.5pp per week. What's the most likely cause?</>}
-        options={[
-          {key:"a", text:"ESU is overfitting — add dropout."},
-          {key:"b", text:"GSU embedding has drifted from the catalog distribution; ESU is trained on whatever GSU surfaces today, but the index serves yesterday's neighbors. Refresh the index OR co-train GSU+ESU.", correct:true},
-          {key:"c", text:"User behavior has shifted — collect more data."},
-          {key:"d", text:"Latency budget is being missed — investigate the serving stack."},
-        ]}
-        trap={<>(a) and (c) are generic answers that don't engage with SIM's two-stage structure. (d) is unrelated. The widening gap is a classic GSU/ESU coupling bug: ESU's training-time and serving-time inputs come from different GSU distributions because the GSU model is frozen while ESU keeps moving.</>}
-        lens={<>Two-stage retrievers fail when the stages drift apart. Fixes: (1) refresh the GSU embedding/index on the same cadence as ESU; (2) co-train — let ESU's gradient flow back into GSU; (3) retrieval-augmented training — at train time, sample from the LIVE serving GSU output, not a precomputed one.</>}
-        stretch={<>Why can't you just freeze the GSU AND the ESU together?</>}
-      />
-
-      <VIS.TrapProblem
-        id="sim-p5"
-        difficulty="hard"
-        title="P5 — Memory: how much does lifelong history cost?"
-        scenario={<>1B active users, mean lifelong history = 8K events, p99 = 50K. Each event = (item_id int64, category_id int32, timestamp int32, action_type int8) = 20 bytes. SIM-Hard stores per user an inverted index: category → recency-ordered event list. Avg 200 distinct categories per user, ~40 events per category. What's the rough memory cost to serve SIM-Hard from RAM at this scale?</>}
-        options={[
-          {key:"a", text:"~16 TB raw, easily fits in a single replica."},
-          {key:"b", text:"~16 TB raw — need ~30 sharded replicas of 1TB-class boxes with index overhead, hot/cold tiering, and replication factor 3.", correct:true},
-          {key:"c", text:"~160 GB — single beefy box."},
-          {key:"d", text:"~1.6 PB — only feasible on disk."},
-        ]}
-        trap={<>Math check: 1B users × 8K events × 20 bytes = 160 TB raw. Wait — let me redo: 1B × 8K × 20 = 1.6e11 × 1000 = 1.6e14 bytes? Actually: 1e9 × 8e3 × 20 = 1.6e14 bytes = 160 TB. With inverted-index overhead (~2×) and replication factor 3, ~1 PB. (a) and (c) lowball by 100-1000×. (d) overshoots replication-aware estimate; with hot/cold tiering only the recent slice needs RAM.</>}
-        lens={<>The real production trick is hot/cold tiering: keep last 90 days of history per user in RAM (~10% of events), spill older history to NVMe with a cache. SIM benefits because GSU's category-keyed lookup has high locality — a user typically interacts with a stable set of categories so their RAM-resident slice covers ~90% of GSU hits.</>}
-        stretch={<>If you couldn't afford hot/cold tiering, what's the next compression trick worth trying?</>}
-      />
-
-      <VIS.TrapProblem
-        id="sim-p6"
-        difficulty="medium"
-        title="P6 — Bias-variance lens on SIM vs DIN"
-        scenario={<>You're comparing DIN (K=1000 attention) vs SIM (lifelong + K'=100 ESU) on the same training data. SIM has access to far more events per user but attends over fewer at scoring time. Which framing is most accurate?</>}
-        options={[
-          {key:"a", text:"SIM has lower bias — it sees more of the user's interest distribution via lifelong history."},
-          {key:"b", text:"SIM has lower variance — averaging over a fixed shortlist reduces noise vs sampling from a long sequence."},
-          {key:"c", text:"SIM trades a tiny bias hit (GSU misses) for a large variance hit reduction (lifelong signal stabilizes long-term preferences)."},
-          {key:"d", text:"SIM reduces irreducible noise by capturing the user's true latent interest more completely than DIN's last-K window can.", correct:true},
-        ]}
-        trap={<>(a) is partially right but vague — what BIAS exactly? (b) confuses ESU's K' with classical variance. (c) gets the direction right but the magnitudes wrong — GSU's bias hit is small only when category structure is good; on long-tail it's significant.</>}
-        lens={<>The cleanest framing: DIN's K-event truncation throws away the user's stable long-term interests; SIM keeps them. This is closer to "reducing the label noise" (the score is more reflective of the user's true preference) than to bias or variance specifically. The classical bias-variance frame doesn't map perfectly to retrieval-then-rank pipelines.</>}
-        stretch={<>If a user's interests change EVERY DAY (high non-stationarity), does SIM's lifelong advantage still hold?</>}
-      />
-
-      <VIS.TrapProblem
-        id="sim-p7"
-        difficulty="hard"
+        title="A3 — Counterfactual: SIM removed, fallback is DIN"
+        scenario={<>SIM is removed from your stack overnight; you fall back to DIN with K=200. Which statements correctly describe what changes?</>}
         multiSelect
-        title="P7 — Migrating from DIN to SIM: what to watch"
-        scenario={<>You're shipping a SIM-Hard rollout to replace a DIN-K=200 baseline. The A/B test setup: 50/50 traffic split, primary metric = revenue/session, secondary = CTR. Which of the following should you instrument BEFORE the A/B starts? Select all that apply.</>}
         options={[
-          {key:"a", text:"GSU shortlist size distribution per request (mean/p50/p99) — diagnoses cold-category failures.", correct:true},
-          {key:"b", text:"Long-tail item exposure rate vs DIN — SIM may concentrate impressions on high-history users' favorite categories.", correct:true},
-          {key:"c", text:"Per-category CTR delta — surfaces where SIM helps vs hurts.", correct:true},
-          {key:"d", text:"Model file size on disk."},
-          {key:"e", text:"GPU memory headroom — SIM is more memory-hungry than DIN."},
-          {key:"f", text:"Index freshness lag (event → indexed) at p99 — stale index = stale shortlist.", correct:true},
+          {key:"a", text:"Lifelong-interest recall drops: users whose returning interest sits beyond their last 200 actions become invisible to the model.", correct:true},
+          {key:"b", text:"Per-category personalization weakens for users whose target category appears infrequently in their last 200 actions but heavily in their lifelong history.", correct:true},
+          {key:"c", text:"Serving cost goes UP because DIN at K=200 is more expensive than SIM's GSU+ESU."},
+          {key:"d", text:"Calibration of the CTR head becomes easier because DIN's input distribution is no longer target-conditional.", correct:true},
         ]}
-        trap={<>(d) is irrelevant to an A/B comparison. (e) is wrong — SIM-Hard actually has lower runtime memory than DIN at scoring time (K'=100 vs K=200); the index is bigger but lives in a separate store. (b) is the subtle one that catches juniors: SIM's lifelong-history advantage benefits power users disproportionately; long-tail items can lose exposure even when the global CTR goes up.</>}
-        lens={<>Four worth instrumenting: shortlist-size, long-tail-exposure, per-category delta, index-freshness. Together they give you a fairness + freshness + per-segment picture that single-number aggregate metrics will miss.</>}
-        stretch={<>If long-tail exposure drops 20% but revenue/session goes up 3%, do you ship?</>}
+        trap={<>(c) is the seductive miss — DIN at K=200 is actually CHEAPER than SIM, not more expensive (no GSU stage). The cost story is in DIN's favor; SIM trades cost for lifelong recall.</>}
+        lens={<>SIM buys lifelong recall + target-conditional retrieval at the cost of a more complex serving stack and a target-biased ESU input. Removing it costs you recall and category-specific personalization but cleans up the calibration story.</>}
       />
 
+      {/* axis: A4 */}
       <VIS.TrapProblem
-        id="sim-p8"
+        id="sim-a4"
         difficulty="hard"
-        title="P8 — GSU recall is the ceiling"
-        scenario={<>You measure that on a held-out set, GSU returns the "true positive" relevant historical event in its top-K'=100 only 78% of the time (recall@100). Your ESU then attends over the GSU output. What's the ceiling on the ESU's contribution to NDCG@10?</>}
+        title="A4 — Composition: SIM + HSTU?"
+        scenario={<>A teammate proposes "stack SIM's GSU in front of HSTU to combine lifelong retrieval with HSTU's scaling story." Which is the correct critique?</>}
         options={[
-          {key:"a", text:"None — ESU is a strong learner and can compensate."},
-          {key:"b", text:"GSU recall@100 = 0.78 caps the full pipeline at ~78% of its theoretical-perfect performance. ESU can only re-rank what it's given.", correct:true},
-          {key:"c", text:"NDCG is rank-based; recall doesn't bound it."},
-          {key:"d", text:"Depends only on ESU's architecture."},
+          {key:"a", text:"HSTU is designed to attend over the full long sequence with a custom attention kernel; bolting GSU in front truncates the very signal HSTU's power-law scaling needs.", correct:true},
+          {key:"b", text:"HSTU and SIM use the same attention kernel — the composition is redundant."},
+          {key:"c", text:"GSU's category-match would lose action-type tokens that HSTU's heterogeneous vocabulary depends on."},
+          {key:"d", text:"This stack is the standard industry recipe."},
         ]}
-        trap={<>(a) is a confidence-in-the-model fallacy: re-ranking can only re-order; it cannot generate items GSU didn't surface. (c) sounds technical but is wrong — when the relevant item is absent from the shortlist, NDCG WILL be capped because the relevant doc cannot appear in the ranking.</>}
-        lens={<>Two-stage pipelines have a fundamental ceiling: stage-2 recall ≤ stage-1 recall. If GSU misses 22% of relevant events, no ESU architecture changes this. The real fix is improving GSU — bigger K', SIM-Soft fallback, or co-training so ESU's gradient pushes GSU toward better recall.</>}
-        stretch={<>What's a quick experiment to estimate GSU's recall ceiling without labeled ground truth?</>}
+        trap={<>(c) is a defensible secondary point but (a) is the primary architectural objection — HSTU's value proposition is not pruning the long sequence. (b) is false; (d) is fabricated.</>}
+        lens={<>SIM's GSU is a Band-aid for models that cannot handle long sequences. HSTU is engineered to handle long sequences directly. Composing them throws away the reason to choose HSTU.</>}
       />
 
+      {/* axis: A5 */}
       <VIS.TrapProblem
-        id="sim-p9"
+        id="sim-a5"
         difficulty="medium"
-        title="P9 — Why not just increase K in DIN to 50K?"
-        scenario={<>A skeptic on your team says: "If lifelong history is so valuable, why not just set K=50000 in DIN and call it a day? Attention is O(K·d), GPUs are fast."</>}
+        title="A5 — Boundary: when SIM stops beating DIN"
+        scenario={<>At what user-history length does SIM stop providing measurable lift over plain DIN with the same K? Pick the threshold with the architectural reason.</>}
         options={[
-          {key:"a", text:"You're right, K=50000 DIN is equivalent — just more expensive."},
-          {key:"b", text:"Per-candidate attention over 50K events × ~256 candidates per request × QPS = 100K+ events/ms — impossible at production latency even on H100s. SIM's two-stage decouples shortlist (cheap) from attention (expensive but small).", correct:true},
-          {key:"c", text:"DIN's softmax is numerically unstable above K=10K."},
-          {key:"d", text:"Attention noise grows with K; SIM denoises via category filter."},
+          {key:"a", text:"Around the K value itself — if median history is approximately K, SIM's GSU has nothing to filter out and ESU sees the same content DIN does.", correct:true},
+          {key:"b", text:"At 10K events — SIM is engineered specifically for that length."},
+          {key:"c", text:"Around 50 events — SIM was always for short histories."},
+          {key:"d", text:"There is no boundary; SIM always beats DIN."},
         ]}
-        trap={<>(a) is the naive scaling-laws fallacy. (c) is wrong — softmax is fine at any K. (d) is a poetic but unjustified framing.</>}
-        lens={<>The math: production CTR rankers score 100-500 candidates per request at 1000+ QPS. K=50000 DIN attention = 50K × 256 candidates × 64-dim × 1000 QPS = 8e11 FLOPs/sec/replica — multiple H100s per replica purely for attention. SIM-Hard's GSU is microseconds; ESU's K'=100 attention is 500× cheaper than K=50K DIN. Same lifelong signal, two orders of magnitude less compute.</>}
-        stretch={<>At what K does DIN become cheaper than SIM, if ever?</>}
+        trap={<>(b) and (c) misframe SIM's role; (d) is wrong — SIM's only purpose is to retrieve from a sequence longer than K.</>}
+        lens={<>SIM's contribution is "useful target-relevant slice from a history that doesn't fit." If the history fits, the GSU is a no-op and you have paid an extra stage for nothing.</>}
       />
 
+      {/* ============== B. Application ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      {/* axis: B1 */}
       <VIS.TrapProblem
-        id="sim-p10"
+        id="sim-b1"
         difficulty="hard"
-        title="P10 — SIM vs TWIN under tight GPU budget"
-        scenario={<>You have a fixed GPU budget. TWIN V2 promises +1.5% NDCG vs SIM-Hard but costs 4× the GPU at serving time. Your existing CTR pipeline runs DIN. Choose your roadmap.</>}
+        title="B1 — Lifelong history + CPU-only fleet + clean category taxonomy"
+        scenario={<>You're on a recsys team with these constraints: 5K-event median user history, CPU-only inference fleet (no GPUs available for ranking), product catalog with a clean 3-level category tree. Pick the right ranker.</>}
         options={[
-          {key:"a", text:"Skip SIM, go straight to TWIN V2 — better destination."},
-          {key:"b", text:"Ship SIM-Hard first (lifelong signal with minimal infra), measure the lift, then decide if TWIN's marginal +1.5% justifies the 4× GPU cost.", correct:true},
-          {key:"c", text:"Stay on DIN; the gain isn't worth the migration."},
-          {key:"d", text:"Build TWIN and SIM in parallel, A/B between them."},
+          {key:"a", text:"DLRM with dense crosses (no sequence model)."},
+          {key:"b", text:"HSTU (drop the crosses, scale on FLOPs)."},
+          {key:"c", text:"SIM with hard-search GSU — exploits the lifelong history and the category taxonomy without GPU.", correct:true},
+          {key:"d", text:"TWIN-V2 (unified-space retrieve-and-rank)."},
         ]}
-        trap={<>(a) skips the cheap, large win for the expensive, marginal one. (c) leaves money on the table — SIM's lifelong signal is typically a 2-5% lift over DIN. (d) wastes engineering budget by building two architectures simultaneously when one is a prerequisite baseline for the other.</>}
-        lens={<>SIM is the right NEXT step from DIN. It captures most of the lifelong-history value (typically 80% of TWIN's headline gain) at 1/10 of TWIN's serving cost. Ship SIM, measure, then justify TWIN's 4× cost from a baseline that already has lifelong-signal value.</>}
-        stretch={<>If the +1.5% from TWIN translates to $50M/year revenue, what's the breakeven GPU cost?</>}
+        trap={<>(b) needs GPU; (d) needs GPU and unified-space training infra; (a) ignores the 5K lifelong signal.</>}
+        lens={<>The scenario triggers all three of SIM's preconditions: lifelong history (justifies retrieve-then-attend), CPU constraint (forces hard-search), and a clean taxonomy (makes hard-search work). This is precisely SIM's design point.</>}
       />
 
+      {/* axis: B2 — sounds reasonable, isn't */}
       <VIS.TrapProblem
-        id="sim-p11"
-        difficulty="medium"
-        title="P11 — Index update cadence"
-        scenario={<>The user-history inverted index for SIM-Hard is updated... how often? Pick the most defensible production choice for a video-streaming CTR ranker.</>}
-        options={[
-          {key:"a", text:"Real-time (every event): tightest freshness, highest write QPS."},
-          {key:"b", text:"Near real-time (every ~5 minutes via micro-batch on Kafka): balances freshness and write cost.", correct:true},
-          {key:"c", text:"Nightly batch: simplest, lowest write cost."},
-          {key:"d", text:"Weekly: index updates rarely matter for lifelong signal."},
-        ]}
-        trap={<>(a) is the gold-plated option that doubles your write infra cost for marginal CTR benefit on most workloads. (c) and (d) break session-level personalization: a user who just watched 3 thrillers should have those visible to SIM within minutes, not tomorrow. The right answer is workload-dependent — short-form video (TikTok-class) wants real-time; movie streaming can tolerate 5-min lag.</>}
-        lens={<>The 5-min near-real-time sweet spot is industry consensus for "lifelong + responsive" CTR: writes are micro-batched (cheap), the lag is below user-perception threshold, and the index store doesn't melt under per-event writes. Tight feedback loops (search, ads bidding) push to real-time; slower content (LinkedIn feed) can tolerate hourly.</>}
-        stretch={<>What's the simplest hack to get "real-time-feeling" without real-time index writes?</>}
-      />
-
-      <VIS.TrapProblem
-        id="sim-p12"
+        id="sim-b2"
         difficulty="hard"
+        title="B2 — &quot;Just increase K to fix recall&quot;"
+        scenario={<>SIM's offline AUC is below expectations. A senior engineer proposes "raise GSU K from 100 to 1000 — more behaviors in ESU, more signal." Why is this likely wrong for SIM specifically?</>}
+        options={[
+          {key:"a", text:"ESU latency would increase — DIN attention scales linearly with K."},
+          {key:"b", text:"Hard-search GSU has a category-specific recall ceiling; past that ceiling, the additional K returns behaviors from sibling categories or near-duplicates, expanding the GSU/ESU space mismatch rather than adding signal.", correct:true},
+          {key:"c", text:"It violates the SIM CIKM 2020 paper recommendation of K=100."},
+          {key:"d", text:"Larger K destabilizes the calibration head."},
+        ]}
+        trap={<>(a) is true but secondary — latency growth is universal to any attention model. The SIM-specific reason is the GSU's category-bounded recall: more K mostly adds noisier same-category behaviors and amplifies the target-conditional bias.</>}
+        lens={<>SIM's recall ceiling is set by the GSU's discrimination ability, not by K. Hard-search GSU's discrimination is fixed by the category taxonomy; raising K past the in-category behavior count just adds noise.</>}
+      />
+
+      {/* axis: B3 — STAKEHOLDER PITCH — must be CONCEPT-UNIQUE */}
+      <VIS.TrapProblem
+        id="sim-b3"
+        difficulty="hard"
+        title="B3 — Pitch SIM to a finance-aware VP without saying &quot;scaling&quot;"
+        scenario={<>Your VP asks: "We have a CPU-only ad-ranking fleet and a 5-year user history per account. Why is SIM the right step over DIN, and what specifically does SIM give us that another deeper model wouldn't?" Pick the single most accurate pitch.</>}
+        options={[
+          {key:"a", text:"SIM is faster, simpler, and easier to maintain than the alternatives."},
+          {key:"b", text:"SIM lets us serve the full lifelong history per request WITHOUT GPUs because the GSU's inverted-index category-match runs as a cheap pre-filter; we keep the long-tail interest signal that DIN's K=200 truncation throws away.", correct:true},
+          {key:"c", text:"SIM is the industry-standard upgrade path; everyone in our space is migrating."},
+          {key:"d", text:"SIM gives us a single end-to-end model that absorbs the retrieval and ranker stacks."},
+        ]}
+        trap={<>(a) is a generic migration pitch that wins for any model. (c) is appeal-to-authority. (d) is wrong — SIM is two stages, not unified (TWIN is the one that approaches unification). Only (b) is SIM-specific: it names the inverted-index GSU mechanism, the CPU-friendliness that follows from that mechanism, and the precise DIN failure (K-truncation losing long-tail interest) that SIM addresses.</>}
+        lens={<>The redaction litmus: swap "SIM" for "Model X" in (b) and the option falls apart — no other recsys uses an inverted-index category-match GSU as the lifelong pre-filter. The pitch lives or dies on the GSU mechanism specifically.</>}
+        stretch={<>Same VP follow-up: "What's the most likely thing to break, and how should we monitor for it?"</>}
+      />
+
+      {/* axis: B4 */}
+      <VIS.TrapProblem
+        id="sim-b4"
+        difficulty="hard"
+        title="B4 — When NOT to use SIM"
+        scenario={<>Your catalog is user-generated content: short-lived posts, no stable category taxonomy, users churn through hundreds of items per day. Which of the following are valid reasons to NOT pick SIM here?</>}
         multiSelect
-        title="P12 — Evaluating SIM offline before A/B"
-        scenario={<>You want offline confidence that SIM-Hard will outperform DIN before burning A/B traffic. What offline experiments would you run? Select all that apply.</>}
         options={[
-          {key:"a", text:"Replay-style eval on held-out future days: score both models, compute NDCG@10 against actual clicks.", correct:true},
-          {key:"b", text:"Counterfactual eval (IPS-weighted) to debias the logged-policy effect.", correct:true},
-          {key:"c", text:"Per-user-segment offline metric — does SIM win on power users (long history) AND tail users (short history)?", correct:true},
-          {key:"d", text:"Just look at training loss — lower loss = better model."},
-          {key:"e", text:"Latency benchmarking at production QPS to confirm SIM fits the budget.", correct:true},
-          {key:"f", text:"Visual inspection of 100 random recommendations."},
+          {key:"a", text:"Hard-search GSU's category-match has nothing to match on when the category taxonomy is absent or unstable.", correct:true},
+          {key:"b", text:"Short-lived items mean the pre-trained embeddings that soft-search GSU depends on go stale faster than refresh cycles.", correct:true},
+          {key:"c", text:"The GSU/ESU space mismatch is amplified when the retrieval space cannot be stably defined.", correct:true},
+          {key:"d", text:"SIM forces a centralized cache."},
+          {key:"e", text:"SIM requires Kafka."},
         ]}
-        trap={<>(d) is the lazy fallback — training loss differences between architectures don't reliably predict A/B outcomes. (f) is fine as a sanity check but never sufficient. The four solid offline experiments stress different failure modes: replay (basic quality), counterfactual (debiased), per-segment (fairness), latency (serving feasibility).</>}
-        lens={<>Senior practice is to combine multiple offline signals BEFORE the A/B: replay for relative quality, counterfactual for debiased estimates, per-segment for hidden regressions, and a latency benchmark to confirm serving headroom. Any of the four can kill a launch on its own.</>}
-        stretch={<>If counterfactual eval shows SIM wins but replay says they tie, which do you trust more?</>}
+        trap={<>(d) and (e) are fabricated infrastructure constraints. The real reasons all trace back to GSU's dependence on a stable retrieval signal (category or pre-trained embedding).</>}
+        lens={<>SIM's GSU is the load-bearing piece; if the GSU has nothing stable to discriminate on, the system reduces to DIN with extra latency. Surfaces without stable item-side signal need different architectures (HSTU's sequence transducer, or a content-tower-first design).</>}
+      />
+
+      {/* ============== C. Mechanism ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      {/* axis: C1 */}
+      <VIS.TrapProblem
+        id="sim-c1"
+        difficulty="hard"
+        title="C1 — Why two stages, not one?"
+        scenario={<>Why does SIM split retrieval (GSU) from ranking (ESU) instead of running attention over the full lifelong history directly?</>}
+        options={[
+          {key:"a", text:"DIN-style target attention over 10K events at production batch sizes blows the GPU memory and latency budget; the GSU's cheap pre-filter shrinks ESU input to 50-200, making the attention cost feasible.", correct:true},
+          {key:"b", text:"GSU computes the gradient; ESU computes the loss."},
+          {key:"c", text:"GSU is for training; ESU is for inference."},
+          {key:"d", text:"The two stages allow distributed training across GPUs."},
+        ]}
+        trap={<>(b), (c), (d) confuse SIM's design with unrelated systems patterns. The actual reason is the attention-cost ceiling at lifelong sequence length.</>}
+        lens={<>SIM's design is shaped by the fact that DIN-style target attention is the right ranking primitive but is linear in K in memory and latency. The GSU is purely a cost-shrinking pre-filter; without it, lifelong DIN is infeasible on production hardware.</>}
+      />
+
+      {/* axis: C2 */}
+      <VIS.TrapProblem
+        id="sim-c2"
+        difficulty="hard"
+        title="C2 — Loss / objective: what does SIM optimize?"
+        scenario={<>What is SIM's training loss and on which subset of behaviors is it computed?</>}
+        options={[
+          {key:"a", text:"Pointwise binary cross-entropy on click label, computed over the ESU's output which sees the GSU-retrieved subset — the GSU itself has no trainable parameters in hard-search mode.", correct:true},
+          {key:"b", text:"Next-action softmax cross-entropy over the full action vocabulary."},
+          {key:"c", text:"Pairwise ranking loss over the full lifelong history."},
+          {key:"d", text:"Triplet loss between anchor user, positive item, and negative item."},
+        ]}
+        trap={<>(b) is HSTU's loss. (c) and (d) describe different model families. SIM is a discriminative pointwise CTR model — same loss as DIN.</>}
+        lens={<>SIM's training does NOT optimize the GSU (in hard-search mode it has no parameters). The ESU trains end-to-end on click labels conditioned on the GSU output. This is exactly why the GSU/ESU space mismatch arises — the GSU isn't trained to produce inputs the ESU expects.</>}
+      />
+
+      {/* axis: C3 */}
+      <VIS.TrapProblem
+        id="sim-c3"
+        difficulty="hard"
+        title="C3 — What's dropped vs feeding full attention"
+        scenario={<>Compared to a hypothetical "DIN over the full lifelong sequence," what does SIM's design deliberately drop?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Cross-category interest signal: behaviors outside the target's category are dropped at the GSU and invisible to ESU.", correct:true},
+          {key:"b", text:"A unified per-user representation that depends on all behaviors regardless of target.", correct:true},
+          {key:"c", text:"Calibration as a target-independent property: the ESU's input distribution is target-conditional, so the CTR head's calibration is too.", correct:true},
+          {key:"d", text:"The ability to use a CPU inverted-index lookup."},
+        ]}
+        trap={<>(d) is what SIM ADDS, not drops.</>}
+        lens={<>Every one of (a)-(c) is a price SIM pays for its cost saving. TWIN's contribution is essentially to recover (b) by training a unified space, which in turn improves (c) since the ESU input distribution is no longer target-mediated by a separate space.</>}
+      />
+
+      {/* axis: C4 */}
+      <VIS.TrapProblem
+        id="sim-c4"
+        difficulty="hard"
+        title="C4 — Which knob, mis-set, catastrophically breaks SIM?"
+        scenario={<>Rank the following by "production breakage if mis-configured" for hard-search SIM, from worst to least-bad: (1) GSU K, (2) ESU attention-head count, (3) category-taxonomy granularity, (4) ESU MLP hidden size.</>}
+        options={[
+          {key:"a", text:"3 (category granularity) -> 1 (GSU K) -> 4 (MLP hidden) -> 2 (ESU heads). Mis-tuned categories silently collapse GSU recall to near-zero; mis-tuned K caps recall but does not zero it; MLP size and head count produce gradual quality drops.", correct:true},
+          {key:"b", text:"2 -> 1 -> 4 -> 3, because attention head count is the most sensitive in any transformer."},
+          {key:"c", text:"4 -> 3 -> 1 -> 2, because the MLP carries the most parameters."},
+          {key:"d", text:"All four are equally sensitive."},
+        ]}
+        trap={<>(b) imports an LLM intuition. (c) confuses parameter count with sensitivity.</>}
+        lens={<>SIM-specific: the load-bearing knob is the category taxonomy. Too-coarse categories over-retrieve (noise floods ESU); too-fine collapse recall to single-digit behaviors. K and MLP knobs cause graceful degradation; category granularity does not.</>}
+      />
+
+      {/* axis: C5 */}
+      <VIS.TrapProblem
+        id="sim-c5"
+        difficulty="hard"
+        title="C5 — Data assumption violation"
+        scenario={<>Your platform stops emitting item-category labels (a data-pipeline regression). What specifically breaks in SIM, and what does NOT?</>}
+        options={[
+          {key:"a", text:"Hard-search GSU collapses (no category to match against, retrieval returns empty or pathologically broad); ESU continues to function on whatever the GSU now passes (typically nothing or full last-K). The CTR head still produces scores but they are uninformed.", correct:true},
+          {key:"b", text:"ESU breaks; GSU is unaffected."},
+          {key:"c", text:"Soft-search GSU breaks; hard-search is unaffected (it never needed categories)."},
+          {key:"d", text:"Calibration head breaks first; nothing else changes."},
+        ]}
+        trap={<>(c) inverts what hard-search depends on (it specifically needs categories). (b) inverts the stages.</>}
+        lens={<>Hard-search GSU is the load-bearing dependency on the category attribute. SIM's whole long-history advantage rides on that one upstream signal. A surface without categories has no hard-search SIM — must fall back to DIN or upgrade to TWIN.</>}
+      />
+
+      {/* ============== D. Intuition traps ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      {/* axis: D1 */}
+      <VIS.TrapProblem
+        id="sim-d1"
+        difficulty="hard"
+        title="D1 — &quot;Soft-search is always better than hard-search&quot;"
+        scenario={<>A teammate insists: "Soft-search has higher recall — it should always beat hard-search." Why does production almost universally pick hard-search anyway?</>}
+        options={[
+          {key:"a", text:"Soft-search has higher offline recall but the marginal recall (cross-category neighbors) often does not convert online; the added cost of an ANN index, embedding refresh, and embedding-staleness handling typically dominates the recall lift.", correct:true},
+          {key:"b", text:"Hard-search is patented; soft-search is open-source."},
+          {key:"c", text:"Soft-search violates the SIM paper's recommendation."},
+          {key:"d", text:"Hard-search trains faster."},
+        ]}
+        trap={<>(b)-(d) are wrong or irrelevant. (a) names the real production tradeoff: marginal recall lift vs marginal infra cost.</>}
+        lens={<>The textbook answer (more recall is better) loses to the production answer (recall lift that does not convert is dead weight). Hard-search's CPU-deployability is the second invisible advantage — the soft-search-vs-hard-search debate is settled by infra costs more often than by recall numbers.</>}
+      />
+
+      {/* axis: D2 */}
+      <VIS.TrapProblem
+        id="sim-d2"
+        difficulty="hard"
+        title="D2 — Wrong-assumption cascade: &quot;SIM is just DIN with longer K&quot;"
+        scenario={<>You assume SIM and DIN-with-K=200 are interchangeable. Which downstream consequences are actually wrong because of that assumption?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Serving stack: SIM's GSU is an additional service on the request path (inverted-index lookup); DIN at K=200 is not — they have different ops profiles.", correct:true},
+          {key:"b", text:"Training data: SIM's ESU sees a target-conditional subset; DIN at K=200 sees a target-independent subset. Same training code on the two produces different model behavior.", correct:true},
+          {key:"c", text:"Calibration: SIM's CTR head sees a target-conditional input distribution; DIN's does not. A frozen Platt scaler that worked for DIN drifts for SIM.", correct:true},
+          {key:"d", text:"Loss function: SIM uses softmax CE; DIN uses BCE."},
+        ]}
+        trap={<>(d) is wrong — both are pointwise BCE.</>}
+        lens={<>SIM is not "DIN with longer K" — it is "DIN over a target-conditioned subset." The conditioning changes the serving stack, the training distribution, and the calibration. Pretending the two are equivalent reliably ships broken systems.</>}
+      />
+
+      {/* axis: D3 */}
+      <VIS.TrapProblem
+        id="sim-d3"
+        difficulty="medium"
+        title="D3 — Senior vs junior fix for SIM AUC regression"
+        scenario={<>SIM offline AUC drops 0.4% after a routine catalog refresh. Junior debugger: "retrain with more data." Senior debugger looks somewhere specific first. Where?</>}
+        options={[
+          {key:"a", text:"Re-check the category-taxonomy distribution before/after the refresh — new or re-assigned categories silently change the GSU's retrieval distribution, which the ESU was trained against the old version of.", correct:true},
+          {key:"b", text:"Increase the learning rate."},
+          {key:"c", text:"Switch to soft-search."},
+          {key:"d", text:"Replace SIM with HSTU."},
+        ]}
+        trap={<>(b)-(d) are migration moves, not debugging moves. (a) follows from the load-bearing-component-first heuristic: GSU is load-bearing for SIM.</>}
+        lens={<>The senior debugger localizes the regression to the load-bearing component first. For SIM, the load-bearing component is the GSU, and the GSU's behavior changes whenever the category taxonomy changes — even when nothing else does.</>}
+      />
+
+      {/* axis: D4 */}
+      <VIS.TrapProblem
+        id="sim-d4"
+        difficulty="hard"
+        title="D4 — Plausible misattribution: SIM CTR drops 2%"
+        scenario={<>SIM online CTR drops 2% the day after launching a new Holiday Gifts item category. Three plausible causes. Which is most likely the actual one, and which are red herrings?</>}
+        options={[
+          {key:"a", text:"Most likely: Hard-search GSU returns empty for items in the new category (no historical behaviors with that category yet); ESU sees nothing and falls back to user-context-only signal. Red herrings: candidate-gen drift, ESU MLP weight decay.", correct:true},
+          {key:"b", text:"Most likely: ESU MLP weight decay. Red herrings: GSU emptiness, candidate drift."},
+          {key:"c", text:"Most likely: candidate-gen drift. Red herrings: GSU emptiness, ESU weight decay."},
+          {key:"d", text:"All three are equally likely; no way to localize."},
+        ]}
+        trap={<>The temptation is to default to candidate-gen drift (the textbook first thing to check for new-launch regressions). The SIM-specific cause is GSU emptiness for cold categories.</>}
+        lens={<>SIM's failure modes cluster around its retrieval stage. Cold category -> empty GSU -> uninformed ESU. The fix is a GSU fallback (sibling-category retrieval or soft-search backstop for cold categories), not retraining the ESU.</>}
+      />
+
+      {/* ============== E. Operations ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      {/* axis: E1 */}
+      <VIS.TrapProblem
+        id="sim-e1"
+        difficulty="hard"
+        title="E1 — Production gotcha: GSU latency lives on the critical path"
+        scenario={<>You move the GSU inverted-index lookup to a remote key-value service instead of co-locating it with the ranker. What happens?</>}
+        options={[
+          {key:"a", text:"Every ranker request now pays an extra 5-10ms p99 for the remote KV call, blowing the ranker's latency budget. The GSU must be co-located with the ranker (in-memory or local SSD) — its position on the critical path is non-negotiable.", correct:true},
+          {key:"b", text:"Nothing changes — GSU and ranker are independent."},
+          {key:"c", text:"The ESU's latency drops because GSU work is offloaded."},
+          {key:"d", text:"Throughput improves because the KV service scales horizontally."},
+        ]}
+        trap={<>(b)-(d) miss that the GSU output is a prerequisite for the ESU. The latency adds rather than parallelizes.</>}
+        lens={<>SIM's two-stage architecture means the GSU is on the critical path. Any latency you add there is paid per request. Production SIM deployments co-locate the inverted-index in-memory or on local SSD.</>}
+      />
+
+      {/* axis: E2 — FAILURE ON FRIDAY */}
+      <VIS.TrapProblem
+        id="sim-e2"
+        difficulty="hard"
+        title="E2 — Failure on Friday: Holiday Gifts category page"
+        scenario={<>Marketing launches Holiday Gifts as a new top-level item category Friday at 5 pm. Saturday 8 am page: CTR on items in the new category drops 8% vs forecast. Latency normal, GPU util normal, eval AUC unchanged on the prior week's data. What broke, why specifically with SIM (and not with DLRM), and what's the fix?</>}
+        options={[
+          {key:"a", text:"DLRM's content-aware dense features would have given some signal on new-category items; SIM's hard-search GSU returns empty for items whose category has zero user-history matches yet. ESU has no behaviors to attend to and the CTR head falls back to user-context features. Fix: GSU fallback policy — for cold categories, retrieve from sibling categories or invoke a soft-search backstop.", correct:true},
+          {key:"b", text:"GPU thermal throttling at peak."},
+          {key:"c", text:"Embedding-table sharding mis-distributed the new category."},
+          {key:"d", text:"The CTR head's Platt scaler drifted."},
+        ]}
+        trap={<>(b)-(d) are generic recsys failures unrelated to SIM. The SIM-specific failure is the cold-category-GSU-emptiness chain.</>}
+        lens={<>SIM's failure mode here is mechanistic: hard-search GSU + cold category = empty retrieval = uninformed ESU. DLRM does not have this failure because it does not gate behavior usage through a retrieval step. The fix is at the GSU layer, not the ranker.</>}
+      />
+
+      {/* axis: E3 */}
+      <VIS.TrapProblem
+        id="sim-e3"
+        difficulty="medium"
+        title="E3 — Implementation specifics: empty retrieval handling"
+        scenario={<>The reference SIM implementation uses tf.nn.embedding_lookup_sparse for the GSU output. What silent failure does this hide if you do not add explicit empty-set handling?</>}
+        options={[
+          {key:"a", text:"When the GSU returns no behaviors, embedding_lookup_sparse returns a zero vector; the ESU attends over a zero vector and the CTR head silently outputs the prior. There is no error, just a confidence collapse — easy to miss without a dedicated empty-retrieval metric.", correct:true},
+          {key:"b", text:"It crashes with a NaN."},
+          {key:"c", text:"It loops infinitely waiting for input."},
+          {key:"d", text:"It returns a uniform attention distribution."},
+        ]}
+        trap={<>(b)-(d) describe failure modes that would be loud; the actual SIM failure is silent.</>}
+        lens={<>Production SIM needs an explicit branch: if GSU returns empty, bypass ESU entirely and use a learned fallback embedding (or fall through to a popularity baseline). The default zero-fill is the easiest production landmine to step on.</>}
+      />
+
+      {/* axis: E4 */}
+      <VIS.TrapProblem
+        id="sim-e4"
+        difficulty="medium"
+        title="E4 — Rollout: DIN to SIM migration"
+        scenario={<>Order the migration steps from DIN to SIM in production. Pick the correct sequencing.</>}
+        options={[
+          {key:"a", text:"Verify catalog category-coverage offline -> ship hard-search GSU offline-only and measure GSU recall -> ship ESU shadow scoring -> traffic ramp at 1, 5, 25, 100 percent -> per-category CTR breakdown monitored throughout.", correct:true},
+          {key:"b", text:"Ship ESU first; add GSU later."},
+          {key:"c", text:"Shadow -> 100 percent traffic — no offline gates."},
+          {key:"d", text:"Hard-search and soft-search both at once, A/B between them."},
+        ]}
+        trap={<>(b) ships a broken model (ESU needs GSU output). (c) is reckless. (d) confuses the deployment with the experiment.</>}
+        lens={<>SIM migrations must verify the load-bearing component (GSU recall) before depending on it. Per-category CTR breakdown is the right monitoring lens because uneven gains by category are SIM-specific (a signal of category-taxonomy quality, not ranker quality).</>}
+      />
+
+      {/* axis: E5 */}
+      <VIS.TrapProblem
+        id="sim-e5"
+        difficulty="hard"
+        title="E5 — Reproducibility: CIKM 2020 lift on Amazon-Books"
+        scenario={<>The paper reports 1-2% AUC lift over DIN on Amazon-Books. You try to reproduce on your marketplace catalog and see under 0.5% lift. What is the most likely SIM-specific reason?</>}
+        options={[
+          {key:"a", text:"Amazon-Books has clean, dense, deep category taxonomy (genre x sub-genre x topic) that makes hard-search GSU's category-match highly discriminative; messy marketplace categories (UGC tags, loose taxonomies) collapse GSU's recall.", correct:true},
+          {key:"b", text:"The paper's hyperparameters are wrong."},
+          {key:"c", text:"PyTorch vs TensorFlow numerical differences."},
+          {key:"d", text:"The paper's data is leaked."},
+        ]}
+        trap={<>(b)-(d) are generic reproduction issues. The SIM-specific reason is the category taxonomy's quality, which determines the GSU's discrimination.</>}
+        lens={<>SIM's headline numbers are bounded by the category taxonomy. The benchmark choice flatters or punishes the architecture independently of the ranker. Reproducing SIM gains on a thin taxonomy is structurally hard.</>}
+      />
+
+      {/* axis: E6 */}
+      <VIS.TrapProblem
+        id="sim-e6"
+        difficulty="hard"
+        title="E6 — Eval contamination: AUC measured against the retrieved subset"
+        scenario={<>Your offline eval pipeline computes AUC on (user, target) pairs evaluated against whatever behaviors the GSU retrieved. Why is this a contaminated metric for comparing SIM to DIN?</>}
+        options={[
+          {key:"a", text:"The GSU has filtered the behaviors in SIM's favor (target-relevant subset) before AUC is computed; the same target-conditional filtering is not applied to DIN's last-K. The metric conflates GSU retrieval quality with ranker discrimination quality.", correct:true},
+          {key:"b", text:"AUC is the wrong metric for ranking."},
+          {key:"c", text:"DIN does not produce probability scores."},
+          {key:"d", text:"SIM emits log-odds; DIN emits probabilities."},
+        ]}
+        trap={<>(b)-(d) are wrong; the real issue is what subset the AUC is computed over.</>}
+        lens={<>SIM offline gains can be hidden GSU gains masquerading as ranker gains. The clean eval is to compute AUC over a target-independent held-out set of (user, behavior, click) tuples drawn from the full history, not the GSU output.</>}
+      />
+
+      {/* ============== F. Failure modes ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      {/* axis: F1 */}
+      <VIS.TrapProblem
+        id="sim-f1"
+        difficulty="hard"
+        title="F1 — Edge case: user with all behaviors in one category"
+        scenario={<>A power user has 5000 behaviors, all in one category (a specialist account). The target item is in that same category. What does SIM do, and what does it silently lose?</>}
+        options={[
+          {key:"a", text:"Hard-search GSU returns the full history (all behaviors match the target category) — but the GSU's K cap (say 200) truncates the 5000 to the most recent 200, silently losing the older interest signal. SIM degenerates to DIN on the last 200, and the lifelong-history advantage evaporates.", correct:true},
+          {key:"b", text:"GSU returns empty because the user has no diversity."},
+          {key:"c", text:"ESU OOMs trying to attend over 5000 behaviors."},
+          {key:"d", text:"The CTR head detects the homogeneity and gates output."},
+        ]}
+        trap={<>(b)-(d) miss the actual mechanism. The truncation is silent — there is no error, no log line, just a return to DIN-level behavior.</>}
+        lens={<>SIM's K-cap is invisible to the user and is encoded only in the GSU's output sort+truncate step. For specialist accounts, K-cap is the binding constraint and the lifelong-history claim quietly stops being true.</>}
+      />
+
+      {/* axis: F2 */}
+      <VIS.TrapProblem
+        id="sim-f2"
+        difficulty="hard"
+        title="F2 — Adversarial: target item in a low-frequency category"
+        scenario={<>An adversary (or a content-moderation team) crafts a target item in a low-frequency category. What does SIM produce, and what does this attack reveal about SIM's reliance on the GSU?</>}
+        options={[
+          {key:"a", text:"GSU returns near-empty (few users have behaviors in low-frequency categories); ESU has no signal; CTR collapses to the prior. The attack reveals that SIM's prediction is bottlenecked by GSU recall, not by ESU capacity — collapsing GSU recall collapses the prediction regardless of how rich the ESU model is.", correct:true},
+          {key:"b", text:"SIM scores the item highly because the low-frequency signal is novel."},
+          {key:"c", text:"SIM crashes with a divide-by-zero."},
+          {key:"d", text:"SIM correctly identifies the adversarial intent."},
+        ]}
+        trap={<>(b)-(d) misframe the attack surface. The real failure is the GSU's recall bottleneck.</>}
+        lens={<>SIM's prediction confidence is a function of GSU recall first, ESU quality second. A model bottlenecked by retrieval is differently shaped than one bottlenecked by ranking — and the attack surface differs accordingly.</>}
+      />
+
+      {/* axis: F3 */}
+      <VIS.TrapProblem
+        id="sim-f3"
+        difficulty="hard"
+        title="F3 — Reverse engineering: offline AUC up, online CTR flat past K=100"
+        scenario={<>You scan SIM's offline AUC as a function of GSU K. AUC climbs steadily through K=200, K=500, K=1000. Online CTR plateaus past K=100. Which SIM-specific design choice drives this divergence?</>}
+        options={[
+          {key:"a", text:"The GSU/ESU space mismatch: as K grows, GSU returns noisier same-category behaviors that shift the ESU's input distribution; offline labels (which see the full history) reward the noise; online evaluation (target-conditional) does not. This is precisely the mismatch TWIN's unified space was designed to remove.", correct:true},
+          {key:"b", text:"Online learning is slower than offline."},
+          {key:"c", text:"The ESU's MLP overfits past K=100."},
+          {key:"d", text:"The CTR head's Platt scaler decalibrates."},
+        ]}
+        trap={<>(b)-(d) are generic; (a) names the SIM-specific architectural cause that TWIN exists to fix.</>}
+        lens={<>SIM's offline-online gap as K grows is the diagnostic signature of the space mismatch. If you see it, you have evidence that TWIN-V2 (or unified-space refactor) is the right next step.</>}
+      />
+
+      {/* axis: F4 */}
+      <VIS.TrapProblem
+        id="sim-f4"
+        difficulty="medium"
+        title="F4 — Paper-named failure: where the authors admit SIM underperforms"
+        scenario={<>The CIKM 2020 SIM paper specifically notes one regime where hard-search underperforms. Pick the regime and the architectural reason the authors named.</>}
+        options={[
+          {key:"a", text:"Fine-grained user interests that span multiple categories — hard-search GSU's single-category match misses semantic neighbors with different category labels. The paper motivates soft-search for this case.", correct:true},
+          {key:"b", text:"Users with fewer than 10 behaviors — GSU has nothing to retrieve."},
+          {key:"c", text:"GPU-rich serving — SIM is wasted there."},
+          {key:"d", text:"Single-tower retrieval systems."},
+        ]}
+        trap={<>(b)-(d) are not what the paper actually called out.</>}
+        lens={<>The paper itself anticipates the cross-category miss as hard-search's weakness and offers soft-search as the patch. The community fix (TWIN) reframes the problem at the architecture level.</>}
+      />
+
+      {/* axis: F5 */}
+      <VIS.TrapProblem
+        id="sim-f5"
+        difficulty="hard"
+        title="F5 — Community-found: what TWIN exposed"
+        scenario={<>TWIN (Chang et al., KDD 2023) was published as a direct improvement over SIM. Without looking up TWIN, derive from SIM's architecture what specific weakness TWIN was built to address, and roughly how it does so.</>}
+        options={[
+          {key:"a", text:"TWIN addresses SIM's GSU/ESU space mismatch — the GSU's retrieval distribution does not match the ESU's training distribution — by training a single unified embedding space such that the retrieved subset comes from the same geometry the ranker scores over. Implementation: jointly train a lightweight retrieval scorer and the ranker against a shared representation.", correct:true},
+          {key:"b", text:"TWIN replaces the inverted-index with HNSW."},
+          {key:"c", text:"TWIN extends SIM to support video features."},
+          {key:"d", text:"TWIN reduces SIM's compute by 10x."},
+        ]}
+        trap={<>(b)-(d) describe other improvements unrelated to the SIM-specific gap TWIN targets.</>}
+        lens={<>The space-mismatch is derivable from SIM's two-stage architecture without reading TWIN: any system that retrieves in space A and ranks in space B has this gap. TWIN is the natural fix; TWIN-V2 adds clustering on the unified-space retrieval.</>}
       />
     </VIS.Section>
 
-    <VIS.Section id="sec-further" title="Further reading">
-      <ul>
-        <li><a href="https://arxiv.org/abs/2006.05639" target="_blank" rel="noopener"><strong>Pi et al. — Search-based User Interest Modeling with Lifelong Sequential Behavior Data for CTR Prediction</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, CIKM 2020)</span><br/>The original SIM paper. Read sections 3 (architecture) and 4 (offline + online results) — they motivate the GSU/ESU split with concrete latency numbers from Alibaba's display ads.</li>
-        <li><a href="https://arxiv.org/abs/2302.02352" target="_blank" rel="noopener"><strong>Chang et al. — TWIN: TWo-stage Interest Network for Lifelong User Behavior Modeling</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, KDD 2023)</span><br/>The direct successor. Read it after SIM — TWIN's "consistency-preserving" shared QK projection is the cure for SIM-Hard's hard-search blind spot.</li>
-        <li><a href="https://arxiv.org/abs/2407.16357" target="_blank" rel="noopener"><strong>Si et al. — TWIN V2: Scaling Ultra-Long User Behavior Sequence Modeling for Enhanced CTR Prediction</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, 2024)</span><br/>Production-scale TWIN at Kuaishou. The serving-system section is the best public account of how a lifelong-attention model actually gets to 1B QPS.</li>
-        <li><a href="https://arxiv.org/abs/1706.06978" target="_blank" rel="noopener"><strong>Zhou et al. — Deep Interest Network for CTR Prediction</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, KDD 2018)</span><br/>The DIN paper. Required background — SIM's ESU IS DIN, just applied to the GSU shortlist instead of the raw history.</li>
-        <li><a href="https://github.com/THUwangcy/ReChorus" target="_blank" rel="noopener"><strong>ReChorus — open-source RecSys benchmark with DIN and SIM implementations</strong></a> <span style={{color:"#64748b", fontSize:14}}>(code)</span><br/>The cleanest small-codebase reference for the two-stage retrieval pattern. Read the SIM module to see how the inverted-index lookup is implemented on a single GPU.</li>
+    <VIS.Section id="sec-refs" title="References & further reading">
+      <ul style={{lineHeight:1.85}}>
+        <li>
+          <a href="https://arxiv.org/abs/2006.05639" target="_blank" rel="noopener"><strong>Pi et al. — SIM (CIKM 2020)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>The original paper. Sections 3 (GSU/ESU), 4 (hard-search vs soft-search) are the load-bearing reads.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2302.02352" target="_blank" rel="noopener"><strong>Chang et al. — TWIN (KDD 2023)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>Direct fix for SIM's GSU/ESU space mismatch.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2407.16357" target="_blank" rel="noopener"><strong>Si et al. — TWIN-V2 (KDD 2024)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>Adds clustering on the retrieved subset.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/1706.06978" target="_blank" rel="noopener"><strong>Zhou et al. — DIN (KDD 2018)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>The target-attention primitive SIM's ESU inherits.</span>
+        </li>
       </ul>
     </VIS.Section>
   </main>

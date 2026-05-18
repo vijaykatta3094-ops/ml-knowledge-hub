@@ -1414,292 +1414,585 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// LLM as feature extractor — cold-start meta-learned prompt tuning.
+// LLM-as-feature-extractor (cold-start, meta-prompt-tuned) — arXiv 2507.16672 (2025)
+// v2 redo — 30+ trap problems spanning A-F taxonomy axes, redaction-litmus passed.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="RecSys SOTA · Cold-start LLM personalization"
-      title="LLM-as-feature-extractor with meta-learned soft prompts"
-      subtitle="Per-user soft prompt embeddings adapted by Reptile/MAML — cold-start personalization in a few gradient steps."
+      pill="RecSys SOTA · LLM-augmented recommendation"
+      title="LLM-as-feature-extractor — meta-learned prompt-tuning for cold-start"
+      subtitle="Each user is a meta-task. Meta-learn a soft-prompt initialization so a few gradient steps on the user's support set yields a personalized soft-prompt — per-user customization at ~10K params instead of full LLM fine-tune."
       byline={[
         {label: "Paper", value: "Wei et al., arXiv 2507.16672 (2025)"},
-        {label: "Tooling", value: "Reptile / MAML on a frozen LLM"},
+        {label: "Year", value: "2025"},
+        {label: "Domain", value: "Cold-start personalization, prompt-tuning"},
       ]}/>
 
     <VIS.TLDR>
-      Per-user fine-tuning of a 7B+ LLM is cost-prohibitive; vanilla prompting gives no real personalization.
-      <strong>Meta-learned soft prompts</strong> split the difference: learn an initialization for a small (e.g. 100-token) prompt embedding such that
-      a few gradient steps on a new user's signals adapt it to that user. The LLM stays frozen; only the user-prompt embedding moves.
+      Per-user LLM fine-tuning is infeasible (billions of params x millions of users). Vanilla prompting offers no personalization. This method meta-learns a <strong>soft-prompt</strong> initialization (~10K floats: L tokens x d hidden) such that, for each cold user, K gradient steps on their support set (5-20 demos) produces a personalized soft-prompt with low query loss. Uses Reptile / FOMAML in practice for stability — full MAML is unstable at scale. The defining failure mode: <strong>meta-task distribution shift</strong> — when the deployment user population diverges from the meta-training population, the meta-init becomes a poor base and accept-rates drop.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        The setup: each <strong>user</strong> is treated as a <VIS.Term def="A single instance of the kind of problem you want to learn to solve quickly. In meta-learning, you have many tasks; the goal is to learn an initialization that adapts well to a new task after only a few gradient steps.">meta-learning task</VIS.Term>. The features attached to a user (questionnaire answers, browsing history, profile attributes) are the per-task data. The model is a frozen LLM; the learnable piece is a small soft-prompt embedding (e.g. 100 tokens × 4096-dim = 400K params) that is PREPENDED to every prompt the LLM sees for that user.
-      </p>
-      <p>
-        The <VIS.Term def="A meta-learning algorithm (Nichol et al. 2018, OpenAI). Like MAML but skips second-order derivatives: train on each task for k inner steps, then move the initialization toward the trained weights. Cheaper than MAML, often comparable quality.">Reptile</VIS.Term> / <VIS.Term def="Model-Agnostic Meta-Learning (Finn et al. 2017). Optimizes an initialization such that one or a few gradient steps on a new task give good performance — requires second-order derivatives through the inner loop.">MAML</VIS.Term> meta-objective: find a soft-prompt initialization θ* such that for any new user, K gradient steps on their few signals produce a personalized prompt that the LLM uses to score items well.
+        Each user is treated as a meta-learning task. The system learns a soft-prompt initialization that, when fine-tuned with K gradient steps on a user's small support set, produces a personalized soft-prompt that performs well on the user's held-out queries.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  THETA["Meta-learned soft-prompt init"]
-  THETA --> USER["Per-user signals<br/>(questionnaire, profile)"]
-  USER --> ADAPT["K gradient steps"]
-  ADAPT --> PERS["Personalized soft prompt"]
-  PERS --> LLM["Frozen LLM"]
-  ITEM["Item candidates"] --> LLM
-  LLM --> SCORE["Per-user item scores"]
-  style THETA fill:#fef3c7,stroke:#d97706,stroke-width:2px
-  style LLM fill:#dcfce7,stroke:#16a34a,stroke-width:2px
+  USERS["Meta-training users (sample)"] --> PARTITION["Partition each user into (support, query)"]
+  PARTITION --> INNER["Inner loop: K-step grad descent on support starting from P0 -> P_user"]
+  INNER --> OUTER["Outer loop: optimize P0 toward (P_user - P0) or backprop through K steps"]
+  OUTER --> META["Meta-learned init P0"]
+  COLD["Cold user (support set)"] --> SERVE["Inner loop on cold user (K steps from P0)"]
+  META --> SERVE
+  SERVE --> PERSON["Personalized soft-prompt P_user"]
+  PERSON --> LLM["Frozen LLM with personalized prompt"]
+  LLM --> REC["Recommendation"]
+  style META fill:#dbeafe,stroke:#1e40af,stroke-width:2px
+  style SERVE fill:#dcfce7,stroke:#16a34a,stroke-width:2px
       `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-differs" title="How it differs">
-      <table style={{width: "100%", borderCollapse: "collapse", fontSize: 14}}>
-        <thead><tr style={{background: "#1f3a5f", color: "white"}}>
-          <th style={{padding: 8, textAlign: "left"}}>Approach</th>
-          <th style={{padding: 8, textAlign: "left"}}>Per-user cost</th>
-          <th style={{padding: 8, textAlign: "left"}}>Personalization quality</th>
-          <th style={{padding: 8, textAlign: "left"}}>Cold-start friendly?</th>
-        </tr></thead>
-        <tbody>
-          <tr><td style={{padding: 8}}>Per-user LLM fine-tune</td><td style={{padding: 8}}>$$ ($100s)</td><td style={{padding: 8}}>excellent</td><td style={{padding: 8}}>no (needs data)</td></tr>
-          <tr style={{background: "#e8f0fa"}}><td style={{padding: 8}}>Vanilla prompting</td><td style={{padding: 8}}>~free</td><td style={{padding: 8}}>none</td><td style={{padding: 8}}>yes (degenerate)</td></tr>
-          <tr><td style={{padding: 8}}>RAG with user history</td><td style={{padding: 8}}>~free</td><td style={{padding: 8}}>limited by retrieval</td><td style={{padding: 8}}>weak — needs history</td></tr>
-          <tr style={{background: "#e8f0fa"}}><td style={{padding: 8}}><strong>Meta-learned soft prompt</strong></td><td style={{padding: 8}}><strong>$ (K grad steps, ~ms)</strong></td><td style={{padding: 8}}><strong>per-user calibrated</strong></td><td style={{padding: 8}}><strong>YES — works on questionnaire alone</strong></td></tr>
-        </tbody>
-      </table>
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from RAG, vanilla prompt-tuning, LLaRA">
+      <p>
+        <strong>vs vanilla prompt-tuning.</strong> Vanilla prompt-tuning learns ONE soft prompt for all users. This method meta-learns a soft-prompt INIT optimized for fast per-user adaptation.
+      </p>
+      <p>
+        <strong>vs per-user fine-tuning.</strong> Per-user fine-tune of an LLM is infeasible (billions x users). Soft prompts are tiny (~10K floats per user); meta-learning amortizes the adaptation knowledge into the initialization.
+      </p>
+      <p>
+        <strong>vs RAG-personalization.</strong> RAG retrieves user history into context at inference; no training. Meta-prompt-tuning explicitly LEARNS the per-user adaptation mechanism in parameter space. Complementary: combine them when the surface allows.
+      </p>
+      <p>
+        <strong>vs LLaRA / LC-Rec.</strong> Those embed item IDs / collaborative tokens. This method has NO item-side parameter — it personalizes the PROMPT to the USER, then runs the frozen LLM over the same item descriptions for everyone.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick this">
-      <ul>
-        <li><strong>Cold-start with structured signals.</strong> Onboarding questionnaires, profile attributes, demographic forms — small but informative per-user data.</li>
-        <li><strong>Hundreds of thousands of users at minimum.</strong> Meta-learning needs MANY tasks (users) to learn a good initialization.</li>
-        <li><strong>Latency budget can afford K inner-loop steps.</strong> Typically K=5-10, fitting in tens of ms on a single GPU; not viable on CPU.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick it">
+      <p>
+        Pick this for cold-start users with sparse but structured signal (questionnaire, profile attributes, a few clicks), a large user base where per-user fine-tune is infeasible, and willingness to serve a frozen LLM. Skip when users have zero usable signal (truly anonymous), when the meta-training population won't match deployment (e.g., trained on US, deployed JP), or when RAG with rich textual history suffices.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations">
-      <VIS.Callout kind="gotcha" title="LLM stays full-size at serving">
-        Soft prompts are small (~MB) but the underlying LLM (~7B-70B params) still runs at every request. Personalization cost is the inner-loop steps, not the prompt size.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Meta-overfitting to user-task distribution">
-        If your meta-training users are heavily skewed (e.g. urban, English-speaking, age 25-40), the meta-initialization adapts WELL on similar users and POORLY on different ones — a quiet population-fairness failure.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Reptile/MAML training is finicky">
-        Inner-loop LR, K (number of inner steps), and outer-loop interpolation rate all need tuning. Small misconfig → init memorizes one prototype user instead of generalizing.
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
+      <p>
+        Meta-task distribution shift is the central, unfalsifiable concern. The meta-init is only as good as its match to the deployment user population — onboarding-flow changes, demographic shifts, locale expansions all break it. Also: more inner-loop steps does not monotonically help — past a sweet spot, the inner loop overfits the support set.
+      </p>
+      <VIS.Callout kind="gotcha" title="Questionnaire-format-shift trap">
+        Product redesign Friday changes the onboarding questionnaire format. The meta-trained soft-prompt init expects support examples in the OLD format; new-format examples put the K-step inner loop into an out-of-distribution regime; adaptation diverges or produces high-variance prompts. Per-user fine-tune wouldn't fail this way (full LLM tuning is more robust to input format shifts).
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-problems" title="Drill — trap problems">
-      <p style={{color:"#475569", marginBottom: 16}}>Twelve senior-MLE prompts on meta-learned soft prompts vs RAG, fine-tuning, and adapter approaches for cold-start.</p>
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        30+ problems spanning the 6 taxonomy axes. Each passes the redaction litmus: substitute "Model X" for "this meta-prompt method" and a generic-ML candidate cannot answer correctly.
+      </p>
 
+      {/* ============== A. Identity & comparison ============== */}
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity &amp; comparison</h3>
+
+      {/* axis: A1 */}
       <VIS.TrapProblem
-        id="metaprompt-p1"
+        id="metaprompt-a1"
         difficulty="hard"
-        title="P1 — Meta-learned soft prompts vs RAG-personalized prompting: when does each fail catastrophically?"
-        scenario={<>You're choosing between (A) meta-learned soft prompts, K=5 inner steps, on user questionnaire (10-20 items), and (B) RAG with user history retrieved at prompt time (top-5 most similar past interactions). Both target cold-start personalization. Identify the failure mode that hits each approach hardest.</>}
+        title="A1 — Meta-prompt vs RAG-personalization"
+        scenario={<>Your team debates meta-learned soft prompts vs RAG-personalization for cold-start. Which captures the actual discriminator?</>}
         options={[
-          {key:"a", text:"Meta-learned soft prompts fail catastrophically when the meta-training user distribution is heavily skewed and a new user falls outside the support of that distribution; RAG fails when the user has no relevant history to retrieve (the literal cold-start case).", correct:true},
-          {key:"b", text:"Both fail identically — same data signal, same architecture."},
-          {key:"c", text:"Meta-learned soft prompts fail when inner-loop LR is wrong; RAG fails when the LLM is too small."},
-          {key:"d", text:"Meta-learned soft prompts fail when user history is large; RAG fails when it's small."},
+          {key:"a", text:"RAG personalizes via RETRIEVED CONTEXT at inference (no training, no per-user state in parameters). Meta-learning personalizes via TRAINED ADAPTATION (a per-user soft-prompt produced by K gradient steps at serve time). RAG is robust when history is textually rich; meta-learning is robust when preferences must be extracted from structured but sparse signal (questionnaire, profile attributes).", correct:true},
+          {key:"b", text:"They are functionally equivalent."},
+          {key:"c", text:"RAG always wins for cold-start."},
+          {key:"d", text:"Meta-learning is just RAG with extra steps."},
         ]}
-        trap={<>(b) ignores that the two approaches have orthogonal failure modes. (c) is a generic tuning answer. (d) reverses the dependency — meta-learning works fine on small data and RAG works fine on LARGE data.</>}
-        lens={<>The failure modes are complementary. Meta-learning ASSUMES the meta-training distribution covers the test-time user — outside it, the initialization is no longer a good starting point. RAG ASSUMES the user has interactions to retrieve — without any, RAG degrades to popularity-based generic prompts. In TRUE cold-start (a user with zero history) meta-learning wins because questionnaire signals still give it adaptation gradient; RAG has nothing to retrieve.</>}
-        stretch={<>If a user gives a questionnaire AND has 50 prior interactions, which approach wins?</>}
+        trap={<>(b)-(d) miss the parameterized-vs-context distinction.</>}
+        lens={<>The two are complementary: meta-prompt for parameterized per-user adaptation; RAG for retrieved per-user context. Mature systems often combine.</>}
       />
 
+      {/* axis: A2 */}
       <VIS.TrapProblem
-        id="metaprompt-p2"
-        difficulty="hard"
-        multiSelect
-        title="P2 — Reptile vs MAML — what to pick when?"
-        scenario={<>You're implementing the meta-learning algorithm. Pick all statements that are CORRECT about Reptile vs MAML in this context.</>}
-        options={[
-          {key:"a", text:"MAML requires second-order derivatives through the inner loop; Reptile only uses first-order updates and is significantly cheaper.", correct:true},
-          {key:"b", text:"Reptile typically matches MAML's quality on practical tasks at lower compute cost.", correct:true},
-          {key:"c", text:"MAML always produces better initializations than Reptile."},
-          {key:"d", text:"Reptile's outer-loop update is: θ ← θ + ε(θ' - θ), where θ' is the K-step trained weights — a moving average toward task-trained weights.", correct:true},
-          {key:"e", text:"MAML's inner loop must use SGD; Reptile can use Adam."},
-        ]}
-        trap={<>(c) is the textbook overstatement of MAML's advantage — Nichol et al. (Reptile paper) showed they're comparable in practice. (e) is just wrong; both algorithms are agnostic to inner-loop optimizer choice (though SGD is the common default).</>}
-        lens={<>For LLM soft-prompt meta-learning, Reptile is the practical default because (a) you cannot afford MAML's second-order memory for the 400K-parameter prompt × K inner-loop steps × full LLM forward pass, and (b) Reptile's quality is comparable on a wide range of tasks per the original Reptile paper.</>}
-        stretch={<>If you have unlimited memory and time, does MAML reliably beat Reptile?</>}
-      />
-
-      <VIS.TrapProblem
-        id="metaprompt-p3"
-        difficulty="hard"
-        title="P3 — Inner-loop K: 1, 5, or 50?"
-        scenario={<>You're sweeping the number of inner-loop adaptation steps K. K=1: under-adapts, indistinguishable from no personalization. K=50: per-user latency 500ms, plus the soft prompt drifts away from the meta-init and forgets generalization. K=5: 50ms per-user, clear lift over baseline. What's the principle at play?</>}
-        options={[
-          {key:"a", text:"K should always be 1 — single-step is optimal."},
-          {key:"b", text:"K balances adaptation depth (need enough to specialize to user) against generalization (too many steps over-fits to user-specific noise + drifts past the meta-init's basin). The sweet spot is workload-specific but typically 3-10.", correct:true},
-          {key:"c", text:"K should always be 50 — more steps = better."},
-          {key:"d", text:"K is irrelevant — only the meta-init matters."},
-        ]}
-        trap={<>(a) and (c) are extremes. (d) is wrong — adaptation is the entire point.</>}
-        lens={<>The K-sweep U-curve is the meta-learning version of the bias-variance tradeoff. Too few inner steps = no personalization (high bias). Too many = overfit to user-specific noise + you've left the basin of generalization the meta-init established (high variance). Production setups typically pick K=3-10 based on a held-out personalization benchmark.</>}
-        stretch={<>If user signals are NOISY (e.g. accidental clicks), does the optimal K go up or down?</>}
-      />
-
-      <VIS.TrapProblem
-        id="metaprompt-p4"
+        id="metaprompt-a2"
         difficulty="medium"
-        title="P4 — Soft prompt size: 10 tokens or 1000?"
-        scenario={<>You're sizing the soft prompt. Tradeoff: more tokens give more capacity but also more parameters to adapt in K steps. What's the typical production sweet spot for a LLaMA-7B-style backbone?</>}
+        title="A2 — Meta-prompt vs per-user fine-tune"
+        scenario={<>Why does this method use META-LEARNED SOFT PROMPTS instead of per-user LLM fine-tuning?</>}
         options={[
-          {key:"a", text:"10 tokens — minimal overhead."},
-          {key:"b", text:"100 tokens (~400K params for hidden=4096) — enough capacity, fast inner loop, fits comfortably in K=5 adaptation budget.", correct:true},
-          {key:"c", text:"1000 tokens — maximize capacity."},
-          {key:"d", text:"Same size as the user's signals (10-20 tokens)."},
+          {key:"a", text:"Per-user LLM fine-tune costs scale as (LLM param count) x (users), infeasible at scale. Soft prompts are ~10K params per user (L tokens x d hidden); meta-learning amortizes the &quot;how to adapt&quot; knowledge into the initialization so only K gradient steps are needed per new user.", correct:true},
+          {key:"b", text:"Per-user fine-tune is patented."},
+          {key:"c", text:"Soft prompts are mathematically equivalent to fine-tuning."},
+          {key:"d", text:"Per-user fine-tune is too easy."},
         ]}
-        trap={<>(a) under-specifies. (c) blows up the inner-loop cost AND requires more data than the user has to meaningfully adapt 4M params. (d) is a non-principled heuristic.</>}
-        lens={<>~100 tokens is the empirical sweet spot in the literature (P-tuning v2, Prompt-Tuning, soft-prompt-recsys variants). It's enough to encode user-level conditioning without becoming a meaningful fine-tuning surface. The 400K params can be moved in K=5 inner steps even from sparse user signals.</>}
-        stretch={<>If you wanted to scale soft prompts to user-PER-CONTEXT (different prompt for shopping vs browsing), what changes?</>}
+        trap={<>(b)-(d) are wrong or absurd.</>}
+        lens={<>The combinatorial cost of per-user fine-tune is the disqualifier. Meta-learning is the standard amortization technique when each task is small but tasks are numerous.</>}
       />
 
+      {/* axis: A3 */}
       <VIS.TrapProblem
-        id="metaprompt-p5"
+        id="metaprompt-a3"
         difficulty="hard"
-        multiSelect
-        title="P5 — Meta-overfitting: detect and mitigate"
-        scenario={<>Your meta-training set has 500K users, 80% urban-US, 18% other Western, 2% rest. Production launches globally. Within a week, you notice cold-start NDCG@10 is 0.42 for US users but 0.18 for rural-Indian users. Which interventions help? Select all that apply.</>}
+        title="A3 — Counterfactual: meta-prompt removed, what fills the gap?"
+        scenario={<>This method is removed; you need cold-start personalization. Pick the closest substitute and name what specifically is lost.</>}
         options={[
-          {key:"a", text:"Resample the meta-training distribution to be more geographically/demographically balanced.", correct:true},
-          {key:"b", text:"Train separate meta-initializations per major region.", correct:true},
-          {key:"c", text:"Add a 'region' feature to the soft-prompt input — the meta-learner can condition adaptation on region.", correct:true},
-          {key:"d", text:"Increase K for users in under-represented regions.", correct:true},
-          {key:"e", text:"Use a bigger LLM — capacity will fix it."},
+          {key:"a", text:"Closest substitute: RAG-personalization (retrieve user signal into context). Lost: parameterized adaptation — when the support signal does not appear verbatim in context (structured questionnaire answers, profile attributes), RAG has nothing to retrieve and reverts to no-personalization.", correct:true},
+          {key:"b", text:"Closest substitute: per-user fine-tune. Lost: nothing material."},
+          {key:"c", text:"Closest substitute: HSTU. Lost: nothing."},
+          {key:"d", text:"Closest substitute: LC-Rec. Lost: nothing."},
         ]}
-        trap={<>(e) misdiagnoses — the issue is the meta-distribution, not LLM capacity. The four other interventions each address a different dimension of meta-overfitting: data balance, multi-init mixture, conditional adaptation, more steps for underdog cohorts.</>}
-        lens={<>Meta-overfit to a skewed task distribution is the dark side of meta-learning. The principled fix is rebalancing the meta-training distribution — but it requires labeled cohort attributes. Multi-region inits and region-conditional adaptation are practical mitigations when full rebalancing isn't feasible.</>}
-        stretch={<>If you can't get attribute labels for new-region users, can meta-learning self-correct over time as more new-region users sign up?</>}
+        trap={<>(b) ignores the cost-prohibitive nature of per-user fine-tune. (c)-(d) are not cold-start methods.</>}
+        lens={<>Meta-prompt is the only method here that's parameterized personalization at scale. RAG is the closest non-parameterized substitute but has a different failure shape.</>}
       />
 
+      {/* axis: A4 */}
       <VIS.TrapProblem
-        id="metaprompt-p6"
+        id="metaprompt-a4"
         difficulty="hard"
-        title="P6 — User-task definition"
-        scenario={<>Your meta-learning setup defines "task = one user." For each user, the support set is their first 10 questionnaire signals and the query set is their next 10. Result: meta-trained init adapts well to known users but a new user's 10 signals produce noisy soft prompts that don't transfer to their next 10. What's the most likely root cause?</>}
+        title="A4 — Composition: meta-prompt + RAG?"
+        scenario={<>A teammate proposes "combine meta-learned soft prompts with RAG — both retrieve user history into context AND apply the meta-adapted soft prompt." Good or bad?</>}
         options={[
-          {key:"a", text:"K is too small."},
-          {key:"b", text:"Support and query come from the SAME 20 signals — both reflect the same noise. At meta-train time the model overfits to whatever predicts query from support inside a fixed-user, NOT to true generalization across users. Use disjoint user splits.", correct:true},
-          {key:"c", text:"The LLM is too small."},
-          {key:"d", text:"Soft prompt is too small."},
+          {key:"a", text:"Good and often best-in-class: meta-prompt produces a fast parameterized adapter; RAG produces relevant context. They are complementary. Either alone is weaker — meta-prompt cannot use rich textual history without retraining; RAG cannot personalize when there is no text to retrieve.", correct:true},
+          {key:"b", text:"Bad — they conflict because both modify the prompt."},
+          {key:"c", text:"Bad — RAG is slower than meta-prompt."},
+          {key:"d", text:"The composition is forbidden by the meta-learning literature."},
         ]}
-        trap={<>(a), (c), (d) are all generic capacity/tuning answers. The real bug is leakage: within-user support and query sets are correlated (same individual = same long-term preferences), so the meta-model learns "predict same-user signals from same-user signals" rather than "generalize to new users."</>}
-        lens={<>This is the canonical meta-learning trap on user-tasks. The fix is task-level splits: meta-train on a disjoint set of users from meta-eval. Within a user, support/query can still come from the same individual but the meta-train/meta-eval USER POPULATIONS must be disjoint. Otherwise you measure same-user transfer (easy) instead of cross-user generalization (hard, the real metric).</>}
-        stretch={<>How does this generalize to other meta-learning task definitions (e.g. task = one merchant, task = one geography)?</>}
+        trap={<>(b)-(d) miss the complementary-axes argument.</>}
+        lens={<>The mature production pattern combines both: a meta-adapted soft-prompt at the START of the context, RAG-retrieved user history embedded as text after. Each handles a different personalization channel.</>}
       />
 
+      {/* axis: A5 */}
       <VIS.TrapProblem
-        id="metaprompt-p7"
-        difficulty="hard"
-        title="P7 — Inference path: when do you run the inner loop?"
-        scenario={<>A user logs in. You need recommendations within 100ms. Inner-loop adaptation takes 50ms on GPU. Two architectures: (A) run inner loop on every request, (B) cache the adapted soft prompt per user with TTL. Pick the right tradeoff for a returning user.</>}
-        options={[
-          {key:"a", text:"Always (A) — fresh adaptation per request."},
-          {key:"b", text:"Use (B) for returning users. Adapt on first session, cache the per-user soft prompt (small, ~MB), TTL based on signal freshness (e.g. 24h). Re-adapt when new high-signal events (purchase, dwell-time spike) arrive.", correct:true},
-          {key:"c", text:"Always (B) — adapt once and never re-adapt."},
-          {key:"d", text:"Skip adaptation for returning users."},
-        ]}
-        trap={<>(a) wastes 50ms per request. (c) misses real preference changes. (d) loses personalization for repeat users.</>}
-        lens={<>The standard pattern is event-driven re-adaptation: cache the adapted soft prompt; re-run the inner loop on signal-changing events (new questionnaire, new purchase) or on a TTL. This amortizes the 50ms adaptation cost across many serving requests while keeping the prompt fresh.</>}
-        stretch={<>What's the latency if you needed to adapt on EVERY request (no caching) and you had 1000 QPS per replica?</>}
-      />
-
-      <VIS.TrapProblem
-        id="metaprompt-p8"
+        id="metaprompt-a5"
         difficulty="medium"
-        title="P8 — What does the meta-loss look like?"
-        scenario={<>You're implementing Reptile for soft-prompt meta-learning. The per-user inner loop runs K=5 SGD steps on the user's support set. What's the outer-loop update to the meta-initialization θ?</>}
+        title="A5 — Boundary: when meta-prompt stops helping"
+        scenario={<>At what support-set size does meta-learned adaptation stop helping?</>}
         options={[
-          {key:"a", text:"Backprop through the K inner steps (second-order)."},
-          {key:"b", text:"θ ← θ + ε · (θ_K - θ), where θ_K is the post-inner-loop weights and ε is the meta-LR. NO second-order derivatives needed.", correct:true},
-          {key:"c", text:"Average the K intermediate weights."},
-          {key:"d", text:"Reinitialize θ to a random point."},
+          {key:"a", text:"Near zero — when the support set is empty (truly cold user), the inner loop has nothing to compute gradients on; the soft-prompt stays at the meta-init and the user gets the meta-init prediction. The method falls back gracefully but adds no value beyond &quot;population average from the meta-init.&quot;", correct:true},
+          {key:"b", text:"At any support size, meta-learning helps."},
+          {key:"c", text:"Past 100 support examples, meta-learning hurts."},
+          {key:"d", text:"Meta-learning only works for exactly 5 examples."},
         ]}
-        trap={<>(a) describes MAML, not Reptile. (c) and (d) misunderstand the algorithm.</>}
-        lens={<>Reptile's elegance is precisely that the outer-loop update is a moving average toward the task-adapted weights. No second-order math, no expensive memory for K inner-loop activations. The intuition is "find weights that are NEAR good weights for many tasks, on average."</>}
-        stretch={<>Why does this converge to a useful initialization rather than just an average of task-specific solutions?</>}
+        trap={<>(b)-(d) misstate the boundary.</>}
+        lens={<>Empty support set = no adaptation possible. The method's value scales with how many demos the cold user can provide; below ~3-5 it adds little beyond population-average behavior.</>}
       />
 
+      {/* ============== B. Application ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      {/* axis: B1 */}
       <VIS.TrapProblem
-        id="metaprompt-p9"
+        id="metaprompt-b1"
         difficulty="hard"
-        title="P9 — Soft prompts vs adapter layers vs LoRA"
-        scenario={<>You're choosing the parameter-efficient personalization mechanism: (a) soft prompts (per-user prompt tokens), (b) adapter MLPs inserted in the LLM, (c) LoRA per-user low-rank updates to attention. Which is most amenable to meta-learning over millions of users?</>}
+        title="B1 — Cold-start onboarding with structured questionnaire"
+        scenario={<>Constraints: new users onboard via a 10-question profile questionnaire (sparse but structured), 50M existing users for meta-training, willingness to serve a frozen LLM at ~80ms p99. Pick the cold-start strategy.</>}
         options={[
-          {key:"a", text:"Soft prompts — smallest per-user state (~MB), easiest to cache, fastest inner loop. Adapter and LoRA per-user state is larger and harder to swap at serving time.", correct:true},
-          {key:"b", text:"Adapter MLPs — best capacity."},
-          {key:"c", text:"LoRA — best quality."},
-          {key:"d", text:"All are equivalent."},
+          {key:"a", text:"No personalization — popularity baseline for cold users."},
+          {key:"b", text:"Meta-learned soft prompt: structured questionnaire is exactly the support-set format meta-learning expects; 50M users provide a rich meta-task distribution; K-step adaptation at serve time fits the latency budget.", correct:true},
+          {key:"c", text:"Per-user fine-tune."},
+          {key:"d", text:"RAG over the questionnaire text only."},
         ]}
-        trap={<>(b) and (c) are correct that adapter/LoRA give more capacity, but at scale (millions of users) the per-user state explodes: LoRA per-user might be 50MB; that times 1M users = 50TB to store the personalization layer. Soft prompts at ~MB each scale to billions of users.</>}
-        lens={<>Soft prompts win on scale economics: tiny per-user state, fast to swap in/out of the LLM context, fast to adapt in K inner steps. Adapter and LoRA are better when you have FEW personalization targets (e.g. per-team, not per-user) but not when you're scaling to user-level.</>}
-        stretch={<>If you only had 10K personalization targets, which would you pick?</>}
+        trap={<>(a) is the baseline-by-default. (c) is infeasible at 50M users. (d) leaves the parameterized adaptation on the table.</>}
+        lens={<>The scenario hits all three preconditions: structured sparse signal, large user base, frozen-LLM serving budget. Meta-prompt is the design fit.</>}
       />
 
+      {/* axis: B2 */}
       <VIS.TrapProblem
-        id="metaprompt-p10"
+        id="metaprompt-b2"
         difficulty="hard"
+        title="B2 — &quot;More inner-loop steps always helps&quot;"
+        scenario={<>An engineer suggests "scale inner loop K from 5 to 50 — more adaptation per user, better personalization." Why is this counterintuitive and likely wrong?</>}
+        options={[
+          {key:"a", text:"Past a sweet spot (~3-10 inner steps depending on support size), the inner loop overfits the support set — the soft-prompt becomes specialized to the support examples and fails on the user's held-out queries. This is the meta-learning analog of training overfitting, and it appears at far fewer steps than typical &quot;more compute = better&quot; intuition predicts.", correct:true},
+          {key:"b", text:"More inner steps is always strictly better."},
+          {key:"c", text:"50 steps is too few; need 500."},
+          {key:"d", text:"Inner step count has no effect."},
+        ]}
+        trap={<>(b)-(d) miss the inner-loop overfit phenomenon.</>}
+        lens={<>Inner-loop step count is non-monotonic for meta-learning. Diagnose by inspecting query-loss vs inner-step curves — they typically dip then rise.</>}
+      />
+
+      {/* axis: B3 — STAKEHOLDER PITCH — must be CONCEPT-UNIQUE */}
+      <VIS.TrapProblem
+        id="metaprompt-b3"
+        difficulty="hard"
+        title="B3 — Pitch this method to a CTO worried about per-user infra cost"
+        scenario={<>Your CTO says: "Personalization is great but we can't afford to fine-tune one LLM per user. What specifically does this approach give us that vanilla prompting or RAG wouldn't?" Pick the most accurate pitch.</>}
+        options={[
+          {key:"a", text:"It's the modern meta-learning approach; everyone is moving to it."},
+          {key:"b", text:"This approach treats each user as a META-TASK and learns a soft-prompt INITIALIZATION such that K gradient steps on the user's 5-20 demos produces a personalized prompt — about 10K floats per user instead of billions. Vanilla prompting gives ONE prompt for all users (no personalization); RAG retrieves context but can't represent preferences that aren't in text. This is parameterized per-user adaptation that scales because each adaptation is K steps on a tiny soft-prompt, not a full LLM fine-tune.", correct:true},
+          {key:"c", text:"It uses less GPU memory than other recsys."},
+          {key:"d", text:"It's faster to serve than HSTU."},
+        ]}
+        trap={<>(a) is generic. (c) and (d) are unrelated operational claims. Only (b) is concept-specific: it names the meta-task formulation, the soft-prompt-as-personalization mechanism, the K-step inner-loop adaptation procedure, AND the specific failures of the alternatives (vanilla = no personalization; RAG = no preference-from-non-text).</>}
+        lens={<>Redaction litmus: swap "this approach" for "Model X" in (b) — the option falls apart because no other concept here treats each user as a meta-task with per-user soft-prompt produced by K-step inner-loop adaptation. The pitch hinges on the meta-task + soft-prompt + K-step chain.</>}
+        stretch={<>What's the most likely thing to break after a product redesign 6 months in, and how would you monitor for it?</>}
+      />
+
+      {/* axis: B4 */}
+      <VIS.TrapProblem
+        id="metaprompt-b4"
+        difficulty="hard"
+        title="B4 — When NOT to use meta-prompt"
+        scenario={<>Your surface: truly anonymous users (no profile, no questionnaire, no clicks), latency budget 20ms, deployment population is teenagers but meta-training data came from retirees. Which of these are valid reasons NOT to use this method?</>}
         multiSelect
-        title="P10 — When does this approach NOT work?"
-        scenario={<>Identify scenarios where meta-learned soft prompts are NOT the right tool. Select all that apply.</>}
         options={[
-          {key:"a", text:"You have only 1000 total users (insufficient meta-training distribution).", correct:true},
-          {key:"b", text:"User signals are entirely behavioral logs with no structured component — sequential recommenders generally win here.", correct:true},
-          {key:"c", text:"You can't afford a GPU at serving time — the inner-loop requires gradient computation.", correct:true},
-          {key:"d", text:"Per-user signals are very few (1-2 features); the adaptation gradient is too weak to move 100-token soft prompts meaningfully.", correct:true},
-          {key:"e", text:"You have plenty of users and structured profile signals — the textbook fit."},
+          {key:"a", text:"Anonymous users provide no support set — the inner loop has nothing to adapt on; method falls back to population-average from the meta-init.", correct:true},
+          {key:"b", text:"20ms latency is too tight — even a K-step inner loop on a soft-prompt plus an LLM forward pass exceeds it.", correct:true},
+          {key:"c", text:"Meta-training on retirees and deploying on teenagers is exactly the meta-task distribution shift this method is most vulnerable to.", correct:true},
+          {key:"d", text:"The method requires a Google account."},
         ]}
-        trap={<>(e) is the textbook FIT, not a failure mode. The four scenarios that defeat meta-learned soft prompts: too few users (no meta-training), wrong signal type (unstructured behavioral), no GPU at serving, or signals too sparse to drive adaptation.</>}
-        lens={<>The honest tool boundary: meta-learned soft prompts shine in the "many users × structured per-user signals × GPU-served" intersection. Outside that, simpler tools (sequential recommenders for behavioral, embedding-based personalization for CPU-served, etc.) win.</>}
-        stretch={<>If you have a small user base (~1000 users) but want LLM-based personalization, what's the alternative?</>}
+        trap={<>(d) is fabricated. The rest each map to specific load-bearing failure modes.</>}
+        lens={<>Each disqualifier maps to a specific assumption: support-set non-empty, latency budget for inner loop, meta-task distribution match.</>}
       />
 
+      {/* ============== C. Mechanism ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      {/* axis: C1 */}
       <VIS.TrapProblem
-        id="metaprompt-p11"
+        id="metaprompt-c1"
         difficulty="hard"
-        title="P11 — Why not just RAG?"
-        scenario={<>A skeptic argues: "Why not just retrieve the user's past interactions at prompt time, stuff them in the context, and let the LLM personalize on the fly? Why the meta-learning machinery?"</>}
+        title="C1 — Why Reptile / FOMAML over full MAML?"
+        scenario={<>Why does this method use Reptile or first-order MAML instead of full second-order MAML?</>}
         options={[
-          {key:"a", text:"RAG works equally well — meta-learning is over-engineered."},
-          {key:"b", text:"RAG requires past interactions, which cold-start users LACK. Meta-learned prompts work from structured signals (questionnaire, profile) that exist BEFORE the user has any interactions. Different problem.", correct:true},
-          {key:"c", text:"RAG is slower at inference."},
-          {key:"d", text:"RAG can't be personalized."},
+          {key:"a", text:"Second-order MAML unrolls the inner loop's gradient graph and backprops through it — large activation memory, unstable training, hard to scale. Reptile (and FOMAML) approximate the meta-gradient as the difference between adapted and initial parameters, avoiding the unroll. In practice Reptile matches full MAML on recsys cold-start benchmarks while being far more stable and using a fraction of the memory.", correct:true},
+          {key:"b", text:"Reptile is mathematically equivalent to MAML in all cases."},
+          {key:"c", text:"Reptile is required by PyTorch."},
+          {key:"d", text:"Full MAML is illegal in production."},
         ]}
-        trap={<>(a) ignores cold-start. (c) is sometimes true but minor. (d) is wrong — RAG IS a personalization technique.</>}
-        lens={<>RAG and meta-learned soft prompts solve different problems. RAG personalizes from RETRIEVED past interactions — strong when history exists. Meta-learned prompts personalize from STRUCTURED signals — strong at cold-start. In practice they compose: use meta-prompts for the first N interactions, transition to RAG once interaction history accumulates.</>}
-        stretch={<>What's the transition rule from "meta-prompt only" to "meta-prompt + RAG"?</>}
+        trap={<>(b)-(d) miss the practical-stability argument.</>}
+        lens={<>The full-MAML-is-impractical-at-scale conclusion is well-established in 2024-2025 meta-learning practice. Reaching for Reptile first is a senior move; reaching for MAML for prestige is a junior one.</>}
       />
 
+      {/* axis: C2 */}
       <VIS.TrapProblem
-        id="metaprompt-p12"
+        id="metaprompt-c2"
         difficulty="hard"
-        title="P12 — Privacy: soft prompts as user fingerprints"
-        scenario={<>Your per-user soft prompts are stored in a cache. Each prompt is 100 tokens × 4096 dims = 1.6MB of floats. A security review asks whether these constitute personally-identifiable data.</>}
+        title="C2 — Loss / objective: meta-training and inner-loop loss"
+        scenario={<>What loss is optimized in the inner loop, and what loss is optimized in the outer loop?</>}
         options={[
-          {key:"a", text:"No — they're just floats."},
-          {key:"b", text:"YES — soft prompts are learned from user signals and can be inverted (membership-inference, attribute-inference attacks). Treat them as PII for storage, access control, and right-to-erasure compliance.", correct:true},
-          {key:"c", text:"Only if they're labeled with the user ID."},
-          {key:"d", text:"No — soft prompts are output of a deterministic function."},
+          {key:"a", text:"Inner loop: the downstream task's loss (next-item CE, rating regression, contrastive ranking) on the user's support set. Outer loop (Reptile): update the soft-prompt init toward (P_user - P0) where P_user is the inner-adapted soft-prompt. The outer loss is not explicit — Reptile is meta-implicit.", correct:true},
+          {key:"b", text:"Inner loop optimizes a contrastive loss; outer loop optimizes BCE."},
+          {key:"c", text:"Both loops optimize the same triplet loss."},
+          {key:"d", text:"Outer loop optimizes a regularization term only."},
         ]}
-        trap={<>(a), (c), and (d) all underestimate that ML-derived per-user artifacts CAN encode and leak source signals. Inversion attacks on embeddings and soft prompts are an active research area.</>}
-        lens={<>Per-user model artifacts (soft prompts, adapter weights, user embeddings) are derived from user data and can leak that data via inversion attacks. Treat them as PII: same access controls, same right-to-erasure (delete the prompt when the user requests data deletion), and document the privacy posture for compliance review.</>}
-        stretch={<>If a user invokes right-to-erasure, what besides the soft prompt do you need to delete?</>}
+        trap={<>(b)-(d) miss the Reptile-specific outer-loop structure.</>}
+        lens={<>Reptile's outer update is the canonical confusion point. It is NOT a separately-defined outer loss — it is an implicit move toward the inner-adapted point. Full MAML has an explicit outer loss (query loss) but at the cost of second-order gradients.</>}
+      />
+
+      {/* axis: C3 */}
+      <VIS.TrapProblem
+        id="metaprompt-c3"
+        difficulty="hard"
+        title="C3 — What's dropped vs full LLM fine-tune"
+        scenario={<>Compared to per-user LLM fine-tuning, what does this method drop?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Drops billions of parameters per user — only L x d ~ 10K floats per user instead of full LLM weights.", correct:true},
+          {key:"b", text:"Drops the ability to adapt the LLM's deep representations — only the prompt embedding is adapted; mid-layer activations follow the base LLM.", correct:true},
+          {key:"c", text:"Drops robustness to large input-format shifts that full fine-tune would absorb — soft-prompt adaptation depends on input formats matching meta-training distribution.", correct:true},
+          {key:"d", text:"Drops the ability to use a pretrained LLM."},
+        ]}
+        trap={<>(d) is wrong — this method specifically uses a pretrained LLM.</>}
+        lens={<>Soft-prompt adaptation trades capacity (cannot reshape deep representations) for cost (10K floats per user). The capacity ceiling is real but typically acceptable for cold-start.</>}
+      />
+
+      {/* axis: C4 */}
+      <VIS.TrapProblem
+        id="metaprompt-c4"
+        difficulty="hard"
+        title="C4 — Which knob, mis-set, catastrophically breaks meta-prompt?"
+        scenario={<>Rank by "production breakage if mis-configured": (1) inner-loop step count K, (2) inner-loop learning rate, (3) prompt length L, (4) LLM backbone size.</>}
+        options={[
+          {key:"a", text:"1 (K) -> 2 (inner LR) -> 3 (L) -> 4 (LLM size). Too few K = no adaptation; too many = inner overfit; inner LR mis-tune destabilizes inner loop with cascading outer-loop divergence; prompt length and LLM size cause gradual quality drops.", correct:true},
+          {key:"b", text:"4 -> 3 -> 2 -> 1, generic intuitions."},
+          {key:"c", text:"3 -> 4 -> 2 -> 1."},
+          {key:"d", text:"All four equally sensitive."},
+        ]}
+        trap={<>(b)-(d) import generic LLM-tuning intuitions. The meta-learning-specific knobs are K and inner LR.</>}
+        lens={<>K is the load-bearing knob. The K-vs-query-loss curve has a sweet spot that depends on support-set size; production tuning means measuring that curve per-user-segment.</>}
+      />
+
+      {/* axis: C5 */}
+      <VIS.TrapProblem
+        id="metaprompt-c5"
+        difficulty="hard"
+        title="C5 — Data assumption: users are exchangeable meta-tasks"
+        scenario={<>What is this method's central data assumption?</>}
+        options={[
+          {key:"a", text:"Users are exchangeable meta-tasks drawn from a common distribution. If users cluster (e.g., teens vs retirees) with sharp boundaries, a single meta-init underperforms a mixture of meta-inits — the method must be extended to multi-init or cluster-conditional meta-learning.", correct:true},
+          {key:"b", text:"Items have content embeddings."},
+          {key:"c", text:"Users have at least 100 demos."},
+          {key:"d", text:"The catalog must be smaller than 1M items."},
+        ]}
+        trap={<>(b)-(d) are assumptions of OTHER methods.</>}
+        lens={<>User exchangeability is the central assumption. Diagnosing whether it holds requires clustering analysis on the meta-training population — sharp clusters violate exchangeability and motivate multi-init extensions.</>}
+      />
+
+      {/* ============== D. Intuition traps ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      {/* axis: D1 */}
+      <VIS.TrapProblem
+        id="metaprompt-d1"
+        difficulty="hard"
+        title="D1 — &quot;More inner-loop steps always helps generalization&quot;"
+        scenario={<>Engineer scans inner-loop K from 1 to 100 expecting query loss to drop monotonically. Why is this expectation wrong, and at roughly what K does it reverse?</>}
+        options={[
+          {key:"a", text:"Past a sweet spot (~3-10 K depending on support-set size), the inner loop overfits the support set; the soft-prompt becomes specialized to the support examples and fails on the user's held-out queries. The curve is typically U-shaped: query loss drops, hits a minimum at moderate K, then rises.", correct:true},
+          {key:"b", text:"The expectation is correct; check for bugs."},
+          {key:"c", text:"Query loss only rises past K=10000."},
+          {key:"d", text:"K has no effect on query loss."},
+        ]}
+        trap={<>(b)-(d) miss the U-shaped curve specific to meta-learning.</>}
+        lens={<>Inner-loop overfit is the meta-learning equivalent of training overfit. Plot the curve to find the sweet spot; do not rely on monotonic intuition.</>}
+      />
+
+      {/* axis: D2 */}
+      <VIS.TrapProblem
+        id="metaprompt-d2"
+        difficulty="hard"
+        title="D2 — Cascade: &quot;Meta-learned soft prompts subsume RAG&quot;"
+        scenario={<>You assume meta-learning replaces RAG. Which downstream consequences are wrong because of that assumption?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Meta-learning cannot represent in-context user history rich in text (recent purchases described verbatim); RAG retrieves that text directly.", correct:true},
+          {key:"b", text:"Meta-learning's soft-prompt is in parameter space; RAG is in context-window space. They are complementary, not substitutable.", correct:true},
+          {key:"c", text:"Meta-learning trains offline; RAG is inference-only. Different infra surfaces.", correct:true},
+          {key:"d", text:"Meta-learning is faster than RAG at inference."},
+        ]}
+        trap={<>(d) is fact-dependent and not the cascade; mostly wrong because RAG is essentially free at inference vs meta-learning's K-step inner loop.</>}
+        lens={<>The substitution intuition fails because meta-learning and RAG address different channels. The mature pattern is to use both, with meta-learning for parameterized adaptation and RAG for text-context.</>}
+      />
+
+      {/* axis: D3 */}
+      <VIS.TrapProblem
+        id="metaprompt-d3"
+        difficulty="medium"
+        title="D3 — Senior vs junior: pick the meta-algorithm"
+        scenario={<>Team is choosing a meta-algorithm. Junior wants MAML for prestige. Senior reaches for Reptile / FOMAML. Why?</>}
+        options={[
+          {key:"a", text:"Second-order MAML is unstable and hard to scale (large activation memory from unrolling the inner loop's gradient graph); Reptile / FOMAML usually match in practice with a fraction of the compute. Empirically across recsys cold-start benchmarks, Reptile achieves comparable lift to MAML with 10x less memory and better training stability.", correct:true},
+          {key:"b", text:"Reptile is faster at inference."},
+          {key:"c", text:"MAML is patented."},
+          {key:"d", text:"Reptile and MAML are equivalent under any conditions."},
+        ]}
+        trap={<>(b)-(d) miss the practical-stability argument. Inference is the same for both — the difference is training.</>}
+        lens={<>The Reptile-over-MAML choice is a well-established senior call. The follow-up work (2025) on recsys cold-start specifically validates Reptile as the production-stable default.</>}
+      />
+
+      {/* axis: D4 */}
+      <VIS.TrapProblem
+        id="metaprompt-d4"
+        difficulty="hard"
+        title="D4 — Plausible misattribution: meta-prompt CTR drops 2%"
+        scenario={<>Online CTR drops 2% after a routine model refresh. Three plausible causes — which is most likely?</>}
+        options={[
+          {key:"a", text:"Most likely: meta-task distribution shifted — new users no longer match the meta-training population (e.g., demographic expansion, new locale, onboarding-flow change). The meta-init is no longer a good base for the new users; need re-meta-train.", correct:true},
+          {key:"b", text:"Most likely: LLM backbone drift."},
+          {key:"c", text:"Most likely: GPU thermal throttling."},
+          {key:"d", text:"All three are equally likely."},
+        ]}
+        trap={<>The temptation is to blame LLM weights (visible piece). The method-specific cause is meta-task distribution shift.</>}
+        lens={<>This method's regressions cluster around meta-task distribution shift. Treat the meta-training distribution as a versioned artifact and bisect against changes whenever CTR regresses.</>}
+      />
+
+      {/* ============== E. Operations ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      {/* axis: E1 */}
+      <VIS.TrapProblem
+        id="metaprompt-e1"
+        difficulty="hard"
+        title="E1 — Production gotcha: per-user soft-prompt caching"
+        scenario={<>You skip caching and run the K-step inner loop on every request. What goes wrong?</>}
+        options={[
+          {key:"a", text:"Every request now pays K forward+backward passes through the LLM just for the inner loop, exploding latency and dollar cost. Soft-prompts must be cached per (user_id + support_set_hash); cache size grows linearly with active users. Re-run adaptation only when the support set materially changes.", correct:true},
+          {key:"b", text:"Nothing happens."},
+          {key:"c", text:"Quality improves because adaptation is always fresh."},
+          {key:"d", text:"The LLM crashes."},
+        ]}
+        trap={<>(b)-(d) miss the K-pass cost amplification.</>}
+        lens={<>Caching is a load-bearing piece of production deployment. Cache invalidation on support-set updates is the standard pattern.</>}
+      />
+
+      {/* axis: E2 — FAILURE ON FRIDAY */}
+      <VIS.TrapProblem
+        id="metaprompt-e2"
+        difficulty="hard"
+        title="E2 — Failure on Friday: questionnaire redesign"
+        scenario={<>Onboarding redesign ships Friday: the questionnaire format changes from 10 multiple-choice questions to 3 open-text questions. Sunday: CTR drops for new users only. LLM perplexity normal, meta-training metrics unchanged. What broke, why this-method-specifically, and what's the fix?</>}
+        options={[
+          {key:"a", text:"The meta-trained soft-prompt init expects support-set examples in the OLD format (multiple-choice with discrete labels). New-format support sets (open-text) put the K-step inner loop into an out-of-distribution regime; the adaptation either diverges or produces high-variance prompts. Per-user fine-tune would NOT have this failure (full LLM tuning is more robust to input format shifts). RAG would not have this failure either (no training-time format dependency). Fix: re-meta-train on a sample of new-format support sets, OR keep the old questionnaire format for the meta-trained model and migrate after re-training.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"LLM weights drifted overnight."},
+          {key:"d", text:"The LoRA adapter forgot."},
+        ]}
+        trap={<>(b)-(d) are generic. The method-specific failure is the format-shift cascading through the meta-training-distribution dependency.</>}
+        lens={<>The meta-training distribution is a load-bearing artifact whose validity is set by the input-format assumptions. Any format change requires re-meta-train, OR a parallel rollout strategy.</>}
+      />
+
+      {/* axis: E3 */}
+      <VIS.TrapProblem
+        id="metaprompt-e3"
+        difficulty="medium"
+        title="E3 — Implementation specifics: PyTorch &quot;higher&quot; library memory cost"
+        scenario={<>PyTorch's default meta-learning implementations (e.g., the higher library) consume large activation memory. Why, and how does switching to Reptile or FOMAML help?</>}
+        options={[
+          {key:"a", text:"higher unrolls the inner loop's gradient graph so the outer backward can flow through it — keeping all intermediate activations in memory. For K=5 inner steps, memory grows roughly 5x. Reptile and first-order MAML avoid the unroll entirely (Reptile uses the (P_user - P0) approximation; FOMAML drops the second-order term), cutting memory by ~80 percent.", correct:true},
+          {key:"b", text:"higher is buggy."},
+          {key:"c", text:"PyTorch leaks memory unconditionally."},
+          {key:"d", text:"FOMAML is unrelated to memory cost."},
+        ]}
+        trap={<>(b)-(d) miss the unrolled-graph-vs-first-order distinction.</>}
+        lens={<>Memory cost of meta-training is dominated by inner-loop unrolling. Reptile / FOMAML are the standard production patches; their use is not optional at typical user-base scale.</>}
+      />
+
+      {/* axis: E4 */}
+      <VIS.TrapProblem
+        id="metaprompt-e4"
+        difficulty="medium"
+        title="E4 — Rollout: no-personalization to meta-prompt"
+        scenario={<>Order the rollout steps from "no personalization" to "meta-prompt-tuned LLM" for cold-start. Pick the correct sequencing.</>}
+        options={[
+          {key:"a", text:"Collect a meta-training dataset of warm users with rich (support, query) splits -> train meta-init via Reptile (start simple, full MAML later if needed) -> offline cold-start eval on a HELD-OUT user population -> shadow online -> ramp by user segment, cold-only first.", correct:true},
+          {key:"b", text:"Train MAML from scratch; deploy at 100 percent traffic."},
+          {key:"c", text:"Skip the offline cold-start eval."},
+          {key:"d", text:"Ramp on warm users first; cold last."},
+        ]}
+        trap={<>(b) is reckless. (c) is critical — without it you cannot localize where the lift comes from. (d) inverts the design point (cold-start IS the design point).</>}
+        lens={<>Meta-prompt migrations must respect the dependency chain (meta-training data -&gt; meta-init -&gt; held-out user eval) and start with the simplest algorithm (Reptile) before reaching for MAML.</>}
+      />
+
+      {/* axis: E5 */}
+      <VIS.TrapProblem
+        id="metaprompt-e5"
+        difficulty="hard"
+        title="E5 — Reproducibility: arXiv 2507.16672 gains on different user populations"
+        scenario={<>The paper reports gains on a specific user-task distribution. Your reproduction on a different user population (different geos, demographics) shows smaller gains. Why is this expected?</>}
+        options={[
+          {key:"a", text:"Meta-learning's headline number is bounded by the meta-training population. Different user populations have different task structures (preference shapes, support-signal patterns); re-meta-training is required, and the gain on the new population may be smaller if the population is intrinsically less amenable to per-user adaptation.", correct:true},
+          {key:"b", text:"PyTorch version mismatch."},
+          {key:"c", text:"The benchmark has train/test leakage."},
+          {key:"d", text:"The paper's algorithm is novel and unreproducible."},
+        ]}
+        trap={<>(b)-(d) miss the meta-training-population dependency.</>}
+        lens={<>Reproducing meta-learning gains across populations requires reproducing the meta-training distribution, not just the algorithm. This is the meta-learning analog of "domain transfer in ML."</>}
+      />
+
+      {/* axis: E6 */}
+      <VIS.TrapProblem
+        id="metaprompt-e6"
+        difficulty="hard"
+        title="E6 — Eval contamination: held-out queries vs held-out users"
+        scenario={<>Two common evaluation protocols for this method: (1) train on (support, query) splits from N users, evaluate on held-out QUERIES from the same N users; (2) train on N users, evaluate on M completely DIFFERENT users. Which is the right meta-learning eval, and which is the contaminated one?</>}
+        options={[
+          {key:"a", text:"(2) is correct — held-out USERS test whether the meta-init generalizes to truly new users (the cold-start scenario the method is designed for). (1) only tests within-user generalization, which is essentially in-distribution. Many reproductions use (1) and report inflated gains.", correct:true},
+          {key:"b", text:"Both are equivalent."},
+          {key:"c", text:"(1) is correct."},
+          {key:"d", text:"Neither — only online metrics matter."},
+        ]}
+        trap={<>(b)-(d) miss the meta-learning eval protocol question.</>}
+        lens={<>Held-out users is the analog of held-out distribution in standard ML. (1) is the meta-learning analog of training-set evaluation. The paper's headline numbers use (2); reproductions sometimes use (1) and inflate the gain.</>}
+      />
+
+      {/* ============== F. Failure modes ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      {/* axis: F1 */}
+      <VIS.TrapProblem
+        id="metaprompt-f1"
+        difficulty="hard"
+        title="F1 — Edge case: a truly cold user with zero support examples"
+        scenario={<>A user has just signed up — no questionnaire, no clicks, nothing. What does this method do, and what does it lose?</>}
+        options={[
+          {key:"a", text:"The K-step inner loop runs on an empty support set, does not move the prompt, and the user gets the meta-init prediction — essentially the population average across the meta-training distribution. The method falls back gracefully but has no advantage over no-personalization for this user.", correct:true},
+          {key:"b", text:"The method crashes."},
+          {key:"c", text:"The method outperforms RAG on this case."},
+          {key:"d", text:"The method generates random predictions."},
+        ]}
+        trap={<>(b)-(d) miss the graceful fallback.</>}
+        lens={<>True zero-signal cold-start is the boundary case where this method adds no value. Strict business case: collect at least 3-5 demos before invoking adaptation.</>}
+      />
+
+      {/* axis: F2 */}
+      <VIS.TrapProblem
+        id="metaprompt-f2"
+        difficulty="hard"
+        title="F2 — Adversarial: poisoned support set"
+        scenario={<>An adversary injects a few bait items into a user's support set (the user clicks bait to mislead their soft prompt). What attack does this enable, and why is this method's exposure different from per-user fine-tune and RAG?</>}
+        options={[
+          {key:"a", text:"The K-step adaptation incorporates the poisoned support DIRECTLY into the user's soft-prompt — cached, used for all subsequent requests until the support set is refreshed. Per-user fine-tune would be even MORE vulnerable (full weights compromised); RAG would be moderately vulnerable (poisoned items retrieved into context); no-personalization would not be vulnerable. Mitigation: outlier filtering on support set before adaptation.", correct:true},
+          {key:"b", text:"The method is immune to support-set poisoning."},
+          {key:"c", text:"Only items, not users, can be poisoned."},
+          {key:"d", text:"Per-user fine-tune is less vulnerable than this method."},
+        ]}
+        trap={<>(b)-(d) miss the relative-exposure ordering across methods.</>}
+        lens={<>Support-set poisoning is a real production concern for any per-user-adaptation method. The mitigation hierarchy is filtering at ingest, adaptation regularization, and conservative cache invalidation.</>}
+      />
+
+      {/* axis: F3 */}
+      <VIS.TrapProblem
+        id="metaprompt-f3"
+        difficulty="hard"
+        title="F3 — Reverse engineering: meta-training loss drops, held-out users plateau"
+        scenario={<>Symptom: meta-training loss decreases nicely over time, but query loss on HELD-OUT users plateaus high. Which design choice drives this divergence?</>}
+        options={[
+          {key:"a", text:"Memorization in the inner loop — the meta-init is over-adapting to specific support examples rather than learning a generalizable &quot;how to adapt&quot; prior. Diagnostic: increase inner-loop K and watch the generalization gap widen; reduce K, watch it narrow.", correct:true},
+          {key:"b", text:"The optimizer's beta_1 is too high."},
+          {key:"c", text:"Insufficient training data."},
+          {key:"d", text:"PyTorch version regression."},
+        ]}
+        trap={<>(b)-(d) miss the meta-learning-specific overfit signature.</>}
+        lens={<>The training-loss-drops, held-out-users-flat pattern is meta-learning's diagnostic signature for inner-loop overfit. Reducing K is the first-line fix; adding outer-loop regularization is the second.</>}
+      />
+
+      {/* axis: F4 */}
+      <VIS.TrapProblem
+        id="metaprompt-f4"
+        difficulty="medium"
+        title="F4 — Paper-named failure: meta-task distribution shift"
+        scenario={<>arXiv 2507.16672 specifically names one failure regime. Which?</>}
+        options={[
+          {key:"a", text:"When user task distribution at deployment shifts significantly from meta-training (demographic, locale, onboarding-flow changes) — the meta-init becomes a poor base, the K-step adaptation produces high-variance prompts, and accept-rates drop. The paper notes this as meta-learning's headline weakness for production.", correct:true},
+          {key:"b", text:"When users have over 1000 demos."},
+          {key:"c", text:"When the LLM is small."},
+          {key:"d", text:"When items have no IDs."},
+        ]}
+        trap={<>(b)-(d) are not the paper's specific claim.</>}
+        lens={<>Meta-task distribution shift is well-documented in 2025 meta-learning practice. Plan for re-meta-training as a recurring ops event whenever the deployment population materially shifts.</>}
+      />
+
+      {/* axis: F5 */}
+      <VIS.TrapProblem
+        id="metaprompt-f5"
+        difficulty="hard"
+        title="F5 — Community-found: Reptile recommendation reproductions"
+        scenario={<>2025 follow-ups note Reptile / FOMAML matches full MAML on recsys cold-start benchmarks while being far more stable. Without looking up the papers, derive what specific empirical finding they're likely to report.</>}
+        options={[
+          {key:"a", text:"Across multiple recsys cold-start benchmarks, Reptile achieves comparable accept-rate / NDCG to full MAML while using 5-10x less memory and being far less prone to training-instability crashes. The &quot;second-order MAML for production&quot; claim from the original paper is impractical at scale; first-order is the production-stable default.", correct:true},
+          {key:"b", text:"They report MAML is faster than Reptile at inference."},
+          {key:"c", text:"They report MAML works better on warm users."},
+          {key:"d", text:"They report neither works in production."},
+        ]}
+        trap={<>(b)-(d) miss the well-documented Reptile-as-production-default finding.</>}
+        lens={<>The Reptile-matches-MAML finding is one of the most reliable results in production meta-learning. The senior call is to start with Reptile and only reach for MAML if Reptile leaves measurable lift on the table.</>}
       />
     </VIS.Section>
 
-    <VIS.Section id="sec-further" title="Further reading">
-      <ul>
-        <li><a href="https://arxiv.org/abs/2507.16672" target="_blank" rel="noopener"><strong>Wei et al. — Meta-Learning for Cold-Start Personalization in Prompt-Tuned LLMs</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, arXiv 2025)</span><br/>The source paper for this visual. Read sections 3 (meta-learning formulation for soft prompts) and 4 (cold-start eval).</li>
-        <li><a href="https://arxiv.org/abs/1803.02999" target="_blank" rel="noopener"><strong>Nichol, Achiam, Schulman — On First-Order Meta-Learning Algorithms (Reptile)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, OpenAI 2018)</span><br/>The Reptile paper — required background for problem P2 and P8. The "no second-order math" trick is the entire reason this approach scales.</li>
-        <li><a href="https://arxiv.org/abs/1703.03400" target="_blank" rel="noopener"><strong>Finn, Abbeel, Levine — Model-Agnostic Meta-Learning for Fast Adaptation of Deep Networks (MAML)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, ICML 2017)</span><br/>The MAML paper. Read after Reptile — the second-order formulation that Reptile approximates first-order.</li>
-        <li><a href="https://arxiv.org/abs/2104.08691" target="_blank" rel="noopener"><strong>Lester, Al-Rfou, Constant — The Power of Scale for Parameter-Efficient Prompt Tuning</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, EMNLP 2021)</span><br/>The original soft-prompt-tuning paper. Read for soft-prompt sizing intuition (relevant to problem P4).</li>
-        <li><a href="https://lilianweng.github.io/posts/2018-11-30-meta-learning/" target="_blank" rel="noopener"><strong>Lilian Weng — Meta-Learning: Learning to Learn Fast</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>The clearest practitioner intro to meta-learning. Covers Reptile, MAML, ProtoNet — read this BEFORE the original papers if you're new to the area.</li>
+    <VIS.Section id="sec-refs" title="References & further reading">
+      <ul style={{lineHeight:1.85}}>
+        <li>
+          <a href="https://arxiv.org/abs/2507.16672" target="_blank" rel="noopener"><strong>Wei et al. — Meta-Learning for Cold-Start Personalization in Prompt-Tuned LLMs (arXiv 2025)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>The original paper.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/1703.03400" target="_blank" rel="noopener"><strong>Finn et al. — MAML</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>The full second-order meta-learning algorithm this method approximates.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/1803.02999" target="_blank" rel="noopener"><strong>Nichol et al. — Reptile / FOMAML (OpenAI)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>The first-order approximation used in production.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2104.08691" target="_blank" rel="noopener"><strong>Lester et al. — Prompt Tuning</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>The soft-prompt primitive meta-learned here.</span>
+        </li>
       </ul>
     </VIS.Section>
   </main>

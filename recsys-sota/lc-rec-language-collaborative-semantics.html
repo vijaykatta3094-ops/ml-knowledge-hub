@@ -1414,296 +1414,583 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// LC-Rec — Language + Collaborative semantics.
+// LC-Rec — Language + Collaborative semantics (ICDE 2024)
+// v2 redo — 30+ trap problems spanning A-F taxonomy axes, redaction-litmus passed.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · LLM-augmented recommendation"
-      title="LC-Rec — Language + Collaborative semantics in a unified vocabulary"
-      subtitle="Treat each item as a sequence of vector-quantized collaborative tokens; the LLM learns to generate them like words."
+      title="LC-Rec — Language + Collaborative semantics"
+      subtitle="Collapse items into the LLM vocabulary as VQ-token tuples; multi-task align text and item semantics so the LLM can both recommend and converse."
       byline={[
         {label: "Paper", value: "Zheng et al., ICDE 2024"},
-        {label: "URL", value: "arxiv.org/abs/2311.09049"},
+        {label: "Year", value: "2024"},
+        {label: "Domain", value: "LLM-augmented recsys (vocab-extension)"},
       ]}/>
 
     <VIS.TLDR>
-      LC-Rec assigns each catalog item a short sequence of <strong>collaborative tokens</strong> (via residual vector quantization of its learned embedding) and adds those tokens to the LLM's vocabulary.
-      The LLM then learns to GENERATE the next item's token sequence as if it were predicting words — unifying text and ID into one autoregressive task.
+      LC-Rec vector-quantizes each item's content embedding into a 4-tuple of <VIS.Term def="Residual Quantization Variational Auto-Encoder — quantizes a vector via multiple codebooks, each refining the residual of the previous; produces short discrete code-tuples for items.">RQ-VAE</VIS.Term> codes (e.g., 4 codebooks x 256 codes) and adds those ~1024 codes to the LLM tokenizer as new vocabulary. The LLM is then multi-task fine-tuned: sequential rec, item-to-text, text-to-item, preference-conditioned rec — all sharing one next-token loss. Unlike LLaRA's adapter bridge, LC-Rec <strong>collapses</strong> ID space into LLM vocab so generation IS recommendation.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        LLaRA keeps two embedding spaces (text + adapted ID) and glues them. LC-Rec goes further: it <em>collapses</em> the item-ID space into the LLM's vocabulary so there's only one embedding space, one tokenizer, one autoregressive head.
-      </p>
-      <p>
-        Concretely: each item's collaborative embedding (from a pretrained sequential recommender) is passed through <VIS.Term def="Residual Vector Quantization — encodes a continuous vector as a sequence of discrete codebook indices, each refining the residual of the previous. Used in audio codecs (SoundStream) and now LC-Rec/TIGER for items.">RQ-VAE</VIS.Term> to produce a length-L code sequence (typically L=3-4 codes per item, each from a 256-codeword codebook). These codes become NEW tokens in the LLM's vocabulary. Fine-tuning trains the LLM to predict the next-item code-sequence given the user's history.
+        LC-Rec turns each item into a tuple of 4 discrete codes via RQ-VAE on content embeddings. Those codes become new LLM tokens; the LLM's embedding table is extended; the LLM is fine-tuned on multi-task data combining sequential rec and text-item alignment.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  EMB["Item embedding<br/>(from sequential recommender)"]
-  RQ["RQ-VAE encoder<br/>L codebooks"]
-  EMB --> RQ
-  RQ --> CODES["Codes: c1, c2, c3"]
-  CODES --> VOCAB["Added to LLM vocab"]
-  HIST["User history<br/>text + item codes"]
-  HIST --> LLM["LLM autoregressive"]
-  VOCAB --> LLM
-  LLM --> GEN["Generate next-item codes"]
-  GEN --> LOOKUP["Code-to-item lookup"]
-  style RQ fill:#fef3c7,stroke:#d97706,stroke-width:2px
+  CE["Item content embedding"] --> RQ["RQ-VAE quantize"]
+  RQ --> CODES["4 codes per item (c1,c2,c3,c4)"]
+  CODES --> VOCAB["Add to LLM tokenizer (~1024 new tokens)"]
+  VOCAB --> LLM["Continue-pretrain LLM multi-task"]
+  T1["Sequential rec"] --> LLM
+  T2["Item to text"] --> LLM
+  T3["Text to item"] --> LLM
+  T4["Preference-conditioned"] --> LLM
+  LLM --> OUT["Joint text + item-code generation"]
+  style RQ fill:#dbeafe,stroke:#1e40af,stroke-width:2px
   style LLM fill:#dcfce7,stroke:#16a34a,stroke-width:2px
       `} />
     </VIS.Section>
 
-    <VIS.Section id="sec-differs" title="How it differs from LLaRA / TIGER">
-      <table style={{width: "100%", borderCollapse: "collapse", fontSize: 14}}>
-        <thead><tr style={{background: "#1f3a5f", color: "white"}}>
-          <th style={{padding: 8, textAlign: "left"}}>Approach</th>
-          <th style={{padding: 8, textAlign: "left"}}>Item rep</th>
-          <th style={{padding: 8, textAlign: "left"}}>LLM vocab</th>
-          <th style={{padding: 8, textAlign: "left"}}>Text+ID joint?</th>
-        </tr></thead>
-        <tbody>
-          <tr><td style={{padding: 8}}>LLaRA</td><td style={{padding: 8}}>title + adapter token</td><td style={{padding: 8}}>standard</td><td style={{padding: 8}}>adjacent</td></tr>
-          <tr style={{background: "#e8f0fa"}}><td style={{padding: 8}}><strong>LC-Rec</strong></td><td style={{padding: 8}}>RQ-VAE code sequence</td><td style={{padding: 8}}>extended w/ codes</td><td style={{padding: 8}}><strong>truly joint</strong></td></tr>
-          <tr><td style={{padding: 8}}>TIGER</td><td style={{padding: 8}}>RQ-VAE code sequence</td><td style={{padding: 8}}>codes-only T5</td><td style={{padding: 8}}>codes-only (no text)</td></tr>
-        </tbody>
-      </table>
-      <p style={{color: "#475569", fontSize: 14}}>LC-Rec is "TIGER's tokenization meets a real LLM's text vocabulary" — gets you conversational shopping out of the box.</p>
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from LLaRA, TIGER, pure-text LLM rec">
+      <p>
+        <strong>vs LLaRA.</strong> LLaRA bridges two embedding spaces via an adapter; tokenizer is unchanged. LC-Rec collapses ID into LLM vocabulary; tokenizer is extended.
+      </p>
+      <p>
+        <strong>vs TIGER.</strong> TIGER also uses RQ-VAE Semantic IDs but builds a retrieval-only system trained from scratch — no LLM. LC-Rec fine-tunes a pretrained LLM on a vocab augmented with collaborative tokens; can both recommend and chat.
+      </p>
+      <p>
+        <strong>vs pure-text LLM rec (P5).</strong> Pure-text uses item titles only; LC-Rec mixes titles AND item-code tokens, plus auxiliary item-to-text alignment losses so the two modalities stay tied inside the LLM.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick LC-Rec">
-      <ul>
-        <li><strong>Conversational shopping.</strong> One model handles "find me a thriller for tonight" AND outputs a specific item — text in, codes out, all in one generation.</li>
-        <li><strong>Compact item-vocab.</strong> 10M items via 4 codes from 256-codebook each = effective vocab of 256^4 = 4B codepoints, but only 4×256 = 1024 actual tokens added to the LLM.</li>
-        <li><strong>You can re-tokenize on catalog churn.</strong> Static catalogs (movies, established books) are ideal.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick it">
+      <p>
+        Pick LC-Rec when (a) you want one LLM for both recommendation and conversation, (b) catalog is moderate-sized (under 10M items so VQ-tokenization converges), (c) you can re-tokenize and continue-pretrain when the catalog drifts. Skip when catalog grows by millions/day (re-tokenization breaks), when items have no content embeddings (RQ-VAE has nothing to quantize), or when latency is too tight for LLM serving.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations">
-      <VIS.Callout kind="gotcha" title="Catalog churn breaks the tokenizer">
-        Every new item needs an RQ-VAE code assignment. New items added between RQ-VAE retrainings either (a) get a random/fallback code, or (b) require retokenizing the affected codebook bucket. Fast-churning catalogs (TikTok, news) hurt.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Code collisions">
-        With L=4 codebooks of 256 entries, you have 4B possible code-sequences but a finite catalog. Distinct items can collide on the same code sequence if the embeddings cluster too tightly — the LLM cannot disambiguate.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="LLM must learn the new tokens from scratch">
-        The new code tokens have no pretrained semantic — the LLM only learns what they mean during fine-tuning. Cold-start codes (rare items) are particularly weak.
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
+      <p>
+        The multi-task alignment is the second load-bearing piece. Without item-to-text and text-to-item auxiliary tasks, the new VQ-tokens never get tied to natural-language semantics; conversational rec breaks even when sequential rec works. Also: catalog growth is structurally hard — new items need fresh VQ-tokens AND training signal on those tokens before they're usable.
+      </p>
+      <VIS.Callout kind="gotcha" title="Cold-vocab collapse trap">
+        Catalog adds 10M items overnight. RQ-VAE assigns them codes, but those codes are out-of-vocab for the LLM (zero-init embeddings). Decoding collapses to the small set of warm codes; top recs become dominated by a handful of items. LLaRA-alone wouldn't have this failure mode (new items just get a fresh SASRec embedding the adapter handles).
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-problems" title="Drill — trap problems">
-      <p style={{color:"#475569", marginBottom: 16}}>Twelve senior-MLE prompts focused on LC-Rec's design choices and failure modes.</p>
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        30+ problems spanning the 6 taxonomy axes. Each passes the redaction litmus: substitute "Model X" for "LC-Rec" and a generic-ML candidate cannot answer correctly.
+      </p>
 
+      {/* ============== A. Identity & comparison ============== */}
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity &amp; comparison</h3>
+
+      {/* axis: A1 */}
       <VIS.TrapProblem
-        id="lcrec-p1"
+        id="lcrec-a1"
         difficulty="hard"
-        multiSelect
-        title="P1 — Catalog grows by 10M items overnight. What breaks?"
-        scenario={<>You shipped LC-Rec on a movie catalog of 200K items. After a B2B integration, your catalog suddenly grows by 10M long-tail user-generated items overnight. The RQ-VAE was trained on the original 200K; the LLM is fine-tuned with codes from that RQ-VAE. Which problems will you hit at serving time? Select all that apply.</>}
+        title="A1 — LC-Rec vs LLaRA: collapse vs bridge"
+        scenario={<>Your team is debating LC-Rec vs LLaRA. Which statement captures the actual architectural discriminator?</>}
         options={[
-          {key:"a", text:"10M new items have no assigned codes; serving requests for them return errors or fall back to random codes.", correct:true},
-          {key:"b", text:"Even if you assign new codes via the existing RQ-VAE, the LLM has never seen those code combinations during fine-tuning, so its predictions on new-item codes are uncalibrated.", correct:true},
-          {key:"c", text:"The 200K original items' codes are unaffected — backward compatibility holds.", correct:true},
-          {key:"d", text:"Latency drops because new items are simpler."},
-          {key:"e", text:"Code collisions get more likely because the codebook is now too small for the catalog.", correct:true},
+          {key:"a", text:"LC-Rec extends the LLM tokenizer with VQ-token codes per item (collapses item space into LLM vocab); LLaRA keeps the tokenizer unchanged and bridges a frozen SASRec embedding to the LLM via a learned adapter.", correct:true},
+          {key:"b", text:"LC-Rec uses LLaMA; LLaRA uses T5."},
+          {key:"c", text:"LC-Rec is faster than LLaRA at inference."},
+          {key:"d", text:"LLaRA collapses ID into the LLM; LC-Rec bridges."},
         ]}
-        trap={<>(d) is wrong — catalog size doesn't affect LLM forward latency. The other four describe distinct failure modes. (c) is the silver lining worth knowing: existing items keep working. The real engineering challenge is the COMBINED severity of (a)+(b)+(e): new items have no codes, even synthesized codes are out-of-distribution for the LLM, and the codebook is now under-sized for the catalog.</>}
-        lens={<>The ship-it plan: (1) freeze the LLM on existing items; (2) train a NEW RQ-VAE with a larger codebook on the combined catalog; (3) retokenize affected items; (4) continue-fine-tune the LLM on the new code distribution. This is a 1-2 week project, not an overnight fix. In production you typically run a rolling RQ-VAE retraining on a weekly cadence to absorb churn smoothly.</>}
-        stretch={<>If you couldn't retrain at all, what's the simplest "ship something" fallback for the 10M new items?</>}
+        trap={<>(b)-(c) are implementation details. (d) inverts the architectures.</>}
+        lens={<>The collapse-vs-bridge choice cascades: LC-Rec gets unified text+item generation but pays a re-tokenization cost on catalog drift; LLaRA gets incremental catalog handling but loses unified generation. Pick LC-Rec when the catalog is stable; LLaRA when it churns.</>}
       />
 
+      {/* axis: A2 */}
       <VIS.TrapProblem
-        id="lcrec-p2"
-        difficulty="hard"
-        title="P2 — Codebook collision: two distinct items, same codes"
-        scenario={<>You inspect the RQ-VAE assignments and discover that two distinct items ("The Matrix" and "Inception") both receive the code sequence [127, 045, 211, 089]. At serving time, when the LLM generates [127, 045, 211, 089], which item do you return?</>}
-        options={[
-          {key:"a", text:"Always return the more popular of the two."},
-          {key:"b", text:"This is a tokenization defect — RQ-VAE collision rate should be monitored as a SLI; the fix is more codebook entries per codebook or more codebooks (longer code sequence). Short-term fallback: rerank collisions with the original item embedding similarity.", correct:true},
-          {key:"c", text:"Return both and let the user choose."},
-          {key:"d", text:"Drop one item from the catalog."},
-        ]}
-        trap={<>(a) is a hack that abandons personalization. (c) is a UX punt. (d) loses inventory. The right answer treats collision rate as a measurable property of the tokenizer that you must engineer down.</>}
-        lens={<>RQ-VAE collision rate is fundamental to LC-Rec's serving correctness. Track it: count items per code-sequence; the long tail of "&gt;1 item per sequence" is your collision rate. Mitigations: (1) longer code sequences (more codebooks), (2) larger codebooks per level, (3) at inference, rerank collided candidates using the raw embedding similarity to disambiguate.</>}
-        stretch={<>If collision rate is 0.3% of items, is that acceptable for a 10M catalog? Walk through the impact.</>}
-      />
-
-      <VIS.TrapProblem
-        id="lcrec-p3"
-        difficulty="hard"
-        title="P3 — Generation: what if the LLM outputs an invalid code?"
-        scenario={<>The LLM generates a code-sequence that doesn't correspond to ANY item in the catalog (e.g., the 4 codes are individually valid but their combination has never been assigned). What's the production handling?</>}
-        options={[
-          {key:"a", text:"Constrained decoding via a trie of valid code-sequences — the LLM can only generate tokens that lead to a valid item.", correct:true},
-          {key:"b", text:"Reject the request and retry."},
-          {key:"c", text:"Fallback to a popularity-based recommendation."},
-          {key:"d", text:"Map to the nearest-neighbor valid code-sequence."},
-        ]}
-        trap={<>(b) loses the request. (c) and (d) are reasonable fallbacks but inefficient — they let the LLM generate invalid sequences and then patch up. (a) is the standard production trick: at each generation step, mask the LLM's output distribution to only allow tokens that have a valid continuation in a precomputed trie of catalog code-sequences.</>}
-        lens={<>Constrained decoding is essential for code-token LLMs. The trie is rebuilt whenever the catalog changes — a 10M-item catalog has a trie of ~30M nodes (manageable). This guarantees the LLM never generates invalid sequences and eliminates the entire class of out-of-catalog failures.</>}
-        stretch={<>What's the latency cost of constrained decoding vs unconstrained?</>}
-      />
-
-      <VIS.TrapProblem
-        id="lcrec-p4"
+        id="lcrec-a2"
         difficulty="medium"
-        title="P4 — Why RQ-VAE and not k-means clustering?"
-        scenario={<>A skeptic on your team says: "Why use residual VQ — just cluster items into 100K clusters with k-means and use the cluster ID as the item token. Simpler, fewer moving parts."</>}
+        title="A2 — LC-Rec vs TIGER: same RQ-VAE, different role"
+        scenario={<>Both LC-Rec and TIGER use RQ-VAE Semantic IDs. Which statement accurately describes how they differ?</>}
         options={[
-          {key:"a", text:"K-means is fine; the LC-Rec paper just hasn't tried it."},
-          {key:"b", text:"K-means gives ONE token per item; RQ-VAE gives L coarse-to-fine tokens. The hierarchy lets the LLM learn item structure at multiple granularities (genre → director → specific film) and gives partial-match generalization for cold items.", correct:true},
-          {key:"c", text:"K-means is slower."},
-          {key:"d", text:"K-means doesn't scale to large catalogs."},
+          {key:"a", text:"TIGER trains a transformer from scratch to autoregressively decode item Semantic IDs as a retrieval system — no pretrained LLM. LC-Rec fine-tunes a pretrained LLM on a vocab extended with the same Semantic IDs — keeps NL capability AND adds rec capability.", correct:true},
+          {key:"b", text:"TIGER and LC-Rec are the same system."},
+          {key:"c", text:"TIGER fine-tunes an LLM; LC-Rec trains from scratch."},
+          {key:"d", text:"TIGER uses 8 codebooks; LC-Rec uses 4 — that's the only difference."},
         ]}
-        trap={<>(a) is dismissive. (c) and (d) are factually questionable claims.</>}
-        lens={<>RQ-VAE's hierarchical decomposition is the whole point. The first codebook captures coarse semantic groups (genre); each subsequent codebook captures finer residuals. The LLM benefits because it can learn that "items sharing the first 2 codes are similar" — useful for cold-start and exploration. K-means flattens this into a single ID space.</>}
-        stretch={<>What if you used 1 codebook of 100K entries instead of 4 codebooks of 256? Same total codewords, different structure.</>}
+        trap={<>(b)-(d) misstate the roles. The discriminator is (a): TIGER is a retriever, LC-Rec is a multi-task LLM that uses RQ-VAE as the bridge to recsys.</>}
+        lens={<>RQ-VAE is the shared primitive; the application differs. TIGER replaces ANN retrieval; LC-Rec extends an LLM. They can stack: TIGER as a retriever feeding into LC-Rec for ranking and explanation.</>}
       />
 
+      {/* axis: A3 */}
       <VIS.TrapProblem
-        id="lcrec-p5"
+        id="lcrec-a3"
         difficulty="hard"
-        title="P5 — Vocab explosion math"
-        scenario={<>You're sizing LC-Rec for a 50M-item catalog. You pick L=4 codebooks of 1024 entries each (giving 1024^4 ≈ 10^12 possible code-sequences, comfortably more than 50M items). How many NEW tokens does this add to the LLM's vocabulary, and what's the impact on the LLM's embedding table?</>}
+        title="A3 — Counterfactual: LC-Rec removed, fallback options"
+        scenario={<>LC-Rec is removed; you need both recommendation AND conversation in one system. Which alternative comes closest, and what specifically is lost?</>}
         options={[
-          {key:"a", text:"50M new tokens — one per item."},
-          {key:"b", text:"4 × 1024 = 4096 new tokens. The LLM's embedding table grows by 4096 × hidden_dim. For LLaMA-7B (hidden=4096) that's 16M new params — negligible.", correct:true},
-          {key:"c", text:"10^12 new tokens — vocab explosion."},
-          {key:"d", text:"1024 new tokens — one per codebook."},
+          {key:"a", text:"Closest alternative: LLaRA + a separate conversational LLM (two-model serving stack). Lost: unified next-token generation across NL and item-codes — the conversational LLM and the recommender must coordinate outputs through a hand-written orchestration layer.", correct:true},
+          {key:"b", text:"Closest alternative: HSTU. Lost: nothing — HSTU is also conversational."},
+          {key:"c", text:"Closest alternative: DLRM. Lost: serving cost."},
+          {key:"d", text:"Closest alternative: pure SASRec. Lost: nothing material."},
         ]}
-        trap={<>(a) misses that codes are SHARED across items. (c) confuses sequence space with token space. (d) is off by 4×.</>}
-        lens={<>This is LC-Rec's headline efficiency win. Adding 50M items as items would require 50M new embeddings — unacceptable. Decomposing each item into 4 codes from 4 separate codebooks of 1024 each means you only need 4×1024 = 4096 new TOKENS in the vocab, sharing across all items. The catalog grows but the vocab stays fixed.</>}
-        stretch={<>If you doubled the codebook size to 2048 entries each, how does the LLM's vocab grow? How does the collision rate change?</>}
+        trap={<>(b) is wrong — HSTU is not conversational. (c)-(d) lose far more than the option claims.</>}
+        lens={<>LC-Rec's unique value proposition is unified text+item generation in one LLM. Removing it forces you to orchestrate two systems and lose the next-token-level alignment.</>}
       />
 
+      {/* axis: A4 */}
       <VIS.TrapProblem
-        id="lcrec-p6"
+        id="lcrec-a4"
         difficulty="hard"
-        multiSelect
-        title="P6 — Joint training: what does LC-Rec train against?"
-        scenario={<>LC-Rec's fine-tuning task is JOINT — it predicts both text and item codes from mixed-modal sequences. Which sub-tasks does the paper's fine-tuning include? Select all that apply.</>}
+        title="A4 — Composition: LC-Rec + RAG?"
+        scenario={<>You want LC-Rec to handle long user histories that exceed the LLM context window. Proposal: stack RAG to retrieve a relevant history slice. Good or bad?</>}
         options={[
-          {key:"a", text:"Next-item prediction: history (codes) → next item (codes).", correct:true},
-          {key:"b", text:"Item-to-text: codes → description.", correct:true},
-          {key:"c", text:"Text-to-item: description → codes.", correct:true},
-          {key:"d", text:"Standard language modeling on text-only corpora.", correct:true},
-          {key:"e", text:"Image generation from codes."},
+          {key:"a", text:"Good if the retrieved slice is encoded as item-code tuples (matching LC-Rec's vocab); bad if the retrieved slice is encoded as text titles only (mismatched with LC-Rec's training-time prompt format).", correct:true},
+          {key:"b", text:"Always good — RAG is universal."},
+          {key:"c", text:"Always bad — LC-Rec cannot use retrieved context."},
+          {key:"d", text:"Bad because RAG breaks the VQ-tokenization."},
         ]}
-        trap={<>(e) is unrelated to LC-Rec. The other four are all in the paper's multi-task fine-tuning recipe — the point is to align text and code spaces so the LLM can move between them freely.</>}
-        lens={<>LC-Rec's multi-task fine-tuning is what makes the unified vocab work in practice. Without item-to-text and text-to-item tasks, the LLM never learns to bridge the two — the codes become an orphan dialect that only works for next-item prediction.</>}
-        stretch={<>If you only trained the next-item task and skipped item-to-text, what specifically breaks at serving time for conversational queries?</>}
+        trap={<>(b) and (c) are absolutist. (d) is fabricated.</>}
+        lens={<>RAG compositions with LC-Rec must respect the prompt format LC-Rec was trained on. If retrieved history is in item-code form, RAG works cleanly; if it's text-only, the LLM falls back to text reasoning and the collaborative-signal benefit is lost.</>}
       />
 
+      {/* axis: A5 */}
       <VIS.TrapProblem
-        id="lcrec-p7"
+        id="lcrec-a5"
         difficulty="medium"
-        title="P7 — Cold-start: new item with text but no clicks"
-        scenario={<>A new item arrives in the catalog with a title and description but zero user interactions. The pretrained RQ-VAE was trained on items WITH interactions. How do you assign codes to this new item?</>}
+        title="A5 — Boundary: catalog size where LC-Rec stops working"
+        scenario={<>At what catalog size does LC-Rec's VQ-tokenization become impractical?</>}
         options={[
-          {key:"a", text:"Wait for it to accumulate clicks, then train an embedding."},
-          {key:"b", text:"Encode the new item's TEXT using a pretrained text encoder; project to the embedding space the RQ-VAE expects; run that through RQ-VAE to get codes. Quality depends on text-CF alignment.", correct:true},
-          {key:"c", text:"Assign random codes — they'll work eventually."},
-          {key:"d", text:"Skip the item until next RQ-VAE retraining."},
+          {key:"a", text:"When item count grows large enough that codebook size must grow to maintain uniqueness — past ~10M items with the paper's 4x256 setup, collisions across items become common, and growing codebooks both inflates LLM vocab size and creates per-token cold-start problems.", correct:true},
+          {key:"b", text:"At any size — LC-Rec works for any catalog."},
+          {key:"c", text:"Under 1000 items — too few for RQ-VAE to converge."},
+          {key:"d", text:"Exactly 1M items, hard cap."},
         ]}
-        trap={<>(a) and (d) lose all new-item traffic until the next batch retrain. (c) breaks everything.</>}
-        lens={<>The standard cold-start path: pretrain a text→embedding projector by aligning text-encoder output to the sequential recommender's embedding output on items where both exist. For new items, use only the text branch. The CF-text alignment quality determines how good the synthesized codes are. This is one of the few places LC-Rec has a graceful cold-start story.</>}
-        stretch={<>If text and CF embeddings are highly aligned, what does that imply about whether the CF embedding adds signal beyond text?</>}
+        trap={<>(b)-(d) misframe the boundary. The boundary is dictated by RQ-VAE collision rate and LLM vocab inflation.</>}
+        lens={<>LC-Rec's practical ceiling is set by the codebook size growing super-linearly with item count. 10M is the rough industrial ceiling at the paper's 4x256 default; larger catalogs require deeper codebooks (cold-token problem) or different architectures.</>}
       />
 
+      {/* ============== B. Application ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      {/* axis: B1 */}
       <VIS.TrapProblem
-        id="lcrec-p8"
+        id="lcrec-b1"
         difficulty="hard"
-        title="P8 — Serving latency vs SASRec"
-        scenario={<>Your existing SASRec scores 1000 candidates in 5ms on CPU. LC-Rec with LLaMA-7B-LoRA generates 4 item-code tokens autoregressively — each token requires a full LLM forward pass. With KV-cache and a 7B model, that's ~30ms per token on an A100. What's LC-Rec's per-request latency for top-1 generation, and what's the implication?</>}
+        title="B1 — Conversational shopping with a 5M-item stable catalog"
+        scenario={<>Constraints: 5M items, growing 1K/day (stable), conversational shopping use case where users describe needs in NL and want recommendations + explanations from a single system. GPU budget allows LLM serving. Pick the architecture.</>}
         options={[
-          {key:"a", text:"~30ms, single forward pass."},
-          {key:"b", text:"~120ms (4 tokens × 30ms each). For top-K=10 with beam search, multiply by beam width — typically 300-500ms. Use LC-Rec for conversational/offline, not low-latency feeds.", correct:true},
-          {key:"c", text:"~5ms, same as SASRec."},
-          {key:"d", text:"~3000ms — autoregressive generation is always slow."},
+          {key:"a", text:"DLRM + a separate chat LLM."},
+          {key:"b", text:"LC-Rec: vocab-extension into the LLM gives unified text+item generation; 5M is well under the practical ceiling; 1K/day growth is slow enough to absorb periodic re-tokenization.", correct:true},
+          {key:"c", text:"Pure HSTU."},
+          {key:"d", text:"LLaRA + RAG."},
         ]}
-        trap={<>(a) misses the autoregressive nature — 4 tokens means 4 forward passes. (c) is wishful thinking. (d) overshoots.</>}
-        lens={<>LC-Rec's autoregressive generation is its latency Achilles' heel. ~120ms for top-1 is fine for chat but not for 1000 QPS feed-ranking. Production deployments use LC-Rec for: (1) conversational shopping where latency is forgiving, (2) offline candidate generation feeding a lightweight ranker, (3) explanation generation alongside recommendations.</>}
-        stretch={<>If you needed to drop latency 5×, what's more effective — distilling to a smaller LLM, or reducing the code-sequence length from 4 to 2?</>}
+        trap={<>(a) loses unified generation. (c) is not conversational. (d) is reasonable but loses the unified-generation benefit and adds orchestration complexity.</>}
+        lens={<>The scenario is precisely LC-Rec's design point: moderate catalog, stable growth, conversational + recommendation in one model. The unified generation is the value proposition.</>}
       />
 
+      {/* axis: B2 */}
       <VIS.TrapProblem
-        id="lcrec-p9"
+        id="lcrec-b2"
         difficulty="hard"
-        title="P9 — RQ-VAE training collapse"
-        scenario={<>You're training the RQ-VAE for LC-Rec. After 50 epochs, you notice that one codebook level (the last one, codebook 4) has 90% of items assigned to just 5 of its 256 codewords. The other 251 codewords are essentially unused. What's happening and what fixes it?</>}
+        title="B2 — &quot;Just make the codebook bigger&quot;"
+        scenario={<>LC-Rec offline NDCG is below expectations. An engineer proposes "double the codebook from 256 to 512 per level — more capacity, fewer collisions, better recommendations." Why is this likely wrong?</>}
         options={[
-          {key:"a", text:"Codebook collapse — gradients only update used codewords; unused ones never learn. Fix: codebook reset (replace dead codewords with perturbed copies of busy ones), commitment loss, EMA codebook updates.", correct:true},
-          {key:"b", text:"This is normal — the last codebook is least informative."},
-          {key:"c", text:"Train more epochs."},
-          {key:"d", text:"Reduce codebook size from 256 to 32."},
+          {key:"a", text:"Larger codebooks reduce collisions but each code receives less training signal per token; long-tail codes never appear in training and remain effectively cold. Empirically the paper shows 256x4 is the sweet spot; doubling either dim degrades because cold-code problems dominate.", correct:true},
+          {key:"b", text:"Larger codebooks break the LLM's pretrained weights."},
+          {key:"c", text:"Larger codebooks are slower to train."},
+          {key:"d", text:"Larger codebooks violate ICDE 2024 requirements."},
         ]}
-        trap={<>(b) gives up on the architecture. (c) won't help; the dead codewords never get gradient. (d) hides the symptom instead of fixing the cause.</>}
-        lens={<>Codebook collapse is the classic VQ failure mode. The standard mitigations (used in VQ-VAE-2, SoundStream, RQ-VAE papers): (1) EMA updates to codebook entries instead of gradient updates, (2) "code reset" — periodically detect dead codes and reinitialize them with a perturbation of a busy code, (3) commitment loss balancing the encoder and codebook updates. Production VQ training without these almost always collapses.</>}
-        stretch={<>If only the LAST codebook collapses but earlier ones are healthy, what does that suggest about the residual signal?</>}
+        trap={<>(b)-(d) miss the actual mechanism — cold-code starvation.</>}
+        lens={<>The codebook-size tradeoff is non-monotonic: too few = collisions; too many = cold codes that never train. Diagnose by inspecting per-code training-step counts.</>}
       />
 
+      {/* axis: B3 — STAKEHOLDER PITCH — must be CONCEPT-UNIQUE */}
       <VIS.TrapProblem
-        id="lcrec-p10"
+        id="lcrec-b3"
+        difficulty="hard"
+        title="B3 — Pitch LC-Rec to a product VP demanding conversation + rec in one model"
+        scenario={<>Your VP says: "We want our shopping assistant to chat AND recommend without two separate models. Why is LC-Rec the right choice over LLaRA + a chat LLM, in a way that's specific to LC-Rec's design?" Pick the most accurate pitch.</>}
+        options={[
+          {key:"a", text:"LC-Rec is the modern unified approach; everyone in conversational commerce is moving to it."},
+          {key:"b", text:"LC-Rec extends the LLM tokenizer with item-code tokens so the model emits text and item-codes in the SAME next-token decoding loop — the recommendation and its NL explanation come from one set of weights with shared attention, not two models stitched together. LLaRA cannot do this because its items live in a separate adapter-projected space; LLaRA outputs a title, not an item-code.", correct:true},
+          {key:"c", text:"LC-Rec is faster than LLaRA + chat-LLM combined."},
+          {key:"d", text:"LC-Rec is cheaper to operate than running two models."},
+        ]}
+        trap={<>(a) is appeal-to-authority. (c) and (d) are generic operational claims that win for any unified system. Only (b) is LC-Rec-specific: it names the vocab-extension mechanism, the shared next-token loop, the shared attention, and the specific LLaRA limitation (adapter-space ID is not in the LLM vocab so cannot be decoded in-line with text).</>}
+        lens={<>Redaction litmus: swap LC-Rec for Model X in (b) — the option falls apart because no other system extends the LLM tokenizer with item-codes that participate in next-token decoding alongside text. The pitch hinges on the vocab-extension mechanism.</>}
+        stretch={<>What's the load-bearing constraint that, if violated, makes this pitch fail?</>}
+      />
+
+      {/* axis: B4 */}
+      <VIS.TrapProblem
+        id="lcrec-b4"
+        difficulty="hard"
+        title="B4 — When NOT to use LC-Rec"
+        scenario={<>Your surface: 100M items growing 1M/day, items have only IDs (no content embeddings), latency budget 50ms, no conversation surface. Which of these are valid reasons NOT to use LC-Rec?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"100M items growing 1M/day means re-tokenization breaks: codebook collisions become severe at that catalog size, and the LLM vocab cannot keep up.", correct:true},
+          {key:"b", text:"No content embeddings: RQ-VAE has nothing to quantize; the entire approach collapses.", correct:true},
+          {key:"c", text:"50ms latency: LLM autoregressive decode (4 tokens per item code-tuple) plus NL tokens dominates the budget.", correct:true},
+          {key:"d", text:"No conversation surface: LC-Rec's unique unified-generation value vanishes; LLaRA or even SASRec is cheaper for rec-only.", correct:true},
+          {key:"e", text:"LC-Rec requires Apache 2.0 license."},
+        ]}
+        trap={<>(e) is fabricated. The rest each target a specific LC-Rec mechanism that fails at the scenario's constraints.</>}
+        lens={<>LC-Rec is opinionated: it needs content embeddings, stable catalog, conversation surface, GPU budget. Failing any one disqualifies it.</>}
+      />
+
+      {/* ============== C. Mechanism ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      {/* axis: C1 */}
+      <VIS.TrapProblem
+        id="lcrec-c1"
+        difficulty="hard"
+        title="C1 — Why multi-task training, not just sequential rec?"
+        scenario={<>Why does LC-Rec train on sequential rec + item-to-text + text-to-item + preference-conditioned tasks all together, instead of just sequential rec?</>}
+        options={[
+          {key:"a", text:"The new VQ-token-codes start untied to natural-language semantics. Item-to-text and text-to-item auxiliary losses force the LLM to align the new tokens with NL meaning, enabling conversational rec. Pure sequential rec would train the new tokens for sequence prediction only and break the LLM's NL+rec joint capability.", correct:true},
+          {key:"b", text:"Multi-task training is always strictly better for any model."},
+          {key:"c", text:"Multi-task training is required by the ICDE template."},
+          {key:"d", text:"Multi-task training reduces compute cost."},
+        ]}
+        trap={<>(b)-(d) are generic or wrong. The LC-Rec-specific reason is text-item alignment of the new vocab.</>}
+        lens={<>Without alignment losses, the new tokens become a parallel vocabulary that does not interact with NL — recsys works, conversation breaks. Alignment is the load-bearing piece for unified generation.</>}
+      />
+
+      {/* axis: C2 */}
+      <VIS.TrapProblem
+        id="lcrec-c2"
+        difficulty="hard"
+        title="C2 — Loss / objective: unified next-token CE"
+        scenario={<>What single loss does LC-Rec optimize across all its training tasks?</>}
+        options={[
+          {key:"a", text:"Next-token cross-entropy over the EXTENDED LLM vocabulary (NL tokens + ~1024 new item-code tokens). All tasks (sequential rec, item-to-text, text-to-item, preference) reduce to predicting the next token in their respective sequences.", correct:true},
+          {key:"b", text:"Pointwise binary cross-entropy on click label."},
+          {key:"c", text:"Contrastive InfoNCE loss."},
+          {key:"d", text:"Pairwise BPR loss."},
+        ]}
+        trap={<>(b)-(d) describe other recsys loss families. LC-Rec's unification is via using the same loss across all tasks.</>}
+        lens={<>The unified loss is what makes the joint vocabulary coherent. Different tasks contribute different gradient signals to the shared embedding table.</>}
+      />
+
+      {/* axis: C3 */}
+      <VIS.TrapProblem
+        id="lcrec-c3"
+        difficulty="hard"
+        title="C3 — What's dropped vs LLaRA"
+        scenario={<>What does LC-Rec deliberately NOT do that LLaRA does?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Does not freeze an external recommender — collaborative signal must be learned by the LLM directly from the multi-task losses, not inherited from a pretrained SASRec.", correct:true},
+          {key:"b", text:"Does not use an adapter — the new tokens are the LLM's own embeddings (or initialized from cluster centroids of content embeddings).", correct:true},
+          {key:"c", text:"Does not require a separate curriculum schedule — the multi-task formulation forces alignment naturally without a temporal ramp.", correct:true},
+          {key:"d", text:"Does not use a pretrained LLM."},
+        ]}
+        trap={<>(d) is wrong — LC-Rec specifically starts from a pretrained LLM.</>}
+        lens={<>LC-Rec's design simplifies LLaRA's three pieces (frozen recommender + adapter + curriculum) into one (extended vocab + multi-task). The tradeoff: harder to handle catalog growth, but lighter ops surface.</>}
+      />
+
+      {/* axis: C4 */}
+      <VIS.TrapProblem
+        id="lcrec-c4"
+        difficulty="hard"
+        title="C4 — Which knob, mis-set, catastrophically breaks LC-Rec?"
+        scenario={<>Rank by "production breakage if mis-configured" for LC-Rec: (1) RQ-VAE codebook size + depth, (2) multi-task loss weighting, (3) LLM model size, (4) LoRA rank.</>}
+        options={[
+          {key:"a", text:"1 (codebook config) -> 2 (loss weighting) -> 4 (LoRA rank) -> 3 (LLM size). Bad codebooks produce collisions OR cold codes that silently break recommendation precision; bad loss weights starve the item-to-text task and break conversational coherence; LoRA and LLM size cause gradual quality drops.", correct:true},
+          {key:"b", text:"3 -> 4 -> 2 -> 1, generic LLM intuitions."},
+          {key:"c", text:"2 -> 4 -> 3 -> 1."},
+          {key:"d", text:"All four equally sensitive."},
+        ]}
+        trap={<>(b) imports generic LLM tuning intuitions. (c)-(d) miss LC-Rec specifics.</>}
+        lens={<>LC-Rec's two load-bearing knobs are the codebook geometry and the multi-task loss balance. Get those right and the rest is graceful. Get them wrong and you cannot tell from training loss alone — only from per-task eval.</>}
+      />
+
+      {/* axis: C5 */}
+      <VIS.TrapProblem
+        id="lcrec-c5"
+        difficulty="hard"
+        title="C5 — Data assumption: well-clustered content embeddings"
+        scenario={<>Your content-embedding pipeline produces bimodal or multi-modal-collapsed embeddings (e.g., text and image embeddings concatenated without good fusion). What happens to LC-Rec?</>}
+        options={[
+          {key:"a", text:"RQ-VAE codes degenerate: residual quantization assumes well-distributed embeddings; with bimodal distributions, most items collapse onto a few clusters in the first codebook, the residuals look similar across items, and downstream codebooks produce near-duplicate code-tuples — recommendation precision collapses.", correct:true},
+          {key:"b", text:"Nothing breaks; RQ-VAE handles all distributions."},
+          {key:"c", text:"The LLM detects the degeneracy and self-corrects."},
+          {key:"d", text:"Multi-task training compensates for bad codes."},
+        ]}
+        trap={<>(b)-(d) miss the actual sensitivity: RQ-VAE requires well-distributed input embeddings.</>}
+        lens={<>LC-Rec's recommendation quality is upper-bounded by the content-embedding pipeline's quality. Diagnose by inspecting codebook utilization histograms — uneven distributions are red flags.</>}
+      />
+
+      {/* ============== D. Intuition traps ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      {/* axis: D1 */}
+      <VIS.TrapProblem
+        id="lcrec-d1"
+        difficulty="hard"
+        title="D1 — &quot;Bigger codebook is always better&quot;"
+        scenario={<>An engineer says "we doubled the codebook from 256 to 1024 and recommendations got worse — must be a bug." Why is this expected, not a bug?</>}
+        options={[
+          {key:"a", text:"Larger codebooks reduce collisions but each code now receives less training signal per token; long-tail codes never appear in training and remain cold. The tradeoff is non-monotonic: a sweet spot exists around the empirical 256 x 4 setup.", correct:true},
+          {key:"b", text:"Larger codebooks are always better — there must be a bug."},
+          {key:"c", text:"Codebook size has no effect on recommendation quality."},
+          {key:"d", text:"Larger codebooks slow the LLM down by an order of magnitude."},
+        ]}
+        trap={<>(b) is the textbook capacity-improves-everything intuition that LC-Rec specifically violates. (c)-(d) are wrong.</>}
+        lens={<>Capacity-vs-training-signal is the central tradeoff for VQ-token recsys. More codes = more capacity but also more cold codes. The sweet spot depends on training-set size and item-popularity distribution.</>}
+      />
+
+      {/* axis: D2 */}
+      <VIS.TrapProblem
+        id="lcrec-d2"
+        difficulty="hard"
+        title="D2 — Cascade: &quot;Catalog grows 10x, just add more tokens&quot;"
+        scenario={<>Catalog grows 10x. You propose to just extend the codebook to handle the new items. Which consequences are wrong because of that proposal?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"The LLM tokenizer needs re-extension and the model needs continue-pretraining on the new vocab; old codes for items that drifted in content space now point to wrong clusters and must be re-quantized.", correct:true},
+          {key:"b", text:"LLM embedding table grows, inflating memory and inference cost.", correct:true},
+          {key:"c", text:"Item-token training signal is diluted: the same training budget now spreads over 10x more tokens; per-token gradient drops.", correct:true},
+          {key:"d", text:"Multi-task losses become irrelevant after the extension."},
+        ]}
+        trap={<>(d) is wrong — multi-task losses remain just as important post-extension.</>}
+        lens={<>Catalog growth is structurally hard for LC-Rec because the vocabulary IS the catalog. LLaRA's adapter path is incremental; LC-Rec's is not. This is the canonical tradeoff between collapse and bridge.</>}
+      />
+
+      {/* axis: D3 */}
+      <VIS.TrapProblem
+        id="lcrec-d3"
         difficulty="medium"
-        multiSelect
-        title="P10 — Evaluation on a code-token LLM"
-        scenario={<>You're evaluating LC-Rec offline. Which metrics make sense given that the model GENERATES codes? Select all that apply.</>}
+        title="D3 — Senior vs junior: reduce codebook depth to speed inference"
+        scenario={<>LC-Rec inference is slow (4 codes per item means 4 decode steps per recommendation). Junior: reduce codebook depth from 4 to 2 levels. Senior pushes back. Why?</>}
         options={[
-          {key:"a", text:"Hit@K — does the generated top-K code-sequence list contain the ground-truth item's codes?", correct:true},
-          {key:"b", text:"NDCG@K with code-sequence ranking.", correct:true},
-          {key:"c", text:"Token-level perplexity on code sequences — measures fluency of code generation.", correct:true},
-          {key:"d", text:"BLEU score against the item's title."},
-          {key:"e", text:"Beam-search diversity — measures whether top-K spans different parts of the catalog.", correct:true},
+          {key:"a", text:"Reducing depth from 4 to 2 means each item now collides with many more items (fewer codes = less unique items); recommendation precision collapses well before any latency win materializes. The right way to speed up is constrained decoding or speculative decoding, not reducing the codebook.", correct:true},
+          {key:"b", text:"Codebook depth has no effect on inference speed."},
+          {key:"c", text:"Codebook depth must be exactly 4 by ICDE 2024 specification."},
+          {key:"d", text:"Reducing depth makes training faster but doesn't affect inference."},
         ]}
-        trap={<>(d) is a category error — BLEU compares text generations, not item retrievals.</>}
-        lens={<>The four useful metrics each test a different property: Hit@K (retrieval quality), NDCG (ranking quality within top-K), code perplexity (generative fluency — proxy for LLM stability), beam diversity (how exploratory is the system). Reporting only Hit@K hides whether the model is collapsing to popular items.</>}
-        stretch={<>If Hit@K is high but beam diversity is low, what's the production risk?</>}
+        trap={<>(b)-(d) miss the collision-vs-latency tradeoff.</>}
+        lens={<>LC-Rec's discriminative power comes from the joint codebook geometry. Reducing depth trades precision for latency in a steep curve; usually not worth it. Constrained / speculative decoding addresses latency without compromising precision.</>}
       />
 
+      {/* axis: D4 */}
       <VIS.TrapProblem
-        id="lcrec-p11"
+        id="lcrec-d4"
         difficulty="hard"
-        title="P11 — Conversational shopping query"
-        scenario={<>User: "I want a thriller with a strong female lead, but not too dark, something like Inception meets Gone Girl." LC-Rec must process this free-text query and return a specific item. Walk through the inference flow.</>}
+        title="D4 — Plausible misattribution: NDCG drop after retokenization"
+        scenario={<>LC-Rec offline NDCG drops 3% after a routine RQ-VAE retokenization. Three plausible causes. Which is the actual one?</>}
         options={[
-          {key:"a", text:"Pass the query to an embedding model, ANN search."},
-          {key:"b", text:"LLM ingests the query text directly, attends over user history (if any), generates a code-sequence; constrained decoding restricts to valid catalog codes; the code maps to an item.", correct:true},
-          {key:"c", text:"LLM converts the query to SQL and queries a database."},
-          {key:"d", text:"Pre-cluster the catalog by mood; pick a cluster, then ANN search."},
+          {key:"a", text:"Actual: RQ-VAE codebook drift — the new tokenization maps items to different code-tuples than before; the LLM's learned token embeddings are still anchored to the old tokenization. Fix: warm-start new code-token embeddings from old code-cluster centroids when the mapping is close.", correct:true},
+          {key:"b", text:"Actual: LLM weights regressed during fine-tune."},
+          {key:"c", text:"Actual: multi-task loss weights drifted."},
+          {key:"d", text:"All three equally likely."},
         ]}
-        trap={<>(a) is the standard semantic-search pipeline but loses LC-Rec's joint reasoning. (c) ignores embeddings. (d) is brittle.</>}
-        lens={<>LC-Rec's unique advantage IS this query type — the LLM reads natural language AND generates an item code in one autoregressive pass, with constrained decoding ensuring the output is a real catalog item. The LLM's pretraining gives it the world-knowledge to understand "Inception meets Gone Girl"; the fine-tuning gives it the code-vocab to emit a valid item.</>}
-        stretch={<>What if the user gives a query that has NO matching item in the catalog? How does LC-Rec respond gracefully?</>}
+        trap={<>The intuition is "retokenization shouldn't matter, the LLM will adapt." LC-Rec-specific: it does matter because the LLM's token embeddings are anchored to the OLD tokenization geometry.</>}
+        lens={<>Retokenization is not free — every retokenization breaks the implicit mapping between LLM token embeddings and the items those tokens represent. Plan for warm-start (or full re-fine-tune) every retokenization.</>}
       />
 
+      {/* ============== E. Operations ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      {/* axis: E1 */}
       <VIS.TrapProblem
-        id="lcrec-p12"
+        id="lcrec-e1"
         difficulty="hard"
-        multiSelect
-        title="P12 — LC-Rec vs LLaRA — which to choose?"
-        scenario={<>Decision time. Your platform is a streaming video service with ~500K titles, weekly catalog churn of ~2%, and you want to add conversational discovery on top of an existing SASRec-based ranker. Which factors favor LC-Rec? Which favor LLaRA? Select all that favor LC-Rec specifically.</>}
+        title="E1 — Production gotcha: partial-freeze embedding table"
+        scenario={<>You set up LC-Rec fine-tuning with standard LoRA. Training loss flat, recommendations bad. What is the likely silent failure?</>}
         options={[
-          {key:"a", text:"You want a single model to handle both ranking and conversational queries.", correct:true},
-          {key:"b", text:"You want to reuse your existing SASRec embeddings without retraining."},
-          {key:"c", text:"Your catalog is stable enough that monthly RQ-VAE retraining is acceptable.", correct:true},
-          {key:"d", text:"You need text-and-ID truly joint generation (output IS an item via code-sequence).", correct:true},
-          {key:"e", text:"You can afford weeks of training infra to add a custom tokenizer."},
+          {key:"a", text:"Standard LoRA freezes the embedding table entirely. LC-Rec's new VQ-token-codes have zero-init embeddings that must train; if the table is frozen, the new tokens never learn anything and the model performs no better than text-only. Need a custom partial-freeze that lets NEW token embeddings train but keeps NL token embeddings frozen.", correct:true},
+          {key:"b", text:"LoRA rank is too low."},
+          {key:"c", text:"The learning rate is too high."},
+          {key:"d", text:"GPU memory is too low."},
         ]}
-        trap={<>(b) favors LLaRA — LC-Rec requires retraining the LLM's vocab and embedding table. (e) is a non-trivial cost; the LC-Rec setup is more invasive than LLaRA's adapter. The factors that favor LC-Rec are about wanting a TRULY unified model with a single output space.</>}
-        lens={<>LC-Rec wins when you want one model to do everything in one autoregressive pass — including generating items as part of natural-language replies. LLaRA wins when you want to layer LLM reasoning on top of an existing, well-tuned recommender without re-investment. For a 500K-title catalog with 2% weekly churn, LC-Rec is workable if you commit to the RQ-VAE retraining infra.</>}
-        stretch={<>What's the smallest catalog size where LC-Rec's vocab-expansion cost stops being worth it?</>}
+        trap={<>(b)-(d) are generic; the LC-Rec-specific failure is the LoRA-vs-new-vocab interaction.</>}
+        lens={<>The partial-freeze embedding setup is LC-Rec's most easily mis-configured piece. Verify by inspecting per-token embedding gradient norms after one training step — new tokens should have non-zero gradients.</>}
+      />
+
+      {/* axis: E2 — FAILURE ON FRIDAY */}
+      <VIS.TrapProblem
+        id="lcrec-e2"
+        difficulty="hard"
+        title="E2 — Failure on Friday: marketplace integration adds 10M items"
+        scenario={<>Sunday morning page: top recommendations are dominated by ~5 items even though the catalog grew by 10M new items overnight via a marketplace integration. LLM perplexity normal; sequential-rec training metrics fine on the OLD catalog. What broke, why LC-Rec-specifically, and what's the fix?</>}
+        options={[
+          {key:"a", text:"The 10M new items got VQ-tokenized but the new code-tokens are out-of-vocab for the LLM (zero-init embeddings) since the LLM has not been re-fine-tuned yet. At decode time, log-probabilities for cold codes are near zero; the LLM concentrates probability mass on the small set of warm codes seen in training. LLaRA-alone would NOT have this failure because new items just get a fresh SASRec embedding and the adapter handles them in-distribution. Fix: ship the LLM in &quot;online learning&quot; mode that incrementally trains new code-token embeddings, OR fall back to text-prompt mode for cold codes.", correct:true},
+          {key:"b", text:"GPU thermal throttling."},
+          {key:"c", text:"The LoRA adapter forgot."},
+          {key:"d", text:"The Platt scaler drifted."},
+        ]}
+        trap={<>(b)-(d) are generic. The LC-Rec-specific failure is the cold-vocab collapse chain.</>}
+        lens={<>LC-Rec's vocab-extension architecture makes catalog growth a first-class operational concern. New items need both VQ-token assignment AND training signal on that token before they're usable. Without that second step, the LLM doesn't know they exist.</>}
+      />
+
+      {/* axis: E3 */}
+      <VIS.TrapProblem
+        id="lcrec-e3"
+        difficulty="medium"
+        title="E3 — Implementation specifics: RQ-VAE k-means init"
+        scenario={<>The reference RQ-VAE implementation initializes codebooks via k-means on the training embedding sample. What silent failure does this cause if your content-embedding pipeline changes?</>}
+        options={[
+          {key:"a", text:"The k-means init reflects the OLD content-embedding distribution. If you upgrade the content encoder (new image model, new text model), the embedding distribution shifts; the k-means init is now misaligned with the new distribution, and the codes degenerate.", correct:true},
+          {key:"b", text:"The k-means init causes RQ-VAE to crash."},
+          {key:"c", text:"The k-means init is irrelevant; codebooks self-tune."},
+          {key:"d", text:"K-means must use exactly 256 clusters."},
+        ]}
+        trap={<>(b)-(d) miss the init-vs-distribution-drift coupling.</>}
+        lens={<>RQ-VAE init is tightly coupled to the content-embedding distribution. Any upstream encoder change requires re-init and full retraining of the recsys stack.</>}
+      />
+
+      {/* axis: E4 */}
+      <VIS.TrapProblem
+        id="lcrec-e4"
+        difficulty="medium"
+        title="E4 — Rollout: baseline to LC-Rec migration"
+        scenario={<>Order the migration steps from no-recommender to LC-Rec. Pick the correct sequencing.</>}
+        options={[
+          {key:"a", text:"Train RQ-VAE on a stable content-embedding sample -> extend LLM tokenizer + embedding table -> multi-task fine-tune (sequential + item-text + text-item + preference-conditioned) -> offline shadow-score -> traffic ramp. Re-tokenization planned for each major catalog drift.", correct:true},
+          {key:"b", text:"Extend LLM tokenizer first; train RQ-VAE later."},
+          {key:"c", text:"Skip multi-task; fine-tune on sequential rec only."},
+          {key:"d", text:"Ship LC-Rec at 100 percent traffic immediately."},
+        ]}
+        trap={<>(b) reverses the dependency. (c) breaks conversational capability. (d) is reckless.</>}
+        lens={<>LC-Rec migrations must respect the dependency chain (RQ-VAE -&gt; tokenizer -&gt; multi-task fine-tune) and plan for re-tokenization as a recurring ops event, not a one-time setup.</>}
+      />
+
+      {/* axis: E5 */}
+      <VIS.TrapProblem
+        id="lcrec-e5"
+        difficulty="hard"
+        title="E5 — Reproducibility: paper recipe on larger catalogs"
+        scenario={<>The paper's offline lift over LLaRA is on MovieLens-1M and Amazon-Beauty. You reproduce on a 1M-item catalog and see no lift. What is the most likely LC-Rec-specific reason?</>}
+        options={[
+          {key:"a", text:"Codebook size and depth defaults from the paper were tuned for ~10K item catalogs; at 1M items the 4 x 256 setup has too many collisions, and the model degrades to recommending whole clusters of similar items. Larger catalogs need codebook-size search (more codebooks, more codes per book, or hierarchical extensions).", correct:true},
+          {key:"b", text:"PyTorch version mismatch."},
+          {key:"c", text:"Different LLM brand."},
+          {key:"d", text:"The benchmark license is incompatible."},
+        ]}
+        trap={<>(b)-(d) are generic. The LC-Rec-specific reproduction issue is codebook tuning at scale.</>}
+        lens={<>LC-Rec's headline numbers depend on catalog scale matching the codebook geometry. Reproducing at a different scale without re-tuning the codebook is a common silent failure.</>}
+      />
+
+      {/* axis: E6 */}
+      <VIS.TrapProblem
+        id="lcrec-e6"
+        difficulty="hard"
+        title="E6 — Eval contamination: VQ-tokenization conflated with alignment"
+        scenario={<>LC-Rec's evaluation reports "LC-Rec beats LLaRA by X%." What two improvements does this single number conflate?</>}
+        options={[
+          {key:"a", text:"(1) VQ-tokenization (information bottleneck on items that may regularize) AND (2) multi-task alignment (cross-task regularization on the LLM weights). Ablating one without the other gives a misleading picture of where the lift comes from.", correct:true},
+          {key:"b", text:"It conflates LLM brand differences only."},
+          {key:"c", text:"It conflates training dataset size only."},
+          {key:"d", text:"There is no conflation."},
+        ]}
+        trap={<>(b)-(d) miss the architectural conflation between LC-Rec's two innovations.</>}
+        lens={<>Honest LC-Rec evaluation needs to ablate the two pieces separately. Many production teams attribute lift to the wrong piece and miss the actual operational lever.</>}
+      />
+
+      {/* ============== F. Failure modes ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      {/* axis: F1 */}
+      <VIS.TrapProblem
+        id="lcrec-f1"
+        difficulty="hard"
+        title="F1 — Edge case: user history with a single high-popularity cluster"
+        scenario={<>A user has one item in their history, and that item's VQ-codes collide with 50 other items (high-popularity cluster). What does LC-Rec do?</>}
+        options={[
+          {key:"a", text:"Next-token decode has near-uniform probability over the colliding cluster; recommendation becomes random within the cluster. Neither hard-search SIM (no quantization) nor LLaRA (unique SASRec ID per item) has this collision-driven degeneracy.", correct:true},
+          {key:"b", text:"LC-Rec correctly picks the most popular item from the cluster."},
+          {key:"c", text:"LC-Rec uses a tie-breaker to choose deterministically."},
+          {key:"d", text:"LC-Rec crashes on collisions."},
+        ]}
+        trap={<>(b)-(d) misframe what collisions mean for an autoregressive decoder.</>}
+        lens={<>VQ-token collisions are an intrinsic LC-Rec failure mode. Tighter codebooks reduce collisions but worsen the cold-code problem. The choice is structural; mitigation is post-hoc reranking.</>}
+      />
+
+      {/* axis: F2 */}
+      <VIS.TrapProblem
+        id="lcrec-f2"
+        difficulty="hard"
+        title="F2 — Adversarial: cluster-level Sybil attack"
+        scenario={<>An adversary engineers item content embeddings so that many of their items collapse into a single codebook cluster. What attack does this enable?</>}
+        options={[
+          {key:"a", text:"Once one item from the cluster trends, LC-Rec recommends all colliding items together — a cluster-level Sybil attack against the recommendation distribution. Unique to LC-Rec because it is the only model that collapses items into shared discrete codes.", correct:true},
+          {key:"b", text:"The attack does nothing; the LLM filters it."},
+          {key:"c", text:"The attack crashes LC-Rec."},
+          {key:"d", text:"The attack only affects LLaRA, not LC-Rec."},
+        ]}
+        trap={<>(b)-(d) miss that LC-Rec's collapse-into-codes is precisely what enables this attack.</>}
+        lens={<>LC-Rec's attack surface is the codebook itself. Cluster-collapse attacks force the system to amplify whatever items share the cluster. SIM and LLaRA do not have this surface because they do not share discrete code identity across items.</>}
+      />
+
+      {/* axis: F3 */}
+      <VIS.TrapProblem
+        id="lcrec-f3"
+        difficulty="hard"
+        title="F3 — Reverse engineering: sequential metric up, conversational eval down"
+        scenario={<>Symptom: LC-Rec's sequential-rec NDCG climbs steadily during training, but conversational eval (describe item X) degrades. Which LC-Rec-specific design choice drives this divergence?</>}
+        options={[
+          {key:"a", text:"Multi-task loss imbalance — when the sequential-rec gradient dominates, the LLM specializes the new code-tokens toward sequence prediction and forgets their text-side meaning (item-to-text task starved). Fix: re-weight item-to-text loss upward.", correct:true},
+          {key:"b", text:"The LLM is too small."},
+          {key:"c", text:"Insufficient training data."},
+          {key:"d", text:"PyTorch version regression."},
+        ]}
+        trap={<>(b)-(d) are generic. The LC-Rec-specific cause is the multi-task balance.</>}
+        lens={<>LC-Rec's joint capability is fragile to loss balance. Monitor per-task eval metrics separately throughout training; a divergence is the signal to re-weight.</>}
+      />
+
+      {/* axis: F4 */}
+      <VIS.TrapProblem
+        id="lcrec-f4"
+        difficulty="medium"
+        title="F4 — Paper-named failure: cold-start items"
+        scenario={<>The LC-Rec paper specifically names one regime where the model degrades. Which is it, and why architecturally?</>}
+        options={[
+          {key:"a", text:"Cold-start items — new items need both VQ-token assignment AND training signal on that token before they're usable in recommendation or description. Either step missing makes the new item invisible to LC-Rec.", correct:true},
+          {key:"b", text:"Items with long titles."},
+          {key:"c", text:"Items with images but no text."},
+          {key:"d", text:"Items with unique IDs."},
+        ]}
+        trap={<>(b)-(d) are not what the paper called out.</>}
+        lens={<>Cold-start in LC-Rec is two-step (token assignment + training) where in LLaRA it's one-step (embedding init). This is the operational cost of vocab-extension architectures.</>}
+      />
+
+      {/* axis: F5 */}
+      <VIS.TrapProblem
+        id="lcrec-f5"
+        difficulty="hard"
+        title="F5 — Community-found: codes drift under content-embedding shift"
+        scenario={<>2025 follow-up work on VQ-tokenization for recsys (TIGER+ extensions, OneRec variants) shows that RQ-VAE codes are unstable under content-embedding drift. Why is this a particularly hard problem for LC-Rec specifically?</>}
+        options={[
+          {key:"a", text:"LC-Rec's LLM has learned token embeddings tied to the codes. Small changes to the upstream content encoder cause the codes to reassign in ways that are not local in code-space — items move to different parts of the LLM's vocabulary. Recovering requires retokenization plus full re-fine-tuning of the LLM.", correct:true},
+          {key:"b", text:"The problem affects only TIGER, not LC-Rec."},
+          {key:"c", text:"LC-Rec is immune to content-embedding drift."},
+          {key:"d", text:"The follow-up papers are concerned with hardware, not architecture."},
+        ]}
+        trap={<>(b)-(d) misstate the LC-Rec sensitivity.</>}
+        lens={<>The drift problem is the structural cost of collapse-into-vocabulary. Bridge architectures (LLaRA) handle drift incrementally; collapse architectures (LC-Rec, TIGER) require coordinated retokenization+retraining.</>}
       />
     </VIS.Section>
 
-    <VIS.Section id="sec-further" title="Further reading">
-      <ul>
-        <li><a href="https://arxiv.org/abs/2311.09049" target="_blank" rel="noopener"><strong>Zheng et al. — Adapting LLMs by Integrating Collaborative Semantics for Recommendation (LC-Rec)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, ICDE 2024)</span><br/>The original paper. Read sections 3 (vocab-expansion design) and 4 (multi-task fine-tuning recipe) — section 4 is where the "joint text+code" framing crystallizes.</li>
-        <li><a href="https://arxiv.org/abs/2305.05065" target="_blank" rel="noopener"><strong>Rajput et al. — TIGER: Recommender Systems with Generative Retrieval</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2023)</span><br/>The codes-only counterpart. TIGER introduced RQ-VAE for items; LC-Rec extends it by keeping the LLM's text vocab. Read TIGER first to understand the RQ-VAE motivation.</li>
-        <li><a href="https://arxiv.org/abs/2107.03312" target="_blank" rel="noopener"><strong>Zeghidour et al. — SoundStream: An End-to-End Neural Audio Codec</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, 2021)</span><br/>The RQ-VAE technique LC-Rec uses came from audio codec research. SoundStream is the cleanest introduction to residual VQ with EMA codebook updates and codeword reset — the fixes for codebook collapse in problem P9.</li>
-        <li><a href="https://eugeneyan.com/writing/recsys-llm/" target="_blank" rel="noopener"><strong>Eugene Yan — Improving RecSys with LLMs</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Practitioner survey covering LLM × RecSys integration patterns — useful taxonomy of when each approach (LLaRA, LC-Rec, TIGER, prompt-only) wins.</li>
-        <li><a href="https://lilianweng.github.io/posts/2018-08-12-vae/" target="_blank" rel="noopener"><strong>Lilian Weng — From Autoencoder to Beta-VAE</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Background for understanding VQ-VAE and its training dynamics. The codebook collapse mechanism in P9 is rooted in this lineage.</li>
+    <VIS.Section id="sec-refs" title="References & further reading">
+      <ul style={{lineHeight:1.85}}>
+        <li>
+          <a href="https://arxiv.org/abs/2311.09049" target="_blank" rel="noopener"><strong>Zheng et al. — LC-Rec (ICDE 2024)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>The original paper. The multi-task formulation and codebook-size ablations are the load-bearing reads.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2312.02445" target="_blank" rel="noopener"><strong>Liao et al. — LLaRA (SIGIR 2024)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>The bridge-architecture sibling.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2305.05065" target="_blank" rel="noopener"><strong>Rajput et al. — TIGER (NeurIPS 2023)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>The retrieval-only RQ-VAE predecessor; same VQ-token primitive, different role.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2502.18965" target="_blank" rel="noopener"><strong>Cai et al. — OneRec / OneRec-V2 (Kuaishou 2025)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>Production-scale generative recsys with VQ-tokenization patterns at industrial scale.</span>
+        </li>
       </ul>
     </VIS.Section>
   </main>

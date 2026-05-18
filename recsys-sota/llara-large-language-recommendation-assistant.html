@@ -1414,295 +1414,588 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// LLaRA — Large Language-Recommendation Assistant.
+// LLaRA — Large Language-Recommendation Assistant (SIGIR 2024)
+// v2 redo — 30+ trap problems spanning A-F taxonomy axes, redaction-litmus passed.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · LLM-augmented recommendation"
       title="LLaRA — Large Language-Recommendation Assistant"
-      subtitle="Hybrid prompts that fuse item text with collaborative-filtering ID embeddings, ramped in by curriculum."
+      subtitle="Bridge a frozen sequential recommender to an LLM via a learned adapter; train under a text-to-hybrid curriculum that prevents the LLM from ignoring the new ID token."
       byline={[
         {label: "Paper", value: "Liao et al., SIGIR 2024"},
-        {label: "URL", value: "arxiv.org/abs/2312.02445"},
+        {label: "Year", value: "2024"},
+        {label: "Domain", value: "LLM-augmented recsys (hybrid prompt)"},
       ]}/>
 
     <VIS.TLDR>
-      LLaRA fuses a frozen sequential recommender's <strong>ID embeddings</strong> with item <strong>text</strong> inside an LLM's prompt — via a thin adapter — and trains the LLM to predict the next item.
-      The key trick is <strong>curriculum learning</strong>: start text-only so the LLM doesn't immediately ignore the brand-new ID token type, then gradually mix in the collaborative-signal embedding.
+      LLaRA represents each item as <code>&lt;text title&gt; [ID-soft-token]</code> in the LLM prompt. The soft ID token is a projection of a pre-trained <VIS.Term def="Self-Attentive Sequential Recommendation — a transformer over item-only sequences trained pointwise on click labels.">SASRec</VIS.Term> embedding through a learned adapter. A <strong>curriculum</strong> ramps the prompt from text-only at step 0 to fully hybrid at step T; without the curriculum the LLM ignores the new ID-soft-token entirely (lazy-gradient collapse) because text alone is already informative.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        Two camps had grown apart by late 2023. <VIS.Term def="Sequential recommendation models like SASRec or GRU4Rec — predict the next item from a user's behavior sequence using learned ID embeddings.">Sequential recommenders</VIS.Term> (SASRec, GRU4Rec) learned ID embeddings that encode <VIS.Term def="The pattern that users with similar past behavior tend to like similar future items — what you learn from interaction data without using item content.">collaborative-filtering signal</VIS.Term> beautifully but were blind to world knowledge. Pure-text LLM recommenders (GPT-4 prompted with item titles) could reason but ignored what users actually clicked.
-      </p>
-      <p>
-        LLaRA bolts the two together. For each item in a user's history, it injects BOTH the item's text AND a special <code>&lt;ITEM_EMB&gt;</code> placeholder whose embedding is an adapter-mapped projection of the sequential recommender's learned ID embedding.
+        LLaRA bridges two pre-trained representations — a sequential recommender (SASRec / GRU4Rec) for collaborative signal and an LLM for world knowledge — via a small learned adapter that turns a SASRec ID embedding into a soft token the LLM can consume.
       </p>
       <VIS.Mermaid chart={`
-flowchart TB
-  SEQ["Frozen SASRec<br/>item ID embedding"]
-  TXT["Item title text"]
-  ADP["Adapter MLP"]
-  SEQ --> ADP
-  ADP --> EMB["Soft token in LLM vocab"]
-  TXT --> TOK["BPE tokens"]
-  EMB --> PROMPT["Hybrid prompt"]
-  TOK --> PROMPT
-  PROMPT --> LLM["LLM (LoRA fine-tuned)"]
-  LLM --> PRED["Next item prediction"]
-  style ADP fill:#fef3c7,stroke:#d97706,stroke-width:2px
+flowchart LR
+  SAS["Frozen SASRec"] --> EMB["ID embedding e_i"]
+  EMB --> ADP["Adapter (W2 GELU W1)"]
+  ADP --> SOFT["Soft ID token"]
+  TXT["Item title text"] --> TOK["LLM tokenizer"]
+  TOK --> TXT_E["Text token embeddings"]
+  SOFT --> LLM["LoRA-tuned LLM"]
+  TXT_E --> LLM
+  LLM --> OUT["Next-item title"]
+  style ADP fill:#dbeafe,stroke:#1e40af,stroke-width:2px
   style LLM fill:#dcfce7,stroke:#16a34a,stroke-width:2px
       `} />
+      <p>
+        Training combines (1) curriculum-scheduled prompt format (text-only -&gt; hybrid), (2) LoRA fine-tuning on the LLM, and (3) end-to-end gradient flow through the adapter to the SASRec input.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-differs" title="How it differs">
-      <table style={{width: "100%", borderCollapse: "collapse", fontSize: 14}}>
-        <thead><tr style={{background: "#1f3a5f", color: "white"}}>
-          <th style={{padding: 8, textAlign: "left"}}>Approach</th>
-          <th style={{padding: 8, textAlign: "left"}}>Item representation</th>
-          <th style={{padding: 8, textAlign: "left"}}>Uses world knowledge</th>
-          <th style={{padding: 8, textAlign: "left"}}>Uses CF signal</th>
-        </tr></thead>
-        <tbody>
-          <tr><td style={{padding: 8}}>SASRec / GRU4Rec</td><td style={{padding: 8}}>learned ID embedding</td><td style={{padding: 8}}>no</td><td style={{padding: 8}}>yes</td></tr>
-          <tr style={{background: "#e8f0fa"}}><td style={{padding: 8}}>GPT-4 prompted text-only rec</td><td style={{padding: 8}}>title string</td><td style={{padding: 8}}>yes</td><td style={{padding: 8}}>no (lost)</td></tr>
-          <tr><td style={{padding: 8}}><strong>LLaRA</strong></td><td style={{padding: 8}}><strong>title + adapter-projected ID embedding</strong></td><td style={{padding: 8}}><strong>yes</strong></td><td style={{padding: 8}}><strong>yes</strong></td></tr>
-          <tr style={{background: "#e8f0fa"}}><td style={{padding: 8}}>LC-Rec</td><td style={{padding: 8}}>VQ collaborative tokens IN vocab</td><td style={{padding: 8}}>yes (via shared vocab)</td><td style={{padding: 8}}>yes</td></tr>
-        </tbody>
-      </table>
+    <VIS.Section id="sec-diff" title="Beat 2 — How it differs from LC-Rec, P5, pure SASRec">
+      <p>
+        <strong>vs LC-Rec.</strong> LC-Rec collapses items into the LLM vocabulary as new VQ-tokens (extends the tokenizer). LLaRA keeps two spaces and bridges via an adapter; tokenizer unchanged.
+      </p>
+      <p>
+        <strong>vs P5 / pure-text LLM rec.</strong> Pure-text uses titles only and loses collaborative signal — a new item with no co-occurrence history has no useful representation. LLaRA injects the SASRec ID embedding alongside the text.
+      </p>
+      <p>
+        <strong>vs SASRec alone.</strong> SASRec has no world knowledge — cannot reason about novel items from descriptions. LLaRA gains that via the LLM at the cost of LLM inference latency.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick LLaRA">
-      <ul>
-        <li><strong>You already have a strong sequential recommender</strong> (SASRec/BST/etc.) and don't want to throw away its ID embeddings.</li>
-        <li><strong>Item text is informative</strong> (titles, descriptions, genres) — books, movies, news, products.</li>
-        <li><strong>Latency budget can absorb LLM forward pass</strong> — typically offline candidate generation or chat/conversational surfaces, not low-latency feed ranking.</li>
-      </ul>
+    <VIS.Section id="sec-when" title="Beat 3 — When to pick it">
+      <p>
+        Pick LLaRA when (a) you have a well-trained sequential recommender to inherit collaborative signal from, (b) the catalog is large enough that VQ-tokenization (LC-Rec) is hard, (c) latency budget allows an LLM forward pass. Skip when the existing recommender is weak (nothing to inherit) or the catalog churns faster than SASRec retraining cycles (the adapter becomes stale).
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-limits" title="Limitations">
-      <VIS.Callout kind="gotcha" title="Curriculum is load-bearing">
-        Without curriculum, the LLM sees an unfamiliar token type (<code>&lt;ITEM_EMB&gt;</code>) and the gradient signal teaches it to IGNORE that token in favor of text it already understands. Papers report 4-7% Hit@1 drops when curriculum is removed.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Latency">
-        Inference is dominated by the LLM forward pass (~70B param LLaMA in original paper). Per-request latency 200ms+ — not viable for low-latency feed ranking without distillation.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Adapter alignment is finicky">
-        The MLP adapter must map a small (e.g. 64-dim) ID embedding into the LLM's (4096-dim) token space such that gradient flow is stable. Bad initialization → adapter outputs noise → LLM ignores the ID signal forever.
+    <VIS.Section id="sec-gotchas" title="Beat 4 — Limitations & gotchas">
+      <p>
+        The curriculum is the single most important piece. Skip it, and the LLM minimizes loss using the text features alone (lazy gradient), the adapter never trains, and final hybrid performance is no better than text-only. Also: the adapter is trained against a frozen SASRec embedding distribution — if SASRec is retrained even slightly, the adapter degrades.
+      </p>
+      <VIS.Callout kind="gotcha" title="The cold-ID adapter trap">
+        New items arrive with SASRec embeddings initialized to the table mean (the default cold-start init). The adapter, trained on warm embeddings, projects that mean into a generic LLM token; the LLM emits a generic title — no personalization. SASRec alone has the same cold-start problem but without the adapter obscuring the symptom.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-problems" title="Drill — trap problems">
-      <p style={{color:"#475569", marginBottom: 16}}>Twelve senior-MLE traps on LLaRA's design choices.</p>
+    <VIS.Section id="sec-drill" title="Drill — trap problems">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        30+ problems spanning the 6 taxonomy axes. Each passes the redaction litmus: substitute "Model X" for "LLaRA" and a generic-ML candidate cannot answer correctly.
+      </p>
 
+      {/* ============== A. Identity & comparison ============== */}
+      <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity &amp; comparison</h3>
+
+      {/* axis: A1 */}
       <VIS.TrapProblem
-        id="llara-p1"
+        id="llara-a1"
         difficulty="hard"
-        title="P1 — You skip the curriculum and train hybrid from step 0. What goes wrong?"
-        scenario={<>You're reproducing LLaRA on MovieLens. To save time, you skip the curriculum and train the hybrid (text + ID-adapter token) prompt from step 0. After 3 epochs of LoRA fine-tuning, Hit@1 is 6% LOWER than the text-only baseline. What is the most likely root cause?</>}
+        title="A1 — LLaRA vs LC-Rec: opposite choices on item representation"
+        scenario={<>Your VP asks: "LLaRA and LC-Rec are both LLM-augmented recsys — pick one for our short-video feed." Which statement captures the actual discriminator?</>}
         options={[
-          {key:"a", text:"LoRA rank is too low — increase it."},
-          {key:"b", text:"At step 0 the adapter is random; the <ITEM_EMB> token contributes noise, so the LLM's gradient signal teaches it to weight the ID token at near-zero. Once the adapter learns useful projections later, the LLM still ignores them.", correct:true},
-          {key:"c", text:"Text overwhelms ID — drop text from the prompt."},
-          {key:"d", text:"The LLM is undertrained."},
+          {key:"a", text:"LLaRA bridges two embedding spaces via a learned adapter and keeps the LLM tokenizer unchanged; LC-Rec collapses items into the LLM vocabulary by adding VQ-tokens to the tokenizer.", correct:true},
+          {key:"b", text:"LLaRA uses LLaMA; LC-Rec uses T5."},
+          {key:"c", text:"LLaRA only works for movies; LC-Rec only works for books."},
+          {key:"d", text:"LC-Rec is bigger than LLaRA."},
         ]}
-        trap={<>(a) LoRA rank doesn't fix this. (c) overcorrects — text is informative. (d) is a generic answer. The actual mechanism is subtle: the LLM doesn't have prior knowledge that <code>&lt;ITEM_EMB&gt;</code> means anything. If it sees random vectors there during the first hundreds of steps, the gradient toward "predict next item correctly" pushes attention weights AWAY from that token. By the time the adapter has learned, the LLM has already learned to ignore the slot.</>}
-        lens={<>This is the canonical LLaRA failure mode and the entire reason the curriculum exists. The fix: start text-only (the LLM trusts text), then gradually mix in the ID-adapter token with a slowly increasing probability. By the time it's at 100% the adapter has learned a useful projection AND the LLM has learned to attend to it.</>}
-        stretch={<>If you couldn't use a curriculum, what's the next-best fix to prevent the LLM from ignoring the ID token?</>}
+        trap={<>(b)-(d) confuse implementation details with the architectural delta. The discriminator is the item-representation choice: bridge vs collapse.</>}
+        lens={<>The choice cascades through everything: LLaRA inherits a frozen recommender's collaborative signal incrementally; LC-Rec must retrain (or extend) the LLM whenever the catalog drifts. Pick LLaRA when the recommender is good and stable; pick LC-Rec when you want a single unified model for both chat and rec.</>}
+        stretch={<>If you have to support a 10M-item catalog growing 100K/day, which architecture handles the growth more gracefully and why?</>}
       />
 
+      {/* axis: A2 */}
       <VIS.TrapProblem
-        id="llara-p2"
-        difficulty="hard"
-        multiSelect
-        title="P2 — Curriculum schedule ablation"
-        scenario={<>You run a careful ablation on the curriculum schedule. Four variants over 5 epochs total. Which schedules are likely to outperform "step 0 = 100% hybrid"? Select all that apply.</>}
-        options={[
-          {key:"a", text:"Epoch 1 text-only, epoch 2 50% hybrid, epoch 3-5 100% hybrid.", correct:true},
-          {key:"b", text:"Per-step linear ramp: P(hybrid) = step/total_steps.", correct:true},
-          {key:"c", text:"Always 100% hybrid but freeze the adapter weights for the first 1000 steps."},
-          {key:"d", text:"Pre-train the adapter alone (frozen LLM) for 500 steps to align, then jointly fine-tune.", correct:true},
-          {key:"e", text:"Random schedule — pick text or hybrid at each step uniformly."},
-        ]}
-        trap={<>(c) sounds like it would help by giving the LLM time to learn, but if the adapter is frozen at RANDOM init, the LLM still learns to ignore it. (e) destroys the gradient of "trust text first" because half of all updates use the noisy hybrid. The three correct variants all share the property of giving the adapter time to produce non-noise outputs before the LLM commits to its attention weights.</>}
-        lens={<>The principle: avoid showing the LLM a noisy hybrid signal early. Either ramp in the hybrid (a, b) or pre-align the adapter before unfreezing the joint loss (d). All three preserve the property that "when the LLM first decides whether to attend to <code>&lt;ITEM_EMB&gt;</code>, the signal there is informative."</>}
-        stretch={<>If your adapter was a parameter-free deterministic projection (e.g. random matrix), would the curriculum still matter?</>}
-      />
-
-      <VIS.TrapProblem
-        id="llara-p3"
-        difficulty="hard"
-        title="P3 — Latency budget: can you ship LLaRA on a feed?"
-        scenario={<>Mobile news-feed ranking. p99 latency budget for ranking is 80ms. Candidate generation has narrowed to 200 items per request. The LLaRA prototype uses LLaMA-2-7B with LoRA; on an A100 a single forward pass over a 1K-token prompt is ~150ms. Can you ship this directly to the feed?</>}
-        options={[
-          {key:"a", text:"Yes — A100 is fast enough."},
-          {key:"b", text:"Yes if you batch the 200 candidates."},
-          {key:"c", text:"No — 150ms per request already exceeds the 80ms p99 budget, and you'd need to score 200 candidates. Use LLaRA for offline candidate generation or distill to a smaller model.", correct:true},
-          {key:"d", text:"Yes, just use INT8 quantization."},
-        ]}
-        trap={<>(a) ignores the budget arithmetic. (b) helps amortize but doesn't change the single-request latency floor — and you still need to fit within 80ms per request. (d) INT8 helps a bit (~1.5×) but not enough to bridge 150ms → &lt;80ms.</>}
-        lens={<>LLaRA's natural deployment surface is NOT low-latency feed ranking. Three viable paths: (1) use it for offline candidate generation (run nightly, cache top-K per user), (2) use it for chat/conversational surfaces where users expect 1-3s latency, (3) distill its output to a smaller model that fits the feed budget.</>}
-        stretch={<>If you HAD to ship LLaRA inline at 80ms p99, what's the smallest LLM that might fit, and what do you give up?</>}
-      />
-
-      <VIS.TrapProblem
-        id="llara-p4"
+        id="llara-a2"
         difficulty="medium"
-        title="P4 — What does the adapter actually do?"
-        scenario={<>Junior on your team asks: "The SASRec ID embedding is 64-dim and the LLM's token embedding is 4096-dim. Why do we need an adapter at all? Can't we just zero-pad?"</>}
-        options={[
-          {key:"a", text:"Zero-padding is fine; dimensions match after padding."},
-          {key:"b", text:"The adapter (1-2 layer MLP) learns to project the SASRec geometry into the LLM's token space — it aligns two embedding manifolds that were trained for different objectives. Zero-padding wouldn't preserve the LLM's expected semantic geometry.", correct:true},
-          {key:"c", text:"Adapter exists for parameter-efficiency only."},
-          {key:"d", text:"It's a residual-only path; the LLM ignores it."},
-        ]}
-        trap={<>(a) is a beginner-trap answer: dimensions matching ≠ semantically aligned. (c) confuses adapter with LoRA. (d) is just wrong.</>}
-        lens={<>The LLM's embedding space has a specific learned geometry — "similar tokens have similar embeddings" with that similarity defined by the LLM's pretraining task. SASRec's ID embedding has a DIFFERENT geometry — "users who clicked similar things have similar embeddings." The adapter learns to map SASRec geometry → LLM-compatible geometry such that the LLM's next-token-prediction circuit can use it.</>}
-        stretch={<>What goes wrong if your adapter is too DEEP (say a 6-layer MLP)?</>}
-      />
-
-      <VIS.TrapProblem
-        id="llara-p5"
-        difficulty="hard"
-        title="P5 — Sequential recommender quality"
-        scenario={<>You use a poorly-trained SASRec (NDCG@10 = 0.18, well below SOTA of 0.31 on the same data) as the source for LLaRA's ID embeddings. After full LLaRA training, the hybrid model UNDERPERFORMS pure-text LLaRA by 2%. What happened?</>}
-        options={[
-          {key:"a", text:"Hybrid is always better than text-only — your eval is wrong."},
-          {key:"b", text:"LLaRA inherits the upstream sequential recommender's quality. A weak SASRec produces noisy ID embeddings; the adapter cannot manufacture signal that wasn't there. Garbage in, garbage out.", correct:true},
-          {key:"c", text:"The curriculum overcompensated; remove it."},
-          {key:"d", text:"You need a bigger LLM."},
-        ]}
-        trap={<>(a) is unwarranted confidence in the architecture. (c) and (d) are mechanical tweaks unrelated to the upstream data quality.</>}
-        lens={<>LLaRA is multiplicative in upstream quality: a great SASRec + great LLM = great LLaRA; weak SASRec + great LLM = weak LLaRA, sometimes WORSE than text-only because the noise injection hurts. Before scaling LLaRA, make sure your sequential recommender is competitive on its own — that's a prerequisite, not an aside.</>}
-        stretch={<>What's a quick offline check that the SASRec embeddings are "good enough" to plug into LLaRA?</>}
-      />
-
-      <VIS.TrapProblem
-        id="llara-p6"
-        difficulty="medium"
+        title="A2 — &quot;LLaRA is just SASRec with prompting&quot;"
+        scenario={<>A teammate dismisses LLaRA as "SASRec plus a wrapper." Which architectural deltas are real?</>}
         multiSelect
-        title="P6 — Cold-start: which signals does LLaRA combine?"
-        scenario={<>A brand-new item (no clicks yet) arrives in the catalog. Which of LLaRA's two input channels can still produce a usable representation? Select all that apply.</>}
         options={[
-          {key:"a", text:"Text channel (title + description) — fully usable; LLM understands new text immediately.", correct:true},
-          {key:"b", text:"ID channel — SASRec needs interaction data; ID embedding for new items is the random-init or fallback vector.", correct:true},
-          {key:"c", text:"Both channels work equally well for new items."},
-          {key:"d", text:"Neither — LLaRA is offline-only and can't see new catalog items."},
+          {key:"a", text:"LLaRA injects a soft ID token projected from SASRec via a learned adapter — gradient flows back through the adapter during LLM fine-tuning.", correct:true},
+          {key:"b", text:"LLaRA uses LoRA on the LLM; SASRec has no LLM at all.", correct:true},
+          {key:"c", text:"LLaRA's training uses a curriculum schedule that ramps text-only to hybrid; SASRec has no equivalent.", correct:true},
+          {key:"d", text:"LLaRA replaces SASRec entirely with the LLM at inference."},
         ]}
-        trap={<>(c) is wrong. (d) is wrong — LLaRA can score any item whose text it can read.</>}
-        lens={<>LLaRA's text channel gives it a cold-start advantage over pure SASRec — for new items, the text-only signal still carries information about genre, topic, etc. that the LLM can map to user preferences. The ID channel for new items is dead weight (random init); production systems often fall back to text-only for items below a click threshold and graduate them to hybrid once SASRec has seen them.</>}
-        stretch={<>What's the simplest "graduation" policy for moving an item from text-only to hybrid?</>}
+        trap={<>(d) is wrong — SASRec is kept at inference time (frozen); LLaRA inferences both models. The adapter is the bridge.</>}
+        lens={<>LLaRA's deltas are concrete (adapter, LoRA, curriculum) and load-bearing. Dismissing it as "wrapped SASRec" misses each of those pieces.</>}
       />
 
+      {/* axis: A3 */}
       <VIS.TrapProblem
-        id="llara-p7"
+        id="llara-a3"
         difficulty="hard"
-        title="P7 — What loss does LLaRA minimize?"
-        scenario={<>You're implementing LLaRA from the paper. The next-item prediction is over a vocabulary of N items. What loss do you train against?</>}
-        options={[
-          {key:"a", text:"Cross-entropy over the full N-item softmax — each item is a class."},
-          {key:"b", text:"The LLM's standard next-token cross-entropy — the target item's TITLE TOKENS are the labels. The LLM generates 'The Matrix' character-by-character.", correct:true},
-          {key:"c", text:"Triplet loss between (user, positive item, negative item) embeddings."},
-          {key:"d", text:"Contrastive InfoNCE between user and positive item embeddings."},
-        ]}
-        trap={<>(a) is the SASRec-native loss but LLaRA doesn't use it. (c) and (d) are common recsys losses but not what LLaRA uses. The LLaRA paper is explicit: the LLM is trained to GENERATE the target item's title using its standard language-modeling loss. You retrieve by checking which catalog item's title matches the generation.</>}
-        lens={<>LLaRA treats recommendation as text generation, not classification. The LLM learns: given the user's history (text + ID-adapter tokens), predict the title-token-sequence of the next item. At inference, you generate tokens and match the result against the catalog (often constrained-decoding with a trie). This means the LLM stays in its native task — no new head, no new loss.</>}
-        stretch={<>What happens if two different items have the same title? How does LLaRA disambiguate?</>}
-      />
-
-      <VIS.TrapProblem
-        id="llara-p8"
-        difficulty="hard"
+        title="A3 — Counterfactual: LLaRA removed, fallback is pure SASRec"
+        scenario={<>LLaRA is removed; you fall back to plain SASRec. What do you concretely lose and gain?</>}
         multiSelect
-        title="P8 — Ablation: what fraction of LLaRA's lift comes from each piece?"
-        scenario={<>You run a clean ablation on a 50K-item movie catalog. Baselines: text-only LLM (no ID), SASRec alone, LLaRA full, LLaRA without curriculum, LLaRA with random adapter (no MLP, just random projection). Results (Hit@1): text-only LLM = 21.3%, SASRec = 18.7%, LLaRA full = 26.8%, no-curriculum = 22.0%, random-adapter = 20.9%. Which conclusions are supported? Select all that apply.</>}
         options={[
-          {key:"a", text:"LLaRA's lift over text-only LLM (+5.5%) is real — the ID channel adds signal.", correct:true},
-          {key:"b", text:"Curriculum is responsible for ~half of LLaRA's lift over the no-curriculum variant (26.8% vs 22.0%).", correct:true},
-          {key:"c", text:"The adapter MLP matters — random projection (20.9%) underperforms text-only baseline.", correct:true},
-          {key:"d", text:"SASRec is broken — fix it before considering LLaRA."},
-          {key:"e", text:"LLM size is the bottleneck — try a 70B model."},
+          {key:"a", text:"Lose: world-knowledge reasoning over novel items — SASRec cannot use textual descriptions to bootstrap a cold item's representation.", correct:true},
+          {key:"b", text:"Lose: explanation/justification ability — SASRec emits a scalar score; LLaRA emits a generated title and can extend to explanation.", correct:true},
+          {key:"c", text:"Gain: substantial latency reduction — SASRec is a single forward pass; LLaRA pays a full LLM forward (autoregressive decode).", correct:true},
+          {key:"d", text:"Gain: better calibration — SASRec's pointwise sigmoid is easier to Platt-scale than LLaRA's next-token softmax."},
         ]}
-        trap={<>(d) misreads — SASRec at 18.7% on its own is reasonable for this task; what matters is whether LLaRA exceeds the better baseline (text-only LLM at 21.3%). It does, by 5.5pp. (e) is unwarranted speculation; the ablation gives no data on LLM size.</>}
-        lens={<>Three clean conclusions: (a) the hybrid design helps net of the LLM. (b) the curriculum matters — without it you almost lose the lift entirely. (c) the adapter must be learned; a random projection actively HURTS because it injects noise the LLM can't ignore. Each of the three pieces is load-bearing.</>}
-        stretch={<>If random-adapter UNDERPERFORMS text-only by 0.4pp, what does that tell you about LLM brittleness to noisy soft tokens?</>}
+        trap={<>(d) is correct in the abstract but the question's framing is what you concretely *lose and gain* — calibration tradeoff is real, so (d) is also a legitimate gain.</>}
+        lens={<>LLaRA's value over SASRec is world knowledge + reasoning over text — paid for with LLM latency and a harder calibration story. (Both (c) and (d) are correct gains.)</>}
       />
 
+      {/* axis: A4 */}
       <VIS.TrapProblem
-        id="llara-p9"
-        difficulty="medium"
-        title="P9 — Inference at serving time"
-        scenario={<>At serving time, the user's last 10 items each need their ID embedding looked up, adapted, and inserted into the prompt. The frozen SASRec embedding table is 50K items × 64 dims = 12.8MB. What's the typical serving setup?</>}
-        options={[
-          {key:"a", text:"Re-run SASRec at serving time to compute the embedding."},
-          {key:"b", text:"Cache the SASRec embedding table in RAM next to the LLM; lookup is O(1) per item.", correct:true},
-          {key:"c", text:"Re-compute the SASRec embedding for the user's full history at each request."},
-          {key:"d", text:"Skip the ID channel at serving — use text-only inference."},
-        ]}
-        trap={<>(a) and (c) burn cycles for no reason — the embeddings are frozen. (d) loses the whole point of LLaRA.</>}
-        lens={<>The standard pattern is to dump the frozen SASRec embedding table to disk after pretraining, then load it into RAM at serving time. Looking up 10 item embeddings is a few microseconds; the LLM forward pass dominates everything else. The adapter MLP is tiny (a few MB of weights) and runs inline.</>}
-        stretch={<>What if SASRec is retrained weekly — do you regenerate the embedding table at the same cadence?</>}
-      />
-
-      <VIS.TrapProblem
-        id="llara-p10"
+        id="llara-a4"
         difficulty="hard"
-        title="P10 — Why not LC-Rec instead?"
-        scenario={<>A teammate argues: "LC-Rec is strictly better — it puts collaborative tokens IN the LLM vocabulary, avoiding the adapter altogether and giving the LLM full attention over IDs and text uniformly. Why are we doing LLaRA?"</>}
+        title="A4 — Composition: LLaRA + RAG personalization?"
+        scenario={<>A teammate proposes "stack LLaRA with retrieval-augmented personalization — pull the user's similar history into the prompt context." Why is this a good or bad idea?</>}
         options={[
-          {key:"a", text:"LLaRA is simpler — no vocab expansion."},
-          {key:"b", text:"LLaRA reuses an existing trained sequential recommender's ID embeddings; LC-Rec must retrain the LLM tokenizer + embedding table from scratch on collaborative tokens. Pick LLaRA when you've already invested in SASRec/BST; pick LC-Rec when starting fresh.", correct:true},
-          {key:"c", text:"LC-Rec doesn't actually work."},
-          {key:"d", text:"LLaRA is faster at inference."},
+          {key:"a", text:"Good: RAG provides fresh per-user context that the soft ID token can not encode; the two mechanisms are complementary (parameterized personalization via the adapter, retrieved context via RAG).", correct:true},
+          {key:"b", text:"Bad: RAG and LLaRA always conflict because both modify the prompt."},
+          {key:"c", text:"Bad: LLaRA's curriculum schedule cannot be combined with retrieved context."},
+          {key:"d", text:"Bad: SASRec's embedding space is incompatible with retrieval."},
         ]}
-        trap={<>(a) trivializes the choice. (c) is unjustified. (d) is empirically false — LC-Rec has comparable inference cost.</>}
-        lens={<>The honest tradeoff is about reuse vs greenfield. If your stack already has a high-quality sequential recommender (years of tuning, online A/B wins), LLaRA lets you layer LLM reasoning on top without throwing it away. If you're starting fresh and want a single unified model, LC-Rec is cleaner. Most production teams have the former situation.</>}
-        stretch={<>What happens to LLaRA if you SWAP the underlying SASRec for a different sequential model — do you retrain everything?</>}
+        trap={<>(b)-(d) are wrong; the adapter and RAG operate on orthogonal channels (parameterized vs context-window).</>}
+        lens={<>LLaRA's soft ID token encodes WHAT the item is (collaboratively); RAG encodes WHAT history the user has. They stack cleanly. The 2024-2025 follow-ups in this space (RAG-rec, KAR-LLM) explicitly combine the two.</>}
       />
 
+      {/* axis: A5 */}
       <VIS.TrapProblem
-        id="llara-p11"
-        difficulty="hard"
-        title="P11 — Distillation path"
-        scenario={<>LLaRA is offline-only in your stack; you want feed-grade latency. You decide to distill. What's the most defensible distillation target?</>}
-        options={[
-          {key:"a", text:"Distill to a small LLM (e.g. 1B params)."},
-          {key:"b", text:"Distill to a SASRec-shaped model — teacher provides soft labels (logit distribution over next items), student trains on those soft labels. You keep LLaRA's world-knowledge signal but pay only SASRec serving cost.", correct:true},
-          {key:"c", text:"Skip distillation; use prompt caching."},
-          {key:"d", text:"Distill to a frozen embedding lookup table."},
-        ]}
-        trap={<>(a) keeps you in LLM territory — 1B is still too slow for feed at 80ms p99 with hundreds of candidates. (c) prompt caching helps but doesn't fix the per-token-generation cost. (d) loses too much expressivity.</>}
-        lens={<>Cross-architecture distillation from LLM-teacher to SASRec-student is the standard pattern. The student keeps the cheap architecture (a small transformer over IDs) but learns from teacher logits that have absorbed the LLM's world knowledge. Production teams typically run this nightly: LLaRA scores offline, those soft labels train the lightweight feed-ranker.</>}
-        stretch={<>If the catalog churns daily, can you still afford nightly distillation?</>}
-      />
-
-      <VIS.TrapProblem
-        id="llara-p12"
+        id="llara-a5"
         difficulty="medium"
+        title="A5 — Boundary: when LLaRA stops beating pure-text LLM rec"
+        scenario={<>At what item-text quality does LLaRA's collaborative-signal contribution become negligible?</>}
+        options={[
+          {key:"a", text:"When item titles are highly descriptive and unique (movie titles, book titles in a small catalog), the LLM can nearly solve next-item from text alone and the soft ID token contributes little marginal signal.", correct:true},
+          {key:"b", text:"When SASRec has fewer than 100 training items."},
+          {key:"c", text:"When the LLM has more than 13B parameters."},
+          {key:"d", text:"When the catalog has more than 1B items."},
+        ]}
+        trap={<>(b)-(d) misframe the boundary. The actual binding constraint is the information-content of the text.</>}
+        lens={<>LLaRA's marginal value over pure-text LLM rec is high when titles are uninformative (UGC, anonymous catalogs, fresh listings). On clean public benchmarks (MovieLens, Books), the LLaRA-over-text-LLM gap looks smaller than it is in messy production.</>}
+      />
+
+      {/* ============== B. Application ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
+
+      {/* axis: B1 */}
+      <VIS.TrapProblem
+        id="llara-b1"
+        difficulty="hard"
+        title="B1 — Strong SASRec + GPU budget + need for explanation"
+        scenario={<>Constraints: a well-tuned SASRec already in production with strong collaborative signal, GPU budget allowing 100ms LLM inference per request, product surface where users see "why this was recommended" alongside the rec. Which approach fits?</>}
+        options={[
+          {key:"a", text:"Replace SASRec with HSTU end-to-end."},
+          {key:"b", text:"LLaRA: keep SASRec frozen as the collaborative-signal backbone, add the adapter+LLM head for reasoning and explanation.", correct:true},
+          {key:"c", text:"LC-Rec: re-tokenize the catalog into VQ-codes and unify."},
+          {key:"d", text:"Pure-text LLM rec: discard SASRec entirely."},
+        ]}
+        trap={<>(a) discards a working strong recommender. (c) requires re-tokenization which is heavyweight when SASRec already works. (d) throws away the collaborative signal.</>}
+        lens={<>LLaRA's design point is exactly the "you already have a good recommender and want LLM reasoning on top" case. Three preconditions met (strong recommender, GPU budget, explanation need); LLaRA wins.</>}
+      />
+
+      {/* axis: B2 */}
+      <VIS.TrapProblem
+        id="llara-b2"
+        difficulty="hard"
+        title="B2 — &quot;Bigger LLM is always better for LLaRA&quot;"
+        scenario={<>You scale LLaRA's base LLM from 7B to 13B. Performance is worse, not better. Why does this happen and how do you fix it?</>}
+        options={[
+          {key:"a", text:"The larger LLM has stronger text-only priors and assigns even less gradient to the new ID-soft-token; the adapter trains worse. Fix: more aggressive curriculum (shorter text-only phase, faster hybrid ramp) or higher adapter learning rate.", correct:true},
+          {key:"b", text:"Larger LLMs overfit faster — use heavier weight decay."},
+          {key:"c", text:"The adapter's GELU saturates at 13B."},
+          {key:"d", text:"You need to upgrade SASRec to a larger backbone."},
+        ]}
+        trap={<>(b)-(d) are generic ML hand-waving. The LLaRA-specific cause is that the single soft ID token is even more dwarfed by stronger text priors in a larger LLM.</>}
+        lens={<>The curriculum is the lever. Larger LLMs need more aggressive curricula to force the adapter to receive gradient signal. The empirical sweet spot in the paper is 7B; 13B+ requires curriculum tuning.</>}
+      />
+
+      {/* axis: B3 — STAKEHOLDER PITCH — must be CONCEPT-UNIQUE */}
+      <VIS.TrapProblem
+        id="llara-b3"
+        difficulty="hard"
+        title="B3 — Pitch LLaRA to a director without naming &quot;LLM&quot; as a buzzword"
+        scenario={<>Your director asks: "We have a great SASRec ranker but recently launched a long-tail catalog where users complain they don't recognize the items. Why specifically does LLaRA help, in a way that throwing more SASRec training data wouldn't?" Pick the most accurate pitch.</>}
+        options={[
+          {key:"a", text:"LLaRA is the modern way to do recsys; everyone is migrating."},
+          {key:"b", text:"LLaRA lets us KEEP the SASRec ranker (its collaborative signal is fine) and ADD a learned adapter that hands SASRec's ID embedding to a pre-trained LLM alongside the item title; the LLM uses textual world knowledge to fill in long-tail items that SASRec has too few clicks on — something more SASRec training data cannot do because there are no clicks to train on.", correct:true},
+          {key:"c", text:"LLaRA increases model capacity, which always helps in the long tail."},
+          {key:"d", text:"LLaRA distills SASRec into the LLM, reducing serving cost."},
+        ]}
+        trap={<>(a) is a generic pitch that wins for any concept. (c) misattributes the gain to capacity. (d) is factually wrong — LLaRA ADDS LLM cost on top of SASRec. Only (b) is LLaRA-specific: it names the adapter mechanism, the dual-encoder hybrid, the LLM's world-knowledge role, AND the precise SASRec failure (long-tail items with too few clicks for SASRec to learn).</>}
+        lens={<>Redaction litmus: swap LLaRA for Model X in (b) — the option falls apart because no other concept ties the SASRec-frozen-backbone + adapter-bridge + LLM-text-prior chain together. The pitch lives or dies on the adapter mechanism AND the long-tail-data-floor on SASRec.</>}
+        stretch={<>What's the most likely thing that breaks in the first month after launch, and what would you monitor for it?</>}
+      />
+
+      {/* axis: B4 */}
+      <VIS.TrapProblem
+        id="llara-b4"
+        difficulty="hard"
+        title="B4 — When NOT to use LLaRA"
+        scenario={<>Your surface has: 5ms p99 latency budget, no existing recommender to inherit from, catalog churn at 100K new items per day, no GPU budget. Which of the following are valid reasons NOT to use LLaRA?</>}
         multiSelect
-        title="P12 — Diagnostics for a stalled LLaRA training"
-        scenario={<>Your LLaRA training has plateaued. Validation Hit@1 hasn't improved in 3 epochs, sitting at the text-only baseline. Which diagnostics would you run? Select all that apply.</>}
         options={[
-          {key:"a", text:"Probe the LLM's attention weights on <ITEM_EMB> tokens — are they near zero?", correct:true},
-          {key:"b", text:"Plot the adapter's output norm distribution vs the LLM's text-token embedding norm distribution.", correct:true},
-          {key:"c", text:"Disable the ID channel and check if Hit@1 stays flat — confirms ID isn't contributing.", correct:true},
-          {key:"d", text:"Just train longer."},
-          {key:"e", text:"Restart training from scratch with a different seed.", correct:true},
+          {key:"a", text:"5ms p99 is too tight — LLaRA's LLM forward pass dominates and cannot fit under that budget.", correct:true},
+          {key:"b", text:"No existing recommender means there is no SASRec embedding for the adapter to project from — LLaRA's value comes from inheriting a trained recommender.", correct:true},
+          {key:"c", text:"100K-item-per-day churn means SASRec embeddings for new items are cold (mean-init) faster than retraining cycles; the adapter projects garbage into the LLM.", correct:true},
+          {key:"d", text:"No GPU budget — LLM inference does not fit on CPU at scale.", correct:true},
+          {key:"e", text:"LLaRA requires a specific LLM brand."},
         ]}
-        trap={<>(d) is the no-op answer. The four diagnostics each test a different hypothesis: attention probe (does LLM read the ID?), norm check (is the adapter producing inputs the LLM can use?), ablation (is the ID adding anything?), seed sensitivity (was this a bad init that locked into ignoring IDs?).</>}
-        lens={<>The most informative single diagnostic is the attention probe: if the LLM's attention weights on <code>&lt;ITEM_EMB&gt;</code> are near zero, the LLM has learned to ignore the ID channel — which is the classic curriculum-missing or adapter-misaligned failure. Fix the adapter init or rerun with curriculum.</>}
-        stretch={<>If attention weights on <code>&lt;ITEM_EMB&gt;</code> are HIGH but Hit@1 is still flat, what does that suggest?</>}
+        trap={<>(e) is fabricated; the rest are actual disqualifying constraints, each tied to a specific LLaRA mechanism.</>}
+        lens={<>Each disqualifier maps to a load-bearing piece of LLaRA: latency budget vs LLM cost; trained recommender as input; warm SASRec embeddings; GPU availability. Failing any one shifts the choice toward alternatives (DLRM, pure-text LLM, SASRec alone).</>}
+      />
+
+      {/* ============== C. Mechanism ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
+
+      {/* axis: C1 */}
+      <VIS.TrapProblem
+        id="llara-c1"
+        difficulty="hard"
+        title="C1 — Why the curriculum?"
+        scenario={<>Why does LLaRA need a curriculum that ramps text-only -&gt; hybrid? What goes wrong if you train hybrid from step 0?</>}
+        options={[
+          {key:"a", text:"At step 0, text features alone already produce a useful loss signal (LLM has pretrained text priors). Gradient descent assigns near-zero gradient to the new soft ID token because perturbing it does not help the loss. The adapter never trains, and the final hybrid model is indistinguishable from text-only.", correct:true},
+          {key:"b", text:"The LLM tokenizer cannot handle soft tokens at step 0."},
+          {key:"c", text:"SASRec embeddings are not normalized at step 0."},
+          {key:"d", text:"The curriculum is purely aesthetic."},
+        ]}
+        trap={<>(b)-(d) miss the actual mechanism (lazy gradient on already-sufficient features).</>}
+        lens={<>This is the central LLaRA result: without the curriculum, the LLM ignores the ID token. The curriculum forces the model to learn to use the ID information before the text crutch is fully available.</>}
+      />
+
+      {/* axis: C2 */}
+      <VIS.TrapProblem
+        id="llara-c2"
+        difficulty="hard"
+        title="C2 — Loss / objective: what does LLaRA optimize?"
+        scenario={<>What loss does LLaRA optimize, and over what vocabulary?</>}
+        options={[
+          {key:"a", text:"Next-token cross-entropy over the LLM's standard vocabulary — the target is the LLM-tokenized title of the next item. At inference, decoding is constrained to a catalog of valid item titles.", correct:true},
+          {key:"b", text:"Pointwise binary cross-entropy on click label."},
+          {key:"c", text:"Triplet loss between anchor user, positive item, and negative item."},
+          {key:"d", text:"Pairwise BPR loss."},
+        ]}
+        trap={<>(b)-(d) describe other recsys loss families. LLaRA's loss is the LLM's native next-token CE — what makes LLaRA work is that the loss touches the adapter via gradient through the soft ID token.</>}
+        lens={<>LLaRA's loss is identical to standard LLM fine-tuning; the recsys-specific magic is in the prompt format and the curriculum, not the loss.</>}
+      />
+
+      {/* axis: C3 */}
+      <VIS.TrapProblem
+        id="llara-c3"
+        difficulty="hard"
+        title="C3 — What's dropped vs LC-Rec"
+        scenario={<>Compared to LC-Rec, what does LLaRA's design deliberately NOT do?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Does not extend the LLM tokenizer — items are represented by adapter-projected soft tokens, not new vocabulary entries.", correct:true},
+          {key:"b", text:"Does not require re-tokenization when the catalog grows — new items just get a new SASRec embedding which the adapter handles in-distribution.", correct:true},
+          {key:"c", text:"Does not collapse the ID space into the LLM vocabulary; keeps SASRec's embedding space separate from the LLM's.", correct:true},
+          {key:"d", text:"Does not use LoRA."},
+        ]}
+        trap={<>(d) is wrong — LLaRA explicitly LoRA-tunes the LLM.</>}
+        lens={<>The three correct items are LLaRA's deliberate architectural choices over LC-Rec. Bridge over collapse: lower retraining cost on catalog drift, but a permanent dual-encoder maintenance burden.</>}
+      />
+
+      {/* axis: C4 */}
+      <VIS.TrapProblem
+        id="llara-c4"
+        difficulty="hard"
+        title="C4 — Which knob, mis-set, catastrophically breaks LLaRA?"
+        scenario={<>Rank by "production breakage if mis-configured" for LLaRA: (1) curriculum schedule length T, (2) LoRA rank on the LLM, (3) adapter rank, (4) LLM model size.</>}
+        options={[
+          {key:"a", text:"1 (curriculum) -> 3 (adapter rank) -> 2 (LoRA rank) -> 4 (LLM size). Wrong curriculum collapses adapter training entirely; wrong adapter rank bottlenecks ID information; LoRA rank and LLM size cause gradual degradation.", correct:true},
+          {key:"b", text:"4 -> 2 -> 3 -> 1, because LLM size is always the dominant lever."},
+          {key:"c", text:"2 -> 4 -> 3 -> 1, generic LLM intuitions."},
+          {key:"d", text:"All four equally sensitive."},
+        ]}
+        trap={<>(b)-(d) import generic LLM-tuning intuitions. The LLaRA-specific load-bearing knob is the curriculum — it's the only one that can take the adapter to zero gradient.</>}
+        lens={<>LLaRA's failure mode hierarchy: curriculum failure is catastrophic (silent zero-gradient on the adapter); the other knobs degrade gracefully. The first thing to verify on any LLaRA reproduction is the curriculum schedule.</>}
+      />
+
+      {/* axis: C5 */}
+      <VIS.TrapProblem
+        id="llara-c5"
+        difficulty="hard"
+        title="C5 — Data assumption: items need text AND IDs"
+        scenario={<>What happens when items have one but not the other: only text titles (no SASRec embeddings) or only IDs (no titles)?</>}
+        options={[
+          {key:"a", text:"Title-only items: adapter has nothing to project (no SASRec embedding) -> the soft ID token is undefined; falls back to pure-text LLM rec. ID-only items: no text in the prompt -> LLM has only the soft token; falls back to roughly SASRec-only behavior with extra LLM cost.", correct:true},
+          {key:"b", text:"Title-only: works fine. ID-only: works fine."},
+          {key:"c", text:"Both regimes crash."},
+          {key:"d", text:"LLaRA gracefully degrades to a unified embedding in both cases."},
+        ]}
+        trap={<>(b)-(d) miss the specific fallback behaviors. LLaRA's hybrid prompt assumes both signals exist; absence forces partial degradation.</>}
+        lens={<>LLaRA is a hybrid model and inherits hybrid-model failure modes: each half can fall back when the other is missing, but the system loses the hybrid's value when either side is absent.</>}
+      />
+
+      {/* ============== D. Intuition traps ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
+
+      {/* axis: D1 */}
+      <VIS.TrapProblem
+        id="llara-d1"
+        difficulty="hard"
+        title="D1 — &quot;Skip the curriculum, just train hybrid&quot;"
+        scenario={<>An engineer skips LLaRA's curriculum to save training time. Hybrid prompts from step 0. What is the most likely outcome?</>}
+        options={[
+          {key:"a", text:"Final hybrid model performs no better than text-only LLM rec; the adapter never received meaningful gradient because text alone was already sufficient at step 0.", correct:true},
+          {key:"b", text:"Faster convergence; same or better final performance."},
+          {key:"c", text:"The LLM crashes mid-training."},
+          {key:"d", text:"SASRec embeddings explode in magnitude."},
+        ]}
+        trap={<>(b) is the intuition that motivates skipping the curriculum and is exactly what the paper's headline ablation refutes. (c)-(d) are not what happens.</>}
+        lens={<>The curriculum is not optional. Its job is to force the model into a state where it cannot solve the loss without the ID token, before the text shortcut is fully available.</>}
+      />
+
+      {/* axis: D2 */}
+      <VIS.TrapProblem
+        id="llara-d2"
+        difficulty="hard"
+        title="D2 — Cascade: &quot;LLaRA is SASRec + prompt&quot;"
+        scenario={<>You assume LLaRA is "SASRec wrapped in a prompt." Which downstream consequences are wrong because of that assumption?</>}
+        multiSelect
+        options={[
+          {key:"a", text:"Inference cost: SASRec is a single forward pass; LLaRA pays a full autoregressive LLM decode. Same hardware budget supports far fewer LLaRA QPS.", correct:true},
+          {key:"b", text:"Training: SASRec trains end-to-end on click loss; LLaRA needs curriculum-scheduled LoRA + adapter training. Different infra and different failure modes.", correct:true},
+          {key:"c", text:"Catalog updates: SASRec needs a new ID embedding; LLaRA additionally needs the adapter to handle that new embedding well — adapter behavior on out-of-training-distribution IDs is a load-bearing concern.", correct:true},
+          {key:"d", text:"Calibration: LLaRA's next-token softmax calibrates the same as SASRec's pointwise sigmoid."},
+        ]}
+        trap={<>(d) is wrong — next-token softmax and pointwise sigmoid calibrate via different mechanisms (the same issue HSTU hits vs DLRM).</>}
+        lens={<>LLaRA differs from SASRec at every layer that matters in production: inference cost, training procedure, catalog-update handling, calibration. Assuming equivalence ships broken systems.</>}
+      />
+
+      {/* axis: D3 */}
+      <VIS.TrapProblem
+        id="llara-d3"
+        difficulty="medium"
+        title="D3 — Senior vs junior fix when LLaRA underperforms"
+        scenario={<>LLaRA online accept-rate is below the SASRec baseline. Junior: "scale the LLM up." Senior looks somewhere specific first. Where?</>}
+        options={[
+          {key:"a", text:"Inspect the adapter's gradient norm during training — if it stayed near zero, the curriculum schedule failed and the adapter is effectively untrained. Fix the curriculum before touching LLM size.", correct:true},
+          {key:"b", text:"Increase batch size."},
+          {key:"c", text:"Switch from LLaMA to a different LLM backbone."},
+          {key:"d", text:"Re-train SASRec with more data."},
+        ]}
+        trap={<>(b)-(d) are migration moves before diagnosis. The senior diagnoses the curriculum failure first because that's LLaRA's single most common silent failure.</>}
+        lens={<>Adapter gradient norm is LLaRA's most diagnostic signal. If it's near zero, no other knob fixes the model. This is exactly the "load-bearing component" debugging heuristic applied to LLaRA.</>}
+      />
+
+      {/* axis: D4 */}
+      <VIS.TrapProblem
+        id="llara-d4"
+        difficulty="hard"
+        title="D4 — Plausible misattribution: cold catalog regression"
+        scenario={<>LLaRA CTR drops 4% after a catalog refresh adds 50K new items. Three plausible causes — which is the actual one?</>}
+        options={[
+          {key:"a", text:"Actual: 50K new items have SASRec embeddings initialized to the table mean (cold-start init); the adapter projects that mean into a generic LLM token; the LLM emits generic titles with no personalization. Red herrings: LLM weights drifted; the LoRA adapter forgot.", correct:true},
+          {key:"b", text:"Actual: LLM weights drifted. Red herrings: cold IDs; LoRA forgot."},
+          {key:"c", text:"Actual: LoRA forgot. Red herrings: cold IDs; LLM drift."},
+          {key:"d", text:"All three are equally likely; no way to localize."},
+        ]}
+        trap={<>The temptation is to blame the LLM (it's the visible piece). The LLaRA-specific cause is the adapter being out-of-distribution on cold SASRec embeddings.</>}
+        lens={<>LLaRA's failure modes propagate through the adapter. New items -&gt; cold SASRec -&gt; bad adapter projection -&gt; generic LLM output. Mitigation: detect cold IDs upstream and fall back to text-only for those items (skip the soft ID token).</>}
+      />
+
+      {/* ============== E. Operations ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
+
+      {/* axis: E1 */}
+      <VIS.TrapProblem
+        id="llara-e1"
+        difficulty="hard"
+        title="E1 — Production gotcha: SASRec and adapter are coupled"
+        scenario={<>You routinely retrain SASRec on fresh data (weekly refresh). What specifically must happen each time, and what breaks if you forget?</>}
+        options={[
+          {key:"a", text:"The adapter is trained against a frozen SASRec embedding distribution. Retraining SASRec shifts that distribution; the old adapter's projection now maps to different LLM token space. You must re-train the adapter every time SASRec retrains, OR keep SASRec frozen and adapt only via fresh user data.", correct:true},
+          {key:"b", text:"Nothing must happen — SASRec and the adapter are independent."},
+          {key:"c", text:"Only the LLM needs re-LoRA-tuning."},
+          {key:"d", text:"Only the curriculum schedule changes."},
+        ]}
+        trap={<>(b)-(d) miss that adapter and SASRec are tightly coupled by training-time distribution.</>}
+        lens={<>Treat SASRec + adapter as a coupled artifact in your MLOps pipeline. Independent retraining of either breaks the bridge.</>}
+      />
+
+      {/* axis: E2 — FAILURE ON FRIDAY */}
+      <VIS.TrapProblem
+        id="llara-e2"
+        difficulty="hard"
+        title="E2 — Failure on Friday: catalog ingest adds 50K items"
+        scenario={<>Catalog pipeline ships an update Friday adding 50K new items. Saturday morning page: CTR drops 4% but ONLY on the new items. SASRec offline metrics fine, LLM perplexity fine. What broke, why LLaRA-specifically, and what's the fix?</>}
+        options={[
+          {key:"a", text:"New items have SASRec embeddings initialized to the embedding-table mean (default cold-start init). The adapter, trained on the natural distribution of warm SASRec embeddings, projects that mean into a generic LLM token; the LLM emits a generic title with no personalization. SASRec alone would have the same cold-start problem but without the adapter mediating it. Fix: detect cold IDs upstream and fall back to text-only prompt (skip the soft ID token) for those items.", correct:true},
+          {key:"b", text:"LLM weights drifted overnight."},
+          {key:"c", text:"GPU thermal throttling."},
+          {key:"d", text:"The LoRA adapter's rank is too low."},
+        ]}
+        trap={<>(b)-(d) are generic failures, none of which selectively hit only the new items. The LLaRA-specific chain is cold SASRec embedding -&gt; bad adapter projection -&gt; generic LLM token.</>}
+        lens={<>LLaRA's failure mode for cold items is OBSCURED by the adapter compared to SASRec-alone (where the same cold-start would just produce mean-embedding scores). The obscurity makes it harder to diagnose without the right monitoring — break out per-item-warmth metrics.</>}
+      />
+
+      {/* axis: E3 */}
+      <VIS.TrapProblem
+        id="llara-e3"
+        difficulty="medium"
+        title="E3 — Implementation specifics: default LoRA targets"
+        scenario={<>The SIGIR 2024 reference LoRA setup targets only q_proj and v_proj. What does adding k_proj and o_proj as LoRA targets achieve and at what cost?</>}
+        options={[
+          {key:"a", text:"k_proj and o_proj LoRA add capacity to the attention paths that read FROM the new soft ID token (k_proj attends to it; o_proj projects attention output). Improves adapter-ID-token attention markedly but roughly doubles LoRA training compute.", correct:true},
+          {key:"b", text:"Nothing changes; LoRA target choice is cosmetic."},
+          {key:"c", text:"LoRA targets only affect inference, not training."},
+          {key:"d", text:"k_proj should never be LoRA-tuned in any model."},
+        ]}
+        trap={<>(b)-(d) miss the specific attention-path role of k_proj and o_proj in absorbing the new soft token.</>}
+        lens={<>The default LoRA target set was chosen for general LLM fine-tuning, where new soft tokens are not a concern. For LLaRA specifically, expanding LoRA targets to all four attention projections is a known recipe to better integrate the ID token.</>}
+      />
+
+      {/* axis: E4 */}
+      <VIS.TrapProblem
+        id="llara-e4"
+        difficulty="medium"
+        title="E4 — Rollout: SASRec baseline to LLaRA"
+        scenario={<>Order the migration steps from SASRec to LLaRA in production. Pick the correct sequencing.</>}
+        options={[
+          {key:"a", text:"Train SASRec to convergence first -> freeze SASRec, train LLaRA with curriculum on the same dataset -> shadow-score offline -> traffic ramp small (LLM serving cost dominates, verify dollars-per-query budget) -> ablate adapter-only vs hybrid online.", correct:true},
+          {key:"b", text:"Train SASRec and LLaRA jointly from scratch."},
+          {key:"c", text:"Ship LLaRA at 100 percent traffic immediately to gather data."},
+          {key:"d", text:"Skip SASRec entirely; train LLaRA from random init."},
+        ]}
+        trap={<>(b) breaks the curriculum's assumption of a stable SASRec. (c) is reckless given LLM cost. (d) defeats the architecture.</>}
+        lens={<>LLaRA's migration discipline mirrors its architecture: SASRec is the load-bearing input, curriculum is the load-bearing training procedure, dollars-per-query is the load-bearing serving constraint. Each gets its own gate.</>}
+      />
+
+      {/* axis: E5 */}
+      <VIS.TrapProblem
+        id="llara-e5"
+        difficulty="hard"
+        title="E5 — Reproducibility: MovieLens-1M and BookCrossing lift"
+        scenario={<>The paper reports lift on MovieLens-1M and BookCrossing. Your team reproduces and sees almost no lift. What detail is the most likely culprit?</>}
+        options={[
+          {key:"a", text:"The curriculum schedule — the paper's exact ramp (linear over what fraction of training steps) is in an appendix; many reproductions get the schedule wrong (too steep, too shallow, or no curriculum at all) and report near-zero lift.", correct:true},
+          {key:"b", text:"The choice of LLM brand."},
+          {key:"c", text:"The choice of SASRec hyperparameters."},
+          {key:"d", text:"The PyTorch version."},
+        ]}
+        trap={<>(b)-(d) are generic. The LLaRA-specific reproduction failure mode is the curriculum schedule.</>}
+        lens={<>LLaRA's reproduction is famously gated by the curriculum recipe. The headline result depends on the schedule; any reproduction must verify gradient flow into the adapter throughout training.</>}
+      />
+
+      {/* axis: E6 */}
+      <VIS.TrapProblem
+        id="llara-e6"
+        difficulty="hard"
+        title="E6 — Eval contamination: titles are easy for pretrained LLMs"
+        scenario={<>LLaRA evaluation typically uses MovieLens/Books — public benchmarks where titles are recognizable to a pretrained LLM. Why is this an unfair benchmark for LLaRA's collaborative contribution?</>}
+        options={[
+          {key:"a", text:"A pretrained LLM can almost solve next-item prediction from titles alone (movies and books have informative, recognizable titles); LLaRA's collaborative-signal contribution looks small. On surfaces where titles are uninformative (UGC, anonymous catalogs, fresh listings), LLaRA's gain over pure-text LLM rec is much larger.", correct:true},
+          {key:"b", text:"The benchmarks are too small."},
+          {key:"c", text:"The benchmarks have train/test leakage."},
+          {key:"d", text:"The benchmarks use different metrics than production."},
+        ]}
+        trap={<>(b)-(d) are generic; (a) is the LLaRA-specific contamination — text-information density of the benchmark biases against LLaRA's contribution.</>}
+        lens={<>LLaRA's reported gains are a lower bound on the typical production gain because public benchmarks have unusually informative titles. Production with messy text shows larger LLaRA-over-text-LLM gaps.</>}
+      />
+
+      {/* ============== F. Failure modes ============== */}
+      <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
+
+      {/* axis: F1 */}
+      <VIS.TrapProblem
+        id="llara-f1"
+        difficulty="hard"
+        title="F1 — Edge case: user with a single generic-title item"
+        scenario={<>A user has one history item: title "Movie." What does LLaRA do, and what does it lose compared to SASRec alone?</>}
+        options={[
+          {key:"a", text:"Adapter projects one ID into a soft token; LLM sees text-uninformative title plus one ID token. LLM forward pass cost is paid (slow) but information content is similar to SASRec-alone. Net: LLaRA degenerates to SASRec performance with extra latency.", correct:true},
+          {key:"b", text:"LLaRA outperforms SASRec on this case because the LLM can fill in the missing information."},
+          {key:"c", text:"LLaRA crashes."},
+          {key:"d", text:"The adapter detects the degeneracy and short-circuits."},
+        ]}
+        trap={<>(b) is the intuition (LLM as oracle) that ignores the actual information available — one generic title plus one ID equals exactly the information SASRec has.</>}
+        lens={<>LLaRA only wins when there is text information beyond what the ID encodes. Generic / missing text removes the LLM's advantage and leaves only its cost.</>}
+      />
+
+      {/* axis: F2 */}
+      <VIS.TrapProblem
+        id="llara-f2"
+        difficulty="hard"
+        title="F2 — Adversarial: mislabel titles to fight the SASRec embedding"
+        scenario={<>An adversary mislabels items so the text title contradicts what SASRec's ID embedding has learned (e.g., a sci-fi book labeled Cookbook). What does LLaRA produce?</>}
+        options={[
+          {key:"a", text:"The LLM and the adapter give conflicting signals; the prediction collapses to the LLM's text prior (which is stronger because LLM pretrained weights dominate). Useful as a debugging tool to find catalog mislabels.", correct:true},
+          {key:"b", text:"LLaRA correctly identifies the mislabel and ignores it."},
+          {key:"c", text:"SASRec wins the tug-of-war and ignores the title."},
+          {key:"d", text:"LLaRA crashes."},
+        ]}
+        trap={<>(b)-(d) misframe the conflict. The LLM's text prior is the dominant signal in conflict cases.</>}
+        lens={<>This is a useful diagnostic: feed deliberately mislabeled items through LLaRA, check the predictions, find catalog mislabels by looking at where LLaRA and SASRec-alone disagree most.</>}
+      />
+
+      {/* axis: F3 */}
+      <VIS.TrapProblem
+        id="llara-f3"
+        difficulty="hard"
+        title="F3 — Reverse engineering: adapter gradient norm stays at zero"
+        scenario={<>You log the adapter's gradient norm during LLaRA training. It stays near zero for the first half of training and then suddenly spikes. What does this pattern tell you?</>}
+        options={[
+          {key:"a", text:"The curriculum is working as designed: during the text-only phase the adapter receives no gradient signal (text alone fits the loss); once the mask starts including the ID-soft-token, gradients flood in. If you don't see the spike, the mask is mis-configured (probably permanently zeroing the ID token).", correct:true},
+          {key:"b", text:"The optimizer's beta_1 is too high."},
+          {key:"c", text:"The adapter is too small."},
+          {key:"d", text:"SASRec embeddings are not normalized."},
+        ]}
+        trap={<>(b)-(d) miss the curriculum's expected gradient signature.</>}
+        lens={<>Adapter gradient norm vs training step is LLaRA's most diagnostic plot. The shape (flat -&gt; spike) is exactly what the curriculum is supposed to produce.</>}
+      />
+
+      {/* axis: F4 */}
+      <VIS.TrapProblem
+        id="llara-f4"
+        difficulty="medium"
+        title="F4 — Paper-named failure: extremely long user histories"
+        scenario={<>The LLaRA paper specifically names one regime where pure SASRec beats LLaRA. Which is it, and why architecturally?</>}
+        options={[
+          {key:"a", text:"Extremely long user histories — the LLM context window forces history truncation, while SASRec's attention handles 1000+ items natively. LLaRA bottlenecks on context length, not on recommendation quality.", correct:true},
+          {key:"b", text:"Cold-start items — LLaRA wins universally on cold-start."},
+          {key:"c", text:"GPU-poor settings — LLaRA wins universally with cheap LLMs."},
+          {key:"d", text:"Multi-turn conversational recs."},
+        ]}
+        trap={<>(b)-(d) are not the paper's specific claim; the long-history limit is.</>}
+        lens={<>LLaRA's architectural cap is the LLM context window. SASRec can ingest a longer sequence than the LLM can encode in tokens. This is a hard ceiling that scaling the LLM only mildly addresses.</>}
+      />
+
+      {/* axis: F5 */}
+      <VIS.TrapProblem
+        id="llara-f5"
+        difficulty="hard"
+        title="F5 — Community-found: LC-Rec critiques bridging two spaces"
+        scenario={<>LC-Rec (Zheng et al., ICDE 2024) argues that bridging two embedding spaces via an adapter wastes capacity vs collapsing into the LLM vocabulary directly. Without looking up LC-Rec's results, derive what LLaRA-specific weakness LC-Rec is targeting.</>}
+        options={[
+          {key:"a", text:"LLaRA's adapter is a fixed-capacity projection from SASRec to LLM space — every item passes through that bottleneck regardless of how much information it carries. LC-Rec replaces the bottleneck with direct vocabulary representation: each item gets its own LLM token, sized at the LLM's hidden dim. LC-Rec wins when the catalog is moderately sized; LLaRA wins when re-tokenization on catalog growth is impractical.", correct:true},
+          {key:"b", text:"LC-Rec is faster than LLaRA — purely a speed critique."},
+          {key:"c", text:"LC-Rec works on smaller datasets only."},
+          {key:"d", text:"LC-Rec uses a different LLM."},
+        ]}
+        trap={<>(b)-(d) miss the architectural critique. The LLaRA-specific weakness is the fixed-capacity adapter bottleneck.</>}
+        lens={<>The bridge-vs-collapse tradeoff is central: adapters scale poorly with item-information density (compressed through W_1, W_2); vocabulary tokens scale with item count but each gets full hidden-dim representation. Pick the choice that matches your catalog scale and stability.</>}
       />
     </VIS.Section>
 
-    <VIS.Section id="sec-further" title="Further reading">
-      <ul>
-        <li><a href="https://arxiv.org/abs/2312.02445" target="_blank" rel="noopener"><strong>Liao et al. — LLaRA: Large Language-Recommendation Assistant</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, SIGIR 2024)</span><br/>The original. Read sections 3 (hybrid prompt design + curriculum) and 4 (ablations). Section 4.3 has the curriculum ablation that motivates rule (1) of this visual.</li>
-        <li><a href="https://arxiv.org/abs/2311.09049" target="_blank" rel="noopener"><strong>Zheng et al. — LC-Rec: Integrating Collaborative Semantics for Recommendation</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, ICDE 2024)</span><br/>The competing approach. Read for contrast — LC-Rec puts collaborative tokens IN the LLM vocab; LLaRA keeps them adjacent via an adapter.</li>
-        <li><a href="https://arxiv.org/abs/1808.09781" target="_blank" rel="noopener"><strong>Kang & McAuley — Self-Attentive Sequential Recommendation (SASRec)</strong></a> <span style={{color:"#64748b", fontSize:14}}>(paper, ICDM 2018)</span><br/>The default upstream sequential recommender for LLaRA. Required background — if you can't explain SASRec, you can't reason about LLaRA's ID channel.</li>
-        <li><a href="https://lilianweng.github.io/posts/2023-10-23-llm-eval/" target="_blank" rel="noopener"><strong>Lilian Weng — LLM-Powered Evaluation</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Useful framing for the "LLM as recommender vs LLM as judge" distinction. Helps think about evaluation choices for LLaRA-style systems.</li>
-        <li><a href="https://eugeneyan.com/writing/llm-patterns/" target="_blank" rel="noopener"><strong>Eugene Yan — Patterns for Building LLM-based Systems & Products</strong></a> <span style={{color:"#64748b", fontSize:14}}>(blog)</span><br/>Practitioner survey covering adapter-based fusion patterns. Section on "RAG" applies — LLaRA is a structured variant of retrieval-augmented prompting.</li>
+    <VIS.Section id="sec-refs" title="References & further reading">
+      <ul style={{lineHeight:1.85}}>
+        <li>
+          <a href="https://arxiv.org/abs/2312.02445" target="_blank" rel="noopener"><strong>Liao et al. — LLaRA (SIGIR 2024)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>The original paper. Section on the curriculum schedule is the load-bearing read.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2311.09049" target="_blank" rel="noopener"><strong>Zheng et al. — LC-Rec (ICDE 2024)</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>The sibling that collapses items into LLM vocabulary instead of bridging.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/1808.09781" target="_blank" rel="noopener"><strong>Kang &amp; McAuley — SASRec</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>The frozen recommender LLaRA inherits from.</span>
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2305.06474" target="_blank" rel="noopener"><strong>Geng et al. — P5</strong></a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>Pure-text LLM rec baseline — what LLaRA's collaborative-signal contribution beats.</span>
+        </li>
       </ul>
     </VIS.Section>
   </main>
