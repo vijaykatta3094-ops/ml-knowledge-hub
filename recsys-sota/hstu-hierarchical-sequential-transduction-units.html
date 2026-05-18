@@ -1415,7 +1415,7 @@
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
 // HSTU — Hierarchical Sequential Transduction Units (Meta, ICML 2024)
-// v2 redo — 40+ trap problems spanning A-F taxonomy axes.
+// v3 retro-sweep — gate-clean rewrite with confusingly-similar decoys + G19-aware framing.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
@@ -1435,7 +1435,7 @@ const App = () => (
 
     <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        HSTU is a <VIS.Term def="A model that maps an input sequence to an output sequence — here a single causal stack predicts the next event from past events.">sequence transducer</VIS.Term> over a user's <VIS.Term def="A unified vocabulary mixing item IDs, action types (click/watch/purchase/dwell), context events, and timestamps — every interaction becomes one token.">heterogeneous action-token stream</VIS.Term>. Instead of "score (user, candidate item) with a deep MLP using engineered crosses," HSTU asks "given everything the user has done so far, what is the next action and on which item?"
+        HSTU is a <VIS.Term def="A model that maps an input sequence to an output sequence — here a single causal stack predicts the next event from past events.">sequence transducer</VIS.Term> over a user's <VIS.Term def="A unified vocabulary mixing item IDs, action types (click/watch/purchase/dwell), context events, and timestamps — every interaction becomes one token.">heterogeneous action-token stream</VIS.Term>. Instead of scoring (user, candidate item) with a deep MLP using engineered crosses, HSTU asks: given everything the user has done so far, what is the next action and on which item?
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
@@ -1447,7 +1447,7 @@ flowchart TB
   style S fill:#dbeafe,stroke:#1e40af,stroke-width:2px
       `} />
       <p>
-        The "hierarchical" piece refers to the multi-level action vocabulary (event type → item → sub-action) and to the layerwise mixing of pointwise and aggregated normalization that handles both long and short histories.
+        The hierarchical piece refers to the multi-level action vocabulary (event type, item, sub-action) and to the layerwise mixing of pointwise and aggregated normalization that handles both long and short histories.
       </p>
     </VIS.Section>
 
@@ -1459,7 +1459,7 @@ flowchart TB
         <strong>HSTU.</strong> Replace cross+MLP with a single transducer over the action sequence. Crosses are induced by attention, not declared. <VIS.Term def="A relationship between two scalars where one grows as a polynomial function of the other; in ML, test loss decreases predictably as compute increases.">Power-law scaling</VIS.Term> in compute — doubling FLOPs reliably improves quality, the way it does for LLMs.
       </p>
       <p>
-        <strong>TIGER (sibling).</strong> Also generative, but quantizes content embeddings into <VIS.Term def="A short tuple of discrete codes (e.g. 4 codebooks × 256 codes each) that captures hierarchical content semantics — similar items share prefixes.">Semantic IDs</VIS.Term> and decodes the next item's ID — generation IS retrieval. HSTU keeps random item-IDs, doesn't quantize content, and ranks over a candidate set; it's the *ranker* in the generative-recs family, not the indexer.
+        <strong>TIGER (sibling).</strong> Also generative, but quantizes content embeddings into <VIS.Term def="A short tuple of discrete codes (e.g. 4 codebooks × 256 codes each) that captures hierarchical content semantics — similar items share prefixes.">Semantic IDs</VIS.Term> and decodes the next item's ID — generation IS retrieval. HSTU keeps random item-IDs, doesn't quantize content, and ranks over a candidate set; it's the ranker in the generative-recs family, not the indexer.
       </p>
       <p>
         <strong>SASRec/BERT4Rec (sibling).</strong> Plain transformer over item-only sequences with binary CE. HSTU's contribution over them is the (a) heterogeneous action vocabulary, (b) custom pointwise+aggregated-norm attention, (c) scaling-law evidence at trillion-param scale.
@@ -1468,7 +1468,7 @@ flowchart TB
 
     <VIS.Section id="sec-when" title="Beat 3 — When to pick it / where it wins">
       <p>
-        Pick HSTU when (a) long user histories (10³–10⁵ events) feed the sequence model, (b) GPU-rich serving infra can absorb auto-regressive scoring or precomputation, (c) engagement-loop signal (what the user just did predicts what they want next) dominates the surface. Short-history surfaces (search, ads with strong contextual covariates, cold-start-heavy catalogs) are NOT where HSTU's scaling law pays off.
+        Pick HSTU when (a) long user histories (10³–10⁵ events) feed the sequence model, (b) GPU-rich serving infra can absorb auto-regressive scoring or precomputation, (c) engagement-loop signal (what the user just did predicts what they want next) dominates the surface. Short-history surfaces (search, ads with strong contextual covariates, cold-start-heavy catalogs) are where HSTU's scaling law fails to pay off.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
@@ -1495,343 +1495,344 @@ flowchart TB
 
     <VIS.Section id="sec-drill" title="Drill — trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        40+ problems spanning the 6 taxonomy axes (identity, application, mechanism, intuition traps, operations, failure modes). Each must pass the redaction litmus test: substitute "Model X" for "HSTU" — if a generic-ML candidate can still answer, the problem is concept-as-costume.
+        Problems spanning the 6 taxonomy axes (identity, application, mechanism, intuition traps, operations, failure modes). Each must pass the redaction litmus test: substitute "Model X" for "HSTU" — if a generic-ML candidate can still answer, the problem is concept-as-costume.
       </p>
 
       {/* ============== A. Identity & comparison ============== */}
       <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity & comparison</h3>
 
-      {/* axis: A1 (distinguish from sibling) */}
+      {/* A1 */}
       <VIS.TrapProblem
         id="hstu-a1"
         difficulty="hard"
-        title="A1 — HSTU vs TIGER: same family, opposite choices"
-        scenario={<>Your VP says "HSTU and TIGER are both generative recsys — pick one for our short-video feed." You need to articulate the actual discriminator, not the family resemblance. Which statement captures the choice the two papers make differently?</>}
+        title="A1 — HSTU vs TIGER: same family, different choices"
+        scenario={<>Your VP says HSTU and TIGER are both generative recsys and asks you to pick one for a short-video feed. You need to articulate the actual discriminator between them. Which statement captures the design split between the two papers?</>}
         options={[
-          {key:"a", text:"HSTU uses transformers; TIGER does not."},
-          {key:"b", text:"TIGER replaces the ANN retrieval index by autoregressively decoding Semantic IDs; HSTU keeps item-ID embeddings and ranks over an externally-retrieved candidate set.", correct:true},
-          {key:"c", text:"HSTU is for ranking, TIGER is for ranking — both replace the ranker."},
-          {key:"d", text:"TIGER works on long histories; HSTU works on short."},
+          {key:"a", text:"HSTU runs a non-transformer state-space stack; TIGER runs a transformer decoder over Semantic IDs — that is why HSTU scales further."},
+          {key:"b", text:"TIGER decodes Semantic IDs autoregressively to replace ANN retrieval; HSTU keeps item-ID embeddings and ranks an externally-retrieved candidate set with a generative loss.", correct:true},
+          {key:"c", text:"HSTU and TIGER both replace the ranker; TIGER adds RQ-VAE quantization on top of the same transducer HSTU uses end to end."},
+          {key:"d", text:"TIGER targets long histories with content-quantized tokens; HSTU targets short histories with random item-IDs and falls back to DLRM when sequences exceed 1k events."},
         ]}
-        trap={<>(a) is false — TIGER is also a transformer. (c) confuses roles: TIGER's contribution is generative *retrieval* (no HNSW), not ranking. (d) inverts the truth: HSTU benefits from *long* histories.</>}
+        trap={<>(a) misnames HSTU's stack — it is a transformer with custom attention, not state-space. (c) collapses the roles: TIGER's contribution is generative retrieval, not ranking on top of HSTU. (d) inverts the length regime — HSTU benefits from long histories, not short.</>}
         lens={<>The two papers split the generative recsys stack at different layers. TIGER attacks retrieval (Semantic-ID decoding replaces ANN). HSTU attacks the cross+MLP ranker (sequence transducer replaces DLRM). They can stack: HSTU ranking over TIGER-retrieved candidates is a published industrial pattern.</>}
         stretch={<>If you have to pick exactly one for a brand-new surface with no existing infra, which goes first and why?</>}
       />
 
-      {/* axis: A2 (definitional trap) */}
+      {/* A2 — multi-select problem */}
       <VIS.TrapProblem
         id="hstu-a2"
         difficulty="medium"
-        title="A2 — 'HSTU is just SASRec at scale'"
-        scenario={<>A teammate dismisses HSTU as "SASRec with more params." You need to name the *architectural* deltas, not just scale. Which deltas are real?</>}
+        title="A2 — Is HSTU just a scaled-up SASRec?"
+        scenario={<>A teammate dismisses HSTU as SASRec with more parameters. Identify which of the following architectural deltas HSTU actually introduces over SASRec.</>}
         multiSelect
         options={[
-          {key:"a", text:"HSTU's token vocabulary is heterogeneous (item-IDs + action types + context); SASRec's is item-IDs only.", correct:true},
-          {key:"b", text:"HSTU uses a custom pointwise + aggregated normalization instead of LayerNorm; SASRec uses standard LN.", correct:true},
-          {key:"c", text:"HSTU uses BCE per-item; SASRec uses softmax over actions."},
-          {key:"d", text:"HSTU's attention is a SiLU-gated linear-attention variant, not softmax attention.", correct:true},
-          {key:"e", text:"SASRec was trained at trillion-param scale; HSTU was not."},
+          {key:"a", text:"Heterogeneous token vocabulary mixing item-IDs, action types, and context — SASRec uses item-IDs only and a single embedding table.", correct:true},
+          {key:"b", text:"Pointwise + aggregated normalization replacing LayerNorm to handle mixed-scale tokens in one residual stream.", correct:true},
+          {key:"c", text:"BCE per-item replacing the action-vocab softmax SASRec originally used in its 2018 release."},
+          {key:"d", text:"SiLU-gated linear-attention variant instead of softmax attention, designed for O(n) cost at 8k+ context.", correct:true},
+          {key:"e", text:"Trillion-parameter scale on SASRec checkpoints; HSTU is the smaller distilled version."},
         ]}
-        trap={<>(c) inverts the loss assignments — HSTU's loss is generative softmax over the joint vocab; SASRec is pointwise BCE on items. (e) is the opposite of true.</>}
-        lens={<>Three concrete deltas: heterogeneous vocab, pointwise+aggregated norm, SiLU-gated linear attention. Each maps to a property the paper claims: heterogeneous vocab → richer per-token signal; aggregated norm → mixed-scale token compatibility; gated linear attention → 5.3–15.2× over FA2 at 8k.</>}
+        trap={<>(c) inverts the loss assignments — SASRec is pointwise BCE on items; HSTU's contribution is the generative softmax over the joint action vocab. (e) reverses which model is which: SASRec was not trained at trillion-param scale; HSTU was.</>}
+        lens={<>Three concrete deltas: heterogeneous vocab, pointwise+aggregated norm, SiLU-gated linear attention. Each maps to a property the paper claims: heterogeneous vocab gives richer per-token signal; aggregated norm gives mixed-scale token compatibility; gated linear attention gives 5.3–15.2× over FA2 at 8k.</>}
         stretch={<>Which of these three deltas would you keep if compute were halved? Which is the cheapest to give up?</>}
       />
 
-      {/* axis: A3 (counterfactual) */}
+      {/* A3 */}
       <VIS.TrapProblem
         id="hstu-a3"
         difficulty="hard"
-        title="A3 — If HSTU didn't exist, quantify the fallback cost"
-        scenario={<>Counterfactual: HSTU was never published. To match the engagement lift Meta reports, you'd build out DLRM further. Pick the option whose *concrete* dimensions of cost are right.</>}
+        title="A3 — Sizing the engineering cost of an HSTU-free counterfactual"
+        scenario={<>Counterfactual: imagine HSTU did get published as a research curiosity but you decided to skip the migration. You match Meta's reported engagement lift by pushing DLRM harder. Pick the option whose dimensions of recurring engineering cost are right.</>}
         options={[
-          {key:"a", text:"DLRM scaling halts past ~10B params (the published plateau); you'd need a fresh feature-cross engineering cycle every quarter (~10 engineers) to keep moving; calibration stays trivial (existing Platt scaler keeps working).", correct:true},
-          {key:"b", text:"DLRM scales fine to 1T params; you'd just need more GPU; calibration becomes harder."},
-          {key:"c", text:"You'd build a vanilla transformer over item sequences and that would match HSTU."},
-          {key:"d", text:"You'd switch to LLM-based recs (P5/RecLLM)."},
+          {key:"a", text:"DLRM keeps scaling smoothly past 1T params; the dominant cost is GPU procurement, while calibration becomes the harder operational problem over time."},
+          {key:"b", text:"You drop DLRM and adopt a vanilla transformer over item-only sequences (SASRec-style); the lift matches HSTU because both are sequence models on the same data."},
+          {key:"c", text:"DLRM scaling stalls near ~10B params per the published plateau, so every quarter you spin up a fresh feature-cross engineering cycle (about 10 engineers); calibration stays cheap because the Platt scaler still works.", correct:true},
+          {key:"d", text:"You skip DLRM entirely and migrate to an LLM-based ranker (P5/RecLLM), trading away the calibration story for a smaller eng team and lower serving cost."},
         ]}
-        trap={<>(b) ignores the empirical DLRM plateau the HSTU paper itself documents. (c) is exactly the SASRec/BERT4Rec attempt — it does *not* match HSTU at scale, which is the paper's primary contribution. (d) is a different research direction with different costs (latency, calibration, data efficiency).</>}
-        lens={<>HSTU's unique gift is power-law scaling on action data. Without it, the alternative is more *engineering* (cross design) rather than more *compute* — a 10x worse multiplier on team size. Calibration stays easy, however; this is one dimension HSTU made *worse*, not better.</>}
+        trap={<>(a) ignores the empirical DLRM plateau the HSTU paper itself documents. (b) is the SASRec attempt — sequence alone does not match HSTU's action-token scaling. (d) is a different research direction with different cost shapes (latency, calibration, data efficiency), not a DLRM substitute.</>}
+        lens={<>HSTU's unique gift is power-law scaling on action data. Without it, the alternative is more engineering (cross design) rather than more compute — a roughly 10× worse multiplier on team size. Calibration stays easy, however; this is one dimension HSTU makes worse, not better.</>}
         stretch={<>If your eng team is 3 people, does the calculus flip? Why?</>}
       />
 
-      {/* axis: A4 (composition) */}
+      {/* A4 — multi-select */}
       <VIS.TrapProblem
         id="hstu-a4"
         difficulty="hard"
-        title="A4 — Stack HSTU + RQ-VAE Semantic IDs"
-        scenario={<>You want to use RQ-VAE Semantic IDs as the item-token vocabulary inside HSTU (instead of random item-IDs). What survives, what breaks?</>}
+        title="A4 — Stacking HSTU on top of RQ-VAE Semantic IDs"
+        scenario={<>You want to use RQ-VAE Semantic IDs as the item-token vocabulary inside HSTU, replacing random item-IDs. Identify the effects that actually follow.</>}
         multiSelect
         options={[
-          {key:"a", text:"Semantic-prefix sharing helps cold-start items (new items inherit useful embeddings via shared prefix codes).", correct:true},
-          {key:"b", text:"HSTU's generative softmax now has to score over the Cartesian product of action types × Semantic-ID codes, blowing up vocab size.", correct:true},
-          {key:"c", text:"Action-type and item-ID semantics no longer fit in the same embedding space — pointwise + aggregated norm helps by giving them separate sub-spaces.", correct:true},
-          {key:"d", text:"Calibration becomes trivial because Semantic IDs already encode content."},
-          {key:"e", text:"The HSTU paper recommends this stack as the production default."},
+          {key:"a", text:"Cold-start items inherit useful embeddings via shared prefix codes, so newly-launched items see better recall than under random item-IDs.", correct:true},
+          {key:"b", text:"The generative softmax now spans the Cartesian product of action types × Semantic-ID codes, blowing up the output vocab size and training compute.", correct:true},
+          {key:"c", text:"Pointwise + aggregated norm becomes load-bearing because action-type tokens and Semantic-ID tokens live at different scales in the same residual stream.", correct:true},
+          {key:"d", text:"Calibration becomes trivial because Semantic IDs already encode content distance — the existing Platt scaler maps softmax to CTR without a new head."},
+          {key:"e", text:"The HSTU paper formally recommends this stack as the production default for engagement surfaces."},
         ]}
-        trap={<>(d) doesn't follow — calibration is about score-to-probability mapping, unrelated to embedding source. (e) is false; the HSTU paper does not propose this stack (TIGER does, with a much simpler architecture).</>}
-        lens={<>Three real effects. Cold-start: helps. Compute: hurts (vocab cartesian). Norm-compatibility: pointwise+aggregated norm becomes load-bearing precisely because heterogeneous tokens now live at *different* scales.</>}
+        trap={<>(d) confuses content representation with score-to-probability mapping — calibration depends on loss shape, not embedding source. (e) is false; HSTU does not propose this stack (TIGER does, with a much simpler architecture).</>}
+        lens={<>Three real effects. Cold-start: helps. Compute: hurts (vocab Cartesian). Norm-compatibility: pointwise+aggregated norm becomes load-bearing precisely because heterogeneous tokens now live at different scales.</>}
         stretch={<>Which other HSTU hyperparameter must you re-tune after this swap? Why?</>}
       />
 
-      {/* axis: A5 (boundary) */}
+      {/* A5 */}
       <VIS.TrapProblem
         id="hstu-a5"
         difficulty="hard"
-        title="A5 — Where does HSTU's advantage end and DLRM's begin?"
-        scenario={<>You're empirically measuring HSTU vs DLRM along sequence length. Below what median user-history length does HSTU's offline NDCG fall *below* a well-tuned DLRM on the same data, per the paper and Meituan's MTGR follow-up?</>}
+        title="A5 — Locating the HSTU vs DLRM crossover by history length"
+        scenario={<>You are empirically measuring HSTU against DLRM along median user-history length. Pick the history-length region where a well-tuned DLRM matches or beats HSTU on offline NDCG, per the paper and Meituan's MTGR follow-up.</>}
         options={[
-          {key:"a", text:"~10 events"},
-          {key:"b", text:"~50 events", correct:true},
-          {key:"c", text:"~5000 events"},
-          {key:"d", text:"Never — HSTU dominates DLRM at every length."},
+          {key:"a", text:"Below ~10 events — both models are starved for signal, but HSTU's inductive bias from action vocab still tilts the comparison in HSTU's favor."},
+          {key:"b", text:"Around ~5000 events — HSTU's attention saturates and DLRM's crosses recover; this is where Meituan documents the regression."},
+          {key:"c", text:"Never — HSTU's scaling law dominates DLRM at every sequence length once both are tuned on equivalent data."},
+          {key:"d", text:"Below ~50 events — short histories give HSTU's scaling law nothing to amortize against DLRM's hand-engineered crosses.", correct:true},
         ]}
-        trap={<>(a) is too low — DLRM beats HSTU even harder there. (c) is wildly too high. (d) is the marketing reading; the paper itself notes the regime where HSTU loses.</>}
-        lens={<>Around ~50 events is the empirical crossover. Architectural reason: scaling-law gains accrue with sequence length; below ~50 tokens HSTU is effectively a small transformer with worse inductive bias than DLRM's hand-engineered crosses. The threshold isn't sharp — it depends on action vocabulary cardinality.</>}
+        trap={<>(a) is the wrong direction — DLRM beats HSTU more, not less, at very short histories. (b) inverts the regime: ~5000 is where HSTU's gains are largest, not where they vanish. (c) is the marketing reading; the paper itself names the regime where HSTU loses.</>}
+        lens={<>Around ~50 events is the empirical crossover. Scaling-law gains accrue with sequence length; below that, HSTU is effectively a small transformer with worse inductive bias than DLRM's hand-engineered crosses. The threshold is not sharp — it depends on action vocabulary cardinality.</>}
         stretch={<>If you doubled the action-vocab cardinality (added micro-actions like dwell-time buckets), would the crossover length shift up or down?</>}
       />
 
       {/* ============== B. Application ============== */}
       <h3 style={{marginTop:32, color:"#1f3a5f"}}>B. Application</h3>
 
-      {/* axis: B1 (when to use over alternatives) */}
+      {/* B1 */}
       <VIS.TrapProblem
         id="hstu-b1"
         difficulty="hard"
-        title="B1 — 8B tokens/day, GPU-rich, weak click signal"
-        scenario={<>Your surface emits <strong>8B action-tokens/day</strong> across <strong>~80M DAU</strong> (median ~100 events / user / day). Infra is GPU-rich. Signal is weak — click-through is noisy because of autoplay. Choose: <em>(a) HSTU, (b) TIGER, (c) DLRM</em>. Defend.</>}
+        title="B1 — Choosing a ranker for 8B action-tokens/day on GPU-rich infra"
+        scenario={<>Your surface emits 8B action-tokens/day across ~80M DAU (median ~100 events / user / day). Infra is GPU-rich. Click signal is noisy because of autoplay. Pick the option whose architectural fit to this regime is the right one.</>}
         options={[
-          {key:"a", text:"HSTU — engagement-loop surface, long histories, GPU available; HSTU's scaling law converts the data deluge into quality.", correct:true},
-          {key:"b", text:"TIGER — generative retrieval handles noisy click signal."},
-          {key:"c", text:"DLRM — weak signal means you need crosses to compensate."},
+          {key:"a", text:"HSTU — long histories, GPU-rich infra, and an action-token scaling law that turns abundant noisy data into quality the way LLM pretraining does.", correct:true},
+          {key:"b", text:"TIGER — generative retrieval over Semantic IDs is the right call when click labels are noisy, because the CE-over-codes loss is robust to label noise."},
+          {key:"c", text:"DLRM — noisy clicks need hand-engineered crosses to denoise the signal; long histories alone cannot compensate for noisy labels."},
+          {key:"d", text:"Two-tower retrieval — replace ranking with similarity search so the noisy click label only filters candidates rather than driving the loss."},
         ]}
-        trap={<>(b) is appealing because TIGER also generative, but TIGER's contribution is replacing the ANN, not handling noisy clicks — its loss is just CE over Semantic IDs. (c) confuses "weak signal needs crosses" — crosses help when signal lives in interactions, not when labels are *intrinsically noisy*. For noisy clicks the cure is more data, which HSTU consumes better than DLRM.</>}
-        lens={<>The decision turns on three facts: long histories (✓ for HSTU), GPU-rich (✓), weak-but-abundant signal (✓ — HSTU scaling law converts data into quality the way LLMs do). All three favor HSTU.</>}
+        trap={<>(b) confuses TIGER's role: it replaces the ANN, not the click-denoising head; its CE over Semantic IDs is no more noise-robust than HSTU's softmax. (c) gets the noise prescription backwards — crosses help when signal hides in interactions, not when labels are intrinsically noisy; the cure for noisy clicks is more data, which HSTU consumes better. (d) replaces the wrong stage of the funnel.</>}
+        lens={<>The decision turns on three facts: long histories, GPU-rich infra, and weak-but-abundant signal. All three favor HSTU's action-token scaling law over both DLRM and TIGER.</>}
         stretch={<>If GPU were the binding constraint and you could only afford one of HSTU or DLRM at full scale, which would you pick?</>}
       />
 
-      {/* axis: B2 (sounds reasonable, isn't) */}
+      {/* B2 */}
       <VIS.TrapProblem
         id="hstu-b2"
         difficulty="hard"
-        title="B2 — 'Bigger embedding dim fixes cold-start in HSTU'"
-        scenario={<>A staff engineer proposes increasing the item-ID embedding dim from 256 → 1024 specifically to "fix HSTU's cold-start problem on newly-launched items." Why is this wrong, and what IS the fix?</>}
+        title="B2 — Diagnosing a proposed fix for cold-start items in HSTU"
+        scenario={<>A staff engineer proposes raising the item-ID embedding dim from 256 to 1024 to fix HSTU's regression on newly-launched items. Pick the option that correctly diagnoses why the proposal fails and identifies the real fix.</>}
         options={[
-          {key:"a", text:"Bigger dim doesn't help: cold-start items have *zero action history* in the training data, so their embedding gets no gradient regardless of dim; the fix is content-based item tokenization (RQ-VAE Semantic IDs) or a content-tower fallback.", correct:true},
-          {key:"b", text:"Bigger dim helps because more capacity = more generalization."},
-          {key:"c", text:"Bigger dim is fine but you also need to retrain for 2x epochs."},
-          {key:"d", text:"Cold-start is irrelevant for HSTU — it's a sequence model."},
+          {key:"a", text:"More capacity always generalizes better — 1024-dim embeddings let HSTU interpolate to unseen items via softer nearest-neighbor structure in the joint embedding space."},
+          {key:"b", text:"The dim increase works if you also double training epochs so the freshly-allocated parameters have time to specialize on tail items with sparse interaction data."},
+          {key:"c", text:"Cold-start is irrelevant for a sequence model — HSTU infers a new item's role from its position in the sequence and the action types around it at decode time."},
+          {key:"d", text:"Cold items get zero training signal regardless of dim; the real fix swaps random item-IDs for content-derived tokens (RQ-VAE Semantic IDs or content-tower fallback) so unseen items share embedding prefixes.", correct:true},
         ]}
-        trap={<>(b) is the textbook reflex (more capacity = better) but ignores that cold-start = zero training signal for that specific item embedding. (d) is the "scaling-law-magically-fixes-everything" hand-wave — HSTU on a never-seen item ID can only fall back to position/context priors.</>}
+        trap={<>(a) is the textbook reflex (more capacity equals better) but ignores that cold-start means zero training signal for that specific item embedding. (b) compounds the same error with more epochs. (c) is the scaling-law-magically-fixes-everything hand-wave — HSTU on a never-seen item ID can only fall back to position/context priors.</>}
         lens={<>HSTU has no native content tower. Cold-start items literally have no learned embedding — dim is irrelevant. The fix replaces the item-ID with a content-derived representation that shares structure across items: RQ-VAE Semantic IDs, hashed content embeddings, or a content-tower retrieval fallback before scoring.</>}
-        stretch={<>What's the calibration consequence of using Semantic IDs for cold-start items but random IDs for warm ones?</>}
+        stretch={<>What is the calibration consequence of using Semantic IDs for cold-start items but random IDs for warm ones?</>}
       />
 
-      {/* axis: B3 (business framing) */}
+      {/* B3 — concept anchor; concept anchor */}
       <VIS.TrapProblem
         id="hstu-b3"
         difficulty="medium"
-        title="B3 — Pitch HSTU to a CTO (must require knowing HSTU's mechanism)"
-        scenario={<>Your CTO asks why HSTU is worth a 6-month migration when DLRM is fine. Give the 1-sentence business case that *requires* understanding HSTU's action-token power-law scaling — the case that fails if HSTU were just "a bigger transformer."</>}
+        title="B3 — Identifying the load-bearing claim HSTU makes about recommendation"
+        scenario={<>Your CTO asks you to state HSTU's central claim about recommendation in one sentence. Identify the description of HSTU's mechanism that matches the paper — the others describe sibling or predecessor systems.</>}
         options={[
-          {key:"a", text:"'Replace pipelines with a single transformer that improves with FLOPs.' (Generic — applies to any big transformer migration.)"},
-          {key:"b", text:"'HSTU action-token vocabulary follows a power-law NDCG vs. FLOPs/sequence-length curve that DLRM provably cannot reach — every FLOP doubling moves a metric the CFO can read on a chart, so the 6-month spend has a quantifiable lift curve, not a we-will-see delta.'", correct:true},
-          {key:"c", text:"'It uses transformers like ChatGPT.'"},
-          {key:"d", text:"'NDCG up 10% on the offline eval.'"},
+          {key:"a", text:"Treats recommendation as sequence transduction; hierarchical attention over user-item interactions; encoder-decoder framing over the action history.", correct:true},
+          {key:"b", text:"Adds transformer attention over DLRM's embedding cross layer, so feature crosses learn better representations than dot-product interactions."},
+          {key:"c", text:"Replaces DLRM's MLP top with a transformer encoder for richer feature interactions, leaving the embedding cross layer untouched."},
+          {key:"d", text:"Uses semantic-ID codes to generate items autoregressively, similar to TIGER's RQ-VAE-then-decode approach."},
         ]}
-        trap={<>(a) is the trap — it sounds like the right pitch but it works for *any* big-transformer migration; redaction-substitute the model name and the sentence is unchanged. (c) is hype. (d) is the offline-only number the CTO already discounted. Only (b) depends on the *action-token scaling law* — drop that mechanism and the pitch evaporates.</>}
-        lens={<>The pitch must turn on the *specific* HSTU finding: action sequences scale like language tokens (power-law on FLOPs), and the unit of scaling is the action token, not parameters alone. That's what lets you draw a real lift-vs-spend curve. A generic "single model, more compute" pitch doesn't — DLRM-v2 can also be made bigger.</>}
-        stretch={<>If you can't show the scaling-law curve on your own surface (e.g. you don't have a 100M-event slice yet), what do you ask for in the next 30 days before re-pitching?</>}
+        trap={<>(b) and (c) keep DLRM's cross+MLP factorization and bolt attention on top — that is the misreading the paper explicitly argues against. (d) describes TIGER's generative-retrieval pitch, not HSTU's transduction-over-action-tokens claim.</>}
+        lens={<>HSTU's load-bearing claim is that recommendation is sequence transduction with hierarchical attention, not feature-cross enrichment. Sibling work (TIGER) generates Semantic IDs; predecessor work (DLRM, attention-over-DLRM) keeps the cross+MLP split. The pitch evaporates if you collapse HSTU into any of them.</>}
+        stretch={<>If you cannot show the scaling-law curve on your own surface yet, what do you ask for in the next 30 days before re-pitching?</>}
       />
 
-      {/* axis: B4 (when NOT to use) */}
+      {/* B4 */}
       <VIS.TrapProblem
         id="hstu-b4"
         difficulty="hard"
-        title="B4 — Ads ranking where crosses carry 60% of signal"
-        scenario={<>Ads platform. Cross-features (advertiser_id × user_country × time_of_day × device_type) empirically carry <strong>~60% of incremental NDCG</strong> per ablation. User histories are short (median ~20 ad-impressions / day). Pick HSTU, MTGR, or DLRM.</>}
+        title="B4 — Picking a ranker for ads where crosses carry most of the signal"
+        scenario={<>Ads platform. Cross-features (advertiser_id × user_country × time_of_day × device_type) carry ~60% of incremental NDCG per ablation. Median user history is ~20 ad-impressions/day. Pick the option whose architectural fit to this signal mix and sequence length is the right one.</>}
         options={[
-          {key:"a", text:"HSTU — modernize."},
-          {key:"b", text:"DLRM — short histories + cross-dominant signal = exactly the regime where DLRM still wins.", correct:true},
-          {key:"c", text:"MTGR — get the best of both."},
-          {key:"d", text:"TIGER — generative is always better for ads."},
+          {key:"a", text:"HSTU — modernization beats legacy; the action-token scaling law absorbs cross-feature signal implicitly once the sequence is long enough to learn it."},
+          {key:"b", text:"DLRM — short histories combined with cross-dominant signal is exactly the regime where DLRM's hand-engineered crosses still outperform sequence models.", correct:true},
+          {key:"c", text:"MTGR — keep HSTU's transducer and re-inject cross-features as additional tokens with Group-Layer Norm to recover the lost DLRM signal."},
+          {key:"d", text:"TIGER — generative retrieval over Semantic IDs lets advertisers compete on content similarity rather than handcrafted crosses."},
         ]}
-        trap={<>(a) is the modernization reflex. (c) is *almost* right but MTGR's break-even requires long sequences AND substantial cross signal — at 20 events/day MTGR pays the HSTU sequence cost without enough sequence to recover. (d) is a category error — TIGER is for retrieval, not ads ranking.</>}
-        lens={<>MTGR helps when *both* sequence (HSTU advantage) and crosses (DLRM advantage) carry signal. With ~20 events/day the sequence side is too thin to justify the move; stay on DLRM, ship the cross-feature pipeline, monitor for the day median history crosses ~100.</>}
+        trap={<>(a) is the modernization reflex. (c) is almost right — MTGR's break-even requires long sequences AND substantial cross signal; at 20 events/day MTGR pays the HSTU sequence cost without enough sequence to recover. (d) is a category error — TIGER is for retrieval, not ads ranking.</>}
+        lens={<>MTGR helps when both sequence (HSTU advantage) and crosses (DLRM advantage) carry signal. With ~20 events/day the sequence side is too thin to justify the move; stay on DLRM, ship the cross-feature pipeline, monitor for the day median history crosses ~100.</>}
         stretch={<>At what user-history length would you re-open the MTGR question for this surface?</>}
       />
 
-      {/* axis: B1 variant — latency-bound retail */}
+      {/* B5 */}
       <VIS.TrapProblem
         id="hstu-b5"
         difficulty="hard"
-        title="B5 — p99 50ms CPU-only ranker"
-        scenario={<>Mid-size e-commerce retailer. Current ranker: DLRM on CPU, p99 50ms, no GPU budget for ranking (GPUs are claimed by image search). Median history ~300 events. Strong engagement-loop pattern. Can you HSTU here?</>}
+        title="B5 — Fitting HSTU into a p99 50ms CPU-only ranking budget"
+        scenario={<>Mid-size e-commerce retailer. Ranker runs on CPU with p99 50ms budget; no GPU budget for ranking (GPUs are claimed by image search). Median history ~300 events. Strong engagement-loop pattern. Pick the option whose latency analysis is right.</>}
         options={[
-          {key:"a", text:"Yes — HSTU's published latency numbers fit."},
-          {key:"b", text:"No — HSTU's 5.3-15.2x speedup over FA2 is reported on GPU at large batch sizes; CPU + no GPU budget makes the auto-regressive scoring untenable at p99 50ms regardless of sequence length.", correct:true},
-          {key:"c", text:"Yes — quantize HSTU to INT8 on CPU."},
-          {key:"d", text:"Yes — truncate sequences to 8 tokens."},
+          {key:"a", text:"Yes — HSTU's published latency numbers fit; the 5.3-15.2× attention speedup gives plenty of headroom even on CPU at 300-event sequences."},
+          {key:"b", text:"Yes — quantize HSTU to INT8 on CPU and the per-request cost approaches DLRM's MLP scoring within the 50ms budget."},
+          {key:"c", text:"No — HSTU's 5.3-15.2× speedup over FA2 is reported on GPU at large batch; CPU + no GPU budget makes auto-regressive scoring untenable at p99 50ms regardless of sequence length.", correct:true},
+          {key:"d", text:"Yes — truncate sequences to 8 tokens; the attention cost collapses and the engagement-loop signal still fits in the recent window."},
         ]}
-        trap={<>(a) misreads the paper — its speedups are GPU-relative, not CPU. (c) glosses over that quantized auto-regressive decoding on CPU still costs ~10× DLRM scoring. (d) defeats the purpose.</>}
-        lens={<>HSTU's scaling story is FLOPs-per-quality on GPUs. Stripped of GPU and asked to fit a 50ms CPU budget, the math doesn't work — DLRM's fixed-shape MLP scoring is orders of magnitude cheaper per request. Long histories matter only if you can serve them within budget.</>}
+        trap={<>(a) misreads the paper — its speedups are GPU-relative, not CPU. (b) glosses over that quantized auto-regressive decoding on CPU still costs ~10× DLRM scoring per request. (d) defeats the purpose by amputating exactly the long-history signal HSTU is supposed to exploit.</>}
+        lens={<>HSTU's scaling story is FLOPs-per-quality on GPUs. Stripped of GPU and asked to fit a 50ms CPU budget, the math does not work — DLRM's fixed-shape MLP scoring is orders of magnitude cheaper per request. Long histories matter only if you can serve them within budget.</>}
         stretch={<>Is there a hybrid where HSTU is computed offline daily and only its precomputed user-vector is consumed online? What does that give up?</>}
       />
 
-      {/* axis: B2 — hot-takes that sound smart */}
+      {/* B6 */}
       <VIS.TrapProblem
         id="hstu-b6"
         difficulty="hard"
-        title="B6 — 'HSTU obsoletes A/B testing'"
-        scenario={<>A tech lead claims that since HSTU is "essentially LLM-grade" you can replace A/B testing with offline NDCG. True or false, and why?</>}
+        title="B6 — Whether offline NDCG can substitute for A/B testing on HSTU"
+        scenario={<>A tech lead claims that because HSTU is essentially LLM-grade you can replace A/B testing with offline NDCG. Pick the option whose argument about offline-online correlation under HSTU's loss is right.</>}
         options={[
-          {key:"a", text:"True — scaling laws say offline = online."},
-          {key:"b", text:"False — HSTU's generative loss is *especially* prone to offline–online gap because NDCG ranks against a fixed candidate set but HSTU is served against a different one (upstream retrieval).", correct:true},
-          {key:"c", text:"True if you also use TIGER."},
-          {key:"d", text:"False — scaling laws don't exist."},
+          {key:"a", text:"True — recsys scaling laws say offline NDCG and online watch-time track each other once data is sufficient, so A/B tests become redundant."},
+          {key:"b", text:"True if you also use TIGER — the joint stack closes the offline-online gap because retrieval and ranking share a generative objective."},
+          {key:"c", text:"False — scaling laws do not exist in recsys; offline metrics never track online for any model architecture in this domain."},
+          {key:"d", text:"False — HSTU's generative loss concentrates mass on safe tokens; NDCG against fixed candidates rewards this while online metrics (which depend on exploration and a different candidate set) do not.", correct:true},
         ]}
-        trap={<>(a) and (c) are scaling-law hype. (d) is anti-empirical.</>}
-        lens={<>Offline NDCG on a fixed candidate set undersells HSTU's generative gains (it doesn't reward novel-but-correct picks) AND oversells under online distribution shift. The mismatch is HSTU-specific: the generative loss concentrates probability on "safe" tokens; NDCG against ground truth rewards this; online metrics (which depend on exploration) don't.</>}
+        trap={<>(a) and (b) are scaling-law hype that ignore HSTU's loss shape. (c) is anti-empirical — scaling laws exist; the issue is what they predict.</>}
+        lens={<>Offline NDCG on a fixed candidate set undersells HSTU's generative gains (it does not reward novel-but-right picks) and oversells under online distribution shift. The mismatch is HSTU-specific: the generative loss concentrates probability on safe tokens; NDCG against ground truth rewards this; online metrics (which depend on exploration) do not.</>}
         stretch={<>Design an offline eval that better tracks online for HSTU. What does it sample over?</>}
       />
 
       {/* ============== C. Mechanism ============== */}
       <h3 style={{marginTop:32, color:"#1f3a5f"}}>C. Mechanism</h3>
 
-      {/* axis: C1 (architectural choice) */}
+      {/* C1 (was 'a' previously, G17 negation removed) */}
       <VIS.TrapProblem
         id="hstu-c1"
         difficulty="hard"
-        title="C1 — Why pointwise + aggregated norm, not LayerNorm?"
-        scenario={<>HSTU drops LayerNorm in favor of pointwise + aggregated normalization. What architectural property would break if you swapped LN back in?</>}
+        title="C1 — Choosing a normalization scheme for HSTU's heterogeneous tokens"
+        scenario={<>HSTU drops LayerNorm in favor of pointwise + aggregated normalization. Pick the option that correctly explains what property of the token stream forced this choice.</>}
         options={[
-          {key:"a", text:"Heterogeneous tokens (item-IDs and action types live at different scales) would have their statistics dominated by whichever class has larger magnitude — LN's per-token feature stats can't separate them. Pointwise + aggregated norm gives each class its own sub-space.", correct:true},
-          {key:"b", text:"LayerNorm doesn't work in transformers."},
-          {key:"c", text:"Latency would go up 5x."},
-          {key:"d", text:"Cold-start would break."},
+          {key:"a", text:"LayerNorm is incompatible with the SiLU-gated linear attention HSTU uses; the normalization must be applied per attention head to keep the linear-attention kernel numerically stable."},
+          {key:"b", text:"LayerNorm raises per-step latency by roughly 5× at 8k context because its rolling statistics serialize across the residual stream and stall the attention kernel."},
+          {key:"c", text:"Heterogeneous tokens (item-IDs and action types) live at different scales; LayerNorm's per-token feature stats are dominated by whichever class has larger magnitude, while pointwise + aggregated norm gives each class its own sub-space.", correct:true},
+          {key:"d", text:"LayerNorm collapses the action-type embeddings into a single mode at scale, which breaks cold-start because new items can no longer be distinguished from any other token."},
         ]}
-        trap={<>(b) is just false. (c) overstates a constant-factor effect. (d) is unrelated — cold-start is about embedding tables, not norm.</>}
+        trap={<>(a) is invented — LN works fine with linear attention. (b) overstates a constant-factor effect. (d) confuses normalization with embedding initialization — cold-start lives in the embedding table, not in the norm layer.</>}
         lens={<>The heterogeneous vocabulary is the load-bearing assumption. With LN, action-type tokens (low cardinality, frequent) swamp item-ID tokens (high cardinality, sparse) statistically. Pointwise norm handles per-token magnitude; aggregated norm handles cross-token interactions — together they let one stack process tokens that previously needed two stacks.</>}
         stretch={<>What if your action vocabulary were homogeneous (e.g. item-IDs only)? Would the pointwise+aggregated norm still help?</>}
       />
 
-      {/* axis: C2 (loss / objective) */}
+      {/* C2 */}
       <VIS.TrapProblem
         id="hstu-c2"
         difficulty="hard"
-        title="C2 — Why HSTU's loss breaks Platt scaling"
-        scenario={<>Your existing DLRM nightly pipeline fits a Platt scaler on raw logits → CTR. You cut over to HSTU. Within hours, predicted-CTR is 30% higher than realized. Why does this happen *specifically* with HSTU and not with another transformer-based ranker?</>}
+        title="C2 — Diagnosing why HSTU's outputs no longer feed a Platt scaler"
+        scenario={<>Your DLRM nightly pipeline fits a Platt scaler on raw logits → CTR. You cut over to HSTU. Within hours, predicted-CTR is 30% higher than realized. Pick the option whose mechanism explains why this happens for HSTU specifically.</>}
         options={[
-          {key:"a", text:"HSTU's loss is generative softmax over the joint action vocabulary; the output is *not* a per-item logit but a per-token probability that includes non-click actions (dwell, like, scroll). The Platt scaler trained on DLRM's pointwise sigmoid sees a different output distribution entirely.", correct:true},
-          {key:"b", text:"HSTU has more params so calibration drifts faster."},
-          {key:"c", text:"HSTU runs on GPU while Platt scaler runs on CPU."},
-          {key:"d", text:"Platt scaling is incompatible with all transformers."},
+          {key:"a", text:"HSTU has more parameters than DLRM, so its logits drift faster between Platt-scaler refreshes; doubling the nightly refresh frequency restores calibration."},
+          {key:"b", text:"HSTU emits per-token probabilities from a softmax over the joint action vocab (including dwell, scroll, like) rather than DLRM's pointwise per-item sigmoid; the Platt scaler sees a different output distribution shape entirely.", correct:true},
+          {key:"c", text:"HSTU runs on GPU while the Platt scaler runs on CPU; FP16-to-FP32 boundary crossings introduce rounding error that compounds within hours."},
+          {key:"d", text:"Platt scaling is incompatible with all transformer-based rankers because their logits are unbounded above; HSTU surfaces the issue at scale where smaller transformers hide it."},
         ]}
-        trap={<>(b), (c), (d) all misread the issue — it's not about params/hardware/transformers in general; it's the *loss shape*. Other transformer rankers (e.g. BERT4Rec with pointwise BCE) reuse Platt fine.</>}
-        lens={<>The fix is fitting a new calibration head *on the generative distribution* — specifically, on P(click | history) marginalized from the joint next-action distribution, not on raw logits. The marginalization step is what's HSTU-specific.</>}
+        trap={<>(a) reduces a loss-shape problem to a refresh-frequency knob. (c) is hardware-blaming. (d) is over-broad — other transformer rankers (e.g. BERT4Rec with pointwise BCE) reuse Platt fine; it is HSTU's loss shape, not "all transformers."</>}
+        lens={<>The fix is fitting a new calibration head on the generative distribution — specifically, on P(click | history) marginalized from the joint next-action distribution, not on raw logits. The marginalization step is what is HSTU-specific.</>}
         stretch={<>Sketch the marginalization. What goes wrong if the action vocabulary changes between training and serving?</>}
       />
 
-      {/* axis: C2 — softmax vs sigmoid */}
+      {/* C2b — multi-select */}
       <VIS.TrapProblem
         id="hstu-c2b"
         difficulty="hard"
-        title="C2b — Generative softmax forfeits what, exactly?"
-        scenario={<>What does HSTU's generative softmax over the action vocab give up vs DLRM's pointwise sigmoid that a senior should flag in a design review?</>}
+        title="C2b — Identifying what HSTU's generative softmax forfeits vs DLRM's sigmoid"
+        scenario={<>Identify the design-review concerns a senior should flag when HSTU's generative softmax over the action vocab replaces DLRM's pointwise sigmoid.</>}
         multiSelect
         options={[
-          {key:"a", text:"Trivial calibration to CTR (sigmoid output ≈ probability of click; softmax requires marginalization).", correct:true},
-          {key:"b", text:"Independent per-item scoring (sigmoid scores each candidate independently; softmax over the action vocab couples scores across candidates in a single decode).", correct:true},
-          {key:"c", text:"Compatibility with pointwise post-hoc loss reweighting (sigmoid logits accept reweighting; softmax probabilities require renormalization).", correct:true},
-          {key:"d", text:"Ability to rank items."},
-          {key:"e", text:"Ability to use AdamW."},
+          {key:"a", text:"Trivial calibration to CTR — sigmoid output approximates P(click) directly; softmax requires marginalization over the action vocab before it becomes a click probability.", correct:true},
+          {key:"b", text:"Independent per-item scoring — sigmoid scores each candidate independently; softmax over the action vocab couples scores across candidates in a single decode pass.", correct:true},
+          {key:"c", text:"Compatibility with pointwise post-hoc loss reweighting — sigmoid logits accept reweighting cleanly; softmax probabilities must be renormalized after reweighting.", correct:true},
+          {key:"d", text:"Ability to rank items — softmax outputs cannot be ordered into a top-K because the probabilities sum to one across the vocabulary."},
+          {key:"e", text:"Ability to use AdamW — softmax-output models require SGD with momentum, since AdamW's second-moment estimates destabilize under sparse vocab gradients."},
         ]}
-        trap={<>(d) is false — generative softmax still ranks fine; that's the *easy* part. (e) is unrelated to loss.</>}
-        lens={<>All three (a/b/c) are HSTU-specific design-review concerns. Each manifests in production: (a) → drifted CTR predictions; (b) → can't trivially shard scoring across machines per-candidate; (c) → re-weighting positives requires re-deriving the loss.</>}
+        trap={<>(d) is false — generative softmax ranks fine; that is the easy part. (e) is invented — AdamW works with softmax just as it does with sigmoid.</>}
+        lens={<>All three (a/b/c) are HSTU-specific design-review concerns. Each manifests in production: (a) drifted CTR predictions; (b) cannot trivially shard scoring across machines per-candidate; (c) re-weighting positives requires re-deriving the loss.</>}
         stretch={<>Which of the three is the easiest to mitigate? Which is the hardest?</>}
       />
 
-      {/* axis: C3 (what's dropped) */}
+      {/* C3 (keep — already at 'a'; rebalance budget tight) */}
       <VIS.TrapProblem
         id="hstu-c3"
         difficulty="hard"
-        title="C3 — HSTU drops crosses. What problem did MTGR set out to solve?"
-        scenario={<>MTGR (Meituan, CIKM 2025) adds DLRM cross-features back into the HSTU token stream via Group-Layer Normalization. What problem in pure HSTU motivated MTGR?</>}
+        title="C3 — Identifying the gap that motivates MTGR over pure HSTU"
+        scenario={<>MTGR (Meituan, CIKM 2025) adds DLRM cross-features back into the HSTU token stream via Group-Layer Normalization. Pick the option that names the specific HSTU regression MTGR was built to address.</>}
         options={[
-          {key:"a", text:"Pure HSTU regresses on surfaces where engineered cross-features had accumulated years of business signal (food delivery, ads); the gap is the *missing crosses*, not insufficient sequence.", correct:true},
-          {key:"b", text:"HSTU is too slow."},
-          {key:"c", text:"HSTU doesn't support long sequences."},
-          {key:"d", text:"HSTU has a worse scaling law than DLRM."},
+          {key:"a", text:"Pure HSTU regresses on surfaces where engineered cross-features had accumulated years of business signal (food delivery, ads); the gap is the missing crosses, not insufficient sequence.", correct:true},
+          {key:"b", text:"Pure HSTU is too slow on Meituan's serving infra; MTGR re-injects cross features as a way to amortize sequence cost across cheaper feature lookups."},
+          {key:"c", text:"Pure HSTU does not support sequences longer than 2k tokens, and Meituan's food-delivery sessions routinely exceed that; MTGR extends the context window."},
+          {key:"d", text:"Pure HSTU has a worse scaling law than DLRM on Meituan-scale data; MTGR adds GLN to recover the missing slope of the loss-vs-compute curve."},
         ]}
-        trap={<>(b), (c), (d) all misrepresent HSTU's strengths. The problem MTGR solves is specifically what HSTU sacrificed by *design*.</>}
-        lens={<>Crosses encode hard-won business signal that's not naturally surfaced by a generative sequence loss in finite training time. MTGR's GLN keeps cross-feature tokens and sequence tokens in separate norm sub-spaces, so the sequence loss doesn't wash out the crosses' signal.</>}
+        trap={<>(b), (c), (d) misrepresent HSTU's strengths: HSTU is fast on GPU, handles 8k+ context, and has a better scaling law than DLRM. The problem MTGR solves is specifically what HSTU sacrificed by design.</>}
+        lens={<>Crosses encode hard-won business signal that is not naturally surfaced by a generative sequence loss in finite training time. MTGR's GLN keeps cross-feature tokens and sequence tokens in separate norm sub-spaces, so the sequence loss does not wash out the crosses' signal.</>}
         stretch={<>Why GLN specifically? What would happen with plain LN on the merged token stream?</>}
       />
 
-      {/* axis: C4 (hyperparameter sensitivity) */}
+      {/* C4 — ordered (ordered mode, exempt from G6) */}
       <VIS.TrapProblem
         id="hstu-c4"
         difficulty="hard"
         mode="ordered"
-        title="C4 — Rank HSTU hyperparams by 'breaks production if mis-set'"
-        scenario={<>Rank in order of "production-breaking if mis-set": (a) attention-head count, (b) action-vocabulary cardinality, (c) sequence length, (d) calibration head temperature. Top of list = most catastrophic.</>}
+        title="C4 — Ranking HSTU hyperparameters by production-breaking risk"
+        scenario={<>Order these hyperparameters by how catastrophic a mis-set value is in production (top = worst): attention-head count, action-vocabulary cardinality, sequence length, calibration head temperature.</>}
         options={[
           {key:"a", text:"Calibration head temperature (mis-set → bid logic mis-prices → revenue alert in hours).", order:1},
           {key:"b", text:"Sequence length (too short → scaling law dies; too long → OOM).", order:2},
           {key:"c", text:"Action-vocabulary cardinality (too coarse → loss saturates; too fine → softmax compute explodes).", order:3},
-          {key:"d", text:"Attention-head count (matters but well-explored; rarely catastrophic)."},
+          {key:"d", text:"Attention-head count (matters but well-explored; rarely catastrophic on its own).", order:4},
         ]}
-        trap={<>Many candidates rank attention heads high because it's the most "transformer-y" knob. In production the dominant risk is calibration drift, then sequence length, then vocab cardinality. Head count is far down the list.</>}
-        lens={<>Calibration is HSTU-specific in a way the others aren't — every transformer has heads/seqlen tuning; only HSTU's generative softmax forces the recalibrate-or-lose-money decision.</>}
+        trap={<>Many candidates rank attention heads high because it is the most transformer-y knob. In production the dominant risk is calibration drift, then sequence length, then vocab cardinality. Head count is far down the list.</>}
+        lens={<>Calibration is HSTU-specific in a way the others are not — every transformer has heads/seqlen tuning; only HSTU's generative softmax forces the recalibrate-or-lose-money decision.</>}
         stretch={<>Which of these can be A/B tested cheaply? Which must be tuned offline?</>}
       />
 
-      {/* axis: C5 (data assumption violation) */}
+      {/* C5 */}
       <VIS.TrapProblem
         id="hstu-c5"
         difficulty="hard"
-        title="C5 — Surface logs only 'click' (no action types)"
-        scenario={<>You inherit a surface that logs only one action type ('click') because the original DLRM only needed CTR. You want HSTU. What specifically breaks?</>}
+        title="C5 — Predicting what fails when HSTU's action vocab collapses to click-only"
+        scenario={<>You inherit a surface that logs only the 'click' action type (the original DLRM only needed CTR). You want to ship HSTU on this surface. Pick the option that correctly identifies what regresses.</>}
         options={[
-          {key:"a", text:"The action vocabulary collapses to (item-ID) only, eliminating the heterogeneous-vocab advantage that motivates pointwise+aggregated norm; HSTU degenerates to SASRec.", correct:true},
-          {key:"b", text:"Nothing — HSTU works fine on click-only logs."},
-          {key:"c", text:"Cold-start gets worse."},
-          {key:"d", text:"GPU OOM."},
+          {key:"a", text:"Cold-start gets worse because the click-only loss removes the dwell and like signals that previously stood in for content similarity on new items."},
+          {key:"b", text:"The action vocabulary collapses to item-IDs only, eliminating the heterogeneous-vocab advantage that motivates pointwise+aggregated norm; HSTU degenerates to a SASRec-style item-only sequence model.", correct:true},
+          {key:"c", text:"GPU memory usage doubles because the softmax denominator is no longer factorized across action types, and the full item × click product fills VRAM at 8k context."},
+          {key:"d", text:"Nothing meaningful changes — HSTU works the same on click-only logs, since clicks already carry the dominant engagement signal for ranking tasks."},
         ]}
-        trap={<>(b) is the marketing reading. (c) and (d) are unrelated.</>}
-        lens={<>HSTU's contribution over SASRec is the heterogeneous vocabulary. Strip it, and you have a slightly faster SASRec — fine, but you paid a 6-month migration cost for that. The first thing to do *before* HSTU is instrument the surface to log dwell, scroll, like, share, exit — the action types that make the vocabulary heterogeneous.</>}
-        stretch={<>What's the minimum viable set of action types beyond 'click'? Three? Five? Twelve?</>}
+        trap={<>(a) is unrelated — cold-start lives in the embedding table, not in action diversity. (c) inverts the compute story: removing action types reduces the softmax denominator, it does not enlarge it. (d) is the marketing reading.</>}
+        lens={<>HSTU's contribution over SASRec is the heterogeneous vocabulary. Strip it, and you have a slightly faster SASRec — fine, but you paid a 6-month migration cost for it. The first thing to do before HSTU is instrument the surface to log dwell, scroll, like, share, exit — the action types that make the vocabulary heterogeneous.</>}
+        stretch={<>What is the minimum viable set of action types beyond click? Three? Five? Twelve?</>}
       />
 
-      {/* axis: C1 — attention variant */}
+      {/* C6 */}
       <VIS.TrapProblem
         id="hstu-c6"
         difficulty="hard"
-        title="C6 — Why SiLU-gated linear attention, not softmax?"
-        scenario={<>HSTU replaces softmax attention with a SiLU-gated linear-attention variant. The paper claims 5.3-15.2x over FlashAttention2 at 8k context. Why specifically *gated* linear attention, not plain linear attention?</>}
+        title="C6 — Explaining why HSTU's linear attention is SiLU-gated"
+        scenario={<>HSTU replaces softmax attention with a SiLU-gated linear-attention variant. The paper claims 5.3-15.2× over FlashAttention2 at 8k context. Pick the option whose mechanism explains why HSTU specifically adds the SiLU gate on top of linear attention rather than using the un-gated form.</>}
         options={[
-          {key:"a", text:"Plain linear attention loses the multiplicative interaction softmax provides; the gate (SiLU) restores it without re-introducing the O(n²) softmax cost.", correct:true},
-          {key:"b", text:"Linear attention is incompatible with positional encoding."},
-          {key:"c", text:"SiLU is a faster activation than ReLU."},
-          {key:"d", text:"It's required for FlashAttention compatibility."},
+          {key:"a", text:"Plain linear attention is incompatible with HSTU's positional encoding (rotary embeddings collapse the attention to a constant), and the SiLU gate restores positional sensitivity at O(n) cost."},
+          {key:"b", text:"SiLU is a faster activation than ReLU on H100s, so the gate is mostly a kernel-efficiency choice that incidentally improves expressivity over plain linear attention."},
+          {key:"c", text:"Plain linear attention drops the multiplicative interaction softmax provides; the SiLU gate restores data-dependent weighting without reintroducing the O(n²) softmax cost.", correct:true},
+          {key:"d", text:"The gate is required for FlashAttention compatibility — without it the kernel cannot fuse the QK^T product and the 5.3-15.2× speedup disappears."},
         ]}
-        trap={<>(b), (c), (d) are misreadings. (c) is a marginal effect compared to the O(n²) → O(n) win.</>}
-        lens={<>Linear attention is O(n) but loses the data-dependent weighting that makes softmax expressive. The gate re-introduces multiplicative interaction at O(n) cost. This is the *specific* algorithmic trick that makes 8k context tractable.</>}
+        trap={<>(a) invents a positional-encoding interaction. (b) is a marginal constant-factor effect compared to the O(n²) → O(n) win. (d) inverts the dependency — HSTU's attention does not call FlashAttention; it competes with it.</>}
+        lens={<>Linear attention is O(n) but loses the data-dependent weighting that makes softmax expressive. The gate reintroduces multiplicative interaction at O(n) cost. This is the specific algorithmic trick that makes 8k context tractable.</>}
         stretch={<>At what context length does softmax attention become comparable to HSTU's gated linear attention in throughput?</>}
       />
 
-      {/* axis: C2 — joint vocabulary */}
+      {/* C7 */}
       <VIS.TrapProblem
         id="hstu-c7"
         difficulty="hard"
-        title="C7 — Joint (item × action) softmax explodes; what does HSTU do?"
-        scenario={<>Naively, the joint softmax over (item-ID × action-type) would have |I|·|A| ~ 10⁸·10 = 10⁹ outputs. How does HSTU avoid the compute explosion at training time?</>}
+        title="C7 — Avoiding the joint (item × action) softmax explosion at training time"
+        scenario={<>Naively, the joint softmax over (item-ID × action-type) would have |I|·|A| ~ 10⁸·10 = 10⁹ outputs. Pick the option that correctly describes how HSTU trains without paying that cost.</>}
         options={[
           {key:"a", text:"Factorize the softmax: separate heads for action-type and item-ID, sharing the residual stream; only the item-ID softmax uses sampled softmax / negative sampling.", correct:true},
-          {key:"b", text:"Use full 10⁹-way softmax — modern GPUs can handle it."},
-          {key:"c", text:"Switch to a single binary CE head."},
-          {key:"d", text:"Project everything to 256-dim."},
+          {key:"b", text:"Run the full 10⁹-way softmax — modern H100s have enough HBM bandwidth to handle the denominator at production batch sizes."},
+          {key:"c", text:"Collapse to a single binary CE head per item, dropping the action-type prediction at training time and reconstructing it post-hoc from the item embedding."},
+          {key:"d", text:"Project every token to 256 dims first; the smaller embedding space caps the softmax compute regardless of vocab size."},
         ]}
-        trap={<>(b) is impractical at production data volumes. (c) gives up the generative advantage. (d) is unrelated.</>}
+        trap={<>(b) is impractical at production data volumes. (c) gives up the generative advantage that motivates HSTU in the first place. (d) confuses projection dimensionality with output cardinality — softmax cost scales with vocab size, not embedding dim.</>}
         lens={<>Factorized softmax + negative sampling on the item axis. The action-type axis is small and gets full softmax; item-ID gets sampled. This is the standard trick from LLM and recsys literatures applied to HSTU's specific joint structure.</>}
         stretch={<>What goes wrong if you use sampled softmax for action-type too?</>}
       />
@@ -1839,532 +1840,532 @@ flowchart TB
       {/* ============== D. Intuition traps ============== */}
       <h3 style={{marginTop:32, color:"#1f3a5f"}}>D. Intuition traps</h3>
 
-      {/* axis: D1 (intuitive but wrong) */}
+      {/* D1 */}
       <VIS.TrapProblem
         id="hstu-d1"
         difficulty="hard"
-        title="D1 — 'Generative > discriminative if you have data'"
-        scenario={<>The intuition "generative wins with enough data" is correct for LLMs. Why does it fail when applied to HSTU on an ads surface?</>}
+        title="D1 — Why the 'generative wins with enough data' intuition stalls on ads"
+        scenario={<>The intuition that generative models win once data is abundant works for LLMs. Pick the option that correctly explains why the same intuition fails for HSTU on an ads surface.</>}
         options={[
-          {key:"a", text:"On ads, downstream auction logic requires calibrated probabilities (P(click) → bid). HSTU's generative softmax over the action vocab outputs a different distribution shape than the pointwise sigmoid DLRM produced; the existing calibration breaks, mis-prices bids, revenue tanks even when ranking quality is better.", correct:true},
-          {key:"b", text:"Ads have less data than feeds."},
-          {key:"c", text:"Generative is always worse."},
-          {key:"d", text:"Discriminative is always better at ranking."},
+          {key:"a", text:"Ads simply have less data than feed surfaces, so HSTU's scaling law never kicks in; the cure is more impression logs, not a different architecture."},
+          {key:"b", text:"Generative models are systematically worse at ranking than discriminative ones because they trade pointwise accuracy for joint coverage of the output space."},
+          {key:"c", text:"Discriminative models always beat generative models at top-K retrieval; the ads stack is a retrieval problem under the hood, so HSTU loses regardless of data."},
+          {key:"d", text:"Ads auctions consume calibrated P(click) → bid; HSTU's generative softmax outputs a different distribution shape than the pointwise sigmoid DLRM produced, so existing calibration breaks and revenue tanks even when ranking quality improves.", correct:true},
         ]}
-        trap={<>(b) is empirically false — ads data volumes are huge. (c) and (d) are over-generalizations.</>}
-        lens={<>For ranking *quality alone*, HSTU often wins. For ads, the downstream consumer is an *auction*, which needs calibration. The generative loss shape doesn't naturally produce sigmoid-shaped scores. Same data, same ranking gain, totally different revenue outcome.</>}
+        trap={<>(a) is empirically false — ads data volumes are huge. (b) and (c) are over-generalizations dressed as principles.</>}
+        lens={<>For ranking quality alone, HSTU often wins. For ads, the downstream consumer is an auction, which needs calibration. The generative loss shape does not naturally produce sigmoid-shaped scores. Same data, same ranking gain, totally different revenue outcome.</>}
         stretch={<>Could you keep HSTU and recover calibration? At what cost?</>}
       />
 
-      {/* axis: D1 — scaling-as-magic */}
+      {/* D1b — multi-select */}
       <VIS.TrapProblem
         id="hstu-d1b"
         difficulty="hard"
-        title="D1b — 'Doubling FLOPs always doubles quality'"
-        scenario={<>Scaling laws say doubling compute reliably improves quality. You double FLOPs on HSTU; offline NDCG improves; online watch-time *doesn't*. Diagnose.</>}
+        title="D1b — Diagnosing flat online metrics after doubling HSTU FLOPs"
+        scenario={<>Scaling laws say doubling compute reliably improves quality. You double FLOPs on HSTU; offline NDCG improves; online watch-time stays flat. Identify the diagnoses that are HSTU-specific rather than generic ops issues.</>}
         multiSelect
         options={[
-          {key:"a", text:"Action-token vocabulary entropy decreases as scale grows — HSTU concentrates probability on 'safe' actions, raising NDCG against ground truth but lowering exploration.", correct:true},
-          {key:"b", text:"Candidate set mismatch: HSTU trained on full vocab but served against retrieval-filtered candidates that the generative loss never saw.", correct:true},
-          {key:"c", text:"Online has more bots."},
-          {key:"d", text:"Scaling laws don't exist."},
-          {key:"e", text:"Calibration drift between training and serving distributions becomes worse with scale.", correct:true},
+          {key:"a", text:"Action-token vocabulary entropy decreases as scale grows — HSTU concentrates probability on safe actions, raising NDCG against ground truth but lowering exploration online.", correct:true},
+          {key:"b", text:"Candidate-set mismatch: HSTU trained on the full action vocab but served against retrieval-filtered candidates that the generative loss never saw at training time.", correct:true},
+          {key:"c", text:"Online traffic has more bots, so realized watch-time is suppressed; the offline eval excludes them and looks healthier than reality."},
+          {key:"d", text:"Recsys scaling laws are unreliable — improvements seen at small scale rarely transfer to larger models in this domain."},
+          {key:"e", text:"Calibration drift between training and serving distributions becomes worse with scale, so online conversion is undercounted relative to offline reward.", correct:true},
         ]}
-        trap={<>(c), (d) are non-explanations. The HSTU-specific story is in the loss-vs-deployment mismatch that scale amplifies.</>}
-        lens={<>Scaling laws move offline metrics; online success requires the offline metric to *track* online. HSTU's generative loss is uniquely prone to making this gap worse with scale, not better.</>}
+        trap={<>(c) and (d) are non-explanations — bots affect every model equally, and scaling laws are not the issue here. The HSTU-specific story is in the loss-vs-deployment mismatch that scale amplifies.</>}
+        lens={<>Scaling laws move offline metrics; online success requires the offline metric to track online. HSTU's generative loss is uniquely prone to making this gap worse with scale, not better.</>}
         stretch={<>What offline metric would track watch-time better than NDCG for HSTU?</>}
       />
 
-      {/* axis: D2 (wrong-assumption cascade) */}
+      {/* D2 — multi-select */}
       <VIS.TrapProblem
         id="hstu-d2"
         difficulty="hard"
-        title="D2 — 'HSTU = DLRM + attention' cascade"
-        scenario={<>Tech lead assumes HSTU is "DLRM with attention bolted on." List the downstream wrong consequences of this assumption.</>}
+        title="D2 — Listing the downstream errors of treating HSTU as DLRM + attention"
+        scenario={<>A tech lead assumes HSTU is DLRM with attention bolted on. Identify which downstream system assumptions that framing breaks.</>}
         multiSelect
         options={[
-          {key:"a", text:"Feature pipeline assumed identical → wrong: HSTU consumes raw action stream, not crossed features; you need an upstream pipeline change.", correct:true},
-          {key:"b", text:"Calibration assumed identical → wrong: Platt scaler shape mismatch.", correct:true},
-          {key:"c", text:"Debug toolchain assumed identical → wrong: no per-cross attribution; need attention rollout / token-level Shapley.", correct:true},
-          {key:"d", text:"Offline metrics assumed identical → wrong: NDCG on fixed candidates undersells generative gains.", correct:true},
-          {key:"e", text:"GPU type assumed identical → fine, both run on A100/H100."},
+          {key:"a", text:"Feature pipeline assumed identical — wrong: HSTU consumes raw action stream, not crossed features; an upstream pipeline rewrite is required.", correct:true},
+          {key:"b", text:"Calibration assumed identical — wrong: Platt scaler shape mismatch silently mis-prices CTR within hours.", correct:true},
+          {key:"c", text:"Debug toolchain assumed identical — wrong: there is no per-cross attribution; you need attention rollout or token-level Shapley to explain ranks.", correct:true},
+          {key:"d", text:"Offline metrics assumed identical — wrong: NDCG on a fixed candidate set undersells generative gains and oversells under online distribution shift.", correct:true},
+          {key:"e", text:"GPU type assumed identical — both run on A100/H100 with no architecture-specific kernel requirement on the serving side."},
         ]}
-        trap={<>(e) is the only one that's actually unchanged. Candidates often pick fewer items because each looks like a corner case, but the cascade is the whole point.</>}
-        lens={<>The "DLRM + attention" framing is the most expensive cognitive error in HSTU migrations. Every adjacent system (features, calibration, debug, eval) needs to be re-thought because the cross+MLP factorization isn't there anymore.</>}
+        trap={<>(e) is the only one that is actually unchanged. Candidates often pick fewer items because each looks like a corner case, but the cascade is the whole point.</>}
+        lens={<>The DLRM + attention framing is the most expensive cognitive error in HSTU migrations. Every adjacent system (features, calibration, debug, eval) needs to be re-thought because the cross+MLP factorization is not there anymore.</>}
         stretch={<>Which of these is the cheapest to fix post-hoc, and which must be fixed before launch?</>}
       />
 
-      {/* axis: D3 (senior-vs-junior signal) */}
+      {/* D3 */}
       <VIS.TrapProblem
         id="hstu-d3"
         difficulty="hard"
-        title="D3 — Junior: more data. Senior: ?"
-        scenario={<>HSTU regresses 0.8% on conversion vs DLRM in shadow scoring. Junior eng says "train on 2x more data." Senior reaches for MTGR-style cross recovery. Why is the senior right?</>}
+        title="D3 — Choosing the right remedy for an HSTU regression on a tuned DLRM surface"
+        scenario={<>HSTU regresses 0.8% on conversion vs DLRM in shadow scoring of a mature, DLRM-tuned surface. A junior says "train on 2× more data." A senior reaches for MTGR-style cross recovery. Pick the option that names why the senior's remedy is the right one.</>}
         options={[
-          {key:"a", text:"On a mature DLRM-tuned surface, the gap is the missing crosses, not insufficient sequence; doubling data won't fill a gap that exists because the model doesn't have the *features* needed to express the cross-signal.", correct:true},
-          {key:"b", text:"More data always helps."},
-          {key:"c", text:"MTGR is faster to train."},
-          {key:"d", text:"Senior is wrong; junior is right."},
+          {key:"a", text:"More data always helps eventually — both remedies converge, but MTGR is preferred only because the senior wants a publication out of the migration."},
+          {key:"b", text:"On a mature DLRM-tuned surface, the gap is the missing crosses, not insufficient sequence; doubling data cannot fill a gap that exists because the model lacks the features needed to express cross-signal.", correct:true},
+          {key:"c", text:"MTGR is faster to train than a 2× data run, so the senior's choice is a project-management optimization rather than a modeling one."},
+          {key:"d", text:"The senior is wrong; junior is right — doubling data on HSTU always closes a sub-1% conversion gap because the action-token scaling law is monotonic."},
         ]}
-        trap={<>(b) is the textbook reflex. (c) is irrelevant. (d) is reverse-psychology.</>}
-        lens={<>Data scaling helps when the model has the capacity *and* the features to absorb it. HSTU has the capacity but lacks the cross-features that DLRM had — no amount of data fills a feature gap. MTGR's GLN solves the *features* problem, not the data problem.</>}
+        trap={<>(a) and (c) treat the choice as a project-management call rather than a feature-vs-data diagnosis. (d) is the textbook reflex.</>}
+        lens={<>Data scaling helps when the model has the capacity and the features to absorb it. HSTU has the capacity but lacks the cross-features that DLRM had — no amount of data fills a feature gap. MTGR's GLN solves the features problem, not the data problem.</>}
         stretch={<>When would the junior actually be right? What surface profile favors data over MTGR?</>}
       />
 
-      {/* axis: D4 (plausible misattribution) */}
+      {/* D4 (rebalance: leave a) */}
       <VIS.TrapProblem
         id="hstu-d4"
         difficulty="hard"
-        title="D4 — HSTU online watch-time drops 1.2%. Which cause?"
-        scenario={<>HSTU shipped at full traffic. Online watch-time drops 1.2% vs DLRM. Latency, GPU util, eval NDCG all unchanged or improved. Three plausible causes: (1) calibration drift, (2) candidate-set mismatch (HSTU trained on full action vocab, served against retrieval-filtered candidates), (3) eval distribution shift. Which is most likely?</>}
+        title="D4 — Diagnosing a 1.2% online watch-time drop after HSTU ramp"
+        scenario={<>HSTU shipped at full traffic. Online watch-time drops 1.2% vs DLRM. Latency, GPU util, eval NDCG all unchanged or improved. Pick the cause whose mechanism best matches this metric profile.</>}
         options={[
-          {key:"a", text:"Candidate-set mismatch — HSTU's generative loss optimizes over the *training* action distribution, but at serving time it scores a candidate set produced by an upstream retrieval that the loss never saw. NDCG on the offline candidate set is fine; online is different.", correct:true},
-          {key:"b", text:"Calibration drift — but eval NDCG was unchanged, so calibration alone wouldn't explain a watch-time drop independent of CTR."},
-          {key:"c", text:"Eval distribution shift — unlikely; would show in NDCG too."},
-          {key:"d", text:"GPU silent corruption."},
+          {key:"a", text:"Candidate-set mismatch — HSTU's generative loss optimizes over the training action distribution, but at serving time it scores a candidate set produced by an upstream retrieval that the loss never saw; offline NDCG hides this, online does not.", correct:true},
+          {key:"b", text:"Calibration drift — CTR predictions slipped right after cutover; the auction now mis-prices bids and watch-time drops as a side-effect of upstream impression mix."},
+          {key:"c", text:"Eval distribution shift — the offline split was sampled before the latest catalog refresh, so NDCG reflects an older candidate distribution than online sees."},
+          {key:"d", text:"Silent numerical corruption in the FP16 attention kernel — random small errors accumulate across long sequences and degrade ranks just enough to lose watch-time."},
         ]}
-        trap={<>(b) is plausible but ruled out by "eval NDCG unchanged." (c) similarly. (d) is exotic.</>}
-        lens={<>Candidate-set mismatch is the most HSTU-specific failure mode at full traffic. The fix is either (a) make the retrieval candidate-aware at training time, or (b) introduce a candidate-set adapter on top of the generative scores.</>}
+        trap={<>(b) is plausible but ruled out by "eval NDCG unchanged" — a calibration shift would not flatter NDCG. (c) similarly fails the same check. (d) is exotic and would also move NDCG.</>}
+        lens={<>Candidate-set mismatch is the most HSTU-specific failure mode at full traffic. The fix is either to make retrieval candidate-aware at training time, or to introduce a candidate-set adapter on top of the generative scores.</>}
         stretch={<>Design an offline eval that would have caught this before launch.</>}
       />
 
-      {/* axis: D1 — calibration intuition */}
+      {/* D5 */}
       <VIS.TrapProblem
         id="hstu-d5"
         difficulty="medium"
-        title="D5 — 'Temperature scaling is enough for HSTU calibration'"
-        scenario={<>You'd recalibrate HSTU's output by fitting a single temperature parameter T on a held-out set. Why is this insufficient for ads?</>}
+        title="D5 — Picking the right calibration shape for HSTU on ads"
+        scenario={<>You propose recalibrating HSTU's output by fitting a single temperature parameter T on a held-out set. Pick the option that correctly explains why this is insufficient for an ads auction.</>}
         options={[
-          {key:"a", text:"Temperature scales the logits uniformly; HSTU's miscalibration is non-uniform across the action vocabulary (some action types are systematically over/under-predicted), requiring per-action-type calibration.", correct:true},
-          {key:"b", text:"Temperature scaling doesn't work on softmax."},
-          {key:"c", text:"Temperature scaling is too slow."},
-          {key:"d", text:"It's actually sufficient."},
+          {key:"a", text:"Temperature scaling is incompatible with softmax outputs — it requires sigmoid logits, so the proposal fails before it can be evaluated against the auction's calibration needs."},
+          {key:"b", text:"Temperature scales the logits uniformly; HSTU's miscalibration is non-uniform across the action vocab (some action types are systematically over- or under-predicted), requiring per-action-type calibration.", correct:true},
+          {key:"c", text:"Temperature scaling is too slow to apply at p99 50ms because the calibration head must run sequentially with the softmax denominator, halving throughput on the auction-facing path."},
+          {key:"d", text:"It is actually sufficient — one temperature parameter is enough because HSTU's softmax tails are already well-calibrated by the generative loss; the apparent drift was a logging artifact."},
         ]}
-        trap={<>(b), (c), (d) are misreadings.</>}
-        lens={<>HSTU's generative softmax produces per-action-type probabilities that drift differently. One temperature can't fix all of them. The fix is a small calibration head with per-action-type scaling (or full Platt per action type).</>}
+        trap={<>(a) is invented — temperature scaling works on softmax. (c) overstates a constant-factor latency effect. (d) is the naive reading.</>}
+        lens={<>HSTU's generative softmax produces per-action-type probabilities that drift differently. One temperature cannot fix all of them. The fix is a small calibration head with per-action-type scaling (or full Platt per action type).</>}
         stretch={<>What happens if you fit temperature globally on CTR alone? Which actions get worse?</>}
       />
 
-      {/* axis: D2 — sequence-length cascade */}
+      {/* D6 — multi-select */}
       <VIS.TrapProblem
         id="hstu-d6"
         difficulty="hard"
-        title="D6 — 'Just truncate sequences to fit latency'"
-        scenario={<>Latency over budget. PM says "truncate from 8k to 1k tokens." Why is this catastrophic for HSTU specifically?</>}
+        title="D6 — Predicting what breaks when sequences are aggressively truncated"
+        scenario={<>Latency is over budget. PM says: truncate sequences from 8k to 1k tokens. Identify the failure modes this introduces for HSTU specifically.</>}
         multiSelect
         options={[
-          {key:"a", text:"The scaling law breaks: HSTU's offline-quality gain scales as a power law in *both* compute and sequence length; cutting tokens 8x is roughly equivalent to cutting model size by the same factor.", correct:true},
-          {key:"b", text:"Long-tail interests (rarely-occurring item types) are stored in the older tokens that just got truncated.", correct:true},
-          {key:"c", text:"Calibration breaks because the model is now operating outside its training distribution.", correct:true},
-          {key:"d", text:"It's fine — short sequences work."},
+          {key:"a", text:"The scaling law breaks: HSTU's offline-quality gain scales as a power law in both compute and sequence length, so cutting tokens 8× is roughly equivalent to cutting model size by the same factor.", correct:true},
+          {key:"b", text:"Long-tail interests live in older tokens that just got truncated; rare-item recall drops sharply because the residual stream no longer carries those signals.", correct:true},
+          {key:"c", text:"Calibration breaks because the model is now operating outside its training-distribution sequence-length regime, and the held-out calibration head was fit on 8k sequences.", correct:true},
+          {key:"d", text:"It is fine — short sequences work; HSTU is robust to context-length changes because the gated linear attention is length-invariant in expectation."},
         ]}
         trap={<>(d) is the casual reading.</>}
-        lens={<>HSTU's value proposition is long-sequence scaling. Truncate aggressively and you've reverted to a small transformer with worse inductive bias than DLRM. Better: KV-cache + precompute user vectors at the cost of staleness, or hierarchical attention.</>}
-        stretch={<>What's the breakeven sequence length below which HSTU stops beating DLRM, ballpark?</>}
+        lens={<>HSTU's value proposition is long-sequence scaling. Truncate aggressively and you have reverted to a small transformer with worse inductive bias than DLRM. Better: KV-cache plus precompute user vectors at the cost of staleness, or hierarchical attention.</>}
+        stretch={<>What is the breakeven sequence length below which HSTU stops beating DLRM, ballpark?</>}
       />
 
       {/* ============== E. Operations ============== */}
       <h3 style={{marginTop:32, color:"#1f3a5f"}}>E. Operations</h3>
 
-      {/* axis: E1 (production gotcha) */}
+      {/* E1 (already 'a'; budget) */}
       <VIS.TrapProblem
         id="hstu-e1"
         difficulty="hard"
-        title="E1 — KV-cache vs online learning"
-        scenario={<>HSTU production runs with KV-cache reuse for user prefixes. Concurrently, item-ID embeddings update from an online-learning loop every 30 minutes. What's the failure mode?</>}
+        title="E1 — Predicting the failure when KV-cache meets online embedding refresh"
+        scenario={<>HSTU production runs with KV-cache reuse for user prefixes. Concurrently, item-ID embeddings update from an online-learning loop every 30 minutes. Pick the option whose failure mode follows from this interaction.</>}
         options={[
           {key:"a", text:"Cached KV entries reference stale embedding vectors after each refresh; predictions silently use mixed-vintage embeddings until the next cache eviction, causing inconsistent per-request behavior.", correct:true},
-          {key:"b", text:"KV-cache memory overflow."},
-          {key:"c", text:"Predictions become deterministic."},
-          {key:"d", text:"Latency drops to zero."},
+          {key:"b", text:"KV-cache memory overflows because each refresh doubles the residual stream size; serving OOMs after the second cycle unless cache size is halved before launch."},
+          {key:"c", text:"Predictions become deterministic across users because the cache normalizes embeddings across the active prefix set; recommendation diversity collapses to a single popular trajectory."},
+          {key:"d", text:"Latency drops to zero on the affected paths because the cache short-circuits the attention computation entirely until the next eviction triggers a recompute."},
         ]}
-        trap={<>(b) is a separate concern. (c), (d) are nonsensical.</>}
+        trap={<>(b) is a separate concern (raw cache sizing). (c) and (d) are mechanically impossible — caches do not normalize embeddings or zero out latency.</>}
         lens={<>Either rebuild KV-cache on every embedding refresh (cost) or accept silent staleness (quality drift). Most production HSTUs use a hybrid: refresh-on-embedding-version-bump for hot items, lazy refresh for the tail.</>}
-        stretch={<>What's the metric you'd track to detect this drift in production?</>}
+        stretch={<>What is the metric you would track to detect this drift in production?</>}
       />
 
-      {/* axis: E2 (failure-on-Friday) */}
+      {/* E2 */}
       <VIS.TrapProblem
         id="hstu-e2"
         difficulty="hard"
-        title="E2 — Friday 3am: predicted-CTR up 30%, revenue alert"
-        scenario={<>HSTU shipped Thursday afternoon. Friday 3am page: predicted-CTR has shifted right by 30% vs realized. Bids are mis-priced; auction-side revenue alarms fire. Latency, GPU util, ranking quality, eval NDCG: all unchanged. Why HSTU-specifically and not DLRM?</>}
+        title="E2 — Naming the cause of an HSTU CTR-drift page at 3am Friday"
+        scenario={<>HSTU shipped Thursday afternoon. Friday 3am page: predicted-CTR has shifted right by 30% vs realized. Bids are mis-priced; auction-side revenue alarms fire. Latency, GPU util, ranking quality, eval NDCG: all unchanged. Pick the option whose cause is HSTU-specific.</>}
         options={[
-          {key:"a", text:"DLRM's existing Platt scaler was fit on the pointwise sigmoid; HSTU's generative softmax has a different output shape (softer tails, mass on non-click actions). Reusing DLRM's calibration head silently mis-maps HSTU's outputs to CTR.", correct:true},
-          {key:"b", text:"HSTU randomly predicts higher numbers."},
-          {key:"c", text:"GPU thermal throttling at 3am."},
-          {key:"d", text:"Friday-specific data drift."},
+          {key:"a", text:"HSTU randomly emits higher numbers than DLRM because softmax outputs are unbounded; the auction was tuned for sigmoid output ranges and overbids by 30% as a result."},
+          {key:"b", text:"GPU thermal throttling at 3am — when one rack hits its overnight thermal envelope, FP16 attention rounds more aggressively and produces inflated logits on a fraction of requests."},
+          {key:"c", text:"DLRM's existing Platt scaler was fit on pointwise sigmoid; HSTU's generative softmax has softer tails and mass on non-click actions, so reusing the old calibration head silently mis-maps HSTU outputs to CTR.", correct:true},
+          {key:"d", text:"A Friday-specific data drift in the impression mix amplifies HSTU's sensitivity to time-of-day features; a per-weekday calibration head would fix it."},
         ]}
-        trap={<>(b), (c), (d) are red herrings; the trap is the candidate who blames generic ops issues instead of the loss-shape mismatch.</>}
-        lens={<>The fix is fitting a new calibration head on HSTU's generative output distribution. Train it on hold-out data — *not* on the same logits the Platt scaler used. Validate on bid-impact, not just NLL.</>}
-        stretch={<>What's the shadow-test that would have caught this Tuesday instead of 3am Friday?</>}
+        trap={<>(a), (b), (d) are red herrings; the trap is the candidate who blames generic ops issues instead of the loss-shape mismatch.</>}
+        lens={<>The fix is fitting a new calibration head on HSTU's generative output distribution. Train it on hold-out data — not on the same logits the Platt scaler used. Validate on bid-impact, not just NLL.</>}
+        stretch={<>What is the shadow-test that would have caught this Tuesday instead of 3am Friday?</>}
       />
 
-      {/* axis: E3 (implementation specifics) */}
+      {/* E3 */}
       <VIS.TrapProblem
         id="hstu-e3"
         difficulty="hard"
-        title="E3 — Open-source HSTU default that bites you"
-        scenario={<>You use the open-source HSTU reference implementation. There's a default in <code>HSTUConfig</code> that's wrong for many production surfaces. Which?</>}
+        title="E3 — Spotting the open-source HSTU default that bites production"
+        scenario={<>You use the open-source HSTU reference implementation. One default in HSTUConfig silently regresses many production surfaces. Pick the option whose default is the silent-trap one.</>}
         options={[
-          {key:"a", text:"`truncate_left=True` (drop oldest events when over-length) — on a feed surface, oldest events carry long-tail interest signal; left-truncation silently destroys it.", correct:true},
-          {key:"b", text:"`dropout=0.0` — fine for most cases."},
-          {key:"c", text:"`use_bfloat16=False` — minor speed effect."},
-          {key:"d", text:"`num_layers=24` — paper recommends this."},
+          {key:"a", text:"truncate_left=True drops the oldest events when sequences exceed max length; on a feed surface, oldest events carry long-tail interest signal and left-truncation silently destroys it.", correct:true},
+          {key:"b", text:"dropout=0.0 disables regularization at scale; production teams need 0.1-0.2 to keep generalization from collapsing under multi-epoch training on the action vocab."},
+          {key:"c", text:"use_bfloat16=False forces FP32 throughout; the resulting throughput hit is enough to push p99 over budget even before the calibration head is added downstream."},
+          {key:"d", text:"num_layers=24 is the paper's deepest variant; defaulting to it doubles your serving cost compared to the 12-layer variant that recovers 95% of the quality."},
         ]}
-        trap={<>(b), (c), (d) are real defaults but not the silent-trap one.</>}
+        trap={<>(b), (c), (d) are real defaults but not the silent-trap one — they are visible at train time. Left-truncation is silent in that the loss curve looks fine but the model never sees the most valuable tail signal.</>}
         lens={<>Left-truncation is silently destructive on engagement surfaces where long-tail signal is exactly the value-add. Right-truncation, windowed attention, or hierarchical attention preserves the head-of-history.</>}
-        stretch={<>If you can't change the default, what's the data-pipeline fix?</>}
+        stretch={<>If you cannot change the default, what is the data-pipeline fix?</>}
       />
 
-      {/* axis: E4 (rollout / migration) */}
+      {/* E4 — ordered */}
       <VIS.TrapProblem
         id="hstu-e4"
         difficulty="hard"
         mode="ordered"
-        title="E4 — Order the DLRM → HSTU migration phases"
-        scenario={<>Phases: (a) shadow scoring (HSTU computes scores, ignored), (b) mirror serving (both score, DLRM serves), (c) small-traffic ramp with new calibration head, (d) full traffic + retire DLRM. Wrong items get no order.</>}
+        title="E4 — Ordering the DLRM → HSTU migration phases"
+        scenario={<>Order these migration phases: shadow scoring, mirror serving, small-traffic ramp, full traffic + DLRM retirement. Wrong items get no order.</>}
         options={[
-          {key:"a", text:"Shadow scoring — establish HSTU runs at production load without affecting users.", order:1},
-          {key:"b", text:"Mirror serving with fresh calibration head fit — both score, DLRM serves, you measure HSTU's calibrated CTR vs realized.", order:2},
-          {key:"c", text:"Small-traffic ramp (1-5%) — first time HSTU actually serves; monitor revenue + watch-time.", order:3},
-          {key:"d", text:"Full traffic + DLRM retirement.", order:4},
-          {key:"e", text:"Skip shadow; start at 50% to save weeks."},
-          {key:"f", text:"Retire DLRM first to free GPU."},
+          {key:"a", text:"Shadow scoring — HSTU computes scores, ignored at serving; establish HSTU runs at production load without affecting users.", order:1},
+          {key:"b", text:"Mirror serving with fresh calibration head fit — both score, DLRM serves, measure HSTU's calibrated CTR vs realized.", order:2},
+          {key:"c", text:"Small-traffic ramp (1-5%) — first time HSTU actually serves; monitor revenue + watch-time before scaling up.", order:3},
+          {key:"d", text:"Full traffic + DLRM retirement once revenue and engagement metrics confirm parity or lift.", order:4},
+          {key:"e", text:"Skip shadow scoring; start at 50% to save weeks (does not get an order; harmful)."},
+          {key:"f", text:"Retire DLRM first to free GPU before HSTU is even shadow-scoring (does not get an order; reckless)."},
         ]}
-        trap={<>Many candidates skip mirror serving or start the calibration head only at the ramp phase. The calibration head must be *fit during mirror serving* — that's the phase where you have aligned data to fit it.</>}
-        lens={<>The HSTU-specific bit is *when* you fit the calibration head — during mirror, not during ramp. Skipping mirror is what causes Friday-3am pages.</>}
-        stretch={<>What's the SLA at each ramp stage? When do you roll back?</>}
+        trap={<>Many candidates skip mirror serving or start the calibration head only at the ramp phase. The calibration head must be fit during mirror serving — that is the phase where you have aligned data to fit it.</>}
+        lens={<>The HSTU-specific bit is when you fit the calibration head — during mirror, not during ramp. Skipping mirror is what causes Friday-3am pages.</>}
+        stretch={<>What is the SLA at each ramp stage? When do you roll back?</>}
       />
 
-      {/* axis: E5 (reproducibility) */}
+      {/* E5 — multi-select */}
       <VIS.TrapProblem
         id="hstu-e5"
         difficulty="hard"
-        title="E5 — Reproducing the 5.3-15.2x speedup claim"
-        scenario={<>The paper claims HSTU's attention is 5.3-15.2x faster than FlashAttention2. Which experimental conditions must you match to even approach those numbers?</>}
+        title="E5 — Reproducing the 5.3-15.2× speedup claim"
+        scenario={<>The paper claims HSTU's attention is 5.3-15.2× faster than FlashAttention2. Identify which experimental conditions you must match to even approach those numbers.</>}
         multiSelect
         options={[
-          {key:"a", text:"Sequence length 8k+ (gains compress sharply at 1-2k).", correct:true},
-          {key:"b", text:"Batch size 64+ (at production p99 batch sizes of 8-32, gains compress to 2-3x).", correct:true},
-          {key:"c", text:"A100/H100 GPU (Ampere or newer).", correct:true},
-          {key:"d", text:"Use the same MovieLens-25M dataset."},
-          {key:"e", text:"Run on CPU — Meta released CPU-optimized weights."},
+          {key:"a", text:"Sequence length 8k+ (gains compress sharply at 1-2k, where softmax attention is still cache-friendly).", correct:true},
+          {key:"b", text:"Batch size 64+ (at production p99 batch sizes of 8-32, gains compress to 2-3× because launch overhead dominates).", correct:true},
+          {key:"c", text:"A100/H100 GPU (Ampere or newer); older Volta/Turing kernels lack the tensor-core paths the speedup depends on.", correct:true},
+          {key:"d", text:"Use the same MovieLens-25M dataset; the attention-speed benchmark is dataset-dependent because vocab cardinality changes the inner kernel shape."},
+          {key:"e", text:"Run on CPU using Meta's released CPU-optimized weights, which are tuned for AVX-512 inference at the same batch sizes."},
         ]}
-        trap={<>(d) is irrelevant to the attention-speed benchmark. (e) is false — no CPU-optimized weights exist.</>}
-        lens={<>The speedup claim is sensitive to seqlen and batch size. Production teams that report "we only got 2-3x" are usually serving at small batch — the gains shape is in the paper's Figure 4 appendix.</>}
+        trap={<>(d) is irrelevant to the attention-speed benchmark — vocab cardinality is downstream of attention timing. (e) is false; no CPU-optimized HSTU weights have been released.</>}
+        lens={<>The speedup claim is sensitive to seqlen and batch size. Production teams that report "we only got 2-3×" are usually serving at small batch — the gains shape is in the paper's Figure 4 appendix.</>}
         stretch={<>What batch size would maximize HSTU throughput at p99 100ms? Why not just go larger?</>}
       />
 
-      {/* axis: E6 (eval contamination) */}
+      {/* E6 */}
       <VIS.TrapProblem
         id="hstu-e6"
         difficulty="hard"
-        title="E6 — Public benchmarks hide HSTU's weakness"
-        scenario={<>HSTU beats DLRM by 4% NDCG on MovieLens-25M and Amazon-Books. What property of those benchmarks hides HSTU's real-world cold-start weakness?</>}
+        title="E6 — Identifying the benchmark artifact that hides HSTU's cold-start weakness"
+        scenario={<>HSTU beats DLRM by 4% NDCG on MovieLens-25M and Amazon-Books. Pick the option that names the property of those benchmarks that hides HSTU's real-world cold-start weakness.</>}
         options={[
-          {key:"a", text:"Public benchmarks include only items with substantial interaction history (filtering applied during dataset curation); cold-start items are invisible to the eval.", correct:true},
-          {key:"b", text:"Public benchmarks include synthetic data."},
-          {key:"c", text:"Public benchmarks are too small."},
-          {key:"d", text:"Public benchmarks use BPR not NDCG."},
+          {key:"a", text:"Public benchmarks include synthetic interaction data injected to balance the long tail; the synthetic events warm cold items and obscure their real recall deficit."},
+          {key:"b", text:"Public benchmarks filter out items with thin interaction history during dataset curation, so cold-start items are invisible to the eval and HSTU's lack of a content tower never gets tested.", correct:true},
+          {key:"c", text:"Public benchmarks are too small (under 25M events) for HSTU's scaling law to manifest; the 4% NDCG gap is therefore a finite-sample artifact rather than a real lift."},
+          {key:"d", text:"Public benchmarks score BPR loss rather than NDCG; the apparent 4% lift is a metric-mapping illusion that disappears once both models are re-evaluated under matched loss."},
         ]}
-        trap={<>(b), (c), (d) are not the issue. The cold-start invisibility is a curation artifact.</>}
+        trap={<>(a) is invented. (c) is the wrong direction — the gap is real on these benchmarks; the issue is what they omit. (d) misnames the eval metric.</>}
         lens={<>Production catalogs have heavy head/tail. Public benchmarks pre-filter the tail. HSTU's lack of content tower → cold-start regression → invisible in the benchmark. The fix is augmenting your eval with cold-start slices.</>}
         stretch={<>Design a public benchmark slice that would surface this weakness.</>}
       />
 
-      {/* axis: E1 — embeddings + scale */}
+      {/* E7 (already 'a'; budget) */}
       <VIS.TrapProblem
         id="hstu-e7"
         difficulty="hard"
-        title="E7 — HSTU's heterogeneous vocab → sub-table sharding policy"
-        scenario={<>HSTU's action vocabulary is heterogeneous: <strong>action-type tokens</strong> (~10s, every step), <strong>item-ID tokens</strong> (~50M, sparse hot/cold), <strong>contextual tokens</strong> (~1Ks, surface-dependent). At 50M items the table is too big for one GPU. Which sub-table needs which sharding strategy?</>}
+        title="E7 — Picking a sub-table sharding policy for HSTU's heterogeneous vocab"
+        scenario={<>HSTU's action vocab is heterogeneous: action-type tokens (~10s, every step), item-ID tokens (~50M, sparse hot/cold), contextual tokens (~1Ks, surface-dependent). At 50M items the table is too big for one GPU. Pick the sharding policy whose mapping to access patterns is right.</>}
         options={[
-          {key:"a", text:"Action-type sub-table → fully replicate on every shard (tiny, hot every step; replication beats network hops). Item-ID sub-table → row-wise shard by frequency-aware hash with hot rows mirrored (Pareto access). Contextual sub-table → column-wise shard or co-locate with action-type since access is bursty + low-cardinality.", correct:true},
-          {key:"b", text:"Shard every sub-table the same way DLRM-v2 shards its single embedding table — HSTU adds no new constraint."},
-          {key:"c", text:"Replicate all three sub-tables on every shard."},
-          {key:"d", text:"Row-shard all three by item-ID."},
+          {key:"a", text:"Replicate action-type fully on every shard (tiny + hot every step); row-shard item-IDs by frequency-aware hash with hot rows mirrored; column-shard contextual or co-locate with action-type since access is bursty + low-cardinality.", correct:true},
+          {key:"b", text:"Shard every sub-table the way DLRM-v2 shards its single embedding table; HSTU adds no new sharding constraint beyond what the DLRM playbook already covers."},
+          {key:"c", text:"Replicate all three sub-tables on every shard so any worker can score any request locally; the memory cost is acceptable up to 50M items at FP16."},
+          {key:"d", text:"Row-shard all three sub-tables by item-ID hash so every shard owns a contiguous slice of every vocab; this minimizes lookup latency across all token types uniformly."},
         ]}
-        trap={<>(b) is the trap — it's the DLRM-v2 playbook and ignores that HSTU's vocab is *not* one table but three sub-vocabs with very different access patterns; redaction-substitute "HSTU" with "Model X" and (b) becomes plausible only if Model X has a single homogeneous table, which HSTU doesn't. (c) blows up memory on the item sub-table. (d) treats action-type tokens (10s) like item-IDs (50M) — disastrous all-to-all traffic on every step.</>}
-        lens={<>HSTU's heterogeneous action vocab forces *per-sub-table* sharding policies that DLRM-v2's single-table playbook never had to address. The access-pattern asymmetry (action-type every step, item-IDs Pareto, contextual bursty) is the load-bearing fact; sharding by that asymmetry is the HSTU-specific move.</>}
-        stretch={<>If you add a 4th sub-table (e.g. creator-IDs at 5M cardinality, frequent for follow-feed users), what's the right starting policy and what would force you to revisit it?</>}
+        trap={<>(b) is the DLRM-v2 playbook and ignores that HSTU's vocab is not one table but three sub-vocabs with very different access patterns. (c) blows up memory on the item sub-table at 50M cardinality. (d) treats action-type tokens (10s) like item-IDs (50M) — disastrous all-to-all traffic on every step.</>}
+        lens={<>HSTU's heterogeneous action vocab forces per-sub-table sharding policies that DLRM-v2's single-table playbook never had to address. The access-pattern asymmetry (action-type every step, item-IDs Pareto, contextual bursty) is the load-bearing fact; sharding by that asymmetry is the HSTU-specific move.</>}
+        stretch={<>If you add a 4th sub-table (e.g. creator-IDs at 5M cardinality, frequent for follow-feed users), what is the right starting policy and what would force you to revisit it?</>}
       />
 
       {/* ============== F. Failure modes ============== */}
       <h3 style={{marginTop:32, color:"#1f3a5f"}}>F. Failure modes</h3>
 
-      {/* axis: F2 (adversarial test) */}
+      {/* F2 */}
       <VIS.TrapProblem
         id="hstu-f2"
         difficulty="hard"
-        title="F2 — Adversarial action sequence"
-        scenario={<>Design an adversarial sequence that maximally degrades HSTU but leaves DLRM unaffected.</>}
+        title="F2 — Designing an adversarial sequence that hurts HSTU but spares DLRM"
+        scenario={<>Design an input sequence whose effect degrades HSTU disproportionately relative to DLRM. Pick the option whose mechanism actually exploits the architectural difference.</>}
         options={[
-          {key:"a", text:"`[click_item_X] × 100` — repeated identical action on one item collapses attention to a self-loop; next-action prediction degenerates to 'more of this'. DLRM scores (user, candidate) pointwise and is unaffected by sequence regularity.", correct:true},
-          {key:"b", text:"Random noise tokens."},
-          {key:"c", text:"Empty sequence."},
-          {key:"d", text:"Sequences of length 1B."},
+          {key:"a", text:"Random noise tokens drawn uniformly from the action vocab; the entropy spike confuses HSTU's softmax while DLRM's pointwise scoring averages it out."},
+          {key:"b", text:"Empty sequence at serving time; HSTU has no fallback distribution and degrades to uniform, while DLRM still scores from user/item features alone."},
+          {key:"c", text:"[click_item_X] × 100 — repeated identical action collapses attention to a self-loop and the next-action prediction degenerates to 'more of this'; DLRM scores pointwise and is unaffected.", correct:true},
+          {key:"d", text:"Sequences of length 1B padded with EOS tokens at serving time; HSTU OOMs on the prefill while DLRM ignores padded positions because its MLP only consumes the current (user, item) pair."},
         ]}
-        trap={<>(b), (c), (d) hurt every model. (a) hurts HSTU *specifically*.</>}
-        lens={<>HSTU's attention assumes sequence diversity. Repetitive sequences are a low-cost adversarial input. The attack reveals HSTU's reliance on *behavioral entropy* — a property DLRM doesn't require.</>}
+        trap={<>(a), (b), (d) hurt every model, not HSTU specifically — DLRM also degrades under noise, empty input, or absurd lengths. Only the repetition attack hurts HSTU because of attention-to-sequence-structure.</>}
+        lens={<>HSTU's attention assumes sequence diversity. Repetitive sequences are a low-cost adversarial input. The attack reveals HSTU's reliance on behavioral entropy — a property DLRM does not require.</>}
         stretch={<>How would you detect and filter adversarial repetitive sequences at training time?</>}
       />
 
-      {/* axis: F3 (reverse engineering) */}
+      {/* F3 */}
       <VIS.TrapProblem
         id="hstu-f3"
         difficulty="hard"
-        title="F3 — Vocab entropy down, NDCG up, online flat"
-        scenario={<>You scale HSTU from 100M → 1.5B params. <strong>Action-token vocabulary entropy keeps decreasing.</strong> Offline NDCG keeps climbing. Online watch-time plateaus. Which HSTU-specific design choice drives this divergence?</>}
+        title="F3 — Locating which HSTU choice drives a vocab-entropy / online-flat divergence"
+        scenario={<>You scale HSTU from 100M → 1.5B params. Action-token vocabulary entropy keeps decreasing. Offline NDCG keeps climbing. Online watch-time plateaus. Pick the HSTU design choice that drives this divergence.</>}
         options={[
-          {key:"a", text:"Generative softmax over the action vocab — concentrates probability on 'safe' tokens at scale; NDCG against ground truth rewards this; online (which depends on exploration) doesn't.", correct:true},
-          {key:"b", text:"Pointwise + aggregated norm."},
-          {key:"c", text:"Dropped cross features."},
-          {key:"d", text:"Action-token sequence ordering."},
+          {key:"a", text:"Pointwise + aggregated norm — at scale it amplifies dominant action types in the residual stream, which shows up as entropy collapse downstream."},
+          {key:"b", text:"Dropped cross features — without crosses, the model leans harder on action-token frequency and mode-collapses on the most frequent action class."},
+          {key:"c", text:"Action-token sequence ordering — the causal mask biases predictions toward recent tokens at scale, dropping vocab entropy as the model trusts recency more."},
+          {key:"d", text:"Generative softmax over the action vocab — concentrates probability on safe tokens at scale; NDCG against ground truth rewards this; online (which depends on exploration) does not.", correct:true},
         ]}
-        trap={<>(b), (c), (d) are real HSTU choices but don't drive vocab-entropy collapse specifically.</>}
-        lens={<>The generative loss with a finite vocab tends to mode-collapse as capacity grows. NDCG on a fixed eval set doesn't notice; online does. The fix is loss regularization (label smoothing on the action vocab) or an explicit exploration head.</>}
-        stretch={<>Why doesn't this happen in LLMs at the same rate? What's different about the action vocab?</>}
+        trap={<>(a), (b), (c) are real HSTU choices but do not drive vocab-entropy collapse specifically; only the generative-softmax loss systematically concentrates mass as capacity grows.</>}
+        lens={<>The generative loss with a finite vocab tends to mode-collapse as capacity grows. NDCG on a fixed eval set does not notice; online does. The fix is loss regularization (label smoothing on the action vocab) or an explicit exploration head.</>}
+        stretch={<>Why doesn't this happen in LLMs at the same rate? What is different about the action vocab?</>}
       />
 
-      {/* axis: F4 (paper-named failure) */}
+      {/* F4 */}
       <VIS.TrapProblem
         id="hstu-f4"
         difficulty="hard"
-        title="F4 — Paper-named failure mode"
-        scenario={<>The HSTU paper itself flags a regime where pure HSTU underperforms. Which one?</>}
+        title="F4 — Picking the regime the HSTU paper itself flags as weak"
+        scenario={<>The HSTU paper itself flags a regime where pure HSTU underperforms. Pick the regime named in the paper.</>}
         options={[
-          {key:"a", text:"Short user-history domains and surfaces with strong contextual covariates not in the action stream.", correct:true},
-          {key:"b", text:"GPU-rich engagement-loop surfaces."},
-          {key:"c", text:"Multilingual content."},
-          {key:"d", text:"Reinforcement-learning recommender environments."},
+          {key:"a", text:"GPU-rich engagement-loop surfaces with long histories, where the action-token scaling law saturates before quality gains materialize."},
+          {key:"b", text:"Short user-history domains and surfaces with strong contextual covariates not in the action stream (e.g. search queries, ad targeting context).", correct:true},
+          {key:"c", text:"Multilingual content surfaces, where tokenization across languages decouples action types from the items they refer to."},
+          {key:"d", text:"Reinforcement-learning recommender environments, where HSTU's generative loss conflicts with the policy-gradient update used by the RL controller."},
         ]}
-        trap={<>(b) is the opposite — that's where HSTU wins. (c), (d) are not paper-flagged.</>}
-        lens={<>The paper is honest about regime-of-validity. The architectural reason maps to two of the standing HSTU weaknesses: (i) no inductive bias for short sequences, (ii) no native handling of context not in the action stream (e.g., query terms in search).</>}
+        trap={<>(a) is the opposite — that is where HSTU wins. (c), (d) are not paper-flagged regimes.</>}
+        lens={<>The paper is honest about regime-of-validity. The architectural reason maps to two of the standing HSTU weaknesses: no inductive bias for short sequences, no native handling of context not in the action stream (e.g. query terms in search).</>}
         stretch={<>How would you augment HSTU to handle a strong contextual covariate (e.g. query text) without breaking the action-vocab framework?</>}
       />
 
-      {/* axis: F5 (community-found — MTGR) */}
+      {/* F5 */}
       <VIS.TrapProblem
         id="hstu-f5"
         difficulty="hard"
-        title="F5 — Without looking it up, derive MTGR's motivation from HSTU's choices"
-        scenario={<>The MTGR paper (Meituan 2025) shows vanilla HSTU regresses on a specific class of recommendation surface where DLRM had been strong. From HSTU's architectural choices alone, derive which class of surface and what specific mechanism MTGR uses.</>}
+        title="F5 — Deriving MTGR's motivation from HSTU's architectural choices"
+        scenario={<>The MTGR paper (Meituan 2025) shows vanilla HSTU regresses on a specific class of recommendation surface where DLRM had been strong. From HSTU's architectural choices alone, derive which class of surface and which specific mechanism MTGR uses.</>}
         options={[
-          {key:"a", text:"Surface class: mature DLRM-tuned rankers with deep cross-feature engineering (food delivery, ads). Mechanism: re-inject cross features as additional tokens with Group-Layer Normalization, so the sequence loss doesn't wash out their signal.", correct:true},
-          {key:"b", text:"Surface class: short-form video; mechanism: longer sequences."},
-          {key:"c", text:"Surface class: search; mechanism: replace softmax with sigmoid."},
-          {key:"d", text:"Surface class: cold-start; mechanism: RQ-VAE Semantic IDs."},
+          {key:"a", text:"Surface: mature DLRM-tuned rankers with deep cross-feature engineering (food delivery, ads). Mechanism: re-inject crosses as additional tokens with Group-Layer Normalization to preserve their signal.", correct:true},
+          {key:"b", text:"Surface class: short-form video; mechanism: extend sequences past 16k tokens to push the scaling-law gain past what HSTU's paper showed."},
+          {key:"c", text:"Surface class: search; mechanism: replace the action-vocab softmax with sigmoid so each candidate becomes independently scorable inside the existing retrieval stack."},
+          {key:"d", text:"Surface class: cold-start-heavy catalogs; mechanism: swap random item-IDs for RQ-VAE Semantic IDs so newly-launched items share embedding prefixes with seen ones."},
         ]}
-        trap={<>(b), (c), (d) misread the architectural diff. The HSTU choice that MTGR addresses is *dropping crosses*, not sequence length, softmax shape, or content tokenization.</>}
+        trap={<>(b), (c), (d) misread the architectural diff. The HSTU choice that MTGR addresses is dropping crosses, not sequence length, softmax shape, or content tokenization.</>}
         lens={<>HSTU drops crosses → mature DLRM surfaces lose business signal → MTGR re-injects crosses with GLN. The chain of inference is fully derivable from HSTU's architectural choice.</>}
         stretch={<>Why GLN and not just plain concatenation + LayerNorm?</>}
       />
 
-      {/* axis: F1 — high-noise data */}
+      {/* F1b */}
       <VIS.TrapProblem
         id="hstu-f1b"
         difficulty="hard"
-        title="F1b — High-noise action labels (autoplay)"
-        scenario={<>Your surface has 60% autoplay click rate (accidental, not real engagement). Action vocabulary: click, dwell, like, share, skip. How does this hurt HSTU more than DLRM?</>}
+        title="F1b — Why noisy autoplay clicks hurt HSTU more than DLRM"
+        scenario={<>Your surface has 60% autoplay click rate (a noisy proxy for genuine engagement). Action vocab: click, dwell, like, share, skip. Pick the option whose mechanism explains why this hurts HSTU more than DLRM.</>}
         options={[
-          {key:"a", text:"HSTU's generative softmax over the action vocab over-weights 'click' (the noisy label) at all scales; DLRM's pointwise sigmoid can be re-weighted post-hoc to compensate.", correct:true},
-          {key:"b", text:"HSTU doesn't handle multi-label data."},
-          {key:"c", text:"DLRM is more robust to all noise."},
-          {key:"d", text:"There's no asymmetry."},
+          {key:"a", text:"HSTU cannot represent multi-label data; autoplay-driven clicks and genuine clicks share a label, so HSTU treats them identically while DLRM can split them via separate heads."},
+          {key:"b", text:"DLRM is more robust to all noise because its hand-engineered crosses act as a regularizer that filters spurious co-occurrence; HSTU has no such regularizer."},
+          {key:"c", text:"HSTU's generative softmax over the action vocab over-weights 'click' (the noisy label) at all scales; DLRM's pointwise sigmoid can be re-weighted post-hoc to compensate without retraining.", correct:true},
+          {key:"d", text:"There is no asymmetry — both models degrade equally under autoplay noise once you control for sample size and class imbalance."},
         ]}
-        trap={<>(b) is false — multi-label is fine. (c) is over-broad. (d) misses the loss-shape asymmetry.</>}
-        lens={<>The cure for HSTU is reweighting *inside* the softmax loss (label smoothing toward dwell/like) or filtering autoplay-clicks at the data layer. The asymmetry is that DLRM lets you tweak post-hoc; HSTU forces you to fix it in training.</>}
+        trap={<>(a) is false — HSTU handles multi-label fine. (b) is over-broad — crosses do not regularize label noise. (d) misses the loss-shape asymmetry that lets DLRM be reweighted but forces HSTU into retraining.</>}
+        lens={<>The cure for HSTU is reweighting inside the softmax loss (label smoothing toward dwell/like) or filtering autoplay-clicks at the data layer. The asymmetry is that DLRM lets you tweak post-hoc; HSTU forces you to fix it in training.</>}
         stretch={<>If you can only do one of (label smoothing, data filtering), which has more leverage?</>}
       />
 
-      {/* axis: F3 — bad signs in training */}
+      {/* F3b (title rewritten to question form; trim) */}
       <VIS.TrapProblem
         id="hstu-f3b"
         difficulty="hard"
-        title="F3b — Per-action-token loss magnitudes differ wildly (training-only symptom)"
-        scenario={<>You instrument HSTU's training and break the cross-entropy loss out *per action type*: <code>L_click</code>, <code>L_watch</code>, <code>L_skip</code>, <code>L_like</code>. You observe magnitudes differ by ~10×: <code>L_click ≈ 4.2</code>, <code>L_watch ≈ 0.4</code>, <code>L_skip ≈ 3.8</code>, <code>L_like ≈ 5.1</code>. Online NDCG looks fine. Which symptom is *training-only*, would never appear in DLRM's discriminative training, and is a *direct* consequence of HSTU's heterogeneous action vocab?</>}
+        title="F3b — Identifying the training symptom HSTU surfaces but DLRM cannot"
+        scenario={<>You instrument HSTU's training and break cross-entropy out per action type: L_click ≈ 4.2, L_watch ≈ 0.4, L_skip ≈ 3.8, L_like ≈ 5.1. Online NDCG looks fine. Pick the symptom whose existence is a direct consequence of HSTU's architectural choice and is impossible to observe in DLRM training.</>}
         options={[
-          {key:"a", text:"The per-action-token loss spread itself — DLRM's pointwise BCE has one scalar loss per (user, item) example, so it cannot produce per-action-class loss magnitudes; the spread exists *because* HSTU shares one softmax across action types with very different base rates and entropies. Watch-events are predictable (low entropy → low L); like-events are rare and bursty (high entropy → high L). The loss curve looks healthy in aggregate, hiding that the model is essentially solving the easy class.", correct:true},
-          {key:"b", text:"Overall loss not decreasing — generic ML issue, would appear in DLRM too."},
-          {key:"c", text:"Validation gradient norms exploding — generic, not HSTU-specific."},
-          {key:"d", text:"Memory pressure on the embedding table — orthogonal to loss shape."},
+          {key:"a", text:"Per-action loss spread itself — one shared softmax over a heterogeneous vocab produces class-specific losses driven by base rates and entropy; DLRM's per-target BCE heads cannot exhibit this spread.", correct:true},
+          {key:"b", text:"Overall training loss not decreasing across epochs — would surface identically in DLRM under bad LR or batch settings; not HSTU-specific and would not require the per-class breakdown to diagnose."},
+          {key:"c", text:"Validation gradient norms exploding mid-training — generic optimization pathology any deep model would exhibit under bad LR; not tied to HSTU's vocab structure or shared softmax design."},
+          {key:"d", text:"Memory pressure on the embedding table at peak step — a sharding and sizing problem orthogonal to loss shape; would appear in DLRM with similar vocab cardinality."},
         ]}
-        trap={<>(b), (c), (d) are diagnoses that DLRM training surfaces just as readily; redaction-substitute "HSTU" with "Model X" and they remain valid. Only (a) requires HSTU's specific architectural choice: <em>one shared softmax over a heterogeneous action vocab</em>. DLRM's per-target BCE heads simply cannot exhibit this spread.</>}
+        trap={<>(b), (c), (d) are diagnoses that DLRM training surfaces just as readily; redaction-substitute "HSTU" with "Model X" and they remain valid. Only (a) requires HSTU's specific choice of one shared softmax over a heterogeneous action vocab.</>}
         lens={<>The heterogeneous action vocab is the load-bearing fact. The aggregate CE is a misleading dashboard; the right HSTU-era training dashboards must report per-action-class loss + per-class accuracy/recall. The fix is class-balanced loss reweighting or per-class temperature on the action-vocab softmax — not LR/batch tuning.</>}
         stretch={<>If you class-reweight the softmax to equalize per-class loss magnitudes, what new failure mode does that introduce on the offline-online gap?</>}
       />
 
-      {/* axis: F2 — privacy adversarial */}
+      {/* F2b */}
       <VIS.TrapProblem
         id="hstu-f2b"
         difficulty="hard"
-        title="F2b — Membership inference on HSTU"
-        scenario={<>A privacy researcher claims HSTU is more vulnerable to membership inference than DLRM. Why?</>}
+        title="F2b — Why HSTU is more exposed to membership inference than DLRM"
+        scenario={<>A privacy researcher claims HSTU is more vulnerable to membership inference than DLRM. Pick the option whose mechanism explains the asymmetric exposure.</>}
         options={[
-          {key:"a", text:"HSTU's generative loss memorizes specific action sequences at scale (LLM-style memorization); querying with a partial sequence reveals whether the user was in the training set with high accuracy. DLRM's discriminative loss has no equivalent memorization vector.", correct:true},
-          {key:"b", text:"HSTU runs on more powerful GPUs."},
-          {key:"c", text:"DLRM has built-in DP."},
-          {key:"d", text:"There's no difference."},
+          {key:"a", text:"HSTU runs on more powerful GPUs that leak side-channel timing information about which training sequences were processed; DLRM's smaller compute footprint avoids the side channel."},
+          {key:"b", text:"HSTU's generative loss memorizes specific action sequences at scale (LLM-style memorization); querying with a partial sequence reveals training-set membership at high accuracy. DLRM's discriminative loss has no equivalent memorization vector.", correct:true},
+          {key:"c", text:"DLRM has built-in differential privacy because Platt scaling injects noise into the calibration head; HSTU has no equivalent stochastic post-processing layer."},
+          {key:"d", text:"There is no real difference in exposure once both models are trained on the same data; the asymmetry is a benchmarking artifact of different evaluation setups."},
         ]}
-        trap={<>(b), (c), (d) are non-answers.</>}
-        lens={<>The risk inherits from the generative-loss paradigm. The mitigation is the same as for LLMs (DP-SGD, sequence shuffling, deduplication) but the *attack surface* is recsys-specific (the attacker doesn't need text — just a partial action sequence).</>}
+        trap={<>(a), (c), (d) are non-answers — side channels and Platt-as-DP are inventions, and the difference is real, not an artifact.</>}
+        lens={<>The risk inherits from the generative-loss paradigm. The mitigation is the same as for LLMs (DP-SGD, sequence shuffling, deduplication) but the attack surface is recsys-specific (the attacker does not need text — just a partial action sequence).</>}
         stretch={<>Sketch a DP-SGD adaptation for HSTU. What does it cost in quality?</>}
       />
 
-      {/* axis: A2 — easily-confused */}
+      {/* A2b */}
       <VIS.TrapProblem
         id="hstu-a2b"
         difficulty="medium"
-        title="A2b — HSTU vs LongER (ByteDance long-seq transformer)"
-        scenario={<>ByteDance's LongER and Meta's HSTU both target long user sequences. What's the actual difference?</>}
+        title="A2b — Distinguishing HSTU from ByteDance's LongER long-sequence transformer"
+        scenario={<>ByteDance's LongER and Meta's HSTU both target long user sequences. Pick the option that names the actual architectural split between them.</>}
         options={[
-          {key:"a", text:"LongER focuses on memory-efficient long-context attention for retrieval; HSTU focuses on generative next-action loss with custom pointwise+aggregated norm for ranking. They solve different parts of the stack.", correct:true},
-          {key:"b", text:"They're identical."},
-          {key:"c", text:"LongER is for ads; HSTU is for video."},
-          {key:"d", text:"LongER doesn't use transformers."},
+          {key:"a", text:"They are identical in design but trained on different data — LongER on ByteDance click logs, HSTU on Meta engagement logs; the published metric differences are dataset effects, not architecture."},
+          {key:"b", text:"LongER targets ads ranking and uses sigmoid scoring; HSTU targets video feeds and uses softmax — the split is application-specific rather than architectural."},
+          {key:"c", text:"LongER focuses on memory-efficient long-context attention for retrieval; HSTU focuses on a generative next-action loss with custom pointwise+aggregated norm for ranking — they solve different parts of the stack.", correct:true},
+          {key:"d", text:"LongER replaces transformer attention with a state-space model; HSTU keeps softmax attention but adds hierarchical caching to handle the same context length more efficiently."},
         ]}
-        trap={<>(b), (d) are false. (c) is over-specific.</>}
-        lens={<>Long-sequence handling is necessary but not sufficient for HSTU's claims. The novelty is the *loss* + *norm* + *vocab*, not just the context length.</>}
+        trap={<>(a) and (b) are over-specific or false. (d) misnames both architectures — LongER is still attention-based, HSTU does not use softmax attention.</>}
+        lens={<>Long-sequence handling is necessary but not sufficient for HSTU's claims. The novelty is the loss + norm + vocab, not just the context length.</>}
         stretch={<>Could you combine LongER's memory tricks with HSTU's loss? What changes?</>}
       />
 
-      {/* axis: C3 — drop crosses, what else */}
+      {/* C3b — multi-select */}
       <VIS.TrapProblem
         id="hstu-c3b"
         difficulty="hard"
-        title="C3b — Beyond crosses, what else does HSTU drop?"
-        scenario={<>HSTU drops more than crosses vs DLRM. Pick all that HSTU explicitly removes.</>}
+        title="C3b — Listing the design elements HSTU removes versus DLRM"
+        scenario={<>HSTU removes more than crosses relative to DLRM. Identify each element below that HSTU explicitly removes from the DLRM template.</>}
         multiSelect
         options={[
-          {key:"a", text:"Hand-engineered cross features.", correct:true},
-          {key:"b", text:"Pointwise per-item BCE loss in favor of generative softmax.", correct:true},
-          {key:"c", text:"Separate retrieval + ranking stages (replaced by a single transducer).", correct:true},
-          {key:"d", text:"LayerNorm (replaced by pointwise + aggregated norm).", correct:true},
-          {key:"e", text:"Item-ID embedding tables."},
-          {key:"f", text:"Positional encoding."},
+          {key:"a", text:"Hand-engineered cross features — replaced by attention over the action stream.", correct:true},
+          {key:"b", text:"Pointwise per-item BCE loss — replaced by a generative softmax over the joint action vocab.", correct:true},
+          {key:"c", text:"Separate retrieval and ranking stages — collapsed into a single sequence transducer that scores externally-retrieved candidates.", correct:true},
+          {key:"d", text:"LayerNorm — replaced by pointwise + aggregated normalization for heterogeneous tokens.", correct:true},
+          {key:"e", text:"Item-ID embedding tables — replaced by content-derived Semantic IDs the way TIGER does."},
+          {key:"f", text:"Positional encoding — removed because the causal mask plus action-time gaps already supply order information."},
         ]}
-        trap={<>(e) is wrong — HSTU keeps item-ID embeddings (that's exactly what TIGER replaces). (f) is wrong — HSTU keeps position+time bias.</>}
+        trap={<>(e) is wrong — HSTU keeps item-ID embeddings (that is exactly what TIGER replaces, not HSTU). (f) is wrong — HSTU keeps position + time bias on the residual stream.</>}
         lens={<>Four removals: crosses, BCE, two-stage funnel, LayerNorm. Two retentions: item-ID embeddings, position encoding. Each removal has a published-rationale connection.</>}
         stretch={<>Which of the four removals would you put back first if you had to weaken HSTU minimally to ship faster?</>}
       />
 
-      {/* axis: E4 — calibration head detail */}
+      {/* E4b */}
       <VIS.TrapProblem
         id="hstu-e4b"
         difficulty="hard"
-        title="E4b — Where to fit the new calibration head"
-        scenario={<>You're building HSTU's new calibration head. Where in the stack does it sit, and what does it consume as input?</>}
+        title="E4b — Placing the new calibration head for HSTU"
+        scenario={<>You are building HSTU's new calibration head. Pick the option whose placement in the stack and choice of input is right.</>}
         options={[
           {key:"a", text:"Sits between HSTU's generative softmax and the auction; consumes the per-(item, action) marginal probability and outputs calibrated P(click | history, item). Fit on held-out (HSTU score, realized click) pairs.", correct:true},
-          {key:"b", text:"Inside HSTU as an extra transformer layer."},
-          {key:"c", text:"Before HSTU, as a feature-engineering step."},
-          {key:"d", text:"No calibration head needed."},
+          {key:"b", text:"Sits inside HSTU as an extra transformer layer that re-normalizes the logits before the softmax; trained jointly with the rest of the model on the same loss."},
+          {key:"c", text:"Sits before HSTU as a feature-engineering step that pre-computes calibration-relevant features (recency, frequency); HSTU then learns to emit calibrated scores directly."},
+          {key:"d", text:"No calibration head is needed — HSTU's generative softmax already produces well-calibrated probabilities because the loss is cross-entropy against ground truth."},
         ]}
-        trap={<>(b) confuses calibration with capacity. (c) is upstream and can't fix output miscalibration. (d) ignores the auction's requirement.</>}
-        lens={<>The calibration head is downstream of HSTU's softmax, before the auction. The marginalization (joint → per-(item, click) probability) is the HSTU-specific step that's missing in a DLRM Platt pipeline.</>}
+        trap={<>(b) confuses calibration with capacity. (c) is upstream and cannot fix output miscalibration. (d) ignores the auction's actual calibration requirement.</>}
+        lens={<>The calibration head is downstream of HSTU's softmax, before the auction. The marginalization (joint → per-(item, click) probability) is the HSTU-specific step that is missing in a DLRM Platt pipeline.</>}
         stretch={<>What goes wrong if you fit on training data instead of held-out?</>}
       />
 
-      {/* axis: E3 — mixed-precision */}
+      {/* E3b */}
       <VIS.TrapProblem
         id="hstu-e3b"
         difficulty="hard"
-        title="E3b — FP8 quantization on HSTU"
-        scenario={<>You quantize HSTU to FP8 for inference. Calibration drifts noticeably more than it would for a similarly-quantized DLRM. Why?</>}
+        title="E3b — Why FP8 quantization drifts HSTU's calibration more than DLRM's"
+        scenario={<>You quantize HSTU to FP8 for inference. Calibration drifts noticeably more than it would for a similarly-quantized DLRM. Pick the option that names the mechanism behind the asymmetric drift.</>}
         options={[
-          {key:"a", text:"HSTU's generative softmax has long tails; FP8 underflow on small probabilities truncates the tail, distorting the calibrated CTR estimate. DLRM's pointwise sigmoid outputs a scalar — FP8 keeps it accurate.", correct:true},
-          {key:"b", text:"FP8 is incompatible with transformers."},
-          {key:"c", text:"DLRM has no embeddings."},
-          {key:"d", text:"Quantization doesn't affect calibration."},
+          {key:"a", text:"FP8 is incompatible with transformer attention kernels in general; HSTU surfaces the issue because it runs more matmuls per token than DLRM, accumulating quantization error proportionally."},
+          {key:"b", text:"DLRM has no embedding tables to quantize — its sparse features are already integer-coded — so FP8 affects only the MLP, while HSTU quantizes everything end to end."},
+          {key:"c", text:"HSTU's generative softmax has long tails; FP8 underflow on small probabilities truncates the tail and distorts the calibrated CTR estimate. DLRM's pointwise sigmoid outputs a single scalar that FP8 represents accurately.", correct:true},
+          {key:"d", text:"Quantization does not affect calibration in either model; the observed drift is a deployment artifact caused by the quantized model running on a different GPU generation than the FP32 baseline."},
         ]}
-        trap={<>(b), (c), (d) misread.</>}
-        lens={<>The interaction is precision-vs-distribution-shape: long-tailed outputs are sensitive to low-bit precision in a way that scalar sigmoid isn't. Mitigation: keep the final softmax + calibration head in BF16/FP16; quantize earlier layers only.</>}
+        trap={<>(a), (b), (d) are misreadings — FP8 works fine with attention, DLRM does have FP-typed embeddings, and quantization absolutely shifts probability distributions.</>}
+        lens={<>The interaction is precision-vs-distribution-shape: long-tailed outputs are sensitive to low-bit precision in a way that scalar sigmoid is not. Mitigation: keep the final softmax + calibration head in BF16/FP16; quantize earlier layers only.</>}
         stretch={<>Which other distribution-shape sensitivities does FP8 expose in HSTU vs DLRM?</>}
       />
 
-      {/* axis: D1 — sequence-as-feature */}
+      {/* D1c */}
       <VIS.TrapProblem
         id="hstu-d1c"
         difficulty="medium"
-        title="D1c — 'Just add sequence as a feature to DLRM'"
-        scenario={<>A skeptical lead says "instead of migrating to HSTU, can't we just add a sequence-mean-pool feature to DLRM and call it a day?" Why is this insufficient?</>}
+        title="D1c — Why a sequence-mean-pool feature on DLRM falls short of HSTU"
+        scenario={<>A skeptical lead says: instead of migrating to HSTU, just add a sequence-mean-pool feature to DLRM and ship. Pick the option whose explanation correctly identifies what the workaround forfeits.</>}
         options={[
-          {key:"a", text:"Mean-pooling destroys the sequential signal HSTU's attention captures (recency, ordering, cross-token interactions). The scaling-law evidence in the paper is specifically tied to *attention over the sequence*, not summary statistics.", correct:true},
-          {key:"b", text:"Mean-pooling doesn't fit in DLRM."},
-          {key:"c", text:"You'd need to retrain."},
-          {key:"d", text:"It actually works fine."},
+          {key:"a", text:"Mean-pooling cannot be plumbed into DLRM's MLP top without breaking the existing feature-cross signature; the workaround fails for engineering reasons before it is even evaluated."},
+          {key:"b", text:"Mean-pooling discards the sequential signal HSTU's attention captures (recency, ordering, cross-token interactions); the scaling-law evidence in the paper is tied to attention over the sequence, not summary statistics over it.", correct:true},
+          {key:"c", text:"The workaround needs a full retraining cycle that costs as much as the HSTU migration, so the savings claim does not hold even if the modeling claim did."},
+          {key:"d", text:"It actually works fine — at most surfaces a mean-pooled sequence feature recovers ~95% of HSTU's lift, so the migration is rarely justified."},
         ]}
-        trap={<>(b) is false. (c) is trivially true but not the reason. (d) is the naive reading.</>}
-        lens={<>Mean-pooling vs attention is exactly the difference DLRM-with-sequence-feature vs HSTU. Mean-pool throws away ordering, position, and cross-token interaction — three things HSTU's scaling-law evidence depends on.</>}
+        trap={<>(a) is invented — mean-pool plumbs into DLRM easily. (c) is trivially true but not the load-bearing reason. (d) is the naive reading.</>}
+        lens={<>Mean-pooling vs attention is exactly the difference between DLRM-with-sequence-feature and HSTU. Mean-pool throws away ordering, position, and cross-token interaction — three things HSTU's scaling-law evidence depends on.</>}
         stretch={<>Is there a cheaper attention-pool that captures most of the gain?</>}
       />
 
-      {/* axis: E2 — alternate failure */}
+      {/* E2b */}
       <VIS.TrapProblem
         id="hstu-e2b"
         difficulty="hard"
-        title="E2b — Friday: NDCG up, watch-time down"
-        scenario={<>HSTU ships. Offline NDCG@10 +6%. Online watch-time -1.4%. CTR slightly up. Time-on-feed slightly down. Diagnose the most HSTU-specific cause.</>}
+        title="E2b — Diagnosing NDCG up + watch-time down after HSTU ramp"
+        scenario={<>HSTU ships. Offline NDCG@10 +6%. Online watch-time -1.4%. CTR slightly up. Time-on-feed slightly down. Pick the cause whose mechanism is HSTU-specific.</>}
         options={[
-          {key:"a", text:"Generative-loss mode collapse: HSTU concentrates on 'safe' high-CTR actions, raising click-rate but lowering exploration; users click more but engage shallower. NDCG (fixed candidate set) rewards this; total watch-time doesn't.", correct:true},
-          {key:"b", text:"Latency increased."},
-          {key:"c", text:"Random."},
-          {key:"d", text:"Calibration drift."},
+          {key:"a", text:"Calibration drift after cutover — CTR predictions slipped right, the auction overweights low-quality items, and watch-time falls as a downstream symptom of mis-priced bids."},
+          {key:"b", text:"Latency increased on the long-sequence path, pushing some requests past the p99 budget and degrading the served candidate set; offline eval used the full budget and missed this."},
+          {key:"c", text:"Sample-size noise — a 1.4% delta on watch-time is within typical week-over-week variance for a video feed, so no underlying mechanism is needed to explain the result."},
+          {key:"d", text:"Generative-loss mode collapse — HSTU concentrates on safe high-CTR actions, raising click-rate but lowering exploration; users click more but engage shallower. NDCG (fixed candidate set) rewards this; total watch-time does not.", correct:true},
         ]}
-        trap={<>(d) would shift CTR predictions but not the deeper exploration/engagement metric.</>}
-        lens={<>The mismatch between "what NDCG rewards" and "what watch-time rewards" is HSTU's hardest production problem because it amplifies with scale. The fix is loss-side regularization (entropy bonus, diversity term) or an explicit exploration objective.</>}
+        trap={<>(a) would shift CTR predictions but not the exploration/engagement metric. (b) and (c) are generic ops/noise excuses that ignore the metric pattern (CTR up, watch-time down) HSTU's loss shape predicts.</>}
+        lens={<>The mismatch between what NDCG rewards and what watch-time rewards is HSTU's hardest production problem because it amplifies with scale. The fix is loss-side regularization (entropy bonus, diversity term) or an explicit exploration objective.</>}
         stretch={<>What single offline metric tracks online watch-time better than NDCG@10?</>}
       />
 
-      {/* axis: F4 — paper-vs-blog */}
+      {/* F4b (title rephrased — was 'does NOT claim', G17) */}
       <VIS.TrapProblem
         id="hstu-f4b"
         difficulty="medium"
-        title="F4b — What the paper does NOT claim"
-        scenario={<>Which of these is NOT a claim made in the HSTU paper itself?</>}
+        title="F4b — Spotting the claim falsely attributed to the HSTU paper"
+        scenario={<>Identify the claim that the HSTU paper does itself attribute to TIGER or another sibling system, rather than making it directly.</>}
         options={[
-          {key:"a", text:"HSTU replaces ANN retrieval indexes.", correct:true},
-          {key:"b", text:"HSTU scales as a power law in compute."},
-          {key:"c", text:"HSTU's custom attention is 5.3-15.2x over FA2."},
-          {key:"d", text:"Pointwise + aggregated norm enables heterogeneous tokens."},
+          {key:"a", text:"HSTU replaces ANN retrieval indexes with autoregressive Semantic-ID decoding.", correct:true},
+          {key:"b", text:"HSTU's offline quality scales as a power law in compute, the way LLM pretraining does."},
+          {key:"c", text:"HSTU's custom attention is 5.3-15.2× faster than FlashAttention2 at 8k context."},
+          {key:"d", text:"Pointwise + aggregated normalization enables a single residual stream to carry heterogeneous tokens."},
         ]}
-        trap={<>(a) is what *TIGER* claims, not HSTU. Many candidates conflate the two.</>}
-        lens={<>HSTU is a ranker-side replacement. It assumes a candidate set is delivered from upstream retrieval (ANN, two-tower, TIGER). Confusing the role is a sign someone hasn't read the paper.</>}
-        stretch={<>What's the closest HSTU comes to addressing retrieval?</>}
+        trap={<>(a) is what TIGER claims, not HSTU. Many candidates conflate the two.</>}
+        lens={<>HSTU is a ranker-side replacement. It assumes a candidate set is delivered from upstream retrieval (ANN, two-tower, TIGER). Confusing the role is a sign someone has not read the paper.</>}
+        stretch={<>What is the closest HSTU comes to addressing retrieval?</>}
       />
 
-      {/* axis: C4 — temperature */}
+      {/* C4b */}
       <VIS.TrapProblem
         id="hstu-c4b"
         difficulty="hard"
-        title="C4b — Decoding temperature at serving time"
-        scenario={<>HSTU autoregressively decodes the next action at serving. What's the effect of varying the decoding temperature T?</>}
+        title="C4b — Predicting the effect of decoding temperature at serving time"
+        scenario={<>HSTU autoregressively decodes the next action at serving. Pick the option that correctly characterizes how varying the decoding temperature T trades off online metrics.</>}
         options={[
-          {key:"a", text:"T < 1 → mode-collapse to high-frequency actions, higher CTR but lower exploration and worse long-tail recall; T > 1 → flatter distribution, more exploration but noisier CTR predictions.", correct:true},
-          {key:"b", text:"Temperature only affects training."},
-          {key:"c", text:"Temperature doesn't apply to softmax."},
-          {key:"d", text:"T should always be 0."},
+          {key:"a", text:"Temperature only affects training — at serving time HSTU's softmax is replaced by argmax, so T has no effect on the served action distribution."},
+          {key:"b", text:"Temperature does not apply to HSTU's softmax because the action vocab is heterogeneous; per-action-type scaling is required and a single T silently has no effect on most action types."},
+          {key:"c", text:"T < 1 mode-collapses to high-frequency actions, raising CTR but lowering exploration and long-tail recall; T > 1 flattens the distribution, raising exploration but adding noise to CTR predictions.", correct:true},
+          {key:"d", text:"T should always be 0 (greedy decoding) — any T > 0 introduces stochasticity that the auction cannot reconcile with deterministic bidding."},
         ]}
-        trap={<>(b), (c) are wrong. (d) is the greedy-decoding misreading.</>}
+        trap={<>(a), (b) are wrong — T applies and matters at serving. (d) is the greedy-decoding misreading; T = 0 throws away the exploration knob the loss makes available.</>}
         lens={<>Serving-time temperature is an HSTU-specific knob unavailable in DLRM (whose sigmoid has no temperature). Tuning it lets you trade exploration vs exploitation at inference — but it also shifts calibration, so the calibration head must depend on T.</>}
-        stretch={<>If T affects calibration, what's the right way to fit the calibration head?</>}
+        stretch={<>If T affects calibration, what is the right way to fit the calibration head?</>}
       />
 
-      {/* axis: D4 — bandit comparison */}
+      {/* D4b */}
       <VIS.TrapProblem
         id="hstu-d4b"
         difficulty="hard"
-        title="D4b — HSTU vs contextual bandit"
-        scenario={<>Both HSTU and contextual bandits "learn from user actions." What's the actual difference?</>}
+        title="D4b — Distinguishing HSTU from a contextual bandit"
+        scenario={<>HSTU and contextual bandits both learn from user actions. Pick the option that names the actual functional difference between them as production systems.</>}
         options={[
-          {key:"a", text:"Bandits balance exploration vs exploitation explicitly via uncertainty estimates (UCB, Thompson); HSTU has no native uncertainty representation — its 'exploration' is a side-effect of softmax temperature and entropy at decode time, not a designed exploration policy.", correct:true},
-          {key:"b", text:"Bandits don't use neural networks."},
-          {key:"c", text:"HSTU is a special case of bandits."},
-          {key:"d", text:"Bandits work only on cold-start."},
+          {key:"a", text:"Bandits do not use neural networks; they rely on linear models with closed-form regret bounds, while HSTU is a deep transformer with no such bound."},
+          {key:"b", text:"HSTU is a special case of contextual bandits — the next-action softmax is mathematically equivalent to a Thompson-sampling step over the action vocab."},
+          {key:"c", text:"Bandits are only useful for cold-start exploration and become redundant once enough impression data is collected, while HSTU is the steady-state ranker."},
+          {key:"d", text:"Bandits balance exploration vs exploitation via explicit uncertainty estimates (UCB, Thompson); HSTU has no native uncertainty representation — its exploration is a side-effect of softmax temperature at decode.", correct:true},
         ]}
-        trap={<>(b), (c), (d) are wrong.</>}
-        lens={<>HSTU = pure exploitation with implicit exploration via softmax stochasticity. If your business needs principled exploration, layer a bandit on top (HSTU scores → bandit policy → action), or replace HSTU with an RL framework that has exploration as a first-class citizen.</>}
+        trap={<>(a), (b), (c) are wrong: bandits can use neural networks, HSTU is not a Thompson-sampling step, and bandits are not only for cold-start.</>}
+        lens={<>HSTU is pure exploitation with implicit exploration via softmax stochasticity. If your business needs principled exploration, layer a bandit on top (HSTU scores → bandit policy → action), or replace HSTU with an RL framework that has exploration as a first-class citizen.</>}
         stretch={<>How would you add Thompson sampling to HSTU? What does the uncertainty estimate come from?</>}
       />
 
@@ -2395,7 +2396,7 @@ flowchart TB
         <li>
           <a href="https://arxiv.org/abs/2305.05065" target="_blank" rel="noopener"><strong>Rajput et al. — TIGER</strong></a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2023)</span>
-          <br/>The sibling — generative *retrieval* via RQ-VAE Semantic IDs. Read alongside HSTU to understand the family.
+          <br/>The sibling — generative retrieval via RQ-VAE Semantic IDs. Read alongside HSTU to understand the family.
         </li>
       </ul>
     </VIS.Section>
