@@ -1415,13 +1415,16 @@
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
 // TabADM — Diffusion-based anomaly detection for tabular fraud features.
+// B3 anchor: diffusion log-density of a tabular row as the AD score
+// (vs reconstruction in AE; vs isolation depth in IF).
+// Cross-visual caution: TabADM (method) vs ADBench (meta-benchmark) — keep distinct.
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="Fraud SOTA · Deep anomaly detection"
       title="TabADM / Diffusion AD on tabular"
-      subtitle="A diffusion model trained on benign tabular features; anomaly score is the denoising reconstruction error at small noise levels."
+      subtitle="A diffusion denoiser trained on benign rows; the anomaly score is the denoising error at small noise levels — a tractable proxy for log-density of a tabular row."
       byline={[
         {label: "Paper", value: "Zamberg et al., ICML 2024"},
         {label: "Year", value: "2024"},
@@ -1429,44 +1432,43 @@ const App = () => (
       ]}/>
 
     <VIS.TLDR>
-      Classical VAE / autoencoder anomaly detectors tend to{" "}
-      <VIS.Term def="A failure mode where a generative model collapses to producing a low-diversity output (e.g., the mean of the training set) regardless of input. Reconstruction error becomes uninformative for anomaly scoring.">posterior-collapse</VIS.Term>{" "}
-      on heterogeneous tabular data (mixed categorical + continuous features), making reconstruction error a poor anomaly signal. TabADM instead trains a{" "}
-      <VIS.Term def="A class of generative models that learns to reverse a gradual noising process. To generate, you start from pure noise and iteratively denoise; to score, you measure how well the model denoises a small-noise version of a real input.">diffusion model</VIS.Term>{" "}
-      on benign transactions and scores each test point by how well the model can denoise it at small noise levels. Wins on heterogeneous tabular fraud feature sets; loses on inference latency because each score needs multiple denoising steps.
+      Classical VAE / autoencoder anomaly detectors{" "}
+      <VIS.Term def="A failure mode where the encoder ignores the input and the decoder learns to output the marginal feature distribution. Reconstruction error becomes uninformative for anomaly scoring.">posterior-collapse</VIS.Term>{" "}
+      on heterogeneous tabular data: the KL term in the ELBO pushes the posterior toward the prior and reconstruction error stops discriminating. TabADM replaces the ELBO with a per-noise-level denoising objective — no KL squeeze, no collapse. The score is the denoising reconstruction error at small noise levels, averaged across a short noise schedule. Wins on heterogeneous tabular fraud; loses on inference latency (K denoising steps per score).
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="What it is — the score, end to end">
       <p>
-        TabADM is a single-class anomaly detector for tabular data built on top of a diffusion model:
+        TabADM is a one-class anomaly detector built on top of a{" "}
+        <VIS.Term def="A class of generative models that learn to reverse a gradual noising process. To score a point, you add a small amount of noise and measure how cleanly the trained model can denoise it.">diffusion model</VIS.Term>:
       </p>
       <ol>
-        <li><strong>Train</strong> a diffusion model on the benign-only feature distribution. The model learns to denoise inputs corrupted with Gaussian noise at varying scales.</li>
-        <li><strong>Score</strong> a test point by adding small noise and measuring the denoising reconstruction error. Benign points are well-modeled, so the error is small. Anomalous points lie off-manifold, so the model cannot denoise them cleanly.</li>
-        <li><strong>Average</strong> the denoising error across several small noise levels for a stable score.</li>
+        <li><strong>Train</strong> a denoiser eps_theta(x_t, t) on the BENIGN-only feature distribution. Loss is mean squared error on the predicted noise at uniformly-sampled noise level t.</li>
+        <li><strong>Score</strong> a test row x: pick small t (e.g., t = 20 out of 1000), sample noise epsilon, form x_t = sqrt(alpha_bar_t)·x + sqrt(1 - alpha_bar_t)·epsilon, run the denoiser, and report ||eps_theta(x_t, t) - epsilon||² as that-level's error.</li>
+        <li><strong>Average</strong> across a short SMALL-noise schedule (e.g., t in {`{10, 20, 30, 40, 50}`}) for variance reduction. Higher score → further off the benign manifold.</li>
       </ol>
 
       <VIS.Mermaid chart={`
 flowchart TB
-  X["Test feature row x"]
-  X --> N["Add small Gaussian noise"]
-  N --> D["Diffusion denoiser"]
-  D --> R["Reconstruction x_hat"]
-  R --> E["Score = norm of (x - x_hat)"]
+  X["Test row x"]
+  X --> N["Add small noise t in 10 to 50"]
+  N --> D["Trained denoiser eps_theta"]
+  D --> R["Predicted noise eps_hat"]
+  R --> E["Score = avg norm of eps_hat minus eps"]
   style D fill:#dbeafe,stroke:#2563eb,stroke-width:2px
   style E fill:#fef3c7,stroke:#d97706,stroke-width:2px
       `} />
       <p>
-        Blue box is the trained denoiser. Yellow box is the anomaly score. Higher score means the point is harder to denoise, which means it sits further off the benign manifold.
+        Blue is the trained denoiser. Yellow is the anomaly score. We score at SMALL noise levels because at large noise the denoiser only knows the marginal distribution; discriminating signal lives in the local-manifold regime where benign rows denoise cleanly and anomalies drift.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
+    <VIS.Section id="sec-diff" title="How it differs from VAE-AD and Isolation Forest">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
         <thead>
           <tr style={{background:"#1f3a5f", color:"#fff"}}>
             <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>VAE / AE-AD</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>VAE-AD</th>
             <th style={{padding:"8px 10px", textAlign:"left"}}>Isolation Forest</th>
             <th style={{padding:"8px 10px", textAlign:"left"}}>TabADM</th>
           </tr>
@@ -1476,19 +1478,19 @@ flowchart TB
             <td style={{padding:"8px 10px"}}>Score basis</td>
             <td style={{padding:"8px 10px"}}>Reconstruction error</td>
             <td style={{padding:"8px 10px"}}>Tree isolation depth</td>
-            <td style={{padding:"8px 10px"}}>Denoising error</td>
+            <td style={{padding:"8px 10px"}}>Denoising error at small t</td>
           </tr>
           <tr>
-            <td style={{padding:"8px 10px"}}>Distribution shape</td>
-            <td style={{padding:"8px 10px"}}>Often collapses</td>
-            <td style={{padding:"8px 10px"}}>Coarse</td>
-            <td style={{padding:"8px 10px"}}>Preserved</td>
+            <td style={{padding:"8px 10px"}}>Failure mode</td>
+            <td style={{padding:"8px 10px"}}>Posterior collapse (KL squeeze)</td>
+            <td style={{padding:"8px 10px"}}>Misses high-order joint fraud</td>
+            <td style={{padding:"8px 10px"}}>K× inference cost; small-noise tuning</td>
           </tr>
           <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Mixed types</td>
-            <td style={{padding:"8px 10px"}}>Needs careful encoding</td>
-            <td style={{padding:"8px 10px"}}>Native</td>
-            <td style={{padding:"8px 10px"}}>Needs careful encoding</td>
+            <td style={{padding:"8px 10px"}}>Captures</td>
+            <td style={{padding:"8px 10px"}}>Smooth-continuous structure</td>
+            <td style={{padding:"8px 10px"}}>Marginal/low-order outliers</td>
+            <td style={{padding:"8px 10px"}}>High-order joint manifold</td>
           </tr>
           <tr>
             <td style={{padding:"8px 10px"}}>Inference cost</td>
@@ -1496,206 +1498,399 @@ flowchart TB
             <td style={{padding:"8px 10px"}}>O(log n) per tree</td>
             <td style={{padding:"8px 10px"}}>K denoising steps</td>
           </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Best regime</td>
-            <td style={{padding:"8px 10px"}}>Smooth continuous</td>
-            <td style={{padding:"8px 10px"}}>Tabular default</td>
-            <td style={{padding:"8px 10px"}}>Heterogeneous tabular</td>
-          </tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick">
-      <ul>
-        <li><strong>Heterogeneous tabular fraud features</strong> — mix of categorical (merchant ID, country) and continuous (amount, velocity) with non-trivial joint structure.</li>
-        <li><strong>Mostly-benign-only labels</strong> — you have lots of benign data and very few confirmed fraud labels, so single-class generative AD is appealing.</li>
-        <li><strong>Batch scoring is fine</strong> — you can afford the multi-step denoising at inference time.</li>
-        <li><strong>VAE-AD has been tried and collapsed</strong> — you have direct evidence reconstruction error is uninformative.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <VIS.Callout kind="gotcha" title="ADBench still applies">
-        On standard tabular AD benchmarks, a tuned Isolation Forest with good features is typically within striking distance of TabADM and sometimes ahead. Run IF as your baseline before claiming the diffusion model is worth the operational complexity.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Inference latency is K denoising steps">
-        Each score requires multiple denoising passes through a neural network. Expect 10-50x the latency of a single VAE forward pass. For real-time fraud scoring under a 30ms SLA, this is often a non-starter without distillation.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Categorical encoding still matters">
-        Diffusion is a continuous-noise process. High-cardinality categoricals need careful embedding or quantile transforms; raw one-hot vectors degrade scoring quality.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+    <VIS.Section id="sec-drill" title="Drill — 22 trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Ten interview-grade traps on diffusion-based anomaly detection, VAE collapse, and when to actually pick TabADM in production.
+        Twenty-two interview-grade traps on diffusion-density anomaly scoring, the specific posterior-collapse mechanism it sidesteps, small-noise scoring discipline, and production sequencing against IF and ADBench.
       </p>
 
+      {/* AXIS: D1 — concept-specific mechanism trap */}
       <VIS.TrapProblem
         id="tabadm-p1"
         difficulty="hard"
-        title="P1 — Why does a VAE anomaly detector collapse on tabular fraud features?"
-        scenario={<>You train a VAE anomaly detector on benign transactions: 40 mixed features (15 categorical one-hot, 25 continuous). Reconstruction loss converges nicely, but the AUROC is 0.51. Both benign and fraud points reconstruct equally well (or poorly). What's the failure mode?</>}
+        title="P1 — Why does a VAE anomaly detector collapse on tabular fraud features but TabADM does not?"
+        scenario={<>You train a VAE-AD on benign transactions (40 features, 15 categorical one-hot, 25 continuous). Reconstruction loss converges; AUROC is 0.51 — both benign and fraud reconstruct equally well. Switching to TabADM on the same data and same encoder backbone lifts AUROC to 0.82. What is the discriminating mechanism?</>}
         options={[
-          {key:"a", text:"Posterior collapse: the encoder ignores the input and the decoder learns to output the marginal feature distribution. Reconstruction error becomes uninformative because every point reconstructs to roughly the same conditional mean.", correct:true},
-          {key:"b", text:"VAEs always have high reconstruction error and the AUROC reflects that."},
-          {key:"c", text:"The learning rate is too high."},
-          {key:"d", text:"You need more layers in the encoder."},
+          {key:"a", text:"The KL term in the VAE's ELBO pushes the approximate posterior toward the prior; on weak heterogeneous signal the model takes the path of least resistance — encoder ignores x, decoder outputs a marginal mean. TabADM's loss is per-noise-level denoising MSE with no KL squeeze, so there is no posterior-collapse pathway.", correct:true},
+          {key:"b", text:"TabADM has more parameters."},
+          {key:"c", text:"TabADM uses Gaussian noise during training; VAE does not."},
+          {key:"d", text:"The VAE used the wrong activation function."},
         ]}
-        trap={<>(b) confuses absolute and relative reconstruction error; AD only needs the RELATIVE error to separate benign from fraud. (c) and (d) blame optimization for a structural problem.</>}
-        lens={<>(a) is the canonical VAE-AD failure on tabular. The KL term in the ELBO pushes the posterior toward the prior; with weak signal in mixed-type features, the model takes the path of least resistance and ignores per-row structure. Anomaly scoring needs per-row reconstruction differences, so it dies.</>}
-        stretch={<>Which trick (beta-VAE, free bits, normalizing flow posteriors) addresses this most directly?</>}
+        trap={<>(b) is irrelevant — collapse is a structural objective problem, not a capacity problem. (c) confuses noising mechanics. (d) blames optimization for a loss-shape issue.</>}
+        lens={<><em>Discriminating insight:</em> the KL term is the specific failure surface. Replacing the ELBO with per-noise-level denoising MSE removes the squeeze; the same backbone now produces a usable score.</>}
+        stretch={<>Which VAE variants (beta-VAE with low beta, free-bits, NF posterior) try to keep VAE-AD usable, and why are they typically a partial fix?</>}
       />
 
+      {/* AXIS: C2 — small-noise scoring mechanism */}
       <VIS.TrapProblem
         id="tabadm-p2"
         difficulty="hard"
-        title="P2 — How is TabADM's score defined and why is it more robust than VAE reconstruction?"
-        scenario={<>What is the TabADM anomaly score and why does it work where VAE reconstruction fails on the same data?</>}
+        title="P2 — At which noise levels should you score, and why?"
+        scenario={<>TabADM lets you score at any t in [1, 1000]. You try three configurations: (i) one fixed large t = 800, (ii) one fixed small t = 20, (iii) average across small t in {`{10, 20, 30, 40, 50}`}. AUROCs are 0.55, 0.78, 0.83. Why?</>}
         options={[
-          {key:"a", text:"Add small Gaussian noise to x; denoise with the trained diffusion model; score is the norm of x minus x_hat, averaged over several small noise levels. Works because the diffusion model is trained to model the conditional score function across the entire input distribution, not collapsed to a marginal mean.", correct:true},
-          {key:"b", text:"Generate K samples from the diffusion prior and check if x is among them."},
-          {key:"c", text:"Compute the KL divergence between x and the trained prior."},
-          {key:"d", text:"Run the diffusion forward process and report the final noise."},
+          {key:"a", text:"At large t the input is mostly noise; the denoiser only knows the marginal distribution and produces the same expected error for benign and anomalous points — the signal collapses. At small t, the denoiser leans on local manifold structure — benign rows denoise cleanly, anomalies drift. Averaging across a few small t reduces variance without entering the marginal regime.", correct:true},
+          {key:"b", text:"Large t loses signal because of floating-point underflow."},
+          {key:"c", text:"You should always score at exactly t = 1 for maximum signal."},
+          {key:"d", text:"Variance reduction is incidental; the real reason is the model is better trained at small t."},
         ]}
-        trap={<>(b) and (d) misread how diffusion is scored at inference. (c) is dimensionally incoherent for a single point.</>}
-        lens={<>(a) is correct. The denoiser is trained to predict noise (or x_0) at every noise level; small-noise denoising error is sensitive to whether x lies on the benign manifold. Because the diffusion objective is per-noise-level reconstruction (not an ELBO with a KL squeeze), there is no posterior-collapse pathway.</>}
-        stretch={<>Why average over several small noise levels rather than scoring at one fixed level?</>}
+        trap={<>(b) invents a numerical issue. (c) ignores variance reduction. (d) misattributes — the schedule effect is sampling variance, not training quality.</>}
+        lens={<><em>Discriminating insight:</em> the small-noise regime is where the local manifold matters; the large-noise regime is the marginal distribution where benign and fraud are indistinguishable.</>}
+        stretch={<>How would you choose the specific schedule (which small t to include) for YOUR dataset?</>}
       />
 
+      {/* AXIS: D2 — wrong scoring mental model */}
       <VIS.TrapProblem
         id="tabadm-p3"
-        difficulty="hard"
-        title="P3 — Inference latency: 25 denoising steps at 8ms per step. SLA is 30ms p99."
-        scenario={<>TabADM inference uses 25 denoising steps; each step is 8ms on your GPU. Your real-time fraud SLA is 30ms p99. Pick the right production move.</>}
+        difficulty="medium"
+        title="P3 — Which of these are valid ways to compute a TabADM anomaly score?"
+        scenario={<>Pick the score definition that is mechanically coherent with how TabADM is trained.</>}
         options={[
-          {key:"a", text:"Ship the small-step variant (3-5 steps) with a quality check, or distill TabADM into a single-forward-pass student model and serve the student in production. Falling back to a tuned Isolation Forest for the real-time tier is also acceptable.", correct:true},
-          {key:"b", text:"Ship as-is — 25 steps at 8ms is acceptable."},
-          {key:"c", text:"Use TabADM offline for label generation only; serve a different model online."},
-          {key:"d", text:"Increase GPU count to amortize."},
+          {key:"a", text:"Add small noise to x; run denoiser; report norm of (predicted noise minus actual noise), averaged over a short small-noise schedule.", correct:true},
+          {key:"b", text:"Generate K samples from the diffusion prior and count how many fall within an epsilon ball of x."},
+          {key:"c", text:"Run the full forward process T = 1000 steps on x and report the final noise norm."},
+          {key:"d", text:"Compute the KL divergence between x and the trained prior."},
         ]}
-        trap={<>(b) ignores arithmetic (25 times 8 equals 200ms, well over budget). (d) does not change per-request latency. (c) is a legitimate hybrid but skips the cheaper options first.</>}
-        lens={<>(a) is the senior MLE answer: distill or quantize a slow generative scorer into a single-pass student before shipping. The score itself becomes a regression target. (c) is also reasonable when distillation underperforms — use TabADM for offline weak labeling and a simpler online model for serving.</>}
-        stretch={<>What metric tracks distillation fidelity for an anomaly scorer (not classification accuracy)?</>}
+        trap={<>(b) is generation-based scoring — exponentially expensive in feature dim and not how diffusion scoring works. (c) is the noising direction, not denoising. (d) is dimensionally incoherent for a single point.</>}
+        lens={<><em>Discriminating insight:</em> a diffusion AD score is REVERSE-process error at small noise, not generation density and not forward-noise statistics.</>}
+        stretch={<>Why is the score definition robust to the specific noise epsilon drawn at scoring time?</>}
       />
 
+      {/* AXIS: C5 / E4 — categorical encoding gotcha (diffusion-specific) */}
       <VIS.TrapProblem
         id="tabadm-p4"
         difficulty="hard"
         multiSelect
-        title="P4 — Tabular preprocessing for TabADM"
-        scenario={<>You are preparing features for TabADM. Which preprocessing choices materially improve scoring quality on heterogeneous tabular fraud data? Select all that apply.</>}
+        title="P4 — Encoding mixed-type tabular for a continuous-noise process"
+        scenario={<>You are preparing 40 features (15 categorical including merchant_id with 50k distinct values, 25 continuous) for a TabADM pipeline. Diffusion adds Gaussian noise in feature space. Which choices materially help, and which break the noise process?</>}
         options={[
-          {key:"a", text:"Quantile-transform continuous features to approximately Gaussian.", correct:true},
-          {key:"b", text:"Replace high-cardinality categoricals with learned low-dim embeddings rather than raw one-hot.", correct:true},
-          {key:"c", text:"Standardize continuous columns to zero mean and unit variance.", correct:true},
-          {key:"d", text:"Log-transform skewed monetary amount features.", correct:true},
-          {key:"e", text:"Use raw text categorical values without any encoding."},
-          {key:"f", text:"Convert all features to one-hot regardless of cardinality."},
+          {key:"a", text:"Replace high-cardinality categoricals with learned low-dim embeddings co-trained with the denoiser.", correct:true},
+          {key:"b", text:"Quantile-transform continuous columns toward an approximately Gaussian marginal.", correct:true},
+          {key:"c", text:"Log-transform heavy-tailed monetary amounts before standardization.", correct:true},
+          {key:"d", text:"One-hot all 50,000 merchant levels."},
+          {key:"e", text:"Hash each categorical to a single integer index used directly as a feature."},
+          {key:"f", text:"Drop all categorical columns and keep only continuous."},
         ]}
-        trap={<>(e) is impossible — the model needs numeric input. (f) explodes dimensionality and degrades the noise process for high-cardinality columns.</>}
-        lens={<>(a)-(d) all align feature scale with the Gaussian-noise assumption of diffusion. (a) and (c) make continuous columns play well with the noise scales. (b) keeps categorical info dense and learnable. (d) prevents heavy-tailed amounts from dominating the score.</>}
-        stretch={<>Which preprocessing change typically buys the largest single jump in AUROC?</>}
+        trap={<>(d) blows dimensionality to 50,000 sparse axes — Gaussian noise on a one-hot is meaningless. (e) destroys ordinal/categorical structure — the noise process treats the integer as continuous. (f) discards signal.</>}
+        lens={<><em>Discriminating insight:</em> continuous noise + sparse one-hot ≠ a coherent generative process. Embedding-then-noise is the bridge between categorical info and the diffusion objective.</>}
+        stretch={<>What embedding dim is a reasonable starting rule for cardinality C?</>}
       />
 
+      {/* AXIS: E1 — latency, K-step ceiling */}
       <VIS.TrapProblem
         id="tabadm-p5"
-        difficulty="hard"
-        title="P5 — ADBench warning: when does Isolation Forest beat TabADM?"
-        scenario={<>ADBench found that Isolation Forest with good features beats most deep AD methods on standard tabular benchmarks. On YOUR benchmark, when should you suspect IF will be hard to beat with TabADM?</>}
+        difficulty="medium"
+        title="P5 — 25 denoising steps at 8ms each. p99 SLA = 30ms. What ships?"
+        scenario={<>Real-time fraud tier: 30ms p99, 600 TPS. Naive TabADM scoring uses 25 denoising steps at 8ms/step.</>}
         options={[
-          {key:"a", text:"When fraud anomalies are detectable via marginal or low-order feature outliers — e.g., very large amount, rare country, brand-new device. Tree-based isolation captures these natively; the diffusion model brings little extra signal.", correct:true},
-          {key:"b", text:"When fraud is highly imbalanced."},
-          {key:"c", text:"When you have lots of data."},
-          {key:"d", text:"When you have GPU available."},
+          {key:"a", text:"Distill TabADM into a single-forward-pass student model with the anomaly score as the regression target; deploy the student. Optionally also ship a few-step variant (3-5 steps) for higher-stakes traffic.", correct:true},
+          {key:"b", text:"Add more GPUs to reduce per-request latency."},
+          {key:"c", text:"Ship as-is — 200ms is acceptable for fraud."},
+          {key:"d", text:"Run TabADM only on transactions above a static amount threshold."},
         ]}
-        trap={<>(b) is fraud-universal — both methods face it. (c) and (d) are not predictive of which method wins.</>}
-        lens={<>(a) is the diagnostic. TabADM's edge is in capturing high-order joint structure (this amount AT this hour FROM this device with this merchant); when fraud lives in low-order marginals, IF is competitive and far cheaper. The interview signal here is awareness that deep AD does not universally beat IF.</>}
+        trap={<>(b) increases throughput, not per-request latency. (c) violates SLA. (d) is a band-aid that misses small-amount fraud.</>}
+        lens={<><em>Discriminating insight:</em> diffusion's K-step cost is the cost of the generative score; distillation maps the trained scorer to a one-pass regressor and preserves rank ordering for AD use.</>}
+        stretch={<>What fidelity metric tracks distillation quality for an ANOMALY scorer (not classification)?</>}
+      />
+
+      {/* AXIS: D4 — ADBench/sibling caveat */}
+      <VIS.TrapProblem
+        id="tabadm-p6"
+        difficulty="hard"
+        title="P6 — When does Isolation Forest beat TabADM on YOUR data?"
+        scenario={<>ADBench finds tuned IF rivals most deep tabular AD. On your fraud data, which structural signal predicts IF will be hard to beat with TabADM?</>}
+        options={[
+          {key:"a", text:"When fraud is detectable via low-order marginal outliers — e.g., very large amount, brand-new device, rare country. Tree isolation captures these cheaply; the diffusion model's edge in modeling joint structure brings little extra signal here.", correct:true},
+          {key:"b", text:"When the data has 0.5% prevalence."},
+          {key:"c", text:"When you have enough GPU."},
+          {key:"d", text:"When labels are noisy."},
+        ]}
+        trap={<>(b)(c)(d) are universal fraud constraints — they apply to both methods.</>}
+        lens={<><em>Discriminating insight:</em> TabADM's edge is in high-order joint structure. Low-order fraud = IF territory at 100× lower cost.</>}
         stretch={<>What single offline experiment cleanly tests "is my fraud low-order or high-order"?</>}
       />
 
-      <VIS.TrapProblem
-        id="tabadm-p6"
-        difficulty="medium"
-        title="P6 — Small noise vs large noise levels for scoring"
-        scenario={<>TabADM averages denoising error over noise levels. Should you score at SMALL noise levels, LARGE noise levels, or a mix?</>}
-        options={[
-          {key:"a", text:"Mostly SMALL noise levels. At large noise, the denoiser's job is mostly de-noising back to the marginal distribution, so its error is similar for benign and anomalous points. At small noise, the denoiser leans on local manifold structure, which separates the two.", correct:true},
-          {key:"b", text:"Mostly LARGE noise levels — more noise means more signal."},
-          {key:"c", text:"Always at one fixed level."},
-          {key:"d", text:"Whichever level matches the test-time noise budget."},
-        ]}
-        trap={<>(b) flips the right intuition. (c) loses the stability benefit of averaging. (d) confuses generation-time noise scheduling with scoring.</>}
-        lens={<>(a) is correct. The discriminating signal is in the local-manifold regime, where benign points are easy to denoise and anomalies are not. Averaging across a few small levels reduces variance without bringing in the large-noise regime where the signal disappears.</>}
-        stretch={<>How would you pick the specific small-noise schedule for scoring?</>}
-      />
-
+      {/* AXIS: D6 — adversarial probing */}
       <VIS.TrapProblem
         id="tabadm-p7"
         difficulty="hard"
         multiSelect
-        title="P7 — Adversarial fraud probing TabADM"
-        scenario={<>An attacker knows you use TabADM. They can probe with synthetic transactions and see binary accept-reject decisions. Which attacks are plausible threats? Select all that apply.</>}
+        title="P7 — Adversarial probing of a diffusion-based scorer"
+        scenario={<>An attacker can submit synthetic transactions and observe binary accept/reject. Which attacks are realistic, and which are not?</>}
         options={[
-          {key:"a", text:"Manifold-attack: craft features that look like benign training rows by mimicking common joint patterns, pulling the denoising error below threshold.", correct:true},
-          {key:"b", text:"Score-boundary probing: binary search on amount or velocity to find the exact decision boundary, then plant fraud just inside it.", correct:true},
-          {key:"c", text:"Threshold drift exploitation: send small bursts that nudge your score-percentile threshold upward, then fire the real attack at the new boundary.", correct:true},
-          {key:"d", text:"Force the diffusion model to overfit to the attacker's transactions."},
-          {key:"e", text:"Train a GAN to generate near-benign features and submit them as fraud.", correct:true},
+          {key:"a", text:"Manifold attack — craft features that mimic common benign joint patterns to pull denoising error below threshold.", correct:true},
+          {key:"b", text:"Boundary probing — binary-search on a feature (amount, velocity) to find the decision boundary, then plant fraud just inside.", correct:true},
+          {key:"c", text:"Threshold-drift exploitation — send small bursts that nudge a rolling-percentile threshold upward, then attack at the new boundary.", correct:true},
+          {key:"d", text:"GAN-generated near-benign features submitted as fraud.", correct:true},
+          {key:"e", text:"Force the diffusion model to overfit to the attacker's transactions via gradient-based finetuning."},
         ]}
-        trap={<>(d) is not feasible from outside without label access. (a), (b), (c), (e) are all realistic threat models against an anomaly scorer.</>}
-        lens={<>Anomaly detectors face manifold attacks (a, e), boundary attacks (b), and adaptive-threshold attacks (c). Mitigations: ensemble multiple AD scores, calibrate thresholds with isotonic regression rather than rolling percentile, and add rate-limited holdout monitoring.</>}
-        stretch={<>Which of these attacks does a tuned IF baseline ALSO face? Which is unique to deep AD?</>}
+        trap={<>(e) requires model access and label oracle; not feasible from a black-box accept/reject channel.</>}
+        lens={<><em>Discriminating insight:</em> anomaly scorers face manifold/boundary/threshold attacks. Mitigation = ensemble multiple AD scores, isotonic-calibrate thresholds (vs rolling percentile), rate-limit per-account probing.</>}
+        stretch={<>Which of these attacks does a tuned IF also face? Which is unique to deep AD?</>}
       />
 
+      {/* AXIS: C4 — one-class training discipline */}
       <VIS.TrapProblem
         id="tabadm-p8"
         difficulty="medium"
-        title="P8 — Categorical encoding tradeoff in diffusion"
-        scenario={<>You have a merchant_id column with 50,000 distinct values. Options for encoding inside a TabADM pipeline?</>}
+        title="P8 — Should you include confirmed-fraud rows in TabADM training?"
+        scenario={<>You have 200M benign and 50k confirmed-fraud rows. The intern proposes training TabADM on ALL of it for "more data".</>}
         options={[
-          {key:"a", text:"Learn a low-dim embedding (e.g., dim 32) of merchant_id and feed the embedding as continuous features into the diffusion model. Treat the embedding as part of the trainable model so it co-adapts with the denoiser.", correct:true},
-          {key:"b", text:"One-hot encode all 50,000 levels."},
-          {key:"c", text:"Hash to a single integer feature."},
-          {key:"d", text:"Drop the column."},
+          {key:"a", text:"No — keep training benign-only. TabADM is a one-class density estimator; including fraud rows teaches the denoiser to also reconstruct fraud manifolds, lowering scores for fraud at inference. Use confirmed fraud only for threshold calibration and supervised side-channels.", correct:true},
+          {key:"b", text:"Yes — more data always helps; the model will learn the difference."},
+          {key:"c", text:"Yes — and balance benign/fraud 50-50 to handle imbalance."},
+          {key:"d", text:"Yes, but only after removing categorical features."},
         ]}
-        trap={<>(b) blows up dimensionality and breaks the Gaussian-noise assumption. (c) destroys most of the information. (d) throws away signal that is often useful for fraud.</>}
-        lens={<>(a) is the standard tabular-DL playbook applied to diffusion AD. Co-trained embeddings keep info density high and play nicely with the continuous noise process.</>}
-        stretch={<>How would the embedding dimension scale with cardinality as a rule of thumb?</>}
+        trap={<>(b)(c) confuse supervised classification with one-class density. (d) is a non-sequitur.</>}
+        lens={<><em>Discriminating insight:</em> the score works precisely because the denoiser ONLY knows the benign manifold; teaching it the fraud manifold collapses the gap.</>}
+        stretch={<>What if fraud-row contamination is unavoidable (label noise of 5% in "benign")?</>}
       />
 
+      {/* AXIS: C3 — why average over schedule */}
       <VIS.TrapProblem
         id="tabadm-p9"
-        difficulty="hard"
-        multiSelect
-        title="P9 — Production rollout checklist"
-        scenario={<>You are rolling TabADM to a real-time fraud scoring tier with 800 transactions per second. Which of these checks belong on your rollout list? Select all that apply.</>}
+        difficulty="medium"
+        title="P9 — Why average denoising error across a noise schedule rather than scoring at one t?"
+        scenario={<>You compare scoring at one fixed small t vs averaging over t in {`{10, 20, 30, 40, 50}`}. Which is the right reason to average?</>}
         options={[
-          {key:"a", text:"Distillation-fidelity check: student-vs-teacher anomaly-score rank correlation on a held-out window.", correct:true},
-          {key:"b", text:"Latency benchmark at p50, p95, p99 across the full feature pipeline, not just model inference.", correct:true},
-          {key:"c", text:"Calibration plot of score percentiles against confirmed fraud rate.", correct:true},
-          {key:"d", text:"Shadow-mode comparison against the current IF baseline for at least one week.", correct:true},
-          {key:"e", text:"Verify TabADM beats GBDT on AUROC in a paper benchmark."},
+          {key:"a", text:"The denoising MSE at any single t has substantial sampling noise from the random epsilon drawn at scoring time. Averaging across a short schedule reduces variance without leaving the small-noise (manifold-sensitive) regime.", correct:true},
+          {key:"b", text:"Averaging fixes the model's underfitting at small t."},
+          {key:"c", text:"Averaging gives a probabilistically calibrated score directly."},
+          {key:"d", text:"Averaging is required for distillation."},
         ]}
-        trap={<>(e) is the wrong layer — paper-benchmark performance is not a production guarantee on your data.</>}
-        lens={<>(a)-(d) are all production hygiene items for an AD scorer. (a) guards against distillation regressions. (b) catches feature-pipeline blowups. (c) makes the score usable downstream as a probability. (d) builds confidence vs incumbent before flipping live traffic.</>}
-        stretch={<>How long is "long enough" for shadow mode on a fraud system with weekly seasonality?</>}
+        trap={<>(b)(c)(d) conflate variance reduction with training quality, calibration, and distillation — separate concerns.</>}
+        lens={<><em>Discriminating insight:</em> averaging is a variance-reduction trick on the sampling of epsilon at scoring time, not a fix for training or calibration.</>}
+        stretch={<>How many noise levels are enough? What is the diminishing-return point?</>}
       />
 
+      {/* AXIS: E5 — drift monitor */}
       <VIS.TrapProblem
         id="tabadm-p10"
-        difficulty="hard"
-        title="P10 — End-to-end pick: mid-size fintech, 40 mixed features, 600 TPS, 50ms SLA"
-        scenario={<>Mid-size fintech. 40 mixed tabular features (15 categorical, 25 continuous). 600 transactions per second. 50ms p99 SLA. Confirmed fraud rate 0.2 percent. You have 2 engineers comfortable with PyTorch and a fraud team that already runs a tuned Isolation Forest with AUROC 0.86. Pick ONE.</>}
+        difficulty="medium"
+        title="P10 — Benign distribution drifts; TabADM scores inflate. What do you monitor?"
+        scenario={<>Two weeks after launch, the median TabADM anomaly score has shifted up 15% across all traffic. Confirmed fraud rate is unchanged. What is the most likely cause and the right monitor?</>}
         options={[
-          {key:"a", text:"Keep IF as the baseline. Train TabADM offline and use it to (i) generate weak labels for hard-to-label transactions and (ii) seed a distillation student that joins IF in an ensemble online. Migrate fully only if the ensemble beats IF-alone by a meaningful F1 margin in shadow.", correct:true},
-          {key:"b", text:"Replace IF with TabADM in production now."},
-          {key:"c", text:"Ignore TabADM — IF is good enough."},
+          {key:"a", text:"Benign feature distribution has drifted — the trained denoiser sees inputs further from its training manifold and produces higher denoising errors for everyone. Monitor a KS-test on per-feature distributions vs training reference; on alert, schedule a retrain or shift-correction.", correct:true},
+          {key:"b", text:"Your GPU is throttling."},
+          {key:"c", text:"The diffusion model is overfitting at inference."},
+          {key:"d", text:"The noise schedule changed."},
+        ]}
+        trap={<>(b) does not change scores. (c) is not a thing (overfitting is a training concept). (d) is the operator's choice and should not silently change.</>}
+        lens={<><em>Discriminating insight:</em> a one-class density model is sensitive to input-distribution drift on benigns; the inflation is a false-positive shift unrelated to actual fraud rate.</>}
+        stretch={<>How would you do shift-correction without a full retrain?</>}
+      />
+
+      {/* AXIS: C1 / D2 — direction of the denoising loss */}
+      <VIS.TrapProblem
+        id="tabadm-p11"
+        difficulty="hard"
+        title="P11 — What does the denoiser predict, and how does that connect to the score?"
+        scenario={<>Pick the precise training signal in TabADM and the precise score at inference.</>}
+        options={[
+          {key:"a", text:"Training: predict the noise eps added to x_0 to form x_t. Loss = MSE on predicted noise. Inference score: add small noise, predict, report MSE of predicted noise vs actual noise.", correct:true},
+          {key:"b", text:"Training: predict x_0 directly from x_t. Inference: report KL divergence of predicted distribution."},
+          {key:"c", text:"Training: predict the next forward-process step. Inference: report how many steps to reach pure noise."},
+          {key:"d", text:"Training: maximize log-likelihood directly with score matching. Inference: report likelihood."},
+        ]}
+        trap={<>(b) is the eps vs x_0 parameterization choice — both possible, but TabADM uses noise-prediction. (c) is operationally backward. (d) is the score-matching family but not the trained-score TabADM uses.</>}
+        lens={<><em>Discriminating insight:</em> the noise-prediction parameterization gives a clean per-noise-level MSE that doubles as score; the train objective and score are the same quantity.</>}
+        stretch={<>How would the alternative x_0-parameterization change the score formula?</>}
+      />
+
+      {/* AXIS: F1 — when TabADM is the wrong choice */}
+      <VIS.TrapProblem
+        id="tabadm-p12"
+        difficulty="medium"
+        multiSelect
+        title="P12 — When is TabADM the WRONG choice (architectural mismatch)?"
+        scenario={<>Pick conditions where TabADM is structurally a bad fit even if you have data and compute.</>}
+        options={[
+          {key:"a", text:"You have 6 features total (5 continuous, 1 categorical).", correct:true},
+          {key:"b", text:"Fraud lives almost entirely in low-order marginals (giant amount, rare country).", correct:true},
+          {key:"c", text:"Real-time SLA is 10ms p99 and you cannot distill.", correct:true},
+          {key:"d", text:"You have 200M benign rows and 50k labeled fraud."},
+          {key:"e", text:"You can afford GPU inference."},
+        ]}
+        trap={<>(d)(e) are favorable conditions; not disqualifiers.</>}
+        lens={<><em>Discriminating insight:</em> low-dim + low-order + tight SLA → IF/GBDT. TabADM earns its keep on high-dim + high-order + batch/distillable.</>}
+        stretch={<>At what feature count does TabADM start to dominate IF empirically per ADBench?</>}
+      />
+
+      {/* AXIS: E2 — calibration */}
+      <VIS.TrapProblem
+        id="tabadm-p13"
+        difficulty="medium"
+        title="P13 — Downstream consumer wants P(fraud), not a raw score. How do you calibrate?"
+        scenario={<>The risk engine wants a probability, not a denoising-error number. Pick the right calibration path.</>}
+        options={[
+          {key:"a", text:"Fit isotonic regression on a held-out window mapping raw denoising-error scores to confirmed-fraud rate per score bin. Refit weekly to track drift.", correct:true},
+          {key:"b", text:"Apply softmax to the raw score."},
+          {key:"c", text:"Use the score directly as P(fraud) divided by 100."},
+          {key:"d", text:"Train a logistic regression on top of the score with sigmoid."},
+        ]}
+        trap={<>(b) makes no sense on a single scalar. (c) is dimensionally arbitrary. (d) is Platt-style and OK but isotonic typically handles the non-linear bin shape better for AD scores.</>}
+        lens={<><em>Discriminating insight:</em> AD scores are rank-meaningful but not probability-meaningful; isotonic regression preserves ranking while imposing monotonicity to P(fraud).</>}
+        stretch={<>Why does isotonic usually beat Platt for AD score calibration?</>}
+      />
+
+      {/* AXIS: C6 — Inference compute */}
+      <VIS.TrapProblem
+        id="tabadm-p14"
+        difficulty="medium"
+        multiSelect
+        title="P14 — Levers to cut TabADM inference cost without retraining"
+        scenario={<>Which moves cut score-time cost while preserving rank ordering?</>}
+        options={[
+          {key:"a", text:"Reduce the number of small-t levels averaged (e.g., 5 → 3).", correct:true},
+          {key:"b", text:"Batch many test rows together to amortize GPU launch overhead.", correct:true},
+          {key:"c", text:"Use FP16 (or BF16) inference where supported.", correct:true},
+          {key:"d", text:"Increase the noise level t to t = 800 to get bigger signal."},
+          {key:"e", text:"Switch to running the denoiser only on the categorical features."},
+        ]}
+        trap={<>(d) destroys signal (see P2). (e) breaks the model — the denoiser was trained on the full feature vector.</>}
+        lens={<><em>Discriminating insight:</em> the small-noise schedule and FP16 are the levers; subsetting features or large-t scoring breaks the score's mechanism.</>}
+        stretch={<>At what schedule length does rank-correlation with the full-K score drop below 0.95?</>}
+      />
+
+      {/* AXIS: D3 cascade */}
+      <VIS.TrapProblem
+        id="tabadm-p15"
+        difficulty="hard"
+        title="P15 — Diagnose this cascade"
+        scenario={<>Junior MLE: "I tried TabADM, beat IF on the public dataset by 5 AUROC points, but in shadow against IF on our production traffic, TabADM is 2 points BEHIND IF. What's wrong with TabADM?"</>}
+        options={[
+          {key:"a", text:"Public-dataset fraud is high-order joint (where TabADM wins); your production fraud may be dominated by low-order marginal outliers (where IF wins). Run a fraud-decomposition: train a 1-feature IF per feature; if any single-feature IF gets close to ensemble IF, low-order fraud dominates and TabADM has little extra to add.", correct:true},
+          {key:"b", text:"TabADM was undertrained — retrain for more epochs."},
+          {key:"c", text:"IF was overfit to your training data."},
+          {key:"d", text:"The two models have different score scales."},
+        ]}
+        trap={<>(b)(c) are the easy excuses. (d) is irrelevant for AUROC which is rank-based.</>}
+        lens={<><em>Discriminating insight:</em> public-dataset wins are not guarantees on YOUR fraud signal structure. Decompose the signal before assigning blame to a model.</>}
+        stretch={<>Design the per-feature-IF decomposition experiment in one paragraph.</>}
+      />
+
+      {/* AXIS: E3 rollout */}
+      <VIS.TrapProblem
+        id="tabadm-p16"
+        difficulty="medium"
+        multiSelect
+        title="P16 — Rollout checklist items that are SPECIFIC to a diffusion AD scorer"
+        scenario={<>Which checks specifically matter for TabADM (beyond generic ML rollout hygiene)?</>}
+        options={[
+          {key:"a", text:"Distillation-fidelity check: rank correlation of student vs teacher scores on a held-out window.", correct:true},
+          {key:"b", text:"Noise-schedule sensitivity: rerun scoring with two schedules and check rank stability before fixing one.", correct:true},
+          {key:"c", text:"Benign-distribution drift KS test on the input features vs training reference.", correct:true},
+          {key:"d", text:"Verify the model achieves SOTA on the original paper benchmark."},
+          {key:"e", text:"Confirm fraud rows were excluded from training data.", correct:true},
+        ]}
+        trap={<>(d) is paper-benchmark theatre — it does not predict your production lift.</>}
+        lens={<><em>Discriminating insight:</em> diffusion AD has 3 fragile knobs (training-data purity, noise schedule, distillation faithfulness) — production checks must target them.</>}
+        stretch={<>How would you bake the noise-schedule sensitivity check into CI?</>}
+      />
+
+      {/* AXIS: D1 — beta-VAE / NF posterior decoys */}
+      <VIS.TrapProblem
+        id="tabadm-p17"
+        difficulty="hard"
+        title="P17 — Why aren't VAE collapse-fixes (beta-VAE, NF posterior) enough to replace TabADM?"
+        scenario={<>The intern proposes a beta-VAE with beta = 0.01 (to weaken the KL squeeze) as a cheaper alternative to TabADM.</>}
+        options={[
+          {key:"a", text:"Very low beta degenerates the VAE into a regular autoencoder — no probabilistic structure, reconstruction error often just memorizes the training set and AD generalization suffers. Diffusion gets a similar 'no KL squeeze' benefit but keeps a principled per-noise-level reconstruction objective that still requires modeling the manifold rather than memorizing.", correct:true},
+          {key:"b", text:"Beta-VAE with beta = 0.01 is mathematically equivalent to TabADM."},
+          {key:"c", text:"Beta-VAE will work perfectly; TabADM is overkill."},
+          {key:"d", text:"The KL term is irrelevant; only the decoder matters."},
+        ]}
+        trap={<>(b) is false. (c) ignores generalization tradeoff. (d) misreads the failure mechanism.</>}
+        lens={<><em>Discriminating insight:</em> killing the KL collapses VAE into AE — different (memorization-prone) failure mode. Diffusion keeps a structured objective without the KL squeeze.</>}
+        stretch={<>What about normalizing-flow posteriors — when do they suffice?</>}
+      />
+
+      {/* AXIS: C2 — alpha_bar math */}
+      <VIS.TrapProblem
+        id="tabadm-p18"
+        difficulty="hard"
+        title="P18 — Math of the small-t forward step"
+        scenario={<>At noise step t, alpha_bar_t = 0.99. You form x_t = sqrt(alpha_bar_t)·x_0 + sqrt(1 - alpha_bar_t)·epsilon. What does this say about the signal-to-noise ratio of x_t?</>}
+        options={[
+          {key:"a", text:"x_t is mostly the signal x_0 (weighted by ~0.995) with a small noise component (weighted by ~0.1) — the small-noise regime where denoising error is sensitive to local manifold structure.", correct:true},
+          {key:"b", text:"x_t is mostly noise."},
+          {key:"c", text:"x_t equals the marginal mean."},
+          {key:"d", text:"Alpha_bar_t = 0.99 is a degenerate case."},
+        ]}
+        trap={<>(b)(c)(d) misread the noise schedule arithmetic.</>}
+        lens={<><em>Discriminating insight:</em> the scoring schedule is chosen precisely so alpha_bar_t stays near 1 — keeping x_t in the local neighborhood of x_0 where the manifold matters.</>}
+        stretch={<>What alpha_bar_t value defines the boundary between "useful for AD scoring" and "too noisy"?</>}
+      />
+
+      {/* AXIS: F4 — paper-named caveat */}
+      <VIS.TrapProblem
+        id="tabadm-p19"
+        difficulty="medium"
+        title="P19 — TabADM and weak-label noise: what's the production reality?"
+        scenario={<>Your "benign" training set has ~5% label noise (confirmed-fraud rows that were never escalated). What happens to TabADM?</>}
+        options={[
+          {key:"a", text:"The denoiser learns to reconstruct some fraud-manifold structure, raising its scores for similar fraud in production (lower AUROC). Mitigation: aggressive benign-side filtering (high-precision label sources only), iterative training (train, score, drop top-percentile high-score rows from training set, retrain).", correct:true},
+          {key:"b", text:"Nothing — diffusion is robust to label noise."},
+          {key:"c", text:"AUROC improves because the model sees fraud."},
+          {key:"d", text:"The loss diverges."},
+        ]}
+        trap={<>(b)(c) confuse supervised noise-robustness with one-class density estimation. (d) is unrelated.</>}
+        lens={<><em>Discriminating insight:</em> contamination of the "benign-only" training set is the fundamental one-class density failure mode; mitigations operate at the data side, not the model.</>}
+        stretch={<>Why does the iterative drop-then-retrain procedure tend to converge?</>}
+      />
+
+      {/* AXIS: D4 — senior cross-examine */}
+      <VIS.TrapProblem
+        id="tabadm-p20"
+        difficulty="hard"
+        multiSelect
+        title="P20 — Junior reports 'TabADM beat IF by 5 AUROC on YelpChi'. Which senior follow-ups matter MOST?"
+        scenario={<>You are the senior reviewer. Which of these follow-ups distinguish a real result from a benchmark artifact?</>}
+        options={[
+          {key:"a", text:"What was IF's hyperparameter tuning budget vs TabADM's?", correct:true},
+          {key:"b", text:"Random or temporal split?", correct:true},
+          {key:"c", text:"AUROC or AUPRC reported?", correct:true},
+          {key:"d", text:"Was the feature set identical for both?", correct:true},
+          {key:"e", text:"Did TabADM use more layers than the IF?"},
+        ]}
+        trap={<>(e) is the kind of capacity comparison that does not apply — IF is not deep.</>}
+        lens={<><em>Discriminating insight:</em> ADBench-style fair-eval gates (matched tuning, temporal split, AUPRC, matched features) are the auditing questions that turn paper-claims into production-credible numbers.</>}
+        stretch={<>Which of these gates is hardest to enforce in a typical research benchmark?</>}
+      />
+
+      {/* AXIS: B3 / hero question */}
+      <VIS.TrapProblem
+        id="tabadm-p21"
+        difficulty="hard"
+        title="P21 — Pitch TabADM in 4 sentences for a senior interview"
+        scenario={<>Senior interviewer: "Pitch TabADM to me as if I'm your director and you want budget."</>}
+        options={[
+          {key:"a", text:"VAE-AD on heterogeneous tabular features tends to posterior-collapse because the ELBO's KL term squeezes the posterior to the prior; reconstruction error stops discriminating. TabADM replaces the ELBO with a per-noise-level denoising MSE — no KL squeeze — and scores rows by denoising error at small noise levels averaged over a short schedule. The score captures high-order joint structure that Isolation Forest misses, at the cost of K denoising steps per inference. We deploy it offline for weak labeling and distill a one-pass student for the real-time tier.", correct:true},
+          {key:"b", text:"TabADM is a diffusion model. It is state-of-the-art on tabular AD."},
+          {key:"c", text:"It's a generative model, so it's better than discriminative."},
+          {key:"d", text:"It beats Isolation Forest on every dataset."},
+        ]}
+        trap={<>(b) is generic; (c) is empty; (d) is false (ADBench shows IF is competitive on many tabular tasks).</>}
+        lens={<><em>Discriminating insight:</em> the pitch names the specific failure (VAE KL squeeze), the specific replacement (per-noise-level MSE), the specific score (small-t denoising error), and the specific operational sequence (offline-labeling + distillation).</>}
+        stretch={<>How would you adjust the pitch if the director has read ADBench?</>}
+      />
+
+      {/* AXIS: E2 / hero end-to-end */}
+      <VIS.TrapProblem
+        id="tabadm-p22"
+        difficulty="hard"
+        title="P22 — End-to-end pick: mid-size fintech, 40 mixed features, 50ms SLA, IF baseline 0.86 AUROC"
+        scenario={<>Mid-size fintech. 40 features (15 categorical, 25 continuous). 600 TPS. 50ms p99. Confirmed fraud 0.2%. Existing IF baseline AUROC 0.86. Two engineers. Pick the disciplined rollout.</>}
+        options={[
+          {key:"a", text:"Keep IF as the cheap, calibrated incumbent. Train TabADM offline; (i) use its scores for weak labeling of unlabeled transactions to augment the IF training, (ii) distill TabADM into a single-pass student and add the student to an ensemble with IF online. Shadow the ensemble against IF for 2-4 weeks; migrate fully only if the ensemble beats IF-alone by a meaningful F1 margin under temporal-split AUPRC.", correct:true},
+          {key:"b", text:"Replace IF with TabADM in production immediately."},
+          {key:"c", text:"Don't bother — IF is good enough at 0.86 AUROC."},
           {key:"d", text:"Train a VAE-AD because it is faster than diffusion."},
         ]}
-        trap={<>(b) ignores the 50ms SLA. (c) misses TabADM's offline value. (d) revives the collapse problem TabADM was designed around.</>}
-        lens={<>(a) is the disciplined sequencing. Keep the cheap, calibrated incumbent; add the expensive generative model where it is cheapest to use (offline labeling); only migrate online via distillation when the ensemble clearly beats the baseline.</>}
+        trap={<>(b) ignores SLA. (c) leaves signal on the table. (d) revives the collapse problem TabADM was designed around.</>}
+        lens={<><em>Discriminating insight:</em> the disciplined sequencing is offline-where-it's-cheap (labeling), online-via-distillation (student), shadow-then-migrate (temporal-split AUPRC).</>}
         stretch={<>What single offline experiment would confirm TabADM is adding signal beyond IF on YOUR data?</>}
       />
     </VIS.Section>
@@ -1707,14 +1902,14 @@ flowchart TB
             <strong>Zamberg et al. — TabADM: Diffusion-based Anomaly Detection for Tabular Data</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(paper, ICML 2024)</span>
-          <br/>The TabADM paper. Sec 3 (denoising-score AD) and Sec 5 (ADBench comparison) are the keepers.
+          <br/>The TabADM paper. Sec 3 (denoising-score AD definition) and Sec 5 (ADBench comparison) are the keepers.
         </li>
         <li>
           <a href="https://arxiv.org/abs/2206.09426" target="_blank" rel="noopener">
             <strong>Han et al. — ADBench: Anomaly Detection Benchmark</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2022)</span>
-          <br/>The benchmark that shows tuned Isolation Forest beats most deep AD on standard tabular tasks. Read before claiming deep AD wins on your data.
+          <br/>Shows tuned Isolation Forest is competitive with deep AD on most tabular benchmarks. Read before claiming any deep AD lift.
         </li>
         <li>
           <a href="https://lilianweng.github.io/posts/2021-07-11-diffusion-models/" target="_blank" rel="noopener">
@@ -1728,14 +1923,14 @@ flowchart TB
             <strong>Ho et al. — Denoising Diffusion Probabilistic Models (DDPM)</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2020)</span>
-          <br/>The original DDPM paper. Sec 2 grounds what "denoising score" really means.
+          <br/>Sec 2 grounds what "denoising at noise level t" actually predicts.
         </li>
         <li>
           <a href="https://arxiv.org/abs/1312.6114" target="_blank" rel="noopener">
             <strong>Kingma and Welling — Auto-Encoding Variational Bayes (VAE)</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(paper)</span>
-          <br/>The original VAE. Worth re-reading to see exactly where posterior collapse enters via the KL term.
+          <br/>Worth re-reading to see exactly where posterior collapse enters via the KL term.
         </li>
       </ul>
     </VIS.Section>

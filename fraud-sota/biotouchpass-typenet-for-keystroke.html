@@ -1414,293 +1414,481 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// BioTouchPass / TypeNet — keystroke-dynamics transformers for continuous authentication and ATO detection.
+// BioTouchPass / TypeNet — keystroke biometrics via dwell + flight micro-timings.
+// SIGNAL MODALITY ANCHOR: keystroke = dwell (key-down to key-up) + flight (key-up to next-key-down),
+// LANGUAGE-DEPENDENT bigram timings, NOT spatial.
+// Cross-visual: this is the KEYSTROKE sibling (vs mouse/swipe TCN and gait/accel).
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="Fraud SOTA · Behavioral biometrics"
+      pill="Fraud SOTA · Behavioral biometrics · KEYSTROKE"
       title="BioTouchPass / TypeNet for keystroke"
-      subtitle="A transformer over keystroke dwell/flight timings learns a per-user embedding; account-takeover is detected as cosine drift from the legitimate user's embedding."
+      subtitle="A transformer over (dwell_ms, flight_ms, key_id) sequences learns a per-user embedding via triplet metric learning; ATO is detected as cosine drift from the enrolled user's centroid."
       byline={[
-        {label: "Papers", value: "Acien et al. TypeNet TPAMI 2022; Keystroke Transformer BMVC 2024"},
-        {label: "Year", value: "2022-2024"},
-        {label: "L3", value: "Behavioral biometric"},
+        {label: "Paper", value: "Acien et al., TypeNet (TPAMI 2022)"},
+        {label: "Signal", value: "dwell + flight timings (NOT spatial)"},
+        {label: "L3", value: "Behavioral biometrics · keystroke"},
       ]}/>
 
     <VIS.TLDR>
-      Earlier statistical keystroke models (HMMs, GMMs) needed many enrollment samples per user and rarely generalized.{" "}
-      <VIS.Term def="A neural net trained with a metric loss (triplet, contrastive, InfoNCE) so that the embedding space puts same-user keystroke sessions close together and different-user sessions far apart, even for users never seen at training time.">Metric-learned</VIS.Term>{" "}
-      transformers over per-keystroke{" "}
-      <VIS.Term def="Two timing features per keystroke: dwell = how long the key is held down (key-up minus key-down for the same key), flight = inter-key delay (key-down of key N minus key-up of key N-1).">dwell and flight timings</VIS.Term>{" "}
-      now produce a generalizable user embedding from one enrollment session. Account-takeover detection becomes a cosine-distance check between the live session and the enrolled prototype. Strong on physical keyboards; degrades on mobile soft-keyboards because dwell timings are quantized to touch events.
+      Each keystroke event yields two timings that are biometric-grade:{" "}
+      <VIS.Term def="The time between a key being pressed down and released. Typically 50-150ms; user-specific.">dwell time</VIS.Term>{" "}
+      and{" "}
+      <VIS.Term def="The time between releasing one key and pressing the next. Bigram-specific (e.g., 'th' vs 'qx'); 0-500ms typical.">flight time</VIS.Term>.
+      TypeNet trains a transformer to map a short (~50-keystroke) sequence of (dwell, flight, key_id) tuples to a 128-d embedding under a triplet loss. At inference, cosine similarity between the session embedding and the enrolled user's centroid drops sharply when the typist changes. Wins on desktop with physical keyboards; degrades sharply on mobile soft-keyboards because OS timing quantization (~16ms display-refresh granularity) destroys the dwell/flight signal.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="What it is — the dwell/flight signal, end to end">
+      <p>
+        Each keystroke produces two timings: dwell (key-down to key-up) and flight (key-up to next-key-down). Dwell is roughly user-specific; flight is{" "}
+        <VIS.Term def="The pair of consecutive characters (e.g., 'th', 'in', 'er'). Bigram flight times have characteristic latencies per-user-per-language.">bigram</VIS.Term>-specific and language-dependent. Together they form a short stream that TypeNet ingests:
+      </p>
       <ol>
-        <li><strong>Input:</strong> per-keystroke sequence of (key code, dwell time, flight time) — typically 50-200 keystrokes per session.</li>
-        <li><strong>Encoder:</strong> a transformer (or LSTM in TypeNet) maps the sequence to a fixed-size embedding vector.</li>
-        <li><strong>Training:</strong> metric loss (triplet or InfoNCE) on a large multi-user dataset (Aalto, Buffalo) so that same-user sessions cluster together.</li>
-        <li><strong>Enrollment:</strong> one session per user produces a prototype embedding.</li>
-        <li><strong>Verification / ATO detection:</strong> cosine distance from live-session embedding to enrolled prototype. Above threshold means suspicious.</li>
+        <li><strong>Featurize</strong>: per keystroke, (dwell_ms, flight_ms_from_prev, key_id) — typically 50 tuples per sample.</li>
+        <li><strong>Encode</strong>: a 4-8 layer transformer; mean-pool the per-token outputs to a 128-d session embedding.</li>
+        <li><strong>Train</strong>: triplet loss with semi-hard mining over pairs (same-user-A, same-user-A, different-user-B). The model learns a metric space where the same user clusters tightly.</li>
+        <li><strong>Score</strong>: cosine similarity between session embedding and enrolled centroid (avg of ~5 enrollment sessions). Low cosine → ATO suspect.</li>
       </ol>
 
       <VIS.Mermaid chart={`
 flowchart TB
-  K["Keystroke timings"]
+  K["Stream of (dwell, flight, key_id)"]
   K --> T["Transformer encoder"]
-  T --> E["Session embedding"]
-  E --> C["Cosine to enrolled prototype"]
-  C --> S["Score: ATO if distance high"]
+  T --> E["Session embedding 128-d"]
+  C["Enrolled user centroid"]
+  E --> CMP["Cosine similarity"]
+  C --> CMP
+  CMP --> S["Score: 1 - cosine = ATO risk"]
   style T fill:#dbeafe,stroke:#2563eb,stroke-width:2px
   style S fill:#fef3c7,stroke:#d97706,stroke-width:2px
       `} />
       <p>
-        Blue box is the trained encoder. Yellow box is the operational decision. The whole pipeline can run client-side on a modern laptop.
+        The transformer is trained ONCE on a large multi-user keystroke corpus; new users enroll with ~5 sessions and immediately get a working score. No per-user retraining.
       </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
+    <VIS.Section id="sec-diff" title="How it differs from HMM keystroke (pre-2020) and from mouse/gait siblings">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
         <thead>
           <tr style={{background:"#1f3a5f", color:"#fff"}}>
             <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Statistical (HMM / GMM)</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>TypeNet (LSTM)</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Keystroke Transformer</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>HMM keystroke (legacy)</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>TypeNet</th>
           </tr>
         </thead>
         <tbody>
           <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Enrollment sessions needed</td>
-            <td style={{padding:"8px 10px"}}>10+ per user</td>
-            <td style={{padding:"8px 10px"}}>1-3</td>
-            <td style={{padding:"8px 10px"}}>1</td>
+            <td style={{padding:"8px 10px"}}>Training</td>
+            <td style={{padding:"8px 10px"}}>Per-user — needs thousands of keystrokes per user</td>
+            <td style={{padding:"8px 10px"}}>Global encoder + ~5-session enrollment per user</td>
           </tr>
           <tr>
             <td style={{padding:"8px 10px"}}>Generalization to new users</td>
-            <td style={{padding:"8px 10px"}}>Poor</td>
-            <td style={{padding:"8px 10px"}}>Good</td>
-            <td style={{padding:"8px 10px"}}>Better</td>
+            <td style={{padding:"8px 10px"}}>Zero — needs retraining</td>
+            <td style={{padding:"8px 10px"}}>Zero-shot via metric space</td>
           </tr>
           <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Verification math</td>
-            <td style={{padding:"8px 10px"}}>Likelihood ratio</td>
-            <td style={{padding:"8px 10px"}}>Cosine in embedding</td>
-            <td style={{padding:"8px 10px"}}>Cosine in embedding</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>EER on Aalto (physical keyboard)</td>
-            <td style={{padding:"8px 10px"}}>10-15 percent</td>
-            <td style={{padding:"8px 10px"}}>2-3 percent</td>
-            <td style={{padding:"8px 10px"}}>about 2 percent</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>EER on mobile (soft keyboard)</td>
-            <td style={{padding:"8px 10px"}}>20+ percent</td>
-            <td style={{padding:"8px 10px"}}>8-12 percent</td>
-            <td style={{padding:"8px 10px"}}>6-10 percent</td>
+            <td style={{padding:"8px 10px"}}>Best regime</td>
+            <td style={{padding:"8px 10px"}}>Long-form fixed-prompt typing</td>
+            <td style={{padding:"8px 10px"}}>Free-text desktop sessions</td>
           </tr>
         </tbody>
       </table>
+      <p style={{marginTop:12}}>
+        <strong>Signal-modality contrast vs sibling biometrics:</strong> keystroke is temporal-only — no x, y, or pressure. Mouse/swipe biometrics depend on spatial-temporal (curvature, pressure). Gait depends on continuous 3-axis accelerometer with walk-cycle phase. The failure modes are not interchangeable; do not import "mouse drifts after injury" intuitions into keystroke design.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick">
-      <ul>
-        <li><strong>Web or desktop sessions</strong> with physical-keyboard input — banking, brokerage, enterprise SaaS.</li>
-        <li><strong>Continuous authentication</strong> use case where you re-verify the user every few minutes, not just at login.</li>
-        <li><strong>Account-takeover detection</strong> where the legit user has an enrolled prototype and you need to flag drift.</li>
-        <li><strong>You have a global pretraining dataset</strong> (Aalto, Buffalo, in-house) — metric learning needs scale to generalize.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <VIS.Callout kind="gotcha" title="Mobile soft-keyboards quantize timing">
-        On mobile soft-keyboards, dwell time is approximated by touch-down to touch-up on the SAME virtual key — much noisier than physical-key dwell. Expect EER 2-3x worse than on physical keyboards. Mitigations: condition the model on a "device_class" token, or train a separate mobile model.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Privacy and consent constraints">
-        Keystroke timing is biometric data under GDPR and CCPA. You need explicit consent, a documented retention policy, and a way for users to opt out. Some jurisdictions treat continuous biometric collection as high-risk processing.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Drift with user state">
-        Tiredness, injury, mood, or even keyboard change all shift dwell/flight timings. A model trained on a "rested user typing in the morning" will see drift when the same user types late at night. Practical fix: re-enroll on a rolling window rather than a single one-off session.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Adversarial replay">
-        An attacker who records the legit user's keystroke timings (via malware) can replay them. Liveness signals (mouse jitter, typing-rhythm variability within session) help defend against this.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+    <VIS.Section id="sec-drill" title="Drill — 22 trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Ten interview-grade traps on keystroke biometrics, metric learning, and mobile-soft-keyboard noise.
+        Twenty-two interview-grade traps anchored on the dwell/flight signal, the metric-learning transferability, mobile soft-keyboard quantization, and keystroke-specific drift/spoofing patterns.
       </p>
 
+      {/* AXIS: D1 — metric learning vs HMM */}
       <VIS.TrapProblem
-        id="kt-p1"
+        id="bio-p1"
         difficulty="hard"
-        title="P1 — Why does metric learning generalize where HMMs did not?"
-        scenario={<>Pre-2020 statistical keystroke models needed 10+ enrollment sessions per user and rarely generalized to users not seen during training. TypeNet and successors generalize from a single enrollment session. Why?</>}
+        title="P1 — Why does TypeNet generalize to new users zero-shot where HMM-keystroke does not?"
+        scenario={<>HMM-based keystroke required thousands of keystrokes per user before working. TypeNet enrolls a new user with ~5 sessions.</>}
         options={[
-          {key:"a", text:"Metric learning trains the EMBEDDING space, not per-user parameters. The model learns 'what makes any pair of sessions same-user vs different-user' from millions of pairs at training time. At enrollment, the user contributes ONE point in that already-learned space; no per-user fitting is needed.", correct:true},
-          {key:"b", text:"Neural nets always generalize better than HMMs."},
-          {key:"c", text:"Transformers have positional encoding."},
-          {key:"d", text:"GPUs are faster."},
+          {key:"a", text:"HMMs fit a per-user generative timing model — each user needs their own parameters. TypeNet's triplet loss instead learns a UNIVERSAL metric space where same-user samples cluster regardless of who they are. A new user just contributes a centroid; the metric space is already trained.", correct:true},
+          {key:"b", text:"TypeNet is a bigger model so it generalizes better."},
+          {key:"c", text:"HMMs need more data because they use timing; TypeNet uses key identity."},
+          {key:"d", text:"TypeNet uses GPUs."},
         ]}
-        trap={<>(b)-(d) miss the mechanism. The architectural point is irrelevant without the metric-learning objective; an HMM trained with a metric loss would also generalize better.</>}
-        lens={<>(a) is the right answer. Metric learning amortizes the per-user fit into a global embedding function. This is the same principle that makes face recognition (FaceNet) work from a single enrollment selfie.</>}
-        stretch={<>What dataset properties make a global keystroke metric easier or harder to learn?</>}
+        trap={<>(b) is capacity confusion. (c) is wrong — both use timing; the difference is loss shape. (d) is irrelevant.</>}
+        lens={<><em>Discriminating insight:</em> the metric-learning loss decouples "what is a user's pattern" from "who is this specific user." Per-user identity becomes a centroid lookup, not a training run.</>}
+        stretch={<>What does the encoder learn that survives a population shift to a new language?</>}
       />
 
+      {/* AXIS: A2 / D3 — mobile soft-keyboard quantization */}
       <VIS.TrapProblem
-        id="kt-p2"
+        id="bio-p2"
         difficulty="hard"
-        title="P2 — Mobile soft-keyboard drop: EER goes from 2% to 9%. Mechanism?"
-        scenario={<>Your model trained on Aalto (physical keyboard) gets EER 2 percent on physical-keyboard test and EER 9 percent on a mobile soft-keyboard test. What is the dominant mechanism?</>}
+        title="P2 — Same model: 2% EER on desktop, 9% EER on iOS. Diagnose."
+        scenario={<>Identical TypeNet model deployed on desktop web (physical keyboard) and iOS app (soft keyboard). EER jumps from 2% to 9% on iOS.</>}
         options={[
-          {key:"a", text:"On mobile, dwell time is the gap between touch-down and touch-up on the same virtual key — noisy and quantized to the touch-event sampling rate. Flight time also picks up a software keyboard's autocomplete and gesture delays. The training distribution did not include this noise.", correct:true},
-          {key:"b", text:"Mobile users type slower."},
-          {key:"c", text:"Mobile users have different vocabularies."},
-          {key:"d", text:"Mobile screens are smaller."},
+          {key:"a", text:"iOS soft-keyboard delivers touch events through UIKit at display-refresh granularity (~16ms quantization). Dwell times (typically 50-150ms) are roughly preserved but flight times — especially short bigrams (0-50ms) — are quantized to multiples of 16ms, collapsing the discriminating fine-grained timing signal. Additionally, iOS predictive-text autocomplete injects synthetic keystroke events that have no human timing pattern.", correct:true},
+          {key:"b", text:"iOS users type slower."},
+          {key:"c", text:"The iOS app has higher network latency."},
+          {key:"d", text:"iOS has fewer characters per session."},
         ]}
-        trap={<>(b)-(d) are correlated facts but not the mechanism. The dominant issue is feature noise + training-test distribution shift.</>}
-        lens={<>(a) is the timing-physics answer. Mitigations: train with mobile + physical sessions jointly; condition the model on a device_class token; or train a separate mobile head with shared backbone.</>}
-        stretch={<>How would you decide between "one model with device token" and "two models, one per device class"?</>}
+        trap={<>(b)(c)(d) are surface-level guesses that miss the OS-timing-quantization mechanism.</>}
+        lens={<><em>Discriminating insight:</em> the keystroke signal is quantized away by the OS event pipeline. Network latency is irrelevant — keystroke timing is measured by the local browser/OS, not the server.</>}
+        stretch={<>Why does dwell survive quantization better than flight?</>}
       />
 
+      {/* AXIS: E6 — fallback on mobile */}
       <VIS.TrapProblem
-        id="kt-p3"
-        difficulty="hard"
-        multiSelect
-        title="P3 — Soft-keyboard mitigations"
-        scenario={<>Which interventions plausibly reduce mobile-soft-keyboard EER for a keystroke transformer? Select all that apply.</>}
-        options={[
-          {key:"a", text:"Add a device_class token (desktop/tablet/mobile) to the input sequence.", correct:true},
-          {key:"b", text:"Include accelerometer or touch-pressure signals as additional channels.", correct:true},
-          {key:"c", text:"Pretrain on a mobile-keystroke corpus (Aalto-Mobile, in-house mobile sessions).", correct:true},
-          {key:"d", text:"Train a separate mobile head sharing the backbone, fine-tuned on mobile sessions.", correct:true},
-          {key:"e", text:"Always reject mobile sessions."},
-          {key:"f", text:"Reduce the model size."},
-        ]}
-        trap={<>(e) is operationally unacceptable (mobile is a huge fraction of traffic). (f) does not address the distribution-shift root cause.</>}
-        lens={<>(a)-(d) all attack the device-class distribution shift from different angles. The cheapest is (a) plus (c); the most accurate is usually (d) with a shared backbone.</>}
-        stretch={<>Why does sharing the backbone matter for the mobile head?</>}
-      />
-
-      <VIS.TrapProblem
-        id="kt-p4"
-        difficulty="hard"
-        title="P4 — Threshold setting: false-accept vs false-reject"
-        scenario={<>You ship cosine-distance ATO detection. Cosine threshold tau controls the tradeoff. Marketing wants a low false-reject rate (legitimate users not annoyed); security wants a low false-accept rate (attackers not let in). Pick the right framing.</>}
-        options={[
-          {key:"a", text:"Set tau per-user-segment based on a calibrated FAR/FRR curve. High-value accounts get a tighter threshold (more false-reject but lower false-accept); low-risk accounts get a looser threshold. Re-calibrate every 4-8 weeks as user drift accumulates.", correct:true},
-          {key:"b", text:"Pick one global tau at EER."},
-          {key:"c", text:"Always tighten tau to minimize false-accept."},
-          {key:"d", text:"Always loosen tau to minimize false-reject."},
-        ]}
-        trap={<>(b) is the textbook EER answer but ignores per-user-segment risk. (c) and (d) are dogmatic.</>}
-        lens={<>(a) is the operational answer. Risk-weighted thresholds are standard in fraud; keystroke biometrics are no different. EER is a useful summary number, not an operating point.</>}
-        stretch={<>If your FAR/FRR curve shifts after a model retrain, what is the safe rollout procedure?</>}
-      />
-
-      <VIS.TrapProblem
-        id="kt-p5"
-        difficulty="hard"
-        title="P5 — Replay attack: attacker has captured the user's keystroke timings"
-        scenario={<>An attacker installs malware that records the legitimate user's keystroke timings and replays them at login. Does your TypeNet-style model catch this?</>}
-        options={[
-          {key:"a", text:"No, not by itself. The replayed timings ARE the user's true distribution; cosine distance is small; the model accepts. You need an out-of-band liveness signal (e.g., a server-issued challenge string the user must type live) or a per-session entropy check that detects replay-level determinism.", correct:true},
-          {key:"b", text:"Yes, transformers detect any anomaly."},
-          {key:"c", text:"Yes, because replays have lower entropy."},
-          {key:"d", text:"No, you need a different cosine threshold."},
-        ]}
-        trap={<>(b) is over-broad. (c) is sometimes true but unreliable on its own (good attackers add jitter). (d) does not address the threat model.</>}
-        lens={<>(a) is correct. Behavioral biometrics is verification against an enrolled prototype; replays are designed to match that prototype. Defense requires liveness (challenge-response) or session-state signals (cursor jitter, typing speed within session) that a replay attack cannot easily fake.</>}
-        stretch={<>Design a challenge-response that keystroke biometrics CAN verify even under malware.</>}
-      />
-
-      <VIS.TrapProblem
-        id="kt-p6"
+        id="bio-p3"
         difficulty="medium"
         multiSelect
-        title="P6 — Privacy and consent: what must your deployment have?"
-        scenario={<>You are launching keystroke biometrics in the EU under GDPR. Which items are legally and ethically required? Select all that apply.</>}
+        title="P3 — Mitigations for the mobile soft-keyboard regime"
+        scenario={<>Pick the mitigations that actually address the dwell/flight signal loss on mobile.</>}
         options={[
-          {key:"a", text:"Explicit user consent before any keystroke logging starts.", correct:true},
-          {key:"b", text:"A documented retention policy with a defined deletion timeline.", correct:true},
-          {key:"c", text:"A user-facing opt-out that immediately stops collection.", correct:true},
-          {key:"d", text:"A DPIA (Data Protection Impact Assessment) for high-risk processing.", correct:true},
-          {key:"e", text:"Permission to share embeddings with third-party advertisers."},
-          {key:"f", text:"A claim that keystroke timings are anonymous."},
+          {key:"a", text:"Train a separate mobile-specific encoder on mobile-only data so it adapts to quantized timings.", correct:true},
+          {key:"b", text:"Add platform as a model input (web/iOS/Android) and train a unified encoder with platform-conditioned normalization.", correct:true},
+          {key:"c", text:"Lower the cosine-similarity threshold for mobile, accepting higher FAR.", correct:true},
+          {key:"d", text:"Detect autocomplete-injected synthetic events (zero or near-zero flight) and drop them from the sequence.", correct:true},
+          {key:"e", text:"Use only dwell on mobile and ignore flight (since flight is quantized)."},
+          {key:"f", text:"Switch keystroke off on mobile and fall back to other risk signals.", correct:true},
         ]}
-        trap={<>(e) is the opposite of compliant. (f) is false — keystroke timings are biometric data even after embedding, because the embedding is intended to uniquely identify a person.</>}
-        lens={<>(a)-(d) are the standard GDPR Article 9 + Article 35 stack for biometric processing. Get legal in the loop early.</>}
-        stretch={<>Which of these also applies under CCPA in California?</>}
+        trap={<>(e) is the wrong direction — flight is still informative for long bigrams; throwing it away loses signal that survives quantization.</>}
+        lens={<><em>Discriminating insight:</em> the right strategy depends on session length and stakes. Per-platform models + autocomplete-event filtering + risk-signal fallback are layered defenses.</>}
+        stretch={<>How would you measure whether (a) or (b) is the better fix on YOUR data?</>}
       />
 
+      {/* AXIS: D4 — senior cross-examine */}
       <VIS.TrapProblem
-        id="kt-p7"
-        difficulty="hard"
-        title="P7 — User drift: model EER doubles after 6 weeks. Diagnose."
-        scenario={<>Your deployed model EER doubles over 6 weeks for the same user population. No infra change. What is the most likely cause?</>}
-        options={[
-          {key:"a", text:"User-distribution drift — users get new keyboards, change posture, switch to laptops vs desktops, get faster or slower. The enrolled prototype is stale. Fix: re-enroll on a rolling window or interpolate the prototype with recent sessions.", correct:true},
-          {key:"b", text:"Adversarial attacks."},
-          {key:"c", text:"Server clock drift."},
-          {key:"d", text:"Network packet reordering."},
-        ]}
-        trap={<>(b)-(d) are possible but rarely dominate at this timescale. Drift is the usual explanation.</>}
-        lens={<>(a). Behavioral biometric prototypes go stale; in production you maintain a rolling exponentially-weighted prototype or refresh on a schedule. This is the same hygiene that face-recognition systems use.</>}
-        stretch={<>Design the rolling-prototype update rule — what is the right exponential decay rate?</>}
-      />
-
-      <VIS.TrapProblem
-        id="kt-p8"
-        difficulty="hard"
-        title="P8 — What metric loss to pick for the encoder?"
-        scenario={<>You are training the encoder. Three candidates: pure triplet loss, InfoNCE (multi-negative contrastive), and prototypical-network loss. Pick the most robust for production keystroke biometrics.</>}
-        options={[
-          {key:"a", text:"InfoNCE with a large batch of negatives. Triplet loss is sensitive to mining strategy and collapses without semi-hard mining; prototype losses need clean per-user clusters that mobile sessions do not provide. InfoNCE with many in-batch negatives is the most robust default.", correct:true},
-          {key:"b", text:"Pure triplet loss with random negatives."},
-          {key:"c", text:"Prototypical-network loss with 1-shot enrollment."},
-          {key:"d", text:"Cross-entropy classification over user IDs."},
-        ]}
-        trap={<>(b) collapses or stops improving without hard-negative mining. (c) is fragile when per-user clusters are noisy. (d) does not produce a metric space generalizing to new users.</>}
-        lens={<>(a) is the SOTA default. InfoNCE is what FaceNet's modern successors and SimCLR-style methods all converge to. Triplet was the right answer in 2015; in 2024+, InfoNCE is the safer pick.</>}
-        stretch={<>How large does the negative batch need to be in practice?</>}
-      />
-
-      <VIS.TrapProblem
-        id="kt-p9"
+        id="bio-p4"
         difficulty="hard"
         multiSelect
-        title="P9 — Production rollout checks"
-        scenario={<>You are rolling keystroke biometrics to ATO detection on a banking site. Which checks belong on the rollout list? Select all that apply.</>}
+        title="P4 — Junior reports 'EER is 1.5%'. Which senior questions discriminate good from misleading?"
+        scenario={<>You are the senior. The team reports EER = 1.5% on TypeNet.</>}
         options={[
-          {key:"a", text:"FAR/FRR curve calibrated on a held-out user cohort.", correct:true},
-          {key:"b", text:"Per-device-class subgroup analysis (desktop / laptop / tablet / mobile).", correct:true},
-          {key:"c", text:"Client-side latency benchmarks for the embedding computation.", correct:true},
-          {key:"d", text:"Privacy review with explicit consent flow and retention policy.", correct:true},
-          {key:"e", text:"Liveness / replay-attack threat model addressed.", correct:true},
-          {key:"f", text:"Migration plan to remove SMS 2FA entirely."},
+          {key:"a", text:"How many enrollment sessions per user?", correct:true},
+          {key:"b", text:"Cross-session or within-session evaluation?", correct:true},
+          {key:"c", text:"Fixed-prompt or free-text?", correct:true},
+          {key:"d", text:"What is the test population's language distribution vs training?", correct:true},
+          {key:"e", text:"How many parameters does the transformer have?"},
         ]}
-        trap={<>(f) is over-aggressive — keystroke biometrics ADD a layer, not replace existing factors.</>}
-        lens={<>(a)-(e) are all production-hygiene items specific to behavioral biometrics. Senior MLEs should anticipate all of these BEFORE shipping.</>}
-        stretch={<>Which two of (a)-(e) are easiest to skip without immediate harm, but hardest to add later?</>}
+        trap={<>(e) is capacity question — does not change EER interpretation.</>}
+        lens={<><em>Discriminating insight:</em> EER is meaningless without enrollment size, session split, prompt type, and language match. These are the keystroke-specific eval gates.</>}
+        stretch={<>Which of these gates most often inflates research-paper EER numbers?</>}
       />
 
+      {/* AXIS: D5 — replay attack */}
       <VIS.TrapProblem
-        id="kt-p10"
+        id="bio-p5"
         difficulty="hard"
-        title="P10 — End-to-end pick: design ATO detection for a brokerage with web + iOS + Android clients"
-        scenario={<>Brokerage. Web (Chrome on desktop and laptop), iOS app, Android app. ATO is the dominant fraud loss. You have access to per-keystroke events on web and per-touch events on mobile. 5M monthly active users, 200M sessions / month. Pick the best deployment.</>}
+        title="P5 — Attacker captures the user's keystroke timings via browser malware and replays them. Defense?"
+        scenario={<>Threat model: attacker has captured the legitimate user's dwell/flight stream for a typed password. Now they replay it on login. TypeNet sees identical timings as the legit user.</>}
         options={[
-          {key:"a", text:"One shared transformer backbone, two heads (desktop-physical and mobile-soft) trained jointly with a device_class token. Cosine-distance scoring with per-user-segment thresholds. Re-enroll prototype on a rolling 4-week window. Layer ON TOP of existing SMS-OTP for high-risk actions, not as a replacement.", correct:true},
-          {key:"b", text:"One model for all device classes, ignore the mobile vs desktop distinction."},
-          {key:"c", text:"Mobile only, drop web because keystroke is too noisy."},
-          {key:"d", text:"Replace all existing 2FA with keystroke biometrics."},
+          {key:"a", text:"Liveness via challenge-prompt: at login, randomly select a short novel phrase the user has never typed before. Replayed dwell/flight for a previously-captured phrase does not match the challenge characters. Pair with session-rate-limit and IP+device cross-checks. Free-text continuous-auth (not just login) reduces the replay's value since the attacker would need infinite recorded sessions.", correct:true},
+          {key:"b", text:"Increase the cosine threshold."},
+          {key:"c", text:"Use a deeper transformer."},
+          {key:"d", text:"Rotate the model every week."},
         ]}
-        trap={<>(b) eats the mobile EER penalty. (c) gives up on the easiest segment. (d) is the over-aggressive deployment that gets compliance to block launch.</>}
-        lens={<>(a) is the senior MLE design. Shared backbone amortizes training data; per-device head handles distribution shift; rolling prototype handles drift; layered-on-top deployment respects defense-in-depth.</>}
-        stretch={<>What single metric on the rollout dashboard would you watch most closely in week 1?</>}
+        trap={<>(b)(c)(d) do not address replay — the attacker has perfect timing for the captured phrase.</>}
+        lens={<><em>Discriminating insight:</em> keystroke biometrics is replay-vulnerable on captured prompts; liveness needs novel-character challenges that exploit per-bigram timing structure.</>}
+        stretch={<>Why is continuous-auth (not just login) the natural defense for keystroke ATO?</>}
+      />
+
+      {/* AXIS: D6 — keystroke-specific drift */}
+      <VIS.TrapProblem
+        id="bio-p6"
+        difficulty="medium"
+        multiSelect
+        title="P6 — Keystroke-specific drift sources (not generic 'user drift')"
+        scenario={<>Which of the following cause keystroke-specific drift that requires re-enrollment? Anchor on the DWELL/FLIGHT mechanism, not generic ATO patterns.</>}
+        options={[
+          {key:"a", text:"User buys a new mechanical keyboard with different key travel — dwell distribution shifts ~15ms.", correct:true},
+          {key:"b", text:"User switches from US-QWERTY to Dvorak layout — bigram flight times completely reshuffle.", correct:true},
+          {key:"c", text:"User develops carpal tunnel — dwell and flight both elongate.", correct:true},
+          {key:"d", text:"User starts using a screen reader."},
+          {key:"e", text:"User's network latency increases."},
+          {key:"f", text:"OS update changes JavaScript timing precision from 1ms to 5ms (Spectre mitigation).", correct:true},
+        ]}
+        trap={<>(d) is mouse/screen-reader-specific (not keystroke timing). (e) is irrelevant — keystroke timing is client-side.</>}
+        lens={<><em>Discriminating insight:</em> dwell/flight drift is hardware + layout + language + OS-timing-precision specific. None of these are mouse/swipe/gait failure modes — keep the modality discipline.</>}
+        stretch={<>Which of these is detectable from the score timeline without user feedback?</>}
+      />
+
+      {/* AXIS: C2 — architecture rationale */}
+      <VIS.TrapProblem
+        id="bio-p7"
+        difficulty="medium"
+        title="P7 — Why a transformer rather than a TCN or LSTM for keystroke?"
+        scenario={<>The mouse/swipe sibling uses a TCN. Why does keystroke use a transformer?</>}
+        options={[
+          {key:"a", text:"Keystroke sequences are short (~50 events) and event positions matter (long-range bigram dependencies — 'th' early then 'e' five tokens later). Transformers handle global attention cheaply at this length. Mouse sequences are longer (~500 events) with strong local correlation — TCN's causal-dilated convolutions are cheaper there. Neither choice is universal; it follows from sequence shape and locality structure.", correct:true},
+          {key:"b", text:"Transformers are always better than TCNs."},
+          {key:"c", text:"TCNs cannot handle categorical features like key_id."},
+          {key:"d", text:"Transformers use less GPU memory."},
+        ]}
+        trap={<>(b) is absolute. (c) is false. (d) is the opposite of the truth for long sequences.</>}
+        lens={<><em>Discriminating insight:</em> architecture follows sequence shape (length + locality), not fashion. Keystroke has short global-attention-friendly sequences; mouse has long local-correlation-heavy ones.</>}
+        stretch={<>At what sequence length would a TCN be a better choice for keystroke?</>}
+      />
+
+      {/* AXIS: C3 — triplet loss vs InfoNCE */}
+      <VIS.TrapProblem
+        id="bio-p8"
+        difficulty="hard"
+        title="P8 — Triplet loss with semi-hard mining vs InfoNCE: which fits keystroke better?"
+        scenario={<>Pick the metric-learning loss best suited to TypeNet's enrollment regime (~5 sessions per user, millions of users at train time).</>}
+        options={[
+          {key:"a", text:"Either works; the keystroke-specific consideration is that within-user variance is high (mood, fatigue, prompt difficulty), so hard-negative mining matters more than the loss family — triplet with semi-hard mining or InfoNCE with hard-negative sampling both win over naive same-class averaging. The choice between them comes down to batch size (InfoNCE benefits from large batches; triplet works at smaller batches).", correct:true},
+          {key:"b", text:"InfoNCE always wins because it is contrastive."},
+          {key:"c", text:"Triplet loss always wins because it is older."},
+          {key:"d", text:"You should use cross-entropy with user IDs."},
+        ]}
+        trap={<>(b)(c) are absolute. (d) is the HMM-era thinking — does not generalize to new users.</>}
+        lens={<><em>Discriminating insight:</em> the metric-learning loss family is less important than negative-mining strategy for keystroke; within-user variance is the dominant signal challenge.</>}
+        stretch={<>How would you mine hard negatives for keystroke specifically?</>}
+      />
+
+      {/* AXIS: C5 — enrollment length */}
+      <VIS.TrapProblem
+        id="bio-p9"
+        difficulty="medium"
+        title="P9 — How long does enrollment need to be?"
+        scenario={<>You can enroll a user with 1, 5, or 20 sessions of ~50 keystrokes each. EER at each: 9.2%, 2.1%, 1.8%. Why does the diminishing return kick in around 5 sessions?</>}
+        options={[
+          {key:"a", text:"The centroid is an average of session embeddings; its variance falls as 1/N with sessions. After ~5 sessions, the centroid is close enough to the user's true mean that adding more sessions buys little. Within-user session variance (mood, fatigue, prompt) sets a floor that more enrollment cannot cross.", correct:true},
+          {key:"b", text:"The transformer overfits after 5 sessions."},
+          {key:"c", text:"More sessions cost more storage."},
+          {key:"d", text:"5 sessions is a hardcoded model limit."},
+        ]}
+        trap={<>(b) confuses enrollment (centroid estimation) with training. (c)(d) miss the statistical mechanism.</>}
+        lens={<><em>Discriminating insight:</em> enrollment-driven EER follows centroid-variance arithmetic; the floor is within-user session variance, not centroid quality.</>}
+        stretch={<>How would you compute the centroid-variance floor without running the enrollment experiment?</>}
+      />
+
+      {/* AXIS: D7 — free-text vs fixed prompt */}
+      <VIS.TrapProblem
+        id="bio-p10"
+        difficulty="medium"
+        title="P10 — Free-text vs fixed-prompt typing: which gives a better signal?"
+        scenario={<>You compare TypeNet evaluated on free-text sessions vs fixed-prompt (always typing the same passphrase). EER: free-text 1.8%, fixed-prompt 4.0%. Why?</>}
+        options={[
+          {key:"a", text:"Free-text covers a broader bigram distribution per user, so the encoder sees more of each user's bigram-flight 'fingerprint'. Fixed-prompt restricts the model to one bigram trajectory; the discriminating signal is compressed and within-prompt practice effect (users speed up over time) adds noise. Continuous-auth (which is inherently free-text) is the design target.", correct:true},
+          {key:"b", text:"Fixed-prompt sessions are shorter."},
+          {key:"c", text:"Free-text uses more languages."},
+          {key:"d", text:"Fixed-prompt sessions have more typos."},
+        ]}
+        trap={<>(b) confuses length with content; (c)(d) are surface guesses.</>}
+        lens={<><em>Discriminating insight:</em> bigram-flight diversity drives separability; fixed prompts compress the signal.</>}
+        stretch={<>Would a fixed-prompt detector improve with synthesized prompt rotation?</>}
+      />
+
+      {/* AXIS: E1 — FAR/FRR asymmetry */}
+      <VIS.TrapProblem
+        id="bio-p11"
+        difficulty="medium"
+        title="P11 — Threshold tuning: FAR vs FRR for ATO"
+        scenario={<>EER is 2% (FAR = FRR = 2%). PM says "let's just ship at EER." Why is that the wrong operating point?</>}
+        options={[
+          {key:"a", text:"Fraud cost is asymmetric: a false-accept (FAR) lets an attacker in (high cost — chargeback + reputational damage); a false-reject (FRR) friction-blocks a legit user (low-medium cost — a step-up auth). Operating point should be at low FAR (e.g., 0.1%) and accept the resulting FRR. The threshold is downstream of cost-asymmetric utility, not symmetric error.", correct:true},
+          {key:"b", text:"EER is always wrong as an operating point."},
+          {key:"c", text:"FAR and FRR are the same metric."},
+          {key:"d", text:"You should always operate at FAR = FRR for fairness."},
+        ]}
+        trap={<>(b) overstates; EER is a useful benchmark metric. (c) is wrong. (d) is fairness-confused.</>}
+        lens={<><em>Discriminating insight:</em> EER is the comparison point, not the deployment point. ATO cost asymmetry pushes the operating point toward low FAR.</>}
+        stretch={<>How would you report a model that has low EER but a bad FAR/FRR shape?</>}
+      />
+
+      {/* AXIS: F4 — language */}
+      <VIS.TrapProblem
+        id="bio-p12"
+        difficulty="hard"
+        title="P12 — User enrolled in English; types in Spanish. What happens to EER?"
+        scenario={<>Multilingual app. User enrolls typing in English; types in Spanish during a session.</>}
+        options={[
+          {key:"a", text:"EER inflates because bigram structure differs: 'th' and 'ng' are common English bigrams with characteristic per-user flight times; 'rr' and 'll' are Spanish ones. The user's Spanish bigram-flight distribution may not match their English enrollment centroid even though it is the same person. Fix: language-conditioned model OR per-language centroid OR free-text continuous enrollment that spans languages.", correct:true},
+          {key:"b", text:"EER is unchanged — keystroke is language-independent."},
+          {key:"c", text:"EER improves because Spanish has more characters."},
+          {key:"d", text:"EER changes only for non-Romance languages."},
+        ]}
+        trap={<>(b) is the cross-modality confusion (gait is language-independent — keystroke is not). (c)(d) are surface.</>}
+        lens={<><em>Discriminating insight:</em> keystroke is LANGUAGE-DEPENDENT — a property that distinguishes it from mouse and gait biometrics. The senior move is per-language centroids.</>}
+        stretch={<>Could language be inferred from the keystroke stream alone for per-language routing?</>}
+      />
+
+      {/* AXIS: F3 — paste / autocomplete */}
+      <VIS.TrapProblem
+        id="bio-p13"
+        difficulty="medium"
+        multiSelect
+        title="P13 — Events that are NOT human keystrokes and what to do with them"
+        scenario={<>Which of the following arrive in the keystroke stream and must be filtered before scoring?</>}
+        options={[
+          {key:"a", text:"Pasted content (no dwell/flight for individual chars).", correct:true},
+          {key:"b", text:"iOS predictive-text autocomplete (synthetic events with near-zero flight).", correct:true},
+          {key:"c", text:"Browser autofill of saved passwords.", correct:true},
+          {key:"d", text:"Sticky-keys / accessibility-software input (deviates from natural timing).", correct:true},
+          {key:"e", text:"User-typed characters in non-Latin scripts."},
+        ]}
+        trap={<>(e) are still human keystrokes — language-conditioning, not filtering.</>}
+        lens={<><em>Discriminating insight:</em> the boundary between "human keystroke" and "machine-injected event" is the deployment hygiene work that papers gloss over.</>}
+        stretch={<>How would you detect pasted content from the stream alone?</>}
+      />
+
+      {/* AXIS: F5 — keyboard hardware variation */}
+      <VIS.TrapProblem
+        id="bio-p14"
+        difficulty="hard"
+        title="P14 — User switches from membrane to mechanical keyboard. Dwell distribution shifts 20ms. What is the right operational response?"
+        scenario={<>EER for a specific user spikes from 1.5% to 6% over a week. Investigation reveals they bought a new mechanical keyboard.</>}
+        options={[
+          {key:"a", text:"Trigger adaptive re-enrollment: after detecting persistent within-user score drift (not a single bad session), update the centroid with the most recent N high-confidence sessions while keeping the encoder fixed. Track keyboard-class as a soft signal if available (HID descriptor on web). The TypeNet paper explicitly notes mechanical-vs-membrane shifts dwell ~10-20ms — this is a known operational mode.", correct:true},
+          {key:"b", text:"Lock the account until manual review."},
+          {key:"c", text:"Retrain the entire encoder."},
+          {key:"d", text:"Ignore — the EER bump is temporary."},
+        ]}
+        trap={<>(b) is friction over a known hardware artifact. (c) is overkill — the encoder is global. (d) leaves a user worse-protected.</>}
+        lens={<><em>Discriminating insight:</em> centroid update (cheap) handles hardware drift; encoder retrain (expensive) only handles population-wide shifts.</>}
+        stretch={<>How long is "persistent" before triggering adaptive re-enrollment?</>}
+      />
+
+      {/* AXIS: E5 — monitor */}
+      <VIS.TrapProblem
+        id="bio-p15"
+        difficulty="medium"
+        title="P15 — Sudden population-wide EER spike from 2% to 5% overnight. Cause?"
+        scenario={<>The whole population's EER jumps overnight. No model change shipped. What is the most likely cause?</>}
+        options={[
+          {key:"a", text:"A browser or OS update changed the precision of JavaScript timing APIs (e.g., performance.now() rounding for Spectre mitigation), shifting flight-time distributions for everyone. Monitor: track flight-time histograms week-over-week and alert on KS-test divergence; coordinate with browser-vendor release notes.", correct:true},
+          {key:"b", text:"The encoder weights drifted."},
+          {key:"c", text:"Users got worse at typing overnight."},
+          {key:"d", text:"More users came online."},
+        ]}
+        trap={<>(b) is impossible without a deploy. (c)(d) are silly.</>}
+        lens={<><em>Discriminating insight:</em> client-side timing precision changes are a class of population-wide drift that has no on-device signature; only distribution monitoring catches it.</>}
+        stretch={<>What is the smallest timing-precision change (in ms) that materially affects EER?</>}
+      />
+
+      {/* AXIS: D2 — cascade */}
+      <VIS.TrapProblem
+        id="bio-p16"
+        difficulty="hard"
+        title="P16 — Diagnose this cascade"
+        scenario={<>Junior MLE: "I trained TypeNet on desktop data — 1.8% EER. Deployed to our iOS-first app. EER is now 12%. The model must be broken; I want to retrain from scratch."</>}
+        options={[
+          {key:"a", text:"The model is fine; the data pipeline mismatch is the failure. iOS UIKit timing quantization + autocomplete injection + shorter sessions (mobile users type less) compound to destroy the keystroke signal. Fix: train a mobile-specific model, filter autocomplete events, fall back to other risk signals on short sessions, AND set a per-platform EER target. A 12% EER on iOS may be acceptable as a soft signal in an ensemble — not as a stand-alone gate.", correct:true},
+          {key:"b", text:"Yes, retrain from scratch; the model is broken."},
+          {key:"c", text:"Bigger model."},
+          {key:"d", text:"Add more attention heads."},
+        ]}
+        trap={<>(b)(c)(d) blame the model for an OS-induced signal-quality issue.</>}
+        lens={<><em>Discriminating insight:</em> always check the input-pipeline integrity before retraining the model — a 5x EER jump across platforms is a data-quality story, not a capacity story.</>}
+        stretch={<>How would you confirm "data-pipeline mismatch" without comparing platforms?</>}
+      />
+
+      {/* AXIS: E4 — privacy */}
+      <VIS.TrapProblem
+        id="bio-p17"
+        difficulty="hard"
+        multiSelect
+        title="P17 — Privacy: which of these are real concerns for keystroke biometrics?"
+        scenario={<>Pick the privacy concerns specific to keystroke dwell/flight (not generic ML data privacy).</>}
+        options={[
+          {key:"a", text:"Flight times between specific bigrams can leak the typed content via language models (timing-based side-channel) — even without character logging.", correct:true},
+          {key:"b", text:"Dwell distributions can reveal medical conditions (Parkinson's tremor, post-injury limp affecting typing).", correct:true},
+          {key:"c", text:"GDPR/CCPA classify biometric identifiers as special-category personal data requiring explicit consent.", correct:true},
+          {key:"d", text:"Aggregated population statistics on keystroke speed can identify a specific person."},
+          {key:"e", text:"Keystroke data exposes the user's WiFi network."},
+        ]}
+        trap={<>(d) is false at aggregate level. (e) is unrelated.</>}
+        lens={<><em>Discriminating insight:</em> keystroke privacy is content-leakage + medical-leakage + special-category-PII. Each has a specific mitigation (DP noise on stored embeddings; consent flow; no raw-stream retention).</>}
+        stretch={<>What DP-epsilon would be appropriate for stored centroids?</>}
+      />
+
+      {/* AXIS: E3 — calibration */}
+      <VIS.TrapProblem
+        id="bio-p18"
+        difficulty="medium"
+        title="P18 — Different demographic groups have different baseline cosine distributions. Fairness implications?"
+        scenario={<>Left-handed users, non-native typists, and elderly users have systematically different cosine-similarity distributions at the same threshold. What is the right calibration response?</>}
+        options={[
+          {key:"a", text:"Compute per-segment FAR/FRR at the chosen threshold. If FRR for one group is much higher (over-rejection), per-segment threshold calibration is one option; another is to mine training data from underrepresented groups; the third is to fall back to other risk signals for friction-sensitive groups. Document and monitor.", correct:true},
+          {key:"b", text:"Same threshold for everyone — that is fair."},
+          {key:"c", text:"Lower the threshold globally."},
+          {key:"d", text:"Drop keystroke biometrics for fairness reasons."},
+        ]}
+        trap={<>(b) is the equal-threshold-equal-fairness fallacy. (c) inflates FAR for everyone. (d) is over-correction.</>}
+        lens={<><em>Discriminating insight:</em> equal threshold often produces unequal error rates; senior fairness work is per-segment calibration + targeted data augmentation.</>}
+        stretch={<>How would you measure group-level fairness on a continuous biometric score?</>}
+      />
+
+      {/* AXIS: C6 — bigram structure */}
+      <VIS.TrapProblem
+        id="bio-p19"
+        difficulty="hard"
+        title="P19 — Why is bigram-flight more discriminating than dwell?"
+        scenario={<>Ablation: encoder trained on dwell-only gets EER 5.8%; flight-only gets 3.1%; both gets 1.8%. Why does flight outperform dwell?</>}
+        options={[
+          {key:"a", text:"Dwell is roughly Gaussian per user with overlapping distributions across users (50-150ms range). Flight is BIGRAM-CONDITIONAL — the user's flight time for 'th' is different from 'qx', and the per-user-per-bigram pattern is more distinctive than a marginal-dwell shape. The encoder can pick up bigram-flight motor-skill structure that marginal dwell does not have.", correct:true},
+          {key:"b", text:"Dwell is noisier than flight."},
+          {key:"c", text:"Dwell is identical for every user."},
+          {key:"d", text:"Flight has more units (ms) than dwell."},
+        ]}
+        trap={<>(b)(c)(d) miss the bigram-conditional structure.</>}
+        lens={<><em>Discriminating insight:</em> the discriminator lives in BIGRAM-CONDITIONAL flight, not marginal timings. This is why fixed-prompt typing (limited bigrams) underperforms free-text.</>}
+        stretch={<>Which bigrams are most discriminating? (Hint: common ones with high variance across users.)</>}
+      />
+
+      {/* AXIS: B3 — pitch */}
+      <VIS.TrapProblem
+        id="bio-p20"
+        difficulty="hard"
+        title="P20 — Pitch TypeNet to a director in 4 sentences"
+        scenario={<>"Pitch keystroke biometrics for ATO detection to me. Why should I fund this over device-fingerprint or IP risk?"</>}
+        options={[
+          {key:"a", text:"Keystroke dynamics — per-keystroke dwell (50-150ms) plus bigram-conditional flight times — are a passive, continuous biometric signal that complements device and IP risk: those signals trigger at session start; keystroke continuously verifies the user IS typing throughout the session. TypeNet is a transformer-encoder + triplet-loss model that learns a global metric space, so new users enroll with ~5 sessions and get an immediate cosine-similarity score against their centroid. Best for web/desktop with physical keyboards; degrades on iOS soft-keyboards because UIKit quantizes events to display-refresh granularity — there we either run a mobile-specific encoder or treat the signal as soft and fall back to other risk signals on short sessions.", correct:true},
+          {key:"b", text:"It is a transformer. It is SOTA."},
+          {key:"c", text:"It is free."},
+          {key:"d", text:"It is impossible to spoof."},
+        ]}
+        trap={<>(b)(c)(d) are empty or false (replay is a real spoof channel).</>}
+        lens={<><em>Discriminating insight:</em> the pitch names the signal (dwell + bigram flight), the architecture (transformer + triplet), the operational mode (continuous vs single-shot), and the platform boundary (degrades on mobile).</>}
+        stretch={<>How would you adjust the pitch for a mobile-first product?</>}
+      />
+
+      {/* AXIS: E2 — enrollment UX */}
+      <VIS.TrapProblem
+        id="bio-p21"
+        difficulty="medium"
+        title="P21 — Active vs passive enrollment: which UX for keystroke?"
+        scenario={<>PM wants active enrollment: ask the user to type a 250-char passage during signup. Engineering proposes passive: collect over the first 5 logged-in sessions.</>}
+        options={[
+          {key:"a", text:"Passive over the first ~5 sessions wins for keystroke specifically: free-text bigram coverage during real usage is broader and more representative than a single typed passage, the user does not bear UX friction, and within-user prompt-style variance is captured naturally. Active enrollment is acceptable only if your population includes users who will not generate keystroke traffic quickly (e.g., one-time-login flows).", correct:true},
+          {key:"b", text:"Active — easier to certify enrollment is complete."},
+          {key:"c", text:"Either — they are equivalent."},
+          {key:"d", text:"Active — passive violates GDPR."},
+        ]}
+        trap={<>(b) trades UX for an engineering convenience. (c) misses the bigram-coverage argument. (d) is false — both need consent.</>}
+        lens={<><em>Discriminating insight:</em> for keystroke, enrollment QUALITY is bigram-coverage-driven; passive samples real distribution, active samples one passage.</>}
+        stretch={<>How would you signal to product when a user is "enrolled enough" passively?</>}
+      />
+
+      {/* AXIS: E2 — hero end-to-end */}
+      <VIS.TrapProblem
+        id="bio-p22"
+        difficulty="hard"
+        title="P22 — End-to-end pick: brokerage with web + iOS + Android clients"
+        scenario={<>You are designing ATO detection for a brokerage. Web (physical keyboard, long sessions), iOS app (soft-keyboard, short sessions), Android (soft-keyboard, varying length). Pick the disciplined design.</>}
+        options={[
+          {key:"a", text:"Train a global TypeNet on web data (clean signal) as the primary scorer. On iOS/Android, train a separate platform-specific encoder OR add a platform conditioning input; expect EER 2-3x worse than web. On all platforms, filter autocomplete/paste events from the stream before encoding. Operate at low FAR (~0.1%) on web; treat mobile scores as soft signals in an ensemble with device fingerprint and IP risk. Continuous-auth on web; one-shot per-session on mobile when session is long enough; fall back to other risk signals on short mobile sessions. Re-enroll user centroids adaptively on persistent within-user score drift (likely new keyboard / OS update).", correct:true},
+          {key:"b", text:"Single global model for all three platforms."},
+          {key:"c", text:"Drop keystroke and use only device fingerprint."},
+          {key:"d", text:"Force users to use physical keyboards."},
+        ]}
+        trap={<>(b) ignores the platform signal-quality gap. (c)(d) are extremes.</>}
+        lens={<><em>Discriminating insight:</em> a senior keystroke design is platform-stratified, signal-quality-aware, and integrates with non-biometric risk signals on the regimes where keystroke is weak.</>}
+        stretch={<>What is your kill-switch criterion if EER inflates 3x on web specifically?</>}
       />
     </VIS.Section>
 
@@ -1711,35 +1899,35 @@ flowchart TB
             <strong>Acien et al. — TypeNet: Deep Learning Keystroke Biometrics</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(paper, TPAMI 2022)</span>
-          <br/>The TypeNet paper. Sec 3 (architecture) and Sec 5 (cross-user generalization) are the keepers.
-        </li>
-        <li>
-          <a href="https://arxiv.org/abs/2004.03059" target="_blank" rel="noopener">
-            <strong>Acien et al. — BeCAPTCHA: Behavioral Biometrics Survey</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper)</span>
-          <br/>Survey of behavioral biometrics including keystroke, mouse, touch. Useful for situating TypeNet vs neighbors.
-        </li>
-        <li>
-          <a href="https://userinterfaces.aalto.fi/136Mkeystrokes/" target="_blank" rel="noopener">
-            <strong>Aalto Keystroke Dataset</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(dataset)</span>
-          <br/>136M keystrokes from 168k users. The standard pretraining corpus for keystroke biometrics; you cannot do serious work without it.
+          <br/>The TypeNet paper. Sec 4 (architecture) and Sec 6 (mobile EER degradation) are the keepers.
         </li>
         <li>
           <a href="https://arxiv.org/abs/1503.03832" target="_blank" rel="noopener">
-            <strong>Schroff et al. — FaceNet: A Unified Embedding for Face Recognition</strong>
+            <strong>Schroff et al. — FaceNet: Triplet Loss for Face Verification</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(paper, CVPR 2015)</span>
-          <br/>The original metric-learning-for-identity paper. Read for the conceptual frame that TypeNet inherits.
+          <br/>The original triplet-loss metric-learning paper. TypeNet's loss machinery is the keystroke analog.
         </li>
         <li>
-          <a href="https://gdpr.eu/article-9-processing-special-categories-of-personal-data/" target="_blank" rel="noopener">
-            <strong>GDPR Article 9 — Special Categories of Personal Data</strong>
+          <a href="https://lilianweng.github.io/posts/2021-05-31-contrastive/" target="_blank" rel="noopener">
+            <strong>Lilian Weng — Contrastive Representation Learning</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(reference)</span>
-          <br/>The legal text on biometric data. Read BEFORE shipping behavioral biometrics in the EU.
+          <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
+          <br/>Practitioner walkthrough of InfoNCE, triplet, and hard-negative mining. The right intuition for choosing a metric-learning loss.
+        </li>
+        <li>
+          <a href="https://www.usenix.org/conference/usenixsecurity19/presentation/monaco" target="_blank" rel="noopener">
+            <strong>Monaco — Keystroke biometrics and timing side channels</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper, USENIX Security)</span>
+          <br/>Security-side view: keystroke timing as a side channel that can leak typed content.
+        </li>
+        <li>
+          <a href="https://www.w3.org/TR/hr-time-3/" target="_blank" rel="noopener">
+            <strong>W3C — High Resolution Time, Level 3 (performance.now precision)</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(spec)</span>
+          <br/>The spec that governs JS timing precision — relevant background for understanding population-wide EER drift after browser updates.
         </li>
       </ul>
     </VIS.Section>

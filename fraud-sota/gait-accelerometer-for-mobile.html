@@ -1414,286 +1414,469 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// Gait / accelerometer for mobile — self-supervised transformer on phone accelerometer windows for continuous mobile auth.
+// Gait / accelerometer biometrics for mobile — SSL transformer on phone IMU.
+// SIGNAL MODALITY ANCHOR: gait = 3-axis accelerometer at 50Hz, WALK-CYCLE-PHASE aware,
+// DEVICE-ORIENTATION-DEPENDENT, BATTERY-COST gated, iOS-BACKGROUND-RESTRICTED.
+// Cross-visual: NOT spatial (vs mouse/swipe), NOT event-driven (vs keystroke).
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="Fraud SOTA · Behavioral biometrics"
+      pill="Fraud SOTA · Behavioral biometrics · GAIT"
       title="Gait / accelerometer for mobile"
-      subtitle="Self-supervised transformer pretrained on phone-accelerometer windows; a downstream linear probe identifies the user from a short walking sample."
+      subtitle="Self-supervised transformer pretrained on phone 3-axis accelerometer windows learns walk-cycle-phase-aware embeddings; a linear probe identifies the user from a 10-second walk."
       byline={[
-        {label: "Paper", value: "Gait Authentication via SSL Transformers, UbiComp 2024"},
-        {label: "Year", value: "2024"},
-        {label: "L3", value: "Behavioral biometric"},
+        {label: "Paper", value: "Gait Authentication via SSL Transformers (UbiComp 2024)"},
+        {label: "Signal", value: "3-axis accelerometer at 50Hz (NOT events, NOT spatial)"},
+        {label: "L3", value: "Behavioral biometrics · gait"},
       ]}/>
 
     <VIS.TLDR>
-      Earlier supervised gait-recognition needed per-user labeled walking samples — impractical at scale.{" "}
-      <VIS.Term def="Pretraining a model on an unlabeled corpus using a pretext task (masked-reconstruction, contrastive, next-step prediction). The pretrained encoder is then fine-tuned or probed for downstream tasks with minimal labeled data.">Self-supervised pretraining</VIS.Term>{" "}
-      on huge unlabeled accelerometer streams from millions of phones produces a global encoder; a downstream{" "}
-      <VIS.Term def="A simple linear classifier trained on top of frozen pretrained features. A common SSL evaluation protocol — if a linear probe works, the SSL features are good.">linear probe</VIS.Term>{" "}
-      can identify the user from a 5-10 second walking window with EER 4-6 percent. Strong on Android, more constrained on iOS due to background-sensing restrictions. Battery cost is the dominant production tradeoff.
+      A walking person's phone records a 3-axis accelerometer stream (a_x, a_y, a_z) at 50Hz that has a periodic{" "}
+      <VIS.Term def="The repeating pattern of a single step — heel-strike, mid-stance, toe-off — that recurs at ~1-2 Hz during walking. Each user's walk-cycle has distinctive accelerometer signatures in vertical impact, lateral sway, and cadence variability.">walk-cycle phase</VIS.Term>{" "}
+      with user-specific micro-mechanics. SSL pretraining (masked-prediction or contrastive) on millions of unlabeled walk windows yields a global encoder; a linear probe over ~30 enrollment windows hits &gt; 90% top-1 user-ID accuracy from a 10-second walk. The operational realities — battery cost, iOS background restrictions, device-orientation dependence, and activity confounds — are stricter than the model itself. Senior gait designs are duty-cycled, on-demand at high-risk events, walking-only (gated by activity classification), and treat the IMU stream as special-category PII.
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What it is">
+    <VIS.Section id="sec-what" title="What it is — IMU stream to user score">
+      <p>
+        Continuous 3-axis accelerometer at 50Hz produces a stream of (a_x, a_y, a_z). A sliding window of 5-10 seconds (250-500 samples) is the unit:
+      </p>
       <ol>
-        <li><strong>Input:</strong> a window of phone accelerometer + gyroscope readings (typically 50 Hz, 5-10 second windows = 250-500 samples per axis).</li>
-        <li><strong>SSL pretraining:</strong> a transformer encoder trained on masked-reconstruction or contrastive objectives over millions of unlabeled phone-accelerometer windows.</li>
-        <li><strong>Enrollment:</strong> collect a few walking sessions per user; freeze the encoder, train a tiny linear probe (or store a prototype embedding).</li>
-        <li><strong>Verification:</strong> at run time, score a fresh window against the enrolled prototype. Above threshold means it is not the legitimate user.</li>
+        <li><strong>Sample</strong>: 50Hz is the minimum to capture step cadence (1-2Hz) and its harmonics. 25Hz loses fine phase info; 100Hz buys little.</li>
+        <li><strong>Pretrain (SSL)</strong>: a 4-6 layer transformer over the window. Masked-prediction (mask 15% of timesteps, predict) is typically more data-efficient than contrastive on this signal.</li>
+        <li><strong>Enroll</strong>: freeze the encoder, collect ~30 walking windows for each user, average their embeddings to build the user centroid.</li>
+        <li><strong>Score</strong>: at high-risk events (login, large transfer), trigger a 10-second IMU capture; compute embedding; cosine-similarity to centroid is the auth score.</li>
+        <li><strong>Activity gate</strong>: classify the window as walking / stairs / vehicle / stationary before scoring. Only walking is scored; everything else defers to other risk signals.</li>
       </ol>
-
       <VIS.Mermaid chart={`
 flowchart TB
-  S["Accelerometer + gyro window"]
-  S --> T["SSL-pretrained transformer"]
-  T --> E["Embedding"]
-  E --> P["Linear probe or prototype"]
-  P --> V["Verification score"]
-  style T fill:#dbeafe,stroke:#2563eb,stroke-width:2px
-  style V fill:#fef3c7,stroke:#d97706,stroke-width:2px
+  I["3-axis accel at 50Hz, 10s window"]
+  I --> A["Activity gate: walking?"]
+  A -->|Yes| E["SSL-pretrained encoder"]
+  A -->|No| F["Defer to other risk signals"]
+  E --> C["Embedding 128-d"]
+  C --> CM["Cosine vs enrolled centroid"]
+  CM --> S["Auth score"]
+  style E fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+  style S fill:#fef3c7,stroke:#d97706,stroke-width:2px
       `} />
-      <p>
-        Blue box is the SSL backbone — frozen at deployment. Yellow box is the operational decision. Inference is one forward pass over a 5-10 second window.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="How it differs from the baseline">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
+    <VIS.Section id="sec-diff" title="How it differs from supervised gait CNN — and from sibling biometrics">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
         <thead>
           <tr style={{background:"#1f3a5f", color:"#fff"}}>
             <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Supervised gait CNN</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>SSL transformer + probe</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Supervised gait CNN (pre-2022)</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>SSL gait transformer (this concept)</th>
           </tr>
         </thead>
         <tbody>
           <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Labels needed</td>
-            <td style={{padding:"8px 10px"}}>Lots, per user</td>
-            <td style={{padding:"8px 10px"}}>Few, per user</td>
+            <td style={{padding:"8px 10px"}}>Training labels</td>
+            <td style={{padding:"8px 10px"}}>Per-user labeled walking sessions</td>
+            <td style={{padding:"8px 10px"}}>Unlabeled corpus + small per-user enrollment</td>
           </tr>
           <tr>
-            <td style={{padding:"8px 10px"}}>Generalization to new users</td>
-            <td style={{padding:"8px 10px"}}>Poor</td>
-            <td style={{padding:"8px 10px"}}>Good</td>
+            <td style={{padding:"8px 10px"}}>Cold-start cost</td>
+            <td style={{padding:"8px 10px"}}>High (label new users)</td>
+            <td style={{padding:"8px 10px"}}>Low (centroid from ~30 windows)</td>
           </tr>
           <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>EER (clean walking)</td>
-            <td style={{padding:"8px 10px"}}>6-8 percent</td>
-            <td style={{padding:"8px 10px"}}>4-6 percent</td>
-          </tr>
-          <tr>
-            <td style={{padding:"8px 10px"}}>EER (in-pocket noisy)</td>
-            <td style={{padding:"8px 10px"}}>15-20 percent</td>
-            <td style={{padding:"8px 10px"}}>10-14 percent</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Battery cost / day</td>
-            <td style={{padding:"8px 10px"}}>2-3 percent continuous</td>
-            <td style={{padding:"8px 10px"}}>2-3 percent continuous</td>
+            <td style={{padding:"8px 10px"}}>Generalization</td>
+            <td style={{padding:"8px 10px"}}>Limited cross-population</td>
+            <td style={{padding:"8px 10px"}}>Strong via shared pretraining</td>
           </tr>
         </tbody>
       </table>
+      <p style={{marginTop:12}}>
+        <strong>Signal-modality contrast vs siblings:</strong> gait is continuous IMU — language-INDEPENDENT (unlike keystroke), spatially anchored to the device-not-the-screen (unlike mouse/swipe), and explicitly device-orientation-dependent (unlike either). Battery and OS-background restrictions are gait-specific operational gates that simply do not exist for keystroke or mouse.
+      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to pick">
-      <ul>
-        <li><strong>Mobile banking ATO detection</strong> with consenting users who grant background sensor access.</li>
-        <li><strong>Continuous-authentication tier</strong> — used to keep a session "warm" rather than at login.</li>
-        <li><strong>Android-first deployments</strong> — iOS background sensing is much more restricted.</li>
-        <li><strong>You have access to a global pretraining corpus</strong> (or can collect one) — SSL needs scale.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-limits" title="Limitations and gotchas">
-      <VIS.Callout kind="gotcha" title="Battery cost is the operational gate">
-        Continuous accelerometer sampling at 50 Hz plus periodic embedding compute costs roughly 2-3 percent battery per day on a modern phone. Many users will not tolerate this; production deployments use opportunistic sampling (active app only) or duty-cycle the sensor.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="iOS background restrictions">
-        iOS aggressively suspends background processes. Continuous gait sensing is largely impractical there; iOS deployments tend to be active-foreground only. Cross-platform parity is hard.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Activity-class confound">
-        Walking vs running vs sitting vs cycling all produce wildly different accelerometer signatures. A gait model trained on walking degrades when the user runs. Activity-recognition gating helps: only score during walking windows.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Spoofing risk">
-        An attacker who steals the phone can walk with it. The gait model legitimately flags "different user" within seconds, BUT for a sophisticated attack (attacker matches the victim's gait via training), the model is fooled. Defense-in-depth required.
-      </VIS.Callout>
-      <VIS.Callout kind="warn" title="Privacy and consent">
-        Continuous biometric collection is high-risk processing under GDPR. Explicit opt-in, retention policy, transparent UI; some jurisdictions may forbid it entirely.
-      </VIS.Callout>
-    </VIS.Section>
-
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+    <VIS.Section id="sec-drill" title="Drill — 22 trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Ten interview-grade traps on SSL pretraining, mobile biometrics, and the battery-vs-accuracy tradeoff.
+        Twenty-two interview-grade traps anchored on walk-cycle phase, device orientation, battery and iOS-background constraints, activity gating, and gait-specific spoofing and drift.
       </p>
 
+      {/* AXIS: D1 — orientation invariance */}
       <VIS.TrapProblem
         id="gait-p1"
         difficulty="hard"
-        title="P1 — Why SSL over supervised for gait?"
-        scenario={<>Pre-2022 gait recognition was supervised, with per-user labeled walking samples. SSL gait now works from a tiny per-user sample. Why?</>}
+        title="P1 — Why does raw 3-axis accelerometer break across phone positions?"
+        scenario={<>You train a gait encoder on data with phones in front pocket. Deploy: users carry phones in back pocket, in bag, in hand. User-ID accuracy collapses 92% → 64%.</>}
         options={[
-          {key:"a", text:"SSL pretrains on millions of unlabeled accelerometer windows — labels are not needed for the pretext task. The resulting encoder captures generic walking-rhythm structure; per-user identity is added with a tiny linear probe at the end. Supervised models need per-user labels because they jointly learn 'what walking looks like' and 'who this user is' from the SAME small labeled set.", correct:true},
-          {key:"b", text:"SSL has more parameters."},
-          {key:"c", text:"Transformers always beat CNNs."},
-          {key:"d", text:"Walking patterns are universal."},
+          {key:"a", text:"The 3 axes (a_x, a_y, a_z) are tied to phone orientation. Same walk, phone front-pocket vs back-pocket, produces accelerometer streams that are ROTATIONS of each other — different per-axis distributions even though the underlying walking motion is identical. Fix: (i) rotate to a gravity-aligned reference frame using the gravity vector (a low-pass filtered accelerometer); (ii) augment SSL pretraining with random rotations so the encoder learns rotation-invariant representations. Option (ii) is more robust to imperfect gravity-frame estimation.", correct:true},
+          {key:"b", text:"The accelerometer is broken in the back pocket."},
+          {key:"c", text:"Users walk differently with phones in different positions."},
+          {key:"d", text:"You need a bigger encoder."},
         ]}
-        trap={<>(b) confuses scale with method. (c) is over-broad. (d) is false (walking patterns ARE per-user; that is the whole point of gait biometrics).</>}
-        lens={<>(a) is the right answer. SSL decouples representation learning (lots of unlabeled data) from per-user enrollment (a few seconds of labeled signal). This is the same separation that makes pretrained-language-model fine-tuning work — same idea, different domain.</>}
-        stretch={<>What pretext task (masked-reconstruction, contrastive, next-step) is the strongest default for accelerometer SSL?</>}
+        trap={<>(b) is hardware confusion. (c) is a small effect compared to the rotation; the dominant fix is geometric. (d) is capacity-blame.</>}
+        lens={<><em>Discriminating insight:</em> the gait modality is fundamentally orientation-coupled to the device; the right response is geometric normalization (gravity frame) or augmentation, not architecture.</>}
+        stretch={<>Why might gravity-frame alignment fail when the user is running?</>}
       />
 
+      {/* AXIS: D2 — battery cost (gait-specific) */}
       <VIS.TrapProblem
         id="gait-p2"
         difficulty="hard"
-        title="P2 — Battery cost: 50 Hz continuous sampling, what is the real number?"
-        scenario={<>You plan continuous 50 Hz accelerometer + gyro sampling with periodic 5-second windows scored every 30 seconds. What is the right framing of the battery cost?</>}
+        title="P2 — Continuous 50Hz IMU costs how much battery? What's the duty cycle response?"
+        scenario={<>PM wants 24/7 continuous gait monitoring. You measure: continuous 50Hz IMU at full power is ~50-150 mWh/day on a 3000mAh phone — 5-10% of daily battery for "fraud protection."</>}
         options={[
-          {key:"a", text:"Continuous sensor sampling is roughly 2-3 percent battery per day on a modern phone; the embedding compute every 30 seconds adds another 1-2 percent. Total 3-5 percent per day is the realistic budget. Users notice anything above about 5 percent and uninstall. Use opportunistic sampling (active app, charging-but-on, foreground only) to stay under the threshold.", correct:true},
-          {key:"b", text:"Negligible — modern phones handle it fine."},
-          {key:"c", text:"50 percent per day."},
-          {key:"d", text:"Battery cost does not matter for security features."},
+          {key:"a", text:"Users will uninstall apps that drain over 2% battery/day for an invisible feature. Duty cycle: sample 2 seconds every 30 seconds when phone motion is detected (via low-power motion-coprocessor); only enable full 50Hz capture when the motion classifier flags 'walking' AND a high-risk event is imminent. Total battery drops 80-90%. Apple's CMMotionActivityManager and Android's TYPE_SIGNIFICANT_MOTION provide the low-power motion gate.", correct:true},
+          {key:"b", text:"Battery is irrelevant — users want security."},
+          {key:"c", text:"Use 100Hz sampling for better signal."},
+          {key:"d", text:"Sample continuously but discard most data."},
         ]}
-        trap={<>(b) is naively optimistic. (c) is wildly pessimistic. (d) ignores that user-uninstalls remove ALL signal.</>}
-        lens={<>(a) is empirically grounded. Battery is the operational gate. Production gait systems sample opportunistically rather than continuously, sacrificing some recall to stay under the battery-tolerance threshold.</>}
-        stretch={<>How would you quantify the recall lost from opportunistic vs continuous sampling?</>}
+        trap={<>(b) is false (research consistently shows uninstall correlates with battery). (c) makes it worse. (d) discards data but does not save battery.</>}
+        lens={<><em>Discriminating insight:</em> battery is gait's hard operational gate — duty-cycle + motion-coprocessor + on-demand-on-high-risk is the standard play. None of this applies to keystroke or mouse.</>}
+        stretch={<>What is the lowest sampling rate that still captures the walk-cycle phase?</>}
       />
 
+      {/* AXIS: D3 — iOS background cascade (gait-specific) */}
       <VIS.TrapProblem
         id="gait-p3"
         difficulty="hard"
-        multiSelect
-        title="P3 — iOS limitations: which deployment choices are feasible?"
-        scenario={<>You want to deploy continuous gait sensing on iOS. Which deployment choices are realistically possible? Select all that apply.</>}
+        title="P3 — iOS deployment cascade: app stops collecting after ~10 minutes"
+        scenario={<>Android version works. iOS version: data collection stops after the user backgrounds the app for ~10 minutes. PM says "the iOS app is broken."</>}
         options={[
-          {key:"a", text:"Active-foreground sensing only — sample only while the banking app is open.", correct:true},
-          {key:"b", text:"CoreMotion historical data — periodically fetch the last hour of motion data from system APIs and score in batch.", correct:true},
-          {key:"c", text:"Background-task scheduling — request occasional execution windows via BackgroundTasks framework.", correct:true},
-          {key:"d", text:"Truly continuous 50 Hz background sampling with custom daemon."},
-          {key:"e", text:"Workout-API sensing during recognized walking sessions.", correct:true},
-          {key:"f", text:"Privileged kernel-level driver for unfettered access."},
+          {key:"a", text:"iOS strictly limits background app execution — Core Motion's high-frequency accelerometer access is suspended ~10 minutes after backgrounding (specific timeout varies by iOS version and app state). Fix: use CMMotionActivityManager (low-power background motion-class classification — always allowed); on detected high-risk event (large transfer about to confirm) trigger a brief 10s foreground sensor capture via a notification or in-app gate. The iOS app is not broken — the architecture is asking iOS to do something the OS does not allow.", correct:true},
+          {key:"b", text:"Build a hidden background process — iOS will allow it."},
+          {key:"c", text:"Migrate to Android-only."},
+          {key:"d", text:"Use VoIP background mode as a workaround."},
         ]}
-        trap={<>(d) and (f) are not feasible on iOS without jailbreak — both will be rejected at App Store review.</>}
-        lens={<>(a), (b), (c), (e) are the iOS-feasible paths. Android allows (d)-style continuous; iOS does not. Cross-platform parity requires accepting that iOS will collect less data, with implications for model EER per platform.</>}
-        stretch={<>What is the practical EER penalty for iOS vs Android given these constraints?</>}
+        trap={<>(b) is false. (c) abandons half the userbase. (d) is App Store rejection territory.</>}
+        lens={<><em>Discriminating insight:</em> iOS background restrictions are the gait-specific deployment gate; the right design is event-triggered foreground capture, not continuous background streaming. This is unique to gait — no equivalent for keystroke/mouse.</>}
+        stretch={<>Which iOS APIs allow continuous low-power motion telemetry?</>}
       />
 
+      {/* AXIS: D4 — senior cross-examine */}
       <VIS.TrapProblem
         id="gait-p4"
         difficulty="hard"
-        title="P4 — Activity-class confound: user starts running"
-        scenario={<>Your gait model was trained on walking. The legitimate user starts running. The model's EER spikes — many false-reject events. What is the right architectural fix?</>}
+        multiSelect
+        title="P4 — Junior reports '92% top-1 user-ID accuracy.' Senior follow-ups?"
+        scenario={<>The team reports 92% top-1 user-ID on gait.</>}
         options={[
-          {key:"a", text:"Run a lightweight activity-class classifier (walking / running / sitting / cycling) as a pre-filter. Only score gait during recognized walking windows; defer to other auth factors otherwise. Optionally train per-activity gait models if running is a meaningful share of sessions.", correct:true},
-          {key:"b", text:"Retrain the model to ignore activity class."},
-          {key:"c", text:"Use a single gait model that works across all activities."},
-          {key:"d", text:"Disable gait sensing when accelerometer variance is high."},
+          {key:"a", text:"How many enrollment windows per user?", correct:true},
+          {key:"b", text:"Same-activity (walking) eval or cross-activity (also stairs, run)?", correct:true},
+          {key:"c", text:"Same phone position or randomized across pockets/bag/hand?", correct:true},
+          {key:"d", text:"How long the test walk is (window length)?", correct:true},
+          {key:"e", text:"How many GPU hours pretraining used?"},
         ]}
-        trap={<>(b) is impossible — different activities have legitimately different signatures. (c) sacrifices accuracy on every activity to be mediocre across all. (d) is a crude version of (a).</>}
-        lens={<>(a) is the standard fix. Activity recognition is itself a well-solved SSL task on the same accelerometer streams. Gating on activity class preserves per-activity model accuracy.</>}
-        stretch={<>If you have only one activity model budget, walking or running?</>}
+        trap={<>(e) is irrelevant to result interpretation.</>}
+        lens={<><em>Discriminating insight:</em> enrollment-count + activity-match + phone-position + window-length are the gait-specific eval gates. The metric without these is unreadable.</>}
+        stretch={<>Which gate is most often loose in research-paper gait numbers?</>}
       />
 
+      {/* AXIS: D5 — activity confound (gait-specific) */}
       <VIS.TrapProblem
         id="gait-p5"
-        difficulty="hard"
-        title="P5 — Phone-in-pocket vs phone-in-hand: 10-point EER gap. Diagnose."
-        scenario={<>Your model gets EER 5 percent when the phone is held in hand and EER 14 percent when it is in a pocket. Why?</>}
+        difficulty="medium"
+        title="P5 — User-ID accuracy is 92% on walking, 41% on stairs. Why? Production response?"
+        scenario={<>The encoder was pretrained mostly on walking. At deploy users sometimes walk up stairs.</>}
         options={[
-          {key:"a", text:"In-hand sensors are stable relative to the body; the accelerometer signal cleanly tracks gait rhythm. In-pocket, the phone shifts position within the pocket, adding mechanical noise that masks per-user signature. Fix: train on a corpus that includes pocket positions, OR detect phone-position and route to a pocket-specific model.", correct:true},
-          {key:"b", text:"In-pocket, the user walks differently."},
-          {key:"c", text:"Phone temperature in pocket changes sensor calibration."},
-          {key:"d", text:"In-pocket users are unfamiliar to the model."},
+          {key:"a", text:"Stairs have a different cadence (slower, higher vertical impact) and a different walk-cycle phase envelope. The encoder learned 'walking' features; 'stairs' is out-of-distribution. Fix: add an activity classifier (walking / stairs / running / stationary / vehicle) as a gate BEFORE the gait encoder. Only score on windows the classifier flags as 'walking'; for stairs/running, either route to other risk signals or train an activity-conditioned encoder.", correct:true},
+          {key:"b", text:"Stairs always reduce gait accuracy."},
+          {key:"c", text:"The model is overfit."},
+          {key:"d", text:"Add gyroscope."},
         ]}
-        trap={<>(b) is wrong — the user walks the same. (c) is a tiny secondary effect. (d) confuses noise with user identity.</>}
-        lens={<>(a) is the mechanical answer. Pocket mounting adds noise that masks the signal. Mitigations: include diverse phone-position data in pretraining; or condition the model on a phone-position token derived from a quick orientation estimator.</>}
-        stretch={<>How would you cheaply detect phone position (in-hand vs pocket) from the same sensor stream?</>}
+        trap={<>(b) is fatalist. (c) misreads the OOD-not-overfitting issue. (d) is an architectural change that does not address the activity-gate need.</>}
+        lens={<><em>Discriminating insight:</em> activity-class gate is a gait-specific operational pattern; no analog in keystroke or mouse.</>}
+        stretch={<>How would you train the activity classifier cheaply?</>}
       />
 
+      {/* AXIS: D6 — spoofing (gait-specific) */}
       <VIS.TrapProblem
         id="gait-p6"
-        difficulty="medium"
-        title="P6 — How long an enrollment window?"
-        scenario={<>You are picking the enrollment data per user. Options: 30 seconds of walking, 5 minutes, or 1 hour distributed over days. Which is the strongest default?</>}
+        difficulty="hard"
+        title="P6 — Spoofing: attacker straps the victim's phone to themselves and walks. Defense?"
+        scenario={<>An attacker steals a victim's phone and straps it to themselves (same pocket, same orientation). Their walk produces an accelerometer stream. The gait encoder sees a similar cadence.</>}
         options={[
-          {key:"a", text:"5 minutes spread across 2-3 sessions captures enough within-user variability (different times of day, slightly different shoes) without asking users for an unreasonable enrollment. 30 seconds is too narrow; 1 hour is operationally untenable.", correct:true},
-          {key:"b", text:"30 seconds is plenty."},
-          {key:"c", text:"1 hour distributed gives the best EER."},
-          {key:"d", text:"Enrollment time does not matter for SSL models."},
+          {key:"a", text:"Cadence alone is not the discriminator — walk-cycle MICRO-MECHANICS (vertical impact peak shape, lateral sway frequency, step-length variability) are user-specific even at matched cadence. EER on this attack is typically 5-15% (much higher than legitimate auth at 1-3%). Layered defense: cross-check with heart-rate (if a paired wearable exists), location pattern (the attacker is walking somewhere the victim is not at this time), and step away from gait-only at high-risk events.", correct:true},
+          {key:"b", text:"Gait is unbreakable by physical attack."},
+          {key:"c", text:"Ignore physical attacks; they are rare."},
+          {key:"d", text:"Require fingerprint backup always."},
         ]}
-        trap={<>(b) underfits within-user variability. (c) is technically best but operationally untenable. (d) is false — enrollment quality directly drives EER even with frozen SSL features.</>}
-        lens={<>(a) balances accuracy and UX. The standard tradeoff in behavioral biometrics is "enrollment time vs EER curve" — diminishing returns beyond ~5 minutes for SSL-pretrained models.</>}
-        stretch={<>What single experiment would tell you whether 5 minutes is overkill or under-fit on your user base?</>}
+        trap={<>(b) is naive. (c) underestimates. (d) over-corrects (defeats the passive value of gait).</>}
+        lens={<><em>Discriminating insight:</em> gait raises the bar but does not stop physical-attack vectors; the senior response is layered authentication, not gait-only.</>}
+        stretch={<>What's a heart-rate-based liveness check that respects privacy?</>}
       />
 
+      {/* AXIS: C5 — walk-cycle phase awareness */}
       <VIS.TrapProblem
         id="gait-p7"
         difficulty="hard"
-        multiSelect
-        title="P7 — Privacy and consent: GDPR specifics for continuous gait"
-        scenario={<>You launch continuous gait biometrics in the EU. Which compliance items are required? Select all that apply.</>}
+        title="P7 — Why does the best gait encoder include explicit walk-cycle-phase features?"
+        scenario={<>Two encoder variants: (i) raw window into transformer; (ii) raw window + per-step features (step length proxy, cadence, vertical impact, step variance). Variant (ii) wins by 4-6 user-ID accuracy points.</>}
         options={[
-          {key:"a", text:"Explicit, granular opt-in consent before any sensor recording starts.", correct:true},
-          {key:"b", text:"Documented retention period and deletion schedule for raw sensor data and embeddings.", correct:true},
-          {key:"c", text:"User-facing opt-out that immediately stops collection and deletes data.", correct:true},
-          {key:"d", text:"DPIA (Data Protection Impact Assessment) for the high-risk processing.", correct:true},
-          {key:"e", text:"Permission to share embeddings with third-party advertisers."},
-          {key:"f", text:"On-device-only processing with no server-side transfer of raw signals.", correct:true},
+          {key:"a", text:"Each user has distinctive micro-mechanics within the walk cycle — heel-strike impact shape, lateral sway envelope, push-off acceleration peak. Step segmentation (peak detection on |a|) extracts the per-cycle envelope cleanly; the transformer over the segmented per-step features sees a cleaner signal than a window where step phases are interleaved with timing variability. The lift is the inductive bias of 'walking has steps' baked into preprocessing.", correct:true},
+          {key:"b", text:"Step features are smaller, so the model trains faster."},
+          {key:"c", text:"The transformer cannot learn periodic structure."},
+          {key:"d", text:"Step features are required by the paper's loss function."},
         ]}
-        trap={<>(e) is the opposite of compliant.</>}
-        lens={<>(a)-(d) and (f) are the GDPR Article 9 + Article 35 stack for biometric processing. On-device processing is increasingly the regulatory expectation for sensor-derived biometrics.</>}
-        stretch={<>How does on-device processing change the threat model vs server-side?</>}
+        trap={<>(b)(d) are spurious. (c) is false but believable — transformers CAN learn periodicity, but with much more data than the inductive-bias approach.</>}
+        lens={<><em>Discriminating insight:</em> the gait signal has a known periodic structure (the step cycle); explicit segmentation is an inductive bias that helps the model find the right invariances. No mouse/keystroke analog.</>}
+        stretch={<>Why does step segmentation fail during running?</>}
       />
 
+      {/* AXIS: C2 — SSL objective choice */}
       <VIS.TrapProblem
         id="gait-p8"
-        difficulty="hard"
-        title="P8 — SSL pretext task: masked-reconstruction vs contrastive"
-        scenario={<>You are picking the SSL pretext task for accelerometer windows. Masked-reconstruction (mask 15 percent of time-steps and reconstruct), contrastive (positive pairs from the same window via augmentation), or both?</>}
+        difficulty="medium"
+        title="P8 — Masked-prediction vs contrastive SSL for gait?"
+        scenario={<>You have 5 million unlabeled walk windows. Pretrain with either masked-prediction (mask 15% of timesteps, predict their values) or contrastive (positive pairs via augmentation, push apart from negatives).</>}
         options={[
-          {key:"a", text:"Contrastive with strong augmentation (time-warp, channel-mask, jitter) is the strongest single-task default for behavioral biometric SSL. Masked-reconstruction is competitive but tends to learn smoother features that are less discriminative for per-user identity. The combo (joint training) gives a small extra gain at higher compute cost.", correct:true},
-          {key:"b", text:"Masked-reconstruction is always best."},
-          {key:"c", text:"Contrastive cannot work without labels."},
-          {key:"d", text:"Both pretext tasks give identical features."},
+          {key:"a", text:"Both work; the gait-specific consideration is augmentation quality. Contrastive needs strong augmentations that are signal-preserving (small time-warp, channel shuffle is risky on gait — flips left/right asymmetry). Masked-prediction works directly on the raw stream with no augmentation choice. With limited augmentation expertise, masked-prediction is more robust; with carefully designed augmentations, contrastive sometimes wins.", correct:true},
+          {key:"b", text:"Contrastive always beats masked-prediction."},
+          {key:"c", text:"Masked-prediction is impossible for time series."},
+          {key:"d", text:"SSL is overkill — use supervised."},
         ]}
-        trap={<>(b) overstates masked-reconstruction. (c) is false — contrastive uses augmentations to create positive pairs from the same UNLABELED window. (d) is empirically false.</>}
-        lens={<>(a) is the empirical SSL-for-time-series result. Strong augmentation drives discriminative features; reconstruction loss drives smoothness. For identity tasks, discrimination wins.</>}
-        stretch={<>Which augmentation hurts gait identity if you make it too strong?</>}
+        trap={<>(b)(c) overclaim/false. (d) ignores the cold-start advantage of SSL.</>}
+        lens={<><em>Discriminating insight:</em> the augmentation-design burden is the practical SSL choice for gait. Channel-shuffle in particular can destroy left/right walking asymmetry.</>}
+        stretch={<>Why is channel shuffle dangerous on gait but safe on image SSL?</>}
       />
 
+      {/* AXIS: D7 — device-class (different phones) */}
       <VIS.TrapProblem
         id="gait-p9"
-        difficulty="hard"
-        title="P9 — Spoofing risk: stolen phone, attacker walks with it"
-        scenario={<>An attacker steals the phone and walks with it. Does the gait model catch this?</>}
+        difficulty="medium"
+        title="P9 — User upgrades from iPhone 12 to iPhone 15. EER spikes. Why?"
+        scenario={<>EER for a user spikes from 1.2% to 5.8% after they upgrade their phone (iPhone 12 → iPhone 15).</>}
         options={[
-          {key:"a", text:"Usually yes, within 10-30 seconds of walking — the attacker's gait differs from the enrolled user. BUT defense-in-depth is required: a determined attacker who has studied the victim's gait via prior recordings can train themselves to approximate it. Layer gait with other factors (device behavior, time-of-day patterns) for robustness.", correct:true},
-          {key:"b", text:"Always — gait is uniquely identifying."},
-          {key:"c", text:"Never — anyone can walk."},
-          {key:"d", text:"Only if the attacker is shorter than the user."},
+          {key:"a", text:"IMU calibration and noise characteristics differ across phone models — same gait produces slightly shifted distributions on different hardware. The user's centroid (estimated on iPhone 12 data) no longer matches their iPhone 15 measurements. Operational response: trigger re-enrollment on detected device change (device-ID stored alongside centroid); collect ~30 fresh walk windows on the new device; update centroid. Do not retrain the encoder — the issue is centroid alignment.", correct:true},
+          {key:"b", text:"iPhone 15 has a worse IMU."},
+          {key:"c", text:"Retrain the encoder from scratch."},
+          {key:"d", text:"Drop gait when device changes."},
         ]}
-        trap={<>(b) overclaims. (c) underclaims. (d) is over-narrow.</>}
-        lens={<>(a) is the calibrated read. Gait is a strong signal but not unbreakable; layer it with other behavioral signals for ATO scenarios where the attacker has the device.</>}
-        stretch={<>What detection signal could catch a "trained attacker mimicking gait" attack?</>}
+        trap={<>(b) is false. (c) is overkill. (d) is over-correction.</>}
+        lens={<><em>Discriminating insight:</em> cross-device IMU drift is centroid-level, not encoder-level. The fix is re-enrollment, not retraining.</>}
+        stretch={<>How would you detect device changes from the IMU stream alone if metadata is missing?</>}
       />
 
+      {/* AXIS: D8 — privacy / health (gait-specific) */}
       <VIS.TrapProblem
         id="gait-p10"
         difficulty="hard"
-        title="P10 — End-to-end pick: mobile-banking ATO defense across iOS and Android"
-        scenario={<>Mobile-banking app, 12M MAU (70 percent Android, 30 percent iOS). ATO is rising. You can ship one new behavioral signal in Q3. The team has SSL-pretraining experience. Battery budget: 5 percent per day on Android, 3 percent on iOS. Pick ONE.</>}
+        multiSelect
+        title="P10 — Privacy concerns specific to gait IMU (not generic PII)"
+        scenario={<>Which of these are real, gait-specific privacy concerns (not generic ML data concerns)?</>}
         options={[
-          {key:"a", text:"SSL-pretrained accelerometer encoder, deployed continuously on Android (background sampling) and opportunistically on iOS (foreground only). On-device inference, embedding-only transfer to server. Layer ON TOP of existing device fingerprinting and SMS-OTP — do not replace either. Quarterly retraining with adversarial gait samples included.", correct:true},
-          {key:"b", text:"Mandate iOS users to keep the app open all the time."},
-          {key:"c", text:"Ship the same continuous-sensing model on iOS and Android — same code, same UX."},
-          {key:"d", text:"Skip iOS entirely — too restrictive."},
+          {key:"a", text:"Gait can reveal medical conditions: Parkinson's tremor, post-injury limp, multiple sclerosis early signs.", correct:true},
+          {key:"b", text:"Gait can reveal pregnancy (gait changes through trimesters).", correct:true},
+          {key:"c", text:"Gait can reveal intoxication level.", correct:true},
+          {key:"d", text:"GDPR / CCPA classify biometric identifiers as special-category personal data.", correct:true},
+          {key:"e", text:"Gait reveals user typing speed."},
         ]}
-        trap={<>(b) destroys UX. (c) ignores iOS restrictions and will be rejected at App Store review. (d) abandons 30 percent of MAU.</>}
-        lens={<>(a) is the senior MLE design. Same backbone, platform-appropriate sampling strategy, on-device privacy posture, layered deployment, regular adversarial retraining. The hard part is iOS — anyone proposing "continuous background on iOS" has not read the App Store guidelines.</>}
-        stretch={<>What single metric would you watch in week 1 to catch a battery-related uninstall spike?</>}
+        trap={<>(e) is keystroke, not gait — cross-modality confusion.</>}
+        lens={<><em>Discriminating insight:</em> the IMU stream is a health-data side channel; this is unique to gait among the three behavioral biometrics. DP noise on stored embeddings and explicit consent flow are mandatory.</>}
+        stretch={<>What DP-epsilon is appropriate for stored gait centroids?</>}
+      />
+
+      {/* AXIS: F6 — health drift (gait-specific) */}
+      <VIS.TrapProblem
+        id="gait-p11"
+        difficulty="medium"
+        title="P11 — User's gait shifts permanently after a knee injury. Operational response?"
+        scenario={<>EER for a specific user persistently spikes after an event. Investigation: they had knee surgery 4 weeks ago. Gait has shifted.</>}
+        options={[
+          {key:"a", text:"Adaptive re-enrollment with a confirmation step: detect persistent within-user drift (over multiple sessions, not single-window noise); pause gait scoring; trigger a confirmation flow (other risk signals + user confirmation) to re-enroll the new gait centroid. The system should ALSO be aware that gait drift may indicate a health change — and not surface that to the user without consent.", correct:true},
+          {key:"b", text:"Lock the account permanently."},
+          {key:"c", text:"Force the user to walk the same way as before."},
+          {key:"d", text:"Drop gait globally."},
+        ]}
+        trap={<>(b)(c)(d) are dystopian or extreme.</>}
+        lens={<><em>Discriminating insight:</em> gait drift is a permanent, non-malicious user-change scenario. The system needs an adaptive-re-enrollment loop with a confirmation gate — and ethics-aware silence about why the drift happened.</>}
+        stretch={<>How many sessions of drift before triggering re-enrollment?</>}
+      />
+
+      {/* AXIS: F2 — sedentary users */}
+      <VIS.TrapProblem
+        id="gait-p12"
+        difficulty="medium"
+        title="P12 — Sedentary or desk-bound users: how do you handle them?"
+        scenario={<>10% of your users are desk-bound or elderly and rarely walk with their phone. They cannot enroll a gait centroid.</>}
+        options={[
+          {key:"a", text:"Gait is not the right biometric for every user. Detect 'enrollment infeasible' (no walking windows collected over the onboarding period) and explicitly route these users to a non-gait pipeline. The product should not block these users from using the app; it should silently substitute other behavioral signals (device usage patterns, typing if applicable, location patterns).", correct:true},
+          {key:"b", text:"Force them to walk."},
+          {key:"c", text:"Use a default centroid."},
+          {key:"d", text:"Block them from the app."},
+        ]}
+        trap={<>(b)(c)(d) are user-hostile or technically broken.</>}
+        lens={<><em>Discriminating insight:</em> not every user is a fit for every biometric; the design must route around modality-infeasibility silently.</>}
+        stretch={<>How would you measure what fraction of your population is gait-feasible?</>}
+      />
+
+      {/* AXIS: F3 — vehicle / running confounds */}
+      <VIS.TrapProblem
+        id="gait-p13"
+        difficulty="hard"
+        title="P13 — User scores low while in a moving car. Diagnose."
+        scenario={<>User-ID score is low for one specific 30-minute window. Investigation: the user was in a car.</>}
+        options={[
+          {key:"a", text:"Vehicle vibration looks like noise in the gait band (low-frequency, no clean step cycle). If the activity gate failed to classify 'vehicle' (because the road surface produced enough vibration to mimic step cadence in some classifiers), the encoder processed the window as walking. Fix: tighten the activity classifier (add a 'vehicle' class with diverse training data), require a step-count threshold from a peak detector before scoring, AND check correlation with GPS speed as a sanity gate.", correct:true},
+          {key:"b", text:"The user's gait changes in a car."},
+          {key:"c", text:"The IMU is broken in cars."},
+          {key:"d", text:"Ignore — cars are rare."},
+        ]}
+        trap={<>(b) is conceptually confused — the user is not walking. (c) is hardware confusion. (d) is incorrect prevalence.</>}
+        lens={<><em>Discriminating insight:</em> the activity-class gate must explicitly model vehicle; missing this class is the most common gait deployment bug.</>}
+        stretch={<>Would step-count thresholding alone suffice without an activity classifier?</>}
+      />
+
+      {/* AXIS: E2 — onboarding UX */}
+      <VIS.TrapProblem
+        id="gait-p14"
+        difficulty="medium"
+        title="P14 — Passive vs active enrollment for gait"
+        scenario={<>PM wants active enrollment: "Walk for 60 seconds during signup so we can register your gait." Engineering proposes passive: collect 30 walking windows during normal app usage in the first week.</>}
+        options={[
+          {key:"a", text:"Passive over the first 1-2 weeks wins for gait: covers natural phone-position variation (pocket / bag / hand) and activity variation, requires no UX friction, and respects the iOS-background reality (we collect when the user happens to walk while interacting with the app). Active is a one-shot snapshot of one phone position and unrealistic for the production distribution. The downside: cannot use gait for the first week — fall back to other signals during onboarding.", correct:true},
+          {key:"b", text:"Active — done in one signup."},
+          {key:"c", text:"Either — they are equivalent."},
+          {key:"d", text:"Skip enrollment; use a global centroid."},
+        ]}
+        trap={<>(b) ignores phone-position variability. (c) misses the production-distribution argument. (d) is broken biometrics.</>}
+        lens={<><em>Discriminating insight:</em> gait enrollment quality is determined by phone-position diversity and activity match; passive captures these naturally.</>}
+        stretch={<>How would you signal "enough enrollment" passively?</>}
+      />
+
+      {/* AXIS: D2 — cascade */}
+      <VIS.TrapProblem
+        id="gait-p15"
+        difficulty="hard"
+        title="P15 — Diagnose this cascade"
+        scenario={<>Team: "We trained gait SSL on a public 1000-user dataset, got 95% accuracy on the same benchmark, deployed at our 50k-user app, and accuracy is 71%. The data is bad."</>}
+        options={[
+          {key:"a", text:"Multiple compounding issues. (1) Phone-position distribution: public datasets often have controlled positions; production has the full pocket/bag/hand chaos. (2) Device distribution: 1000 users may all use 5 phone models; 50k users have 100+. (3) Activity distribution: research benchmarks often have walking-only sessions; production includes stairs, vehicles, running. (4) Enrollment realism: research often has 60+ minutes per user; production has ~30 windows. The fix is to retrain (or fine-tune) the encoder on YOUR distribution with realistic position/device/activity coverage, AND tighten the activity gate and orientation normalization.", correct:true},
+          {key:"b", text:"The model is overfit; retrain with more regularization."},
+          {key:"c", text:"Public datasets are useless."},
+          {key:"d", text:"Use a bigger transformer."},
+        ]}
+        trap={<>(b)(c)(d) miss the production-distribution-mismatch root cause.</>}
+        lens={<><em>Discriminating insight:</em> research-benchmark gait numbers ≠ production gait numbers because the research distribution is narrow; the senior move is distribution-aware fine-tuning + operational gates.</>}
+        stretch={<>Which of the four distribution gaps is hardest to close in practice?</>}
+      />
+
+      {/* AXIS: C6 — sampling rate */}
+      <VIS.TrapProblem
+        id="gait-p16"
+        difficulty="medium"
+        title="P16 — Should you sample at 25, 50, or 100Hz?"
+        scenario={<>The activity gate has flagged a walking window. You can sample at 25Hz, 50Hz, or 100Hz. The walk cadence is ~1.5Hz.</>}
+        options={[
+          {key:"a", text:"50Hz is the sweet spot. By Nyquist, sampling at 2x the highest frequency of interest is the minimum; walk-cycle phase has meaningful structure up to ~10-15Hz (vertical-impact transient harmonics), so 50Hz covers all of it with margin. 25Hz loses harmonics; 100Hz costs 2x battery for marginal signal gain. Most gait research uses 50Hz precisely for this reason.", correct:true},
+          {key:"b", text:"100Hz always — more is better."},
+          {key:"c", text:"25Hz — saves battery."},
+          {key:"d", text:"Sampling rate does not matter."},
+        ]}
+        trap={<>(b) overpays. (c) loses signal. (d) is false.</>}
+        lens={<><em>Discriminating insight:</em> Nyquist + battery constraint together set the rate; 50Hz is the standard answer with reasoning.</>}
+        stretch={<>What frequency content is uniquely lost between 25Hz and 50Hz sampling?</>}
+      />
+
+      {/* AXIS: E4 — monitor */}
+      <VIS.TrapProblem
+        id="gait-p17"
+        difficulty="medium"
+        title="P17 — Population EER spikes after a new app version. Cause investigation?"
+        scenario={<>You shipped a new app build. Population-wide gait EER moved from 2.1% to 4.5%. Where to look?</>}
+        options={[
+          {key:"a", text:"Most likely the IMU sampling pipeline changed (iOS Core Motion API version, Android sensor API). Compare per-second sample counts and accelerometer ranges to a reference window pre-release. A change in low-level sample rate, in mg-units calibration, or in Core Motion mode (raw vs filtered) shifts the input distribution for the encoder. Check release notes and roll back if confirmed; recalibrate encoder if not.", correct:true},
+          {key:"b", text:"Random fluctuation."},
+          {key:"c", text:"Users got worse at walking."},
+          {key:"d", text:"GPU clock changed."},
+        ]}
+        trap={<>(b) ignores magnitude. (c) is silly. (d) is irrelevant.</>}
+        lens={<><em>Discriminating insight:</em> population-wide gait drift after an app build = sensor-pipeline change. Distribution checks on raw input are the right place to look first.</>}
+        stretch={<>What's a cheap continuous monitor on input distribution?</>}
+      />
+
+      {/* AXIS: E1 — fallback */}
+      <VIS.TrapProblem
+        id="gait-p18"
+        difficulty="medium"
+        multiSelect
+        title="P18 — When should gait NOT be the deciding signal?"
+        scenario={<>Pick the regimes where gait should defer to other risk signals rather than gate the action.</>}
+        options={[
+          {key:"a", text:"Stationary or vehicle activity classification.", correct:true},
+          {key:"b", text:"Less than 10 seconds of walking captured.", correct:true},
+          {key:"c", text:"First week after enrollment when centroid is unstable.", correct:true},
+          {key:"d", text:"Recent device upgrade or detected phone-position change.", correct:true},
+          {key:"e", text:"Whenever the user is over 65 years old."},
+        ]}
+        trap={<>(e) is age-discrimination, not a signal-quality issue.</>}
+        lens={<><em>Discriminating insight:</em> the senior design gates gait by signal-quality conditions, not by demographic features.</>}
+        stretch={<>What is the right fallback when gait is unavailable for a high-stakes action?</>}
+      />
+
+      {/* AXIS: D5 — combined defenses */}
+      <VIS.TrapProblem
+        id="gait-p19"
+        difficulty="hard"
+        title="P19 — Layered defense: gait + heart-rate + location"
+        scenario={<>Senior architect: "Don't ship gait alone — make it one layer in a fusion. How?"</>}
+        options={[
+          {key:"a", text:"Treat each signal as a probability and combine via a learned fusion (logistic regression or small MLP) over (gait score, heart-rate-anomaly score, location-anomaly score, device-fingerprint score). Train the fusion on confirmed-fraud cases. Each signal alone has weaknesses (gait fails on stationary; HR misses non-wearable users; location fails on travelers); the fusion compensates. Operate the fusion's threshold against the cost-asymmetric FAR/FRR target.", correct:true},
+          {key:"b", text:"Average the scores naively."},
+          {key:"c", text:"Use only the highest-confidence signal."},
+          {key:"d", text:"Use only gait."},
+        ]}
+        trap={<>(b) is unweighted and ignores correlation. (c)(d) discard signal.</>}
+        lens={<><em>Discriminating insight:</em> the senior fusion is learned and cost-asymmetric, not heuristic averaging.</>}
+        stretch={<>How would you handle correlation between gait and HR (e.g., both correlated with activity)?</>}
+      />
+
+      {/* AXIS: F5 — SSL data-hunger */}
+      <VIS.TrapProblem
+        id="gait-p20"
+        difficulty="medium"
+        title="P20 — SSL gains diminish with under-1k-user corpora. Why?"
+        scenario={<>The UbiComp 2024 paper notes that SSL gains over supervised baselines diminish when the unlabeled corpus has fewer than ~1k unique users. Why?</>}
+        options={[
+          {key:"a", text:"SSL learns a representation by being exposed to within-class invariances; with too few users, the model cannot learn what is 'user-invariant' (walk-cycle structure shared across users) vs 'user-specific' (per-user micro-mechanics). At small corpus, the encoder either overfits to the few users seen at pretraining (effectively supervised on them) or fails to find a useful subspace. SSL's value emerges when the corpus has enough population diversity to disambiguate the two.", correct:true},
+          {key:"b", text:"SSL always needs more data than supervised."},
+          {key:"c", text:"Below 1k users, the encoder cannot fit."},
+          {key:"d", text:"SSL needs labeled data."},
+        ]}
+        trap={<>(b) is misleading shorthand. (c)(d) are wrong.</>}
+        lens={<><em>Discriminating insight:</em> SSL's data-hunger is for population diversity, not just window count — the right diversity unlocks the invariance learning.</>}
+        stretch={<>What is the minimum user count for SSL gait to pay off on YOUR data?</>}
+      />
+
+      {/* AXIS: B3 — pitch */}
+      <VIS.TrapProblem
+        id="gait-p21"
+        difficulty="hard"
+        title="P21 — Pitch gait to a mobile banking PM"
+        scenario={<>PM: "Why would I fund continuous gait biometrics over just stepping up fingerprint at high-risk moments?"</>}
+        options={[
+          {key:"a", text:"Gait gives passive, walking-window verification with no user friction at the moment of action — fingerprint requires the user to actively authenticate, which is friction at every high-risk event. We trigger a 10-second IMU capture on high-risk events (large transfer, login from new IP); SSL-pretrained encoder produces a cosine match to the enrolled centroid; pass-or-fail goes into a fusion with device-fingerprint and IP risk. Operating constraints: 2% battery/day budget (duty-cycled, motion-coprocessor-gated, on-demand at high-risk), iOS uses CMMotionActivityManager for low-power background motion classification with a foreground capture only at the triggered event. Excludes desk-bound users (10% of population) — they get a non-gait pipeline. Treats IMU as special-category PII with DP on stored centroids.", correct:true},
+          {key:"b", text:"It is SSL. It is SOTA."},
+          {key:"c", text:"It is free."},
+          {key:"d", text:"It is unbreakable."},
+        ]}
+        trap={<>(b)(c)(d) are empty or false (spoofing exists; battery is not free).</>}
+        lens={<><em>Discriminating insight:</em> the pitch names the friction advantage, the trigger architecture, the battery/iOS realities, the user-exclusion case, and the privacy stance.</>}
+        stretch={<>How does the pitch change if the bank has high-end customers who travel internationally?</>}
+      />
+
+      {/* AXIS: hero end-to-end */}
+      <VIS.TrapProblem
+        id="gait-p22"
+        difficulty="hard"
+        title="P22 — End-to-end pick: mobile banking app, 24/7 ATO protection"
+        scenario={<>You ship gait auth to a mobile banking app. PM wants 24/7 continuous protection. Design the production system.</>}
+        options={[
+          {key:"a", text:"On-demand at high-risk events, not 24/7 continuous. (1) Always-on low-power motion classification via CMMotionActivityManager / TYPE_SIGNIFICANT_MOTION (battery cost is negligible). (2) At a triggered high-risk event (large transfer, password change, login from new IP) AND if classified as 'walking', sample 10 seconds of 50Hz IMU in foreground. (3) Gravity-frame normalize, activity-gate to walking only, run through SSL encoder, cosine-similarity to user centroid. (4) Fuse with device-fingerprint, IP risk, and (where available) heart-rate-anomaly. (5) Operate at low FAR (~0.1%) with FRR fallback to step-up fingerprint. (6) Adaptive centroid re-enrollment on persistent drift (new phone, injury, etc.). (7) Document the IMU-as-PII consent flow and store centroids with DP noise. (8) Route the 10% desk-bound users to a non-gait pipeline.", correct:true},
+          {key:"b", text:"Continuous 50Hz IMU 24/7."},
+          {key:"c", text:"Active enrollment at signup, gait-only auth thereafter."},
+          {key:"d", text:"Skip gait; use only fingerprint."},
+        ]}
+        trap={<>(b) drains battery. (c) ignores phone-position diversity. (d) leaves friction on every action.</>}
+        lens={<><em>Discriminating insight:</em> a senior gait design is event-triggered, walking-gated, battery-aware, fairness-routed, and consent-explicit.</>}
+        stretch={<>What is your kill-switch criterion if false-positives concentrate in a specific user segment?</>}
       />
     </VIS.Section>
 
@@ -1704,35 +1887,35 @@ flowchart TB
             <strong>Gait Authentication via Self-Supervised Transformers</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(paper, UbiComp 2024)</span>
-          <br/>The SSL-for-gait paper. Sec 3 (architecture and pretext tasks) and Sec 5 (cross-user generalization) are the keepers.
+          <br/>The reference paper for SSL gait. Sec 3 (masked-prediction pretraining) and Sec 5 (linear probe results) are the keepers.
         </li>
         <li>
-          <a href="https://arxiv.org/abs/2002.05709" target="_blank" rel="noopener">
-            <strong>Chen et al. — SimCLR: A Simple Framework for Contrastive Learning of Visual Representations</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, ICML 2020)</span>
-          <br/>The canonical contrastive-SSL recipe. Read first to understand what the gait paper is adapting to time-series.
-        </li>
-        <li>
-          <a href="https://developer.apple.com/documentation/coremotion" target="_blank" rel="noopener">
-            <strong>Apple — Core Motion Documentation</strong>
+          <a href="https://developer.apple.com/documentation/coremotion/cmmotionactivitymanager" target="_blank" rel="noopener">
+            <strong>Apple — CMMotionActivityManager</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(docs)</span>
-          <br/>The iOS API surface for motion data. Read BEFORE designing an iOS deployment — the constraints determine the feasible architecture.
-        </li>
-        <li>
-          <a href="https://developer.android.com/develop/sensors-and-location/sensors" target="_blank" rel="noopener">
-            <strong>Android — Sensors overview</strong>
-          </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(docs)</span>
-          <br/>The Android sensor API. More permissive than iOS but still subject to Doze and App Standby restrictions.
+          <br/>The iOS low-power motion-class API. Read this before designing any background sensing on iOS.
         </li>
         <li>
           <a href="https://lilianweng.github.io/posts/2021-05-31-contrastive/" target="_blank" rel="noopener">
             <strong>Lilian Weng — Contrastive Representation Learning</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
-          <br/>The clearest practitioner walkthrough of contrastive SSL methods. Useful background for the gait paper's choice of pretext task.
+          <br/>Practitioner walkthrough of SSL objectives. The augmentation-design discussion is directly relevant for gait.
+        </li>
+        <li>
+          <a href="https://arxiv.org/abs/2010.10477" target="_blank" rel="noopener">
+            <strong>SelfHAR — Self-supervised pretraining for Human Activity Recognition</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(paper, 2021)</span>
+          <br/>The SSL-for-IMU origin paper. Shows the data-efficiency advantage that motivates the SSL-for-gait line.
+        </li>
+        <li>
+          <a href="https://en.wikipedia.org/wiki/General_Data_Protection_Regulation#Special_categories_of_personal_data" target="_blank" rel="noopener">
+            <strong>GDPR — Special categories of personal data</strong>
+          </a>{" "}
+          <span style={{color:"#64748b", fontSize:14}}>(reference)</span>
+          <br/>Biometric data is special-category under GDPR Art 9. Required reading for the consent and DP design.
         </li>
       </ul>
     </VIS.Section>

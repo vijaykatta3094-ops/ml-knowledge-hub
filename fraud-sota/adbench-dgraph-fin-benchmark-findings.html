@@ -1414,282 +1414,484 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// ADBench / DGraph-Fin — the benchmark findings that constrain how to pick anomaly detectors.
+// ADBench / DGraph-Fin — the META-BENCHMARK perspective.
+// B3 anchor: no AD method universally dominates; tuned IF/GBDT often rival deep AD
+// on tabular; deep wins materialize on graphs/sequences.
+// Cross-visual caution: this is the BENCHMARK FINDING (vs TabADM = a METHOD).
 
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill="Fraud SOTA · Deep anomaly detection"
-      title="ADBench / DGraph-Fin benchmark findings"
-      subtitle="On fair benchmarks, Isolation Forest with good features beats most deep tabular AD. Deep models earn their keep on graphs and sequences."
+      pill="Fraud SOTA · Deep anomaly detection · BENCHMARK"
+      title="ADBench / DGraph-Fin: benchmark findings"
+      subtitle="A meta-finding, not a method: on fair benchmarks, tuned Isolation Forest with good features rivals or beats most deep tabular AD. Deep AD earns its keep on graphs and sequences, not on tabular."
       byline={[
-        {label: "Papers", value: "Han et al. ADBench 2022; DGraph-Fin 2024"},
-        {label: "Year", value: "2022-2024"},
-        {label: "L3", value: "Deep AD benchmark"},
+        {label: "Papers", value: "Han et al. ADBench (NeurIPS 2022); DGraph-Fin (NeurIPS 2022)"},
+        {label: "L3", value: "Benchmark protocol + meta-finding"},
+        {label: "Companion", value: "Pair with TabADM (method-level visual)"},
       ]}/>
 
     <VIS.TLDR>
-      Two large-scale fair benchmarks (ADBench across 50+ tabular datasets, DGraph-Fin on financial graphs) reach the same uncomfortable conclusion:{" "}
-      <VIS.Term def="A classical tree-based anomaly detector that scores a point by how easy it is to isolate via random splits. Fast, robust, hard to beat on tabular.">Isolation Forest</VIS.Term>{" "}
-      with good features beats most deep tabular AD methods, and deep AD only earns a real edge on graphs and sequences. Use this as a sanity baseline before reaching for a deep model. But the benchmarks have blind spots — they do not test adversarial fraud, concept drift, or weakly-supervised settings, which are exactly where deep AD often wins in production.
+      ADBench is not a model — it is a benchmark suite that ran 30+ anomaly-detection algorithms on 57 tabular datasets under matched tuning and consistent evaluation. The headline result is uncomfortable for the deep-AD field: tuned{" "}
+      <VIS.Term def="A tree-based outlier detector that scores how many random binary splits are needed to isolate a point. Few splits means unusual, hence high score.">Isolation Forest</VIS.Term>{" "}
+      with ECOD/COPOD-style baselines rivals most deep AD on tabular. The companion DGraph-Fin benchmark flips the script for graphs: on a 3M-node financial graph, GNN methods genuinely beat structural-feature baselines. The senior takeaway is not "deep is bad" — it is "deep wins on the structure type that justifies it (graphs, sequences); on flat tabular, the cost-adjusted lift is small."
     </VIS.TLDR>
 
-    <VIS.Section id="sec-what" title="What the benchmarks found">
+    <VIS.Section id="sec-what" title="What the benchmarks did, briefly">
+      <p>
+        ADBench (NeurIPS 2022) is a controlled head-to-head of unsupervised tabular AD methods. The protocol controls four things research-paper benchmarks usually leave loose:
+      </p>
       <ol>
-        <li><strong>ADBench (NeurIPS 2022):</strong> 30 algorithms across 57 datasets, including 14 deep AD methods. Isolation Forest and ECOD (classical) ranked in the top tier on average; most deep methods sat below.</li>
-        <li><strong>DGraph-Fin (NeurIPS 2024):</strong> A 2M-node financial graph; here deep GNN-AD methods (CARE-GNN, PC-GNN, GAGA) clearly beat tabular baselines because the signal lives in graph structure.</li>
-        <li><strong>Joint reading:</strong> Deep AD's edge is structure-bearing data (graphs, sequences, images). On flat tabular, classical methods are typically Pareto-optimal.</li>
+        <li><strong>Matched hyperparameter budget</strong> — every method gets the SAME number of tuning trials. Removes the deep-model-was-tuned-harder confound.</li>
+        <li><strong>Matched feature set</strong> — both classical and deep methods see the same engineered features. Removes the "deep model learns features the classical did not see" excuse.</li>
+        <li><strong>Reported AUPRC under class imbalance</strong> — AUROC saturates near 1 at low prevalence; AUPRC is the production-aligned metric.</li>
+        <li><strong>Temporal split where data is time-stamped</strong> — random splits leak when graph or temporal structure is shared.</li>
       </ol>
-
+      <p>
+        DGraph-Fin (NeurIPS 2022) is the graph-specific cousin: a 3M-node, multi-relation Chinese fintech graph with timestamps. Under temporal-split AUPRC, GNN methods (GraphSAGE, CARE-GNN, etc.) outperform feature-based baselines — the structure is genuinely high-order.
+      </p>
       <VIS.Mermaid chart={`
 flowchart TB
-  D["Data type"]
-  D --> T["Flat tabular"]
-  D --> G["Graph or sequence"]
-  T --> IF["Isolation Forest baseline wins"]
-  G --> DEEP["Deep AD earns the edge"]
-  style IF fill:#dcfce7,stroke:#16a34a,stroke-width:2px
-  style DEEP fill:#dbeafe,stroke:#2563eb,stroke-width:2px
+  A["57 tabular datasets"]
+  G["1 financial graph"]
+  T["Matched tuning + AUPRC + temporal split"]
+  A --> T
+  G --> T
+  T --> R1["Tabular: tuned IF rivals deep AD"]
+  T --> R2["Graphs: GNN beats structural baselines"]
+  style R1 fill:#fef3c7,stroke:#d97706,stroke-width:2px
+  style R2 fill:#dcfce7,stroke:#16a34a,stroke-width:2px
       `} />
-      <p>
-        Green branch: classical methods are usually enough. Blue branch: deep AD is worth the operational complexity. This decision split is the single most useful takeaway from the benchmarks.
-      </p>
     </VIS.Section>
 
-    <VIS.Section id="sec-diff" title="What changed from earlier deep-AD papers">
-      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8}}>
+    <VIS.Section id="sec-diff" title="What the benchmark REFUTES from earlier deep-AD literature">
+      <table style={{width:"100%", borderCollapse:"collapse", marginTop:8, fontSize:14}}>
         <thead>
           <tr style={{background:"#1f3a5f", color:"#fff"}}>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Aspect</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>Pre-2022 papers</th>
-            <th style={{padding:"8px 10px", textAlign:"left"}}>ADBench finding</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>Pre-2022 claim</th>
+            <th style={{padding:"8px 10px", textAlign:"left"}}>ADBench / DGraph-Fin verdict</th>
           </tr>
         </thead>
         <tbody>
           <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Claim</td>
-            <td style={{padding:"8px 10px"}}>Deep AD dominates IF</td>
-            <td style={{padding:"8px 10px"}}>Refuted at scale</td>
+            <td style={{padding:"8px 10px"}}>"Deep AD beats Isolation Forest"</td>
+            <td style={{padding:"8px 10px"}}>Mostly an artifact of asymmetric tuning + AUROC reporting + random splits</td>
           </tr>
           <tr>
-            <td style={{padding:"8px 10px"}}>Baseline tuning</td>
-            <td style={{padding:"8px 10px"}}>Often default IF</td>
-            <td style={{padding:"8px 10px"}}>IF carefully tuned</td>
+            <td style={{padding:"8px 10px"}}>"A deep model is always worth deploying for fraud"</td>
+            <td style={{padding:"8px 10px"}}>On flat tabular, cost-adjusted lift is small. On graphs/sequences, deep is real.</td>
           </tr>
           <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Dataset count</td>
-            <td style={{padding:"8px 10px"}}>3-8 per paper</td>
-            <td style={{padding:"8px 10px"}}>50+ datasets</td>
+            <td style={{padding:"8px 10px"}}>"AUROC at 0.95 means the model is great"</td>
+            <td style={{padding:"8px 10px"}}>At 1% prevalence, AUROC saturates; AUPRC is the discriminator</td>
           </tr>
           <tr>
-            <td style={{padding:"8px 10px"}}>Metric</td>
-            <td style={{padding:"8px 10px"}}>AUROC only</td>
-            <td style={{padding:"8px 10px"}}>AUROC + PR-AUC + rank</td>
-          </tr>
-          <tr style={{background:"#e8f0fa"}}>
-            <td style={{padding:"8px 10px"}}>Real-world relevance</td>
-            <td style={{padding:"8px 10px"}}>Curated datasets</td>
-            <td style={{padding:"8px 10px"}}>Includes synthetic-anomaly cases</td>
+            <td style={{padding:"8px 10px"}}>"Random split is fine"</td>
+            <td style={{padding:"8px 10px"}}>Random split leaks when graph/time structure is shared</td>
           </tr>
         </tbody>
       </table>
     </VIS.Section>
 
-    <VIS.Section id="sec-when" title="When to take the benchmark at face value">
-      <ul>
-        <li><strong>Stationary tabular fraud features</strong> with cleanly labeled history — the benchmark's setting maps directly to yours.</li>
-        <li><strong>You can tune IF properly</strong> with good features (per-relation aggregates, k-hop fraud rate, motif counts).</li>
-        <li><strong>The decision is "do I invest in deep AD"</strong> — the benchmark says start with IF and only escalate if you can show a real gap on YOUR data.</li>
-      </ul>
-    </VIS.Section>
-
-    <VIS.Section id="sec-limits" title="When the benchmark is lying to you">
+    <VIS.Section id="sec-limits" title="Where the benchmark is lying to you (where it under-tests)">
       <VIS.Callout kind="gotcha" title="No adversarial test sets">
-        ADBench uses naturally occurring or synthetic anomalies — not adversarial ones. Real fraud is adaptive; attackers probe and adapt. Deep AD's representation can be more robust to mimicry attacks than tree-based isolation, and that advantage is invisible in the benchmark.
+        ADBench has no attacker-crafted anomalies. Real fraud is partly adversarial — attackers adapt to detection. Deep models with smoother decision surfaces may matter more in adversarial regimes than the benchmark suggests.
       </VIS.Callout>
       <VIS.Callout kind="warn" title="No concept drift">
-        Benchmarks are typically stationary. Real fraud distributions shift weekly or monthly. Deep AD models with continual fine-tuning often handle drift more gracefully than re-trained tree ensembles, but again the benchmark cannot show it.
+        ADBench treats the train and test distributions as stationary. Production fraud distributions drift weekly. Deep models with continual-learning extensions handle drift differently than IF.
       </VIS.Callout>
       <VIS.Callout kind="warn" title="No weakly-supervised setting">
-        Many production fraud teams have a few confirmed labels plus huge unlabeled streams. Self-supervised deep AD (SimFraud, ICL) can use the unlabeled signal; classical methods cannot. The benchmark does not measure this.
+        ADBench is purely unsupervised. Real production has weak labels (chargebacks, manual reviews) with 5-20% noise. Methods rank differently when you add a small noisy supervised signal.
       </VIS.Callout>
-      <VIS.Callout kind="warn" title="Single global threshold">
-        Benchmarks report ranking metrics. In production you have to pick a threshold per merchant / per channel / per region — and that is a different optimization problem from AUROC.
+      <VIS.Callout kind="warn" title="Cold-start regimes underrepresented">
+        Most ADBench datasets have stable feature distributions per class. New-user / new-merchant cold-start scenarios (where structural features degenerate) are not stress-tested.
       </VIS.Callout>
     </VIS.Section>
 
-    <VIS.Section id="sec-drill" title="Drill — 10 trap problems">
+    <VIS.Section id="sec-drill" title="Drill — 22 trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Ten interview-grade traps on how to read fraud-AD benchmarks and when to override them.
+        Twenty-two interview-grade traps on benchmark interpretation, fair-eval protocol, when benchmark rankings DO NOT transfer, and how to audit a paper claim from a senior MLE seat.
       </p>
 
+      {/* AXIS: D1 — main meta-finding */}
       <VIS.TrapProblem
-        id="adbench-p1"
+        id="adb-p1"
         difficulty="hard"
-        title="P1 — Headline result: IF beats deep AD. What is the immediate implication?"
-        scenario={<>You read ADBench. The headline: Isolation Forest with tuned hyperparameters ranks above most deep AD methods on average across 57 tabular datasets. Your engineering manager asks "should we rip out our deep AD pipeline?"</>}
+        title="P1 — A paper claims their deep AD method beats IF by 8 AUROC on a public tabular dataset. ADBench has run this method. What is your first question?"
+        scenario={<>You are reviewing a 2023 deep-AD paper. Their headline: "8-point AUROC lift over Isolation Forest on YelpChi." ADBench has scored the same method on the same dataset under controlled tuning.</>}
         options={[
-          {key:"a", text:"Not automatically. Run a head-to-head on YOUR data with both methods well-tuned. The benchmark is a strong prior toward IF, not a verdict. If your deep AD wins by a meaningful margin on YOUR fraud distribution, keep it.", correct:true},
-          {key:"b", text:"Yes, rip it out. Benchmarks are gospel."},
-          {key:"c", text:"Ignore the benchmark; deep AD always wins on real data."},
-          {key:"d", text:"Switch to a deeper neural net."},
+          {key:"a", text:"Compare against ADBench's number under matched tuning + AUPRC + temporal split. If the paper's IF was under-tuned (default sklearn hyperparams) and reported AUROC under random split, the 8-point gap is often 1-2 points under the fair protocol — and may invert.", correct:true},
+          {key:"b", text:"Ask if they used PyTorch or TensorFlow."},
+          {key:"c", text:"Ask for more training data."},
+          {key:"d", text:"Replicate their hyperparameter sweep exactly."},
         ]}
-        trap={<>(b) and (c) are equal-and-opposite errors. (d) is a non-sequitur. The senior move is to treat the benchmark as a Bayesian prior that you update with your own data.</>}
-        lens={<>(a) is the disciplined answer. Benchmarks set the prior; your own A/B sets the posterior. Always test on YOUR distribution, with both methods well-tuned.</>}
-        stretch={<>What sample size do you need on your data to detect a 2-point AUROC gap with 95% power?</>}
+        trap={<>(b) is irrelevant. (c)(d) do not address the eval protocol.</>}
+        lens={<><em>Discriminating insight:</em> ADBench is the protocol audit; the question is not "can I replicate the paper" but "does the gap survive matched tuning + AUPRC + temporal split."</>}
+        stretch={<>If the paper does survive the audit, what does that prove about the method?</>}
       />
 
+      {/* AXIS: C2 — AUROC vs AUPRC */}
       <VIS.TrapProblem
-        id="adbench-p2"
+        id="adb-p2"
         difficulty="hard"
-        multiSelect
-        title="P2 — When is the benchmark lying to you?"
-        scenario={<>Which production conditions are likely NOT captured by ADBench's setting? Select all that apply.</>}
+        title="P2 — At 1% fraud prevalence, your model has AUROC 0.95 and AUPRC 0.18. Reviewer asks: how do you justify the disconnect?"
+        scenario={<>1% fraud. AUROC 0.95 looks great; AUPRC is 0.18.</>}
         options={[
-          {key:"a", text:"Adversarial fraud (attackers probing your model).", correct:true},
-          {key:"b", text:"Concept drift over weeks or months.", correct:true},
-          {key:"c", text:"Weak supervision (few labels plus large unlabeled streams).", correct:true},
-          {key:"d", text:"Operational thresholds set per merchant or region.", correct:true},
-          {key:"e", text:"Standard AUROC reporting."},
-          {key:"f", text:"Tuned Isolation Forest baseline."},
+          {key:"a", text:"AUROC integrates over thresholds where almost all benigns rank below almost all fraud — at 1% prevalence this is achievable with near-random fraud ranking because the benign-to-fraud volume ratio dominates. AUPRC asks what fraction of top-ranked transactions are actual fraud — that is the production-aligned metric and 0.18 says the queue is mostly false positives.", correct:true},
+          {key:"b", text:"AUROC and AUPRC are the same metric calculated differently."},
+          {key:"c", text:"The model is just not good enough — retrain."},
+          {key:"d", text:"AUPRC is wrong under imbalance; trust AUROC."},
         ]}
-        trap={<>(e) and (f) ARE in the benchmark. The trap is to dismiss all benchmark findings; the right read is to identify which benchmark assumptions break for your use case.</>}
-        lens={<>(a)-(d) are the four canonical "benchmark blind spots" for fraud. If your production setting has any of these, the benchmark's verdict is weaker than it appears.</>}
-        stretch={<>Which of these blind spots can you cheaply test offline before launching online?</>}
+        trap={<>(b) is wrong. (c) might be true but ignores the metric mechanics. (d) is the inverse of the truth.</>}
+        lens={<><em>Discriminating insight:</em> at extreme imbalance, AUROC is dominated by ranking-amongst-benigns and is near-saturated for any reasonable model. The fraud-queue precision lives in AUPRC.</>}
+        stretch={<>At what prevalence does AUROC and AUPRC start to track each other again?</>}
       />
 
+      {/* AXIS: C3 — temporal vs random split */}
       <VIS.TrapProblem
-        id="adbench-p3"
+        id="adb-p3"
         difficulty="hard"
-        title="P3 — DGraph-Fin says deep wins on graphs. Why?"
-        scenario={<>DGraph-Fin (NeurIPS 2024) reports deep GNN-AD methods clearly beating IF and ECOD on a 2M-node financial graph. Yet on flat tabular ADBench, IF beats deep AD. Why the asymmetry?</>}
+        title="P3 — Why does random-split leak on a graph or temporal dataset?"
+        scenario={<>You shuffle DGraph-Fin transactions and do 80/10/10 random split. Your test AUPRC is 0.91. Under temporal split (train on past, test on future), AUPRC drops to 0.74.</>}
         options={[
-          {key:"a", text:"On flat tabular, IF's random splits already extract most of the available joint structure between low-order features. On graphs, the signal lives in multi-hop relational structure that IF cannot represent without expensive hand-engineered graph features. Deep GNN-AD models that structure natively.", correct:true},
-          {key:"b", text:"GNNs use more parameters."},
-          {key:"c", text:"Graph datasets are smaller so deep models overfit better."},
-          {key:"d", text:"IF is broken on graphs."},
+          {key:"a", text:"Random splits put neighbors of a node in both train and test sets. The model sees labeled neighbors at training time that share edges with test-time nodes — information leak via graph adjacency. Temporal split forces train to precede test, breaking the leak; the drop from 0.91 to 0.74 is the size of the leakage.", correct:true},
+          {key:"b", text:"Random splits over-sample easy examples."},
+          {key:"c", text:"Temporal splits use a smaller test set."},
+          {key:"d", text:"The model was overfit and needs regularization."},
         ]}
-        trap={<>(b) confuses model capacity with feature representation. (c) is the opposite of true (graph datasets are typically larger). (d) is uncharitable to IF.</>}
-        lens={<>(a) is the correct mental model. Deep AD's advantage is representation; classical AD's advantage is robustness. When the data has structure that classical methods cannot express, deep wins; when it does not, classical wins.</>}
-        stretch={<>What hand-engineered graph features would you give IF to close most of the gap on DGraph-Fin?</>}
+        trap={<>(b)(c)(d) are generic excuses that miss the adjacency-leakage mechanism.</>}
+        lens={<><em>Discriminating insight:</em> graph and temporal data have implicit structure; random split leaks via that structure. The fix is structural-aware splitting, not more regularization.</>}
+        stretch={<>How would you split a graph with mixed temporal edges and static node attributes?</>}
       />
 
+      {/* AXIS: D2 — cascade */}
       <VIS.TrapProblem
-        id="adbench-p4"
+        id="adb-p4"
         difficulty="hard"
-        title="P4 — Fair-comparison setup: what to control"
-        scenario={<>You are running your own deep-AD-vs-IF comparison on your fraud data. Which of these is the SINGLE most important thing to get right?</>}
+        title="P4 — Diagnose this cascade"
+        scenario={<>2024 deep-AD paper claims SOTA on Amazon-Fraud. Your team reads it, installs the method, trains, deploys, fails to beat existing GBDT in shadow, blames "our data is different", and wastes 6 engineer-months. Where is the original sin?</>}
         options={[
-          {key:"a", text:"Identical features and identical train/val/test splits, with both methods tuned to convergence on the same validation set. Otherwise you are measuring tuning gap, not method gap.", correct:true},
-          {key:"b", text:"Use the same hardware for both."},
-          {key:"c", text:"Use the same programming language for both."},
-          {key:"d", text:"Use the same loss function for both."},
+          {key:"a", text:"The team did not audit the paper benchmark with the ADBench protocol (matched tuning, AUPRC, temporal split). Public-benchmark SOTA is the starting line for further auditing, not a guarantee of deployment lift. The disciplined alternative: take the paper's method, also reimplement a tuned GBDT/IF baseline with matched compute, and only invest if the lift survives the audit.", correct:true},
+          {key:"b", text:"The team should have tried more methods."},
+          {key:"c", text:"The team needed more data."},
+          {key:"d", text:"The team's GBDT was over-tuned."},
         ]}
-        trap={<>(b)-(d) are nice-to-haves but do not determine validity. (d) is impossible for unsupervised AD anyway.</>}
-        lens={<>(a) is the experimental-rigor answer. Most "deep AD beats IF" claims pre-ADBench failed because the IF baseline was un-tuned; most "IF beats deep AD" claims fail when deep AD is not given enough capacity or epochs. Match feature + split + tuning budget.</>}
-        stretch={<>How would you allocate a fixed compute budget between hyperparameter tuning for IF vs deep AD?</>}
+        trap={<>(b)(c)(d) are downstream symptoms. (a) names the protocol failure at the front of the cascade.</>}
+        lens={<><em>Discriminating insight:</em> the senior move is to treat every SOTA claim as a hypothesis to be falsified under fair eval — not as a prescription to deploy.</>}
+        stretch={<>What 2-week investment would have caught this before the 6-month dive?</>}
       />
 
+      {/* AXIS: D5 — tabular vs graph generalization */}
       <VIS.TrapProblem
-        id="adbench-p5"
-        difficulty="hard"
-        multiSelect
-        title="P5 — Bad metrics that inflate deep-AD wins"
-        scenario={<>Which evaluation choices commonly inflated deep-AD wins in pre-2022 papers? Select all that apply.</>}
-        options={[
-          {key:"a", text:"Reporting only AUROC on imbalanced datasets (PR-AUC reveals more).", correct:true},
-          {key:"b", text:"Comparing against default-hyperparameter IF rather than tuned IF.", correct:true},
-          {key:"c", text:"Cherry-picking 3-5 favorable datasets.", correct:true},
-          {key:"d", text:"Using train AUROC for ranking.", correct:true},
-          {key:"e", text:"Using stratified train/test splits."},
-          {key:"f", text:"Reporting standard deviation across seeds."},
-        ]}
-        trap={<>(e) and (f) are good practice, not inflation sources.</>}
-        lens={<>(a)-(d) are the classic metric-inflation moves. ADBench fixed all four by standardizing tuned baselines, PR-AUC reporting, fixed splits, and dataset-wide rank averaging.</>}
-        stretch={<>If you had to pick ONE metric for fraud AD, AUROC or PR-AUC, which and why?</>}
-      />
-
-      <VIS.TrapProblem
-        id="adbench-p6"
+        id="adb-p5"
         difficulty="medium"
-        title="P6 — Tuning IF properly: what knobs matter most?"
-        scenario={<>You are tuning Isolation Forest as a fair baseline. Which hyperparameter typically has the largest impact on AD quality?</>}
+        title="P5 — DGraph-Fin says deep wins on graphs. Does this generalize to 'deep wins on sequences'?"
+        scenario={<>Your data is sequential transaction events per user (not a graph). A colleague cites DGraph-Fin to justify a sequence-transformer over a simpler tree-based baseline.</>}
         options={[
-          {key:"a", text:"n_estimators (number of trees) up to about 200, then diminishing returns. After that, max_samples and contamination tuning matter more than tree count.", correct:true},
-          {key:"b", text:"max_depth — deeper trees always better."},
-          {key:"c", text:"random_state — different seeds give very different scores."},
-          {key:"d", text:"Feature normalization — IF needs standardized inputs."},
+          {key:"a", text:"Partially — sequences also have high-order temporal structure that trees can miss, but DGraph-Fin's specific finding is about graph adjacency, not arbitrary temporal structure. The right move: run the matched-tuning audit on sequences specifically (e.g., compare a tuned LightGBM with sequence-aware features against a sequence transformer) before assuming generalization.", correct:true},
+          {key:"b", text:"Yes — deep wins on any structured data."},
+          {key:"c", text:"No — DGraph-Fin says nothing about sequences."},
+          {key:"d", text:"Deep wins iff the data has more than 10M rows."},
         ]}
-        trap={<>(b) is wrong (IF scores by isolation depth; very deep trees actually weaken the signal). (c) is small. (d) is false — IF is split-based and scale-invariant.</>}
-        lens={<>(a) is the empirical guidance from many benchmarks. After enough trees, the gains come from sample-subset size and the contamination prior, not from more trees.</>}
-        stretch={<>How does contamination interact with the decision threshold?</>}
+        trap={<>(b) overclaims. (c) under-uses the finding. (d) invents a threshold.</>}
+        lens={<><em>Discriminating insight:</em> the benchmark's mechanism (high-order structure justifies deep) generalizes; its specific result (graphs) does not automatically transfer. Audit the new domain before extrapolating.</>}
+        stretch={<>What sequence-specific benchmark do you cite for the audit?</>}
       />
 
+      {/* AXIS: F3 — cold-start */}
       <VIS.TrapProblem
-        id="adbench-p7"
+        id="adb-p6"
         difficulty="hard"
-        title="P7 — Your deep AD wins on benchmark, loses on your data. Why?"
-        scenario={<>You picked a deep AD method that wins on ADBench. On your fraud data, it loses to IF. What is the most likely reason?</>}
+        title="P6 — Cold-start regime: ADBench's lesson DOES NOT apply"
+        scenario={<>You build a fraud detector for new-merchant onboarding. Most merchants have at most 5 transactions in their history. Should you start with IF as ADBench suggests?</>}
         options={[
-          {key:"a", text:"Your fraud distribution emphasizes low-order marginal anomalies (large amount, rare country) that IF captures natively; the deep method's representational edge does not pay off on this distribution.", correct:true},
-          {key:"b", text:"Benchmarks are broken."},
-          {key:"c", text:"You used the wrong programming language."},
-          {key:"d", text:"You need more GPU."},
+          {key:"a", text:"Probably not — structural features (degree, k-hop label density, neighbor stats) that IF relies on degenerate when a node has no history. Deep models that bring inductive biases (e.g., a GNN with type-conditioned message passing, or a pretrained tabular foundation model) may earn their cost specifically here. The ADBench finding 'IF rivals deep' is benchmarked on data-rich nodes.", correct:true},
+          {key:"b", text:"Yes — IF works at any scale."},
+          {key:"c", text:"Yes — and re-tune IF for fewer trees."},
+          {key:"d", text:"No — but use a GBDT instead."},
         ]}
-        trap={<>(b)-(d) are deflection. The right answer reads what distinguishes your data from the average benchmark dataset.</>}
-        lens={<>(a). Benchmarks average across datasets; your dataset is one point in that distribution. If your fraud signal is low-order, IF wins; if it is high-order or relational, deep AD wins. The benchmark gives you the prior; your data gives you the posterior.</>}
-        stretch={<>What feature analysis would you run to characterize "is my fraud low-order"?</>}
+        trap={<>(b)(c)(d) ignore the cold-start mechanism. GBDT shares IF's structural-feature dependence.</>}
+        lens={<><em>Discriminating insight:</em> the benchmark's "deep is small lift" finding is a stationary-data finding. Cold-start regimes are precisely where the inductive biases of deep models can pay off.</>}
+        stretch={<>What pretraining objective would suit a tabular-foundation cold-start fraud detector?</>}
       />
 
+      {/* AXIS: D3 — senior cross-examine */}
       <VIS.TrapProblem
-        id="adbench-p8"
+        id="adb-p7"
         difficulty="hard"
         multiSelect
-        title="P8 — Production constraints that override benchmark verdicts"
-        scenario={<>Which production constraints could justify picking deep AD even when your offline benchmark says IF is equal or slightly better? Select all that apply.</>}
+        title="P7 — Junior reports 'SOTA on YelpChi.' Which senior follow-ups discriminate real lift from artifact?"
+        scenario={<>You are the senior reviewer. The team reports "SOTA on YelpChi, 5 AUROC points over the previous best."</>}
         options={[
-          {key:"a", text:"You need an embedding to feed downstream models (case-routing, similar-fraud retrieval).", correct:true},
-          {key:"b", text:"You expect adaptive attacks; deep representations are harder to game blindly.", correct:true},
-          {key:"c", text:"You need to score a multimodal input (tabular + text + image); IF cannot.", correct:true},
-          {key:"d", text:"You want to share a backbone with another model (multi-task training).", correct:true},
-          {key:"e", text:"Deep AD always wins."},
-          {key:"f", text:"GPU is cheap."},
+          {key:"a", text:"Random or temporal split?", correct:true},
+          {key:"b", text:"AUROC or AUPRC?", correct:true},
+          {key:"c", text:"Same tuning budget as baselines?", correct:true},
+          {key:"d", text:"Did the baseline get access to the same engineered features?", correct:true},
+          {key:"e", text:"Did the model use more parameters than the baseline?"},
         ]}
-        trap={<>(e) is wrong. (f) is real but not a methodology argument.</>}
-        lens={<>(a)-(d) are legitimate production reasons. The benchmark optimizes AUROC; production optimizes the whole system. Reusable embeddings, robustness to adaptive attacks, and multimodal scoring are all real ops wins for deep AD even when offline AUROC ties.</>}
-        stretch={<>Which of these is the strongest single argument for a senior MLE to make to leadership?</>}
+        trap={<>(e) is the capacity question that does not protect against benchmark artifact.</>}
+        lens={<><em>Discriminating insight:</em> the four ADBench-style fair-eval gates (split / metric / tuning / features) are the audit checklist. Capacity is downstream.</>}
+        stretch={<>Which of these gates is most often violated in 2023-2024 deep-AD papers?</>}
       />
 
+      {/* AXIS: E1 — production-aligned eval */}
       <VIS.TrapProblem
-        id="adbench-p9"
+        id="adb-p8"
         difficulty="medium"
-        title="P9 — DGraph-Fin specifics: 2M nodes, why does CARE-GNN win?"
-        scenario={<>On DGraph-Fin, CARE-GNN beats IF by roughly 5 points of AUC. What is the structural reason?</>}
+        multiSelect
+        title="P8 — Build a production-grade benchmark for YOUR fraud problem"
+        scenario={<>Select the elements that a production-aligned benchmark MUST include (beyond ADBench defaults).</>}
         options={[
-          {key:"a", text:"Fraud labels in DGraph-Fin correlate with multi-hop relational structure (camouflaged neighborhoods, shared device/IP fan-out). CARE-GNN's relation-aware filter selects neighbors that carry the fraud signal; IF cannot represent this without hand-crafted k-hop features.", correct:true},
-          {key:"b", text:"CARE-GNN has more parameters."},
-          {key:"c", text:"DGraph-Fin uses fewer classes."},
-          {key:"d", text:"Trees cannot handle large graphs."},
+          {key:"a", text:"Temporal split with the holdout in the future of training.", correct:true},
+          {key:"b", text:"AUPRC at the operating threshold.", correct:true},
+          {key:"c", text:"Tuned classical baseline (IF + GBDT) with matched compute.", correct:true},
+          {key:"d", text:"Weakly-supervised label noise simulation (5-20% benign-side noise).", correct:true},
+          {key:"e", text:"Adversarial probe set if feasible.", correct:true},
+          {key:"f", text:"Match ADBench's static dataset structure exactly."},
         ]}
-        trap={<>(b) confuses capacity with representation. (c) is irrelevant. (d) is uncharitable.</>}
-        lens={<>(a). DGraph-Fin is a graph dataset where the signal is structural; CARE-GNN is built for exactly this. Without graph features, IF cannot see the fraud pattern; with them, the gap shrinks but does not fully close.</>}
-        stretch={<>What hand-engineered features would you give IF to halve the gap on DGraph-Fin?</>}
+        trap={<>(f) is the wrong direction — static benchmarks UNDER-test fraud production.</>}
+        lens={<><em>Discriminating insight:</em> ADBench is necessary but not sufficient. Your benchmark must add adversarial, weak-label, and drift dimensions to track production behavior.</>}
+        stretch={<>How would you simulate weak-label noise on a clean public dataset?</>}
       />
 
+      {/* AXIS: D6 — adversarial */}
       <VIS.TrapProblem
-        id="adbench-p10"
+        id="adb-p9"
         difficulty="hard"
-        title="P10 — End-to-end pick: where to deploy IF vs deep AD"
-        scenario={<>Your fraud stack has THREE detection tiers: (1) real-time card auth (sub-50ms SLA, tabular features), (2) overnight case review (no SLA, multimodal: text + tabular + graph), (3) merchant-onboarding KYC (multi-hop entity graph). For each tier, recommend IF or deep AD. Pick ONE complete prescription.</>}
+        title="P9 — Why might deep AD matter MORE in adversarial fraud than the static benchmark suggests?"
+        scenario={<>An adversarial attacker probes the AD system to find the decision boundary and plant fraud just inside it. Why might a deep model fare differently than IF in this regime?</>}
         options={[
-          {key:"a", text:"Tier 1 (real-time tabular): IF baseline plus distilled deep student in an ensemble. Tier 2 (overnight multimodal): deep AD — it is the only option that natively handles text plus tabular plus graph. Tier 3 (KYC graph): deep GNN-AD (CARE-GNN or GAGA) — graph signal dominates.", correct:true},
-          {key:"b", text:"All three tiers: IF. The benchmark says so."},
-          {key:"c", text:"All three tiers: deep AD. Newer is better."},
-          {key:"d", text:"All three tiers: a hybrid we have not specified."},
+          {key:"a", text:"IF's decision surface is a union of axis-aligned splits — easy to characterize via boundary probing. Deep model surfaces are smoother and non-axis-aligned, making boundary characterization harder per probe. The ADBench static benchmark scores both on benign-vs-anomaly held-out splits but never measures resistance to probing — so it cannot distinguish them on this axis.", correct:true},
+          {key:"b", text:"Deep models are always more robust because they have more parameters."},
+          {key:"c", text:"IF is unbreakable because trees are non-differentiable."},
+          {key:"d", text:"Adversarial robustness is unrelated to model class."},
         ]}
-        trap={<>(b) and (c) are dogmatic. (d) is a non-answer.</>}
-        lens={<>(a) is the read of the joint benchmark evidence. Use IF where the signal is low-order tabular and latency matters; use deep AD where the signal is structural, multimodal, or graph-shaped. This tier-by-tier judgment IS the senior MLE signal.</>}
-        stretch={<>How would you measure whether Tier 1's deep-AD student is adding signal beyond IF-alone?</>}
+        trap={<>(b) is naive (capacity is not robustness). (c) reverses the truth — non-differentiability does not help against black-box probing. (d) is false.</>}
+        lens={<><em>Discriminating insight:</em> the benchmark's "no adversarial test" caveat is not a footnote — it can flip rankings on an axis the leaderboard never measured.</>}
+        stretch={<>Design one adversarial-probing test that could ride alongside an ADBench-style eval.</>}
+      />
+
+      {/* AXIS: F2 — weak-label noise */}
+      <VIS.TrapProblem
+        id="adb-p10"
+        difficulty="medium"
+        title="P10 — What happens to ADBench rankings under 10% benign-side label noise?"
+        scenario={<>Your "benign" labels have 10% noise (actual fraud not flagged). You re-run ADBench's protocol with this noise injected.</>}
+        options={[
+          {key:"a", text:"Methods rank differently. One-class methods (TabADM, DeepSVDD) suffer when fraud contaminates the 'benign' training set — they learn part of the fraud manifold. Tree-based unsupervised methods (IF, ECOD) are less sensitive because they do not explicitly fit a benign-only model. Rankings can re-order substantially.", correct:true},
+          {key:"b", text:"Rankings are unchanged because all methods see the same noisy labels."},
+          {key:"c", text:"Deep methods always beat classical under noise."},
+          {key:"d", text:"Classical methods always beat deep under noise."},
+        ]}
+        trap={<>(b) is the equal-noise-equal-effect fallacy; the effect depends on the method's training assumptions. (c)(d) overclaim a uniform direction.</>}
+        lens={<><em>Discriminating insight:</em> the impact of label noise depends on whether the method assumes class purity in training. One-class density estimators are most exposed.</>}
+        stretch={<>How would you mitigate weak-label noise for TabADM specifically?</>}
+      />
+
+      {/* AXIS: E2 — shadow rollout */}
+      <VIS.TrapProblem
+        id="adb-p11"
+        difficulty="medium"
+        title="P11 — Shadow benchmark vs production: what to compute"
+        scenario={<>You shadow your candidate model alongside the existing IF for 4 weeks. Pick the right summary statistics.</>}
+        options={[
+          {key:"a", text:"Score-rank correlation between candidate and IF; AUPRC of candidate vs IF on weekly slices to track drift; calibration plot (predicted score percentile vs confirmed fraud rate); P@k in the investigator-capacity range; per-segment AUPRC (new users, high-value, cross-border).", correct:true},
+          {key:"b", text:"Just overall AUROC each week."},
+          {key:"c", text:"Number of alerts generated."},
+          {key:"d", text:"Training loss curve of the candidate."},
+        ]}
+        trap={<>(b) saturates under imbalance. (c) is not a quality metric. (d) is training-time, not shadow.</>}
+        lens={<><em>Discriminating insight:</em> the shadow benchmark is multi-metric and segment-aware; the production decision lives in the precision/coverage tradeoff at investigator capacity.</>}
+        stretch={<>What length of shadow window is "long enough" given weekly fraud seasonality?</>}
+      />
+
+      {/* AXIS: C4 — tabular winners per ADBench */}
+      <VIS.TrapProblem
+        id="adb-p12"
+        difficulty="medium"
+        title="P12 — Which methods ADBench reports as top performers on tabular?"
+        scenario={<>Pick the tabular unsupervised AD set most consistent with ADBench's leaderboard.</>}
+        options={[
+          {key:"a", text:"Tuned Isolation Forest, ECOD, COPOD — cheap classical baselines that consistently rank in the top tier across the 57 tabular datasets.", correct:true},
+          {key:"b", text:"DeepSVDD, DAGMM, AutoEncoder-AD — neural baselines reliably at the top."},
+          {key:"c", text:"Only LOF and OCSVM, because they are the oldest."},
+          {key:"d", text:"Only neural methods because they have more capacity."},
+        ]}
+        trap={<>(b) confuses neural-AD's place — ADBench has them mostly below the classical top. (c)(d) reflect priors not the data.</>}
+        lens={<><em>Discriminating insight:</em> ADBench's top tier on tabular is cheap classical methods. The corollary: your first three baselines for any tabular AD task should be IF + ECOD + COPOD.</>}
+        stretch={<>What does ECOD actually do, briefly?</>}
+      />
+
+      {/* AXIS: C5 — graph winners per DGraph-Fin */}
+      <VIS.TrapProblem
+        id="adb-p13"
+        difficulty="medium"
+        title="P13 — Why does CARE-GNN win on DGraph-Fin where IF-with-structural-features does not?"
+        scenario={<>On the 3M-node DGraph-Fin financial graph, GNN methods (GraphSAGE, CARE-GNN) beat structural-feature baselines under matched tuning + temporal split + AUPRC. Why does the deep advantage materialize here when it does not on flat tabular?</>}
+        options={[
+          {key:"a", text:"Fraud signals depend on multi-hop neighborhood patterns (e.g., money flowing through chains of accounts) and on relation-type information (peer-to-peer vs merchant vs ATM edges). Structural features (degree, k-hop label density) collapse these into scalars; GNN message passing keeps the structure as a learned representation. The inductive bias of message-passing is what the benchmark says is real.", correct:true},
+          {key:"b", text:"GNNs always beat IF on any data."},
+          {key:"c", text:"DGraph-Fin has fewer rows than ADBench datasets."},
+          {key:"d", text:"The GNN had more parameters."},
+        ]}
+        trap={<>(b) overclaims. (c) is irrelevant. (d) confuses capacity with structural inductive bias.</>}
+        lens={<><em>Discriminating insight:</em> deep wins on graphs because message-passing has an inductive bias that matches the data. Capacity alone does not justify deep on tabular.</>}
+        stretch={<>Which CARE-GNN-specific component (label-aware filtering or relation-aware aggregation) drives the lift?</>}
+      />
+
+      {/* AXIS: D4 — director-level conversation */}
+      <VIS.TrapProblem
+        id="adb-p14"
+        difficulty="hard"
+        title="P14 — Director: 'Should we invest a year building a fraud-GNN platform or improve the current GBDT?'"
+        scenario={<>A platform decision. Pick the senior-leadership framing.</>}
+        options={[
+          {key:"a", text:"Frame it as: (1) is YOUR data graph-rich (multi-relation, multi-hop fraud) or flat-tabular? (2) under matched tuning + AUPRC + temporal split, what is the cost-adjusted lift of fraud-GNN over a tuned GBDT with structural features? (3) does the lift survive in cold-start, adversarial, and weak-label regimes? Decision: if all three say yes, build the GNN platform; if any says no, double down on the GBDT.", correct:true},
+          {key:"b", text:"Always build the GNN — it is SOTA."},
+          {key:"c", text:"Always keep the GBDT — IF rivals deep per ADBench."},
+          {key:"d", text:"Build both and let production decide."},
+        ]}
+        trap={<>(b) ignores benchmark caveats. (c) over-generalizes ADBench (it is about tabular). (d) wastes a year of engineering.</>}
+        lens={<><em>Discriminating insight:</em> the senior frame is conditional: the answer depends on data shape and audit outcomes, not on a leaderboard.</>}
+        stretch={<>How would you frame the same question if your data is half-tabular and half-graph?</>}
+      />
+
+      {/* AXIS: F1 — adversarial */}
+      <VIS.TrapProblem
+        id="adb-p15"
+        difficulty="hard"
+        title="P15 — Why public AD benchmarks systematically under-rate deep methods on adversarial fraud"
+        scenario={<>You suspect deep AD's real production advantage is in adversarial robustness, which ADBench does not measure. Argue this in one paragraph.</>}
+        options={[
+          {key:"a", text:"Public benchmarks have static anomalies sampled from a fixed distribution; real fraud is partially adversarial and adapts to detection. Adversarial probing of an axis-aligned tree-ensemble (IF) is straightforward — boundary characterization needs O(features times log n) probes. Deep model surfaces are smoother and harder to characterize; recent research suggests they are also more robust to small input perturbations after appropriate training. The benchmark cannot measure this dimension.", correct:true},
+          {key:"b", text:"Deep AD has more parameters."},
+          {key:"c", text:"Deep AD is faster to train."},
+          {key:"d", text:"Deep AD uses GPU."},
+        ]}
+        trap={<>(b)(c)(d) miss the adversarial-mechanism argument.</>}
+        lens={<><em>Discriminating insight:</em> a benchmark's silence on a dimension is not evidence of equivalence — it is silence. Adversarial regime is the textbook example.</>}
+        stretch={<>What single adversarial test would you bolt onto ADBench to fix this?</>}
+      />
+
+      {/* AXIS: D2 — second cascade */}
+      <VIS.TrapProblem
+        id="adb-p16"
+        difficulty="medium"
+        title="P16 — 'Our AUROC is 0.97 in shadow; ship it.' What can still go wrong?"
+        scenario={<>Shadow AUROC 0.97. The team wants to flip live traffic.</>}
+        options={[
+          {key:"a", text:"At low prevalence AUROC 0.97 may correspond to terrible precision at investigator capacity (P@k). Compute AUPRC and P@k at the cutoff investigators can actually work; check calibration with a Brier or expected-calibration-error metric; segment AUPRC by user-segment, channel, and time-of-day; check temporal stability week-over-week. Only then ship.", correct:true},
+          {key:"b", text:"Nothing — AUROC 0.97 is excellent."},
+          {key:"c", text:"AUROC 0.97 means the model is overfit; reduce capacity."},
+          {key:"d", text:"Just ship and monitor."},
+        ]}
+        trap={<>(b)(d) skip the metric audit. (c) misreads AUROC.</>}
+        lens={<><em>Discriminating insight:</em> AUROC alone cannot signal queue-quality at low prevalence; the production decision lives in AUPRC + P@k + segment + temporal stability.</>}
+        stretch={<>What is the smallest P@k drop that should hold a rollout?</>}
+      />
+
+      {/* AXIS: B3 — pitch */}
+      <VIS.TrapProblem
+        id="adb-p17"
+        difficulty="hard"
+        title="P17 — Pitch the ADBench finding to a director in 4 sentences"
+        scenario={<>Director: "What is the takeaway from ADBench / DGraph-Fin?"</>}
+        options={[
+          {key:"a", text:"ADBench audited 30+ AD methods on 57 tabular datasets under matched tuning + AUPRC + temporal splits and found tuned Isolation Forest + ECOD + COPOD rival most deep AD methods on tabular. DGraph-Fin (the graph cousin) flips this on graphs — GNNs genuinely beat structural-feature baselines on a 3M-node financial graph. Operationally: do not deploy a deep AD model on flat tabular without auditing the cost-adjusted lift vs a tuned classical baseline; do invest in graph methods when your data has multi-hop, multi-relation structure. The benchmark does NOT measure adversarial robustness, drift, weak-label noise, or cold-start — those are separate gates.", correct:true},
+          {key:"b", text:"Deep models are bad on tabular."},
+          {key:"c", text:"Use ADBench instead of our production data."},
+          {key:"d", text:"Always use Isolation Forest."},
+        ]}
+        trap={<>(b) overstates. (c) confuses benchmark with production. (d) ignores the graph finding.</>}
+        lens={<><em>Discriminating insight:</em> the pitch names the protocol, the result, the boundary conditions, and the missing dimensions in one breath.</>}
+        stretch={<>How would the pitch change if the director just read a paper claiming deep wins?</>}
+      />
+
+      {/* AXIS: F5 — low prevalence */}
+      <VIS.TrapProblem
+        id="adb-p18"
+        difficulty="medium"
+        title="P18 — Very-low prevalence (under 0.01%): does ADBench's verdict hold?"
+        scenario={<>Account-takeover at 0.005% prevalence (5 in 100,000). Does ADBench's tuned-IF-rivals-deep finding apply?</>}
+        options={[
+          {key:"a", text:"Partially. The finding holds in expectation but bootstrap variance of any AD score at this prevalence is enormous; metric estimates have wide confidence intervals. Deep ensembles can stabilize predictions across resamples; a single IF run has higher variance. Practical move: use score ensembles (deep + classical) and report confidence intervals on AUPRC, not point estimates.", correct:true},
+          {key:"b", text:"Yes — ADBench covers all prevalences."},
+          {key:"c", text:"No — deep always wins at low prevalence."},
+          {key:"d", text:"No — classical always wins at low prevalence."},
+        ]}
+        trap={<>(b) overgeneralizes. (c)(d) over-direct.</>}
+        lens={<><em>Discriminating insight:</em> at extreme imbalance, point-estimate rankings are unstable; ensemble + CI reporting is the senior move.</>}
+        stretch={<>How wide are AUPRC confidence intervals at n=100k, prev 0.005%?</>}
+      />
+
+      {/* AXIS: E4 — drift */}
+      <VIS.TrapProblem
+        id="adb-p19"
+        difficulty="medium"
+        title="P19 — ADBench is stationary. Your production has weekly drift. What does this change?"
+        scenario={<>Production fraud distribution drifts week-over-week (new attack patterns). ADBench's static benchmark cannot speak to this. What is the senior protocol?</>}
+        options={[
+          {key:"a", text:"Re-benchmark with rolling temporal splits (train on weeks 1-4, test on week 5; slide forward). Rank methods by mean AUPRC across rolling windows AND by AUPRC degradation rate over time. The best method on the production-drift axis may be different from the static-leaderboard winner — typically methods with continual-learning or online-adaptation extensions move up.", correct:true},
+          {key:"b", text:"ADBench is enough; drift will average out."},
+          {key:"c", text:"Just retrain weekly with the same architecture."},
+          {key:"d", text:"Drift is a feature, not a bug."},
+        ]}
+        trap={<>(b) is naive. (c) is part of the answer but does not address ranking. (d) is glib.</>}
+        lens={<><em>Discriminating insight:</em> stationary benchmarks miss adaptation-rate, which is often the actual production differentiator.</>}
+        stretch={<>What is "drift-velocity AUPRC" and how would you compute it?</>}
+      />
+
+      {/* AXIS: E5 — DGraph-Fin specifics */}
+      <VIS.TrapProblem
+        id="adb-p20"
+        difficulty="hard"
+        title="P20 — DGraph-Fin specific: which design decisions in its protocol matter most?"
+        scenario={<>DGraph-Fin is 3M nodes, multi-relation (peer-to-peer, merchant, ATM edges), timestamped. Pick the protocol choices that most affect leaderboard rankings.</>}
+        options={[
+          {key:"a", text:"(i) temporal split — eliminates adjacency leakage; (ii) AUPRC reporting — exposes precision-at-recall under imbalance; (iii) per-relation edge featurization — gives methods that ignore relation type a real disadvantage matching production fraud patterns; (iv) consistent neighbor sampling budget — prevents subsample-size confound.", correct:true},
+          {key:"b", text:"Whether the GPU is A100 or H100."},
+          {key:"c", text:"Number of training epochs."},
+          {key:"d", text:"Random seed of the dataset shuffle."},
+        ]}
+        trap={<>(b)(c)(d) are details that should be controlled but do not drive rankings the way (a) does.</>}
+        lens={<><em>Discriminating insight:</em> protocol choices that touch the structure of fraud (relation-aware, temporal-aware) drive rankings; compute/seed choices control noise.</>}
+        stretch={<>If your data has only one relation type, does DGraph-Fin's finding still apply?</>}
+      />
+
+      {/* AXIS: D5 — generalizing benchmark wins */}
+      <VIS.TrapProblem
+        id="adb-p21"
+        difficulty="medium"
+        multiSelect
+        title="P21 — Which generalizations from ADBench/DGraph-Fin are WARRANTED?"
+        scenario={<>Pick the generalizations that the benchmarks support; reject those that overreach.</>}
+        options={[
+          {key:"a", text:"On flat tabular fraud data with similar prevalence and feature counts, tuned IF + ECOD + COPOD are strong baselines to beat.", correct:true},
+          {key:"b", text:"On graph-structured fraud with multi-hop signal and temporal edges, GNN methods are likely worth investment.", correct:true},
+          {key:"c", text:"On any tabular data, deep AD is useless."},
+          {key:"d", text:"On any graph, GNN beats GBDT."},
+          {key:"e", text:"AUPRC under temporal split + matched tuning is the correct production audit metric for benchmarks.", correct:true},
+        ]}
+        trap={<>(c)(d) overreach beyond benchmark scope (adversarial, cold-start, drift are not measured).</>}
+        lens={<><em>Discriminating insight:</em> benchmarks generalize over their measurement axes only; out-of-axis claims are conjecture.</>}
+        stretch={<>Name one warranted generalization not in the options.</>}
+      />
+
+      {/* AXIS: Hero question */}
+      <VIS.TrapProblem
+        id="adb-p22"
+        difficulty="hard"
+        title="P22 — Hero senior question: 'ADBench says IF beats deep AD. When is the benchmark lying to you?'"
+        scenario={<>Senior interviewer asks the canonical question. Pick the disciplined answer.</>}
+        options={[
+          {key:"a", text:"The benchmark is silent (not necessarily wrong) on: (1) adversarial fraud — public datasets have static anomalies; (2) weak-label noise — clean public labels overstate one-class density methods; (3) concept drift — static eval misses adaptation rate; (4) cold-start — structural features degenerate when neighbors are sparse; (5) low prevalence under 0.01% — point-estimate rankings are unstable; (6) graphs and sequences — DGraph-Fin already says deep wins there; (7) heterogeneous high-order fraud — TabADM-style methods may have a real edge that AUROC alone misses.", correct:true},
+          {key:"b", text:"It is never lying — always trust the leaderboard."},
+          {key:"c", text:"It is always lying — public benchmarks are useless."},
+          {key:"d", text:"Lying only when the random seed is wrong."},
+        ]}
+        trap={<>(b)(c)(d) are absolutist or trivial.</>}
+        lens={<><em>Discriminating insight:</em> the senior answer enumerates the specific axes the benchmark does not measure and names YOUR fraud problem's location on each axis.</>}
+        stretch={<>Which of these silences applies most strongly to YOUR current fraud problem?</>}
       />
     </VIS.Section>
 
@@ -1700,35 +1902,35 @@ flowchart TB
             <strong>Han et al. — ADBench: Anomaly Detection Benchmark</strong>
           </a>{" "}
           <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2022)</span>
-          <br/>The benchmark itself. Sec 4 (results) and Sec 5 (analysis) are the keepers; the 57-dataset rank table is gold.
+          <br/>The benchmark suite. Sec 4 (tabular leaderboard) and Sec 5 (analysis) are the keepers; the appendix lists the 57 datasets and 30 algorithms.
         </li>
         <li>
           <a href="https://arxiv.org/abs/2207.03579" target="_blank" rel="noopener">
-            <strong>Huang et al. — DGraph-Fin: A Large-Scale Dataset for Graph Anomaly Detection</strong>
+            <strong>DGraph-Fin: A Large-Scale Financial Dataset for Graph Anomaly Detection</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2024)</span>
-          <br/>The financial-graph benchmark that shows deep GNN-AD methods earning their keep.
+          <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2022 D&amp;B)</span>
+          <br/>The 3M-node financial graph. Sec 3 (data construction) and Sec 4 (baseline results under temporal split) are where the protocol lives.
         </li>
         <li>
-          <a href="https://github.com/Minqi824/ADBench" target="_blank" rel="noopener">
-            <strong>ADBench GitHub repo</strong>
+          <a href="https://arxiv.org/abs/2306.12251" target="_blank" rel="noopener">
+            <strong>GADBench — Tang et al.</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(code)</span>
-          <br/>Reproduce the benchmark on your own data with one command. The cleanest way to set up a fair IF-vs-deep-AD comparison.
+          <span style={{color:"#64748b", fontSize:14}}>(paper, NeurIPS 2023)</span>
+          <br/>Supervised graph anomaly benchmark — sibling to DGraph-Fin's semi-supervised setting. The "tuned GBDT rivals fraud-GNN" finding.
         </li>
         <li>
-          <a href="https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.IsolationForest.html" target="_blank" rel="noopener">
-            <strong>scikit-learn — IsolationForest</strong>
+          <a href="https://www.fast.ai/posts/2017-11-13-validation-sets.html" target="_blank" rel="noopener">
+            <strong>Rachel Thomas — How (and why) to create a good validation set</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(docs)</span>
-          <br/>The reference IF implementation. Knobs to actually tune: n_estimators, max_samples, contamination.
+          <span style={{color:"#64748b", fontSize:14}}>(blog)</span>
+          <br/>The practitioner essay on temporal vs random splits. Start here if you have not internalized why random splits leak.
         </li>
         <li>
-          <a href="https://arxiv.org/abs/1708.04347" target="_blank" rel="noopener">
-            <strong>Liu, Ting, Zhou — Isolation Forest (revised)</strong>
+          <a href="https://www.kaggle.com/code/lct14558/imbalanced-data-why-you-should-not-use-roc-curve" target="_blank" rel="noopener">
+            <strong>Why you should not use ROC curve for imbalanced data</strong>
           </a>{" "}
-          <span style={{color:"#64748b", fontSize:14}}>(paper)</span>
-          <br/>The original IF paper. Worth re-reading to internalize why random splits work so well on tabular.
+          <span style={{color:"#64748b", fontSize:14}}>(notebook)</span>
+          <br/>Worked example of AUROC saturation vs AUPRC under imbalance.
         </li>
       </ul>
     </VIS.Section>
