@@ -2099,8 +2099,20 @@ function PreRenderedDiagram({ pieces, positions, edges }) {
     });
 
     const elements = lib.convertToExcalidrawElements(skeletons);
-    api.updateScene({ elements });
-    setTimeout(() => { try { api.scrollToContent(elements, { fitToContent: true }); } catch (e) {} }, 50);
+    // Defer updateScene one frame: when PreRenderedDiagram mounts AFTER the
+    // user clicks Reveal (lib already cached, api callback fires synchronously
+    // during Excalidraw mount), Excalidraw's own internal scene-init runs
+    // *after* our excalidrawAPI callback and silently clobbers our elements
+    // with the empty initialData. Yielding via requestAnimationFrame lets
+    // Excalidraw finish initializing before we push the real scene.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        try {
+          api.updateScene({ elements });
+          setTimeout(() => { try { api.scrollToContent(elements, { fitToContent: true }); } catch (e) {} }, 50);
+        } catch (e) { console.error("PreRenderedDiagram updateScene failed:", e); }
+      });
+    });
   }, [lib, api, pieces, positions, edges]);
 
   if (!lib) return React.createElement("div", { style:{padding:24, color:"#64748b"} }, "Loading reference diagram...");
