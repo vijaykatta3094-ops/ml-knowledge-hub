@@ -48,6 +48,337 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://unpkg.com/@lottiefiles/lottie-player@2.0.8/dist/lottie-player.js" async></script>
+  <script>window.__VIS_GLOSSARY = {
+  "_meta": {
+    "purpose": "Shared cache of jargon→plain-English glosses. Used by /visualize and trap-drill authors. Append new terms as encountered. Keep glosses ≤25 words, no jargon-in-jargon.",
+    "updated": "2026-05-19"
+  },
+  "α-balancing": "Per-class scalar weight α in focal loss; multiplies the per-sample modulating factor (1-p_t)^γ. Equivalent in spirit to class-weighted BCE.",
+  "anchor boxes": "Fixed bounding boxes laid over an image at multiple scales. Each is a binary classification candidate (object vs background) in single-stage detection.",
+  "backprop": "Backpropagation: chain-rule pass computing gradients of the loss w.r.t. each weight; consumed by SGD/AdamW for parameter updates.",
+  "batch": "The chunk of samples processed in one forward/backward pass. Gradient is summed over the batch before the optimizer step.",
+  "class-weighted BCE": "Per-class weighted binary cross-entropy. Multiplies the loss for the rare class by a fixed scalar > 1. Doesn't adapt to per-sample confidence.",
+  "class-weighted CE": "Cross-entropy with a fixed per-class scalar weight. Up-weights the rare class; doesn't depend on per-sample confidence.",
+  "cross-entropy": "Standard classification loss: -log(p_t) where p_t is the predicted probability for the correct class. Treats every sample equally.",
+  "dense classification": "ML setup where every pixel/anchor is a candidate class. Background dominates ~99.99% and drowns foreground signal under plain CE.",
+  "Faster R-CNN": "Two-stage object detector: region-proposal network shortlists ~1k boxes, then a classifier head refines. Two stages provide implicit hard-negative filtering.",
+  "gradient (focal loss)": "The signal that updates weights during backprop. Focal loss reduces this signal for confident-correct samples without altering predictions.",
+  "modulating factor": "The (1 - p_t)^γ multiplier in focal loss. Scales each sample's loss by how confident the model is about the right answer.",
+  "oversampling": "Sampling strategy that draws minority-class examples more often per epoch to balance per-batch class counts. Cheap alternative to focal loss.",
+  "RetinaNet": "Lin et al. 2017 single-stage object detector. Showed focal loss closes the accuracy gap with two-stage detectors at higher throughput.",
+  "RetinaNet default": "The (γ, α) focal-loss values Lin et al. recommended after sweep: γ=2, α=0.25 for the positive class.",
+  "single-stage object detection": "Object detector that predicts class and box directly from a feature map in one pass; no region-proposal stage.",
+  "temperature scaling": "Post-hoc calibration: divide pre-softmax logits by a learned scalar T on held-out data. Fixes over-confidence without changing argmax accuracy.",
+  "AdamW": "Adam optimizer with decoupled weight decay; default optimizer for transformer training.",
+  "aleatoric uncertainty": "Uncertainty from inherent noise in the data. Not reducible with more data.",
+  "AML": "Anti-Money-Laundering. The compliance domain of detecting and reporting laundering activity in financial systems.",
+  "ANN": "Approximate Nearest Neighbor. Family of algorithms (HNSW, IVF, ScaNN) that find close vectors much faster than exact search at small recall cost.",
+  "anti-redundancy": "Avoiding near-duplicate items in the same ranked list (e.g. five very similar sushi places). MTGR captures this via the prefix.",
+  "ATE": "Average Treatment Effect. Population-average causal effect of a treatment.",
+  "attention rollout": "Interpretability technique: multiply attention matrices across layers to attribute output to input tokens.",
+  "AUC": "Area Under the ROC Curve. Probability that a random positive scores higher than a random negative. Threshold-free ranking metric.",
+  "auction": "Real-time ad-bidding system that ranks ads by bid × predicted CTR; consumes calibrated probability, not raw logits.",
+  "AUPRC": "Area Under the Precision-Recall Curve. More informative than AUC for class-imbalanced problems.",
+  "autoregressive": "Generates a sequence one element at a time, each conditioned on what's already been emitted; classic next-token prediction.",
+  "backpressure": "Control loop that throttles incoming load when downstream capacity is exceeded (e.g., raise confidence threshold to send fewer posts to humans during surge).",
+  "BatchBALD": "Bayesian Active Learning by Disagreement, batch-corrected. Acquires K queries that JOINTLY maximize mutual information with model parameters.",
+  "BatchNorm": "Batch Normalization. Normalize each feature across the batch dimension; standard for CNNs, awkward for variable-length sequences.",
+  "BCE": "Binary cross-entropy. Loss function for yes/no prediction; pushes the predicted probability toward the true label (0 or 1).",
+  "beam search": "Decoding heuristic that keeps the top-B partial sequences at each step; trades compute for higher-quality outputs vs greedy decoding.",
+  "BERT": "Bidirectional Encoder Representations from Transformers. Pretrained text encoder; classic backbone for text classification (~50ms inference).",
+  "BERT4Rec": "BERT-style masked-item recsys. Bidirectional transformer trained with cloze masking on item sequences; pointwise scoring head.",
+  "BFloat16": "16-bit float with 8-bit exponent (vs FP16's 5). Wider range, lower precision; preferred for ML training stability.",
+  "BIN": "Bank Identification Number. First 6-8 digits of a card; identifies the issuer. Used as a fraud feature.",
+  "BPR": "Bayesian Personalized Ranking. Pairwise loss for recsys: predicted score of an observed item should exceed that of an unobserved item.",
+  "calibrated": "A model's predicted probability matches the true frequency (a 0.8 prediction is right 80% of the time). Re-calibrate as data shifts.",
+  "calibration": "How closely predicted probabilities match true frequencies. A model predicting 0.7 should be right 70% of the time.",
+  "candidate generation": "First stage of recsys: retrieve a few hundred items from the full catalog (millions). Usually ANN or two-tower.",
+  "candidate slate": "The set of items considered for display in one user-facing list. MTGR orders the slate; retrieval produces it.",
+  "cascade": "Multi-stage retrieval/ranking pipeline; each stage shrinks the candidate set and uses a heavier model.",
+  "CATE": "Conditional Average Treatment Effect. Treatment effect conditional on covariates — the per-user/per-context lift.",
+  "causal mask": "Mask applied to attention so each position can only attend to earlier positions; enforces left-to-right autoregressive structure.",
+  "CE": "Cross-entropy. Loss function for multi-class prediction; penalizes the model when the predicted class probability is low for the true class.",
+  "CLIP": "Contrastive Language-Image Pretraining. Joint image-text encoder producing aligned embeddings via contrastive loss.",
+  "code": "One entry in a codebook — a learned vector that an input snaps to during quantization. Identified by its integer index.",
+  "code utilization": "Fraction of codes (or entropy of code-assignments) actually used. Low utilization signals codebook collapse.",
+  "codebook": "Learned dictionary of discrete vectors (codes). An encoder snaps its output to the nearest code; that code's index becomes a token.",
+  "codebook collapse": "VQ/RQ-VAE failure: most codebook entries go unused; encoder maps all inputs to a few popular codes. Sign of broken quantization.",
+  "codebook drift": "Across catalog updates or retraining, codebook entries shift; the same item gets a different Semantic ID, breaking downstream consumers.",
+  "codebook size": "Codes per codebook (|V|, e.g. 256). Larger → finer reconstruction but less prefix-sharing across items.",
+  "cold-start": "When a new user or item has no interaction history, so embedding tables and behavioral features have nothing to learn from.",
+  "commitment loss": "VQ-VAE term that pulls encoder outputs toward their chosen code; prevents the encoder from drifting away from the codebook.",
+  "confidence router": "Routes inputs based on cheap-model output confidence: high confidence → auto-action, low confidence → escalate to expensive model or human.",
+  "conformal prediction": "Distribution-free method that produces prediction sets with guaranteed coverage (e.g., 95%) under exchangeability.",
+  "constrained decoding": "Mask the decoder's logits at each step so it can only emit tokens that lead to a valid sequence (e.g., a real catalog item).",
+  "contextual bandit": "Online decision algorithm: choose an action given context, observe reward, update; trades exploration vs exploitation.",
+  "contrastive loss": "Loss that pulls positive pairs together and pushes negatives apart in embedding space (e.g. InfoNCE).",
+  "cost-of-error": "The business/safety cost of a misclassification — varies by policy (false negative on self-harm vs false positive on spam).",
+  "cross-attention": "Attention layer where queries come from one sequence (e.g., decoder) and keys/values from another (e.g., encoder). Connects two streams.",
+  "CSAM": "Child Sexual Abuse Material. Highest-priority moderation category; detected via perceptual-hash matches against known-bad databases.",
+  "CTR": "Click-Through Rate. Fraction of impressions that lead to a click; the central calibration target for ads and feed ranking.",
+  "DAG": "Directed Acyclic Graph. Nodes connected by directed edges with no cycles; used to model causal structure or computation graphs.",
+  "dead codes": "Codebook entries that no encoder output ever snaps to; symptom of collapse. Fixed by periodic re-init near active encoder regions.",
+  "decode temperature": "Scalar dividing logits before softmax at decode time. Higher T → more diverse samples; lower T → more deterministic argmax-like decoding.",
+  "decoder": "Neural net that maps a latent vector (or token sequence) back to the output space (reconstructed input, next item).",
+  "decoder-only transformer": "Transformer with only the decoder stack (GPT-style); generates outputs one token at a time conditioned on what's been emitted so far.",
+  "deep classifier": "An expensive deep-learning model (transformer-based) used in the second tier of a cascade, after cheap heuristics have screened obvious cases.",
+  "Deep SVDD": "Deep Support Vector Data Description. One-class anomaly detector: maps inliers to a tight hypersphere; outliers fall outside.",
+  "dense retrieval": "Retrieval via dot-product (or cosine) between learned dense embeddings of queries and items; usually served by an ANN index.",
+  "diversification reranker": "Post-ranking layer that swaps items to spread categories/topics across the list. Patches intra-list redundancy that pointwise rankers miss.",
+  "DLRM": "Deep Learning Recommendation Model. Meta's classic recsys architecture: feature crosses + MLP top.",
+  "doubly robust": "Off-policy estimator with both an outcome model and a propensity model; unbiased if EITHER is correct.",
+  "DP-FTRL": "Variant of DP-SGD with correlated noise across steps via tree-aggregation; better privacy-utility trade for long training.",
+  "DP-SGD": "Differentially-Private SGD. Per-sample gradient clipping + Gaussian noise; provides (ε,δ)-DP privacy guarantee at some utility cost.",
+  "DPO": "Direct Preference Optimization. Trains a model on (winning, losing) pairs of outputs to align it with preferences — no separate reward model.",
+  "DPP": "Determinantal Point Process. Probabilistic model that prefers diverse subsets; selecting a new item discounts items similar to those already chosen.",
+  "drift": "When the data distribution at serving time diverges from the training distribution; model accuracy silently degrades.",
+  "DROCC": "Deep Robust One-Class Classification. Adversarially trains a one-class detector by perturbing points along a radius-r shell.",
+  "DyGFormer": "Dynamic Graph Transformer. Transformer over patches of temporal neighbor sequences (no per-node memory, stateless per call).",
+  "dynamic masking": "Attention mask that adapts per-request (here: prevents cross-feature tokens from attending to future emitted items in MTGR).",
+  "e-commerce ranking": "Ranking items on a shopping surface (search, category page, recommendations). Loaded with crosses (price×budget, brand×history).",
+  "ECE": "Expected Calibration Error. Average gap between predicted probability and true frequency, binned over the predicted-probability axis.",
+  "elastic shift": "Reviewer scheduling that scales pool size up/down across time zones to match incoming load; common in 24/7 global moderation ops.",
+  "EMA codebook update": "Update each codebook entry as an exponential moving average of the encoder outputs assigned to it. Stabilizes VQ/RQ-VAE training.",
+  "embedding": "Dense vector representation of a discrete item (word, user, product). Learned so that similar items have similar vectors.",
+  "encoder": "Neural net that maps raw input (image, text, item) into a dense latent vector consumed by downstream layers.",
+  "encoder-decoder": "Transformer with separate encoder (reads input) and decoder (writes output) stacks; T5-style; classic for sequence-to-sequence tasks.",
+  "engagement-bait": "Content engineered to maximize watch-time or clicks (cliffhangers, loops, ragebait) regardless of user satisfaction.",
+  "epistemic uncertainty": "Uncertainty from the model not knowing what it doesn't know. Reducible with more data; captured by ensembles or Bayesian methods.",
+  "exploration vs exploitation": "Tradeoff in online learning: try new actions to gather data vs pick the best-known action to maximize reward now.",
+  "exposure bias": "When the data only contains items the system already showed users; new items never get the chance to prove themselves.",
+  "factorized softmax": "Decompose softmax over a huge vocabulary into smaller softmaxes (e.g. one per code position) to make it tractable.",
+  "false negative": "Model classifies as 'safe' something that's actually a violation; the costliest error class for high-harm policies like self-harm.",
+  "false positive": "Model classifies as 'violation' something that's actually safe; costlier for low-harm policies like spam (annoys real users).",
+  "FastText": "Fast text classifier using subword n-grams; trains and serves in milliseconds. Common cheap-tier text moderation model.",
+  "feature cross": "Combining two raw features into a single signal (e.g. user-id × category). Captures interactions a single-feature model misses.",
+  "FedAvg": "Federated Averaging. Server averages client model weights; the canonical federated-learning aggregator.",
+  "federated learning": "Train a shared model across many clients without centralizing their data; each client computes gradients locally, server aggregates.",
+  "feed surface": "Product surface that shows a long ranked list (home feed, search results). Has many slots, so intra-list ordering matters.",
+  "FIFO": "First-In-First-Out queue. Items processed strictly in arrival order, no priority — wrong choice when policies have different urgency.",
+  "filter bubble": "Recommender concentrates each user on a narrow slice of content over time, suppressing exposure to other relevant items.",
+  "FlashAttention2": "FA2. GPU-optimized exact softmax-attention kernel; tiles QK^T to keep work in SRAM. Standard 2024 baseline for transformer attention speed.",
+  "FLOPs": "Floating-point operations. Standard unit of compute used in scaling-law plots and model-cost comparisons.",
+  "Focal loss": "Down-weights well-classified examples via (1-p)^γ; sharpens loss on hard examples. Used for class-imbalanced detection.",
+  "FP16": "16-bit floating point (IEEE half). Default training/inference precision for modern transformer kernels on Ampere+.",
+  "FP4": "4-bit floating point quantization. Reduces weight+activation memory ~8× vs BF16; aggressive low-precision serving format.",
+  "FP8": "8-bit floating point. Half the bits of FP16; trades precision for compute/memory savings, available on H100+.",
+  "FraudGPT": "LLM continually pretrained on financial-fraud text (typology vocabularies like 'structuring', 'smurfing', etc.) then SFT'd for case generation.",
+  "GCN": "Graph Convolutional Network. Layerwise neighborhood averaging with learned weights; transductive (needs full graph at train time).",
+  "generative recsys": "Recommendation systems where the model GENERATES the next item's identifier (or token sequence) instead of scoring a candidate list.",
+  "GLN": "Group-Layer Normalization. LayerNorm variant that normalizes within separate groups of features; preserves scale separation between heterogeneous token types.",
+  "GNN": "Graph Neural Network. Family of models that learn node/edge embeddings by iteratively aggregating from neighbors.",
+  "golden-set": "A small set of items with verified ground-truth labels, used to audit reviewer accuracy and detect label drift over time.",
+  "GraphSAGE": "Inductive GNN: each node aggregates features from sampled neighbors; works on unseen nodes (unlike transductive GCN).",
+  "GroupNorm": "Group Normalization (CV). Splits channels into G groups and normalizes within each group; works with small batch sizes where BN fails.",
+  "Gumbel-softmax": "Differentiable approximation to sampling from a categorical distribution; lets you backprop through discrete choices via reparameterization.",
+  "hallucination (decoder)": "Decoder emits a token sequence (Semantic ID) that does not correspond to any real item in the catalog.",
+  "HBM": "High-Bandwidth Memory. Stacked DRAM used on GPUs (H100, A100); the bandwidth bottleneck for memory-bound kernels.",
+  "HE": "Homomorphic Encryption. Compute on ciphertexts without decrypting; allows two parties to compute a joint function without revealing inputs.",
+  "hierarchical code": "Code where earlier positions capture coarse semantics, later positions capture fine residuals. Structure that RQ-VAE produces.",
+  "hit-rate": "Fraction of users whose top-K list contains at least one item they actually interacted with.",
+  "HITL": "Human-In-The-Loop. ML system that escalates uncertain cases to a human reviewer before acting; combines model speed with human judgment.",
+  "HNSW": "Hierarchical Navigable Small World. Graph-based ANN: layered proximity graph, greedy descent at each layer. RAM-heavy, log-time.",
+  "HSTU": "Hierarchical Sequential Transduction Units. Meta 2024 paper: sequence-modeling architecture for recommendation that scales past DLRM's plateau.",
+  "human-in-the-loop": "Workflow where uncertain model predictions are sent to a human reviewer; reviewer decisions feed back as training labels.",
+  "inductive bias": "Built-in assumption a model makes about data structure (e.g. locality, recency); shapes what it learns easily.",
+  "InfoNCE": "Contrastive loss: pulls positive (anchor, target) pairs together, pushes negatives apart, normalized over a batch of candidates.",
+  "INT8": "8-bit integer quantization. Reduces memory + compute ~4× vs FP32 at small accuracy cost; common at inference.",
+  "inter-rater agreement": "Statistical measure (Cohen's kappa, etc.) of how often two reviewers label the same item the same way; proxy for label quality.",
+  "intra-list dependencies": "How items in one ranked list interact (anti-redundancy, position effects). Pointwise scorers can't see them; list-generators can.",
+  "intra-list diversity": "Spread of categories/topics within a single ranked list. High diversity = less redundancy; valuable for exploration.",
+  "IPS": "Inverse Propensity Score. Same as IPW; widely used in counterfactual recsys evaluation.",
+  "IPW": "Inverse Propensity Weighting. Reweights samples by 1/probability-of-being-observed; corrects for selection bias.",
+  "isotonic regression": "Post-hoc calibration: fit a free-form monotonic step function from score to probability. More flexible than Platt.",
+  "iterative DPO": "DPO run in multiple rounds: collect on-policy preferences, run DPO, redeploy, repeat. Keeps preference data fresh as the policy evolves.",
+  "IVF-PQ": "Inverted File + Product Quantization. ANN: cluster space into K cells, encode each vector as a PQ code; lookup = nearest centroids + PQ distances.",
+  "K-means": "Clustering algorithm: pick K centroids, assign each point to nearest, recompute centroids; repeat until stable.",
+  "K-RagRec": "Knowledge-RAG Recommender. Uses retrieval-augmented generation: an LLM is grounded on retrieved item snippets to produce recommendations.",
+  "KL divergence": "Asymmetric measure of distance between two distributions. Used as a regularizer in VAEs to keep latents near a prior.",
+  "knowledge distillation": "Train a small 'student' model to match a large 'teacher' model's outputs (logits or features), often with temperature softening.",
+  "KV-cache": "Cached Key/Value tensors from prior transformer steps; lets autoregressive decoding skip recomputing past attention.",
+  "KYC": "Know-Your-Customer. Customer onboarding verification: document checks, face match, sanctions screening.",
+  "label smoothing": "Replace hard 0/1 targets with (ε, 1-ε); discourages over-confidence and helps calibration of softmax outputs.",
+  "latent space": "Vector space the encoder maps inputs into. Geometry here defines what 'similar' means downstream.",
+  "LayerNorm": "Per-token feature-vector normalization (subtract mean, divide by std, then learned affine). Stabilizes deep transformer training.",
+  "Lazy Decoder-Only": "OneRec V2 design: decoder cross-attends to user context only at chosen layers/steps; skipped steps reuse cached summaries. Cuts compute ~94%.",
+  "LDAM": "Label-Distribution-Aware Margin loss. Adds a class-dependent margin to logits; pushes the boundary away from rare-class points.",
+  "leave-last-out": "Eval protocol: for each user, hold out their most recent interaction as the test target, train on the rest.",
+  "linear attention": "Attention that replaces softmax with a kernel feature map so cost is O(n) in sequence length instead of O(n²).",
+  "LinUCB": "Linear Upper Confidence Bound. Contextual bandit assuming linear reward; picks the action with the highest (mean + confidence-bound) estimate.",
+  "list-wise": "Loss or metric defined over an entire ranked list (e.g., NDCG, mean watch-time per list) rather than per-item pairs.",
+  "listwise loss": "Loss computed over the whole ranked list at once (e.g. NDCG-based) instead of one item at a time. Captures list-level objectives.",
+  "LLM-rec": "Umbrella term for recsys approaches that wrap or distill an LLM as the scorer/generator rather than using a classic ID-embedding model.",
+  "Lloyd's algorithm": "Standard iterative procedure for k-means: assign points to nearest centroid, update centroids to cluster mean, repeat until stable.",
+  "LongER": "ByteDance long-sequence transformer for recsys; memory-efficient attention focused on long user histories.",
+  "LoRA": "Low-Rank Adaptation. Fine-tune a model by adding small low-rank weight deltas (A·B) instead of updating full weight matrices.",
+  "LSH": "Locality-Sensitive Hashing. Hash family where similar vectors collide with high probability; used for cheap approximate nearest neighbor.",
+  "Mamba": "State-space model with selective scan; processes sequences in linear time (O(L)) versus transformer's quadratic (O(L²)).",
+  "MAML": "Model-Agnostic Meta-Learning. Trains a model whose parameters can be fine-tuned to a new task in a few gradient steps.",
+  "MC dropout": "Monte-Carlo Dropout. Leave dropout on at inference and sample M forward passes; approximates a Bayesian posterior over weights.",
+  "MCC": "Merchant Category Code. 4-digit code (e.g., 5411 = grocery) categorizing what kind of merchant accepted a transaction.",
+  "membership inference": "Privacy attack that guesses whether a specific record was in the training set by querying the trained model.",
+  "millions-of-item softmax": "Computing softmax over the entire item catalog (millions of classes). Memory- and compute-prohibitive; usually approximated.",
+  "MiniLM": "Small distilled transformer (~22M params, 6 layers) producing sentence embeddings at a fraction of T5's compute.",
+  "mirror serving": "Both old and new models score every request; the old one still serves users. Used to fit new calibration heads.",
+  "MMoE": "Multi-gate Mixture-of-Experts. Each task has its own gate over a shared pool of experts; cheaper than fully task-specific networks.",
+  "MMR": "Maximal Marginal Relevance. Greedy reranker: each step picks the candidate maximizing (relevance − λ × similarity to already-chosen).",
+  "MNAR": "Missing Not At Random. The probability that a value is missing depends on the value itself (e.g., users only rate items they chose to see).",
+  "MobileNet": "Lightweight convolutional neural network designed for fast image inference on mobile/edge devices; ~10ms latency typical.",
+  "mode collapse": "When a generative model concentrates probability on a few outputs and stops covering the long tail of valid choices.",
+  "MoE": "Mixture-of-Experts. Multiple expert subnetworks + a gate that routes each input to one or few experts. Scales params without paying full FLOPs.",
+  "MovieLens": "Public movie-rating dataset (1M-25M ratings). Most-cited public recsys benchmark; small relative to industry data.",
+  "MPC": "Multi-Party Computation. Cryptographic protocol where parties jointly compute a function over private inputs, revealing only the output.",
+  "MRR": "Mean Reciprocal Rank. 1 / position of first relevant item, averaged across queries. Sensitive to top-1 only.",
+  "MTGR": "Meituan Generative Ranking. Decoder-only transformer that emits a ranked list of items autoregressively; captures intra-list dependencies natively.",
+  "NDCG": "Normalized Discounted Cumulative Gain. Ranking metric that rewards relevant items appearing near the top of the list.",
+  "negative sampling": "Train the model to score observed (positive) items above a sub-sample of random non-observed (negative) items; avoids full softmax.",
+  "negative transfer": "When training on multiple tasks hurts each task's accuracy compared to training them separately. The shared params get pulled in conflicting directions.",
+  "non-IID": "Non-Independent-and-Identically-Distributed. Clients in federated learning have different data distributions; breaks IID assumptions FedAvg relies on.",
+  "nucleus sampling": "Top-p decoding: sample the next token from the smallest set whose cumulative probability exceeds p. Adds controlled diversity.",
+  "on-policy": "Training data sampled from the current policy. DPO/PPO benefit because preferences reflect actions the deployed model would actually take.",
+  "OneRec": "Unified retrieve+rank model. Single backbone serves both retrieval and ranking via task-template prompts; eliminates retrieval-ranker train/serve skew.",
+  "online learning": "Updates the model continuously as new data arrives, rather than retraining on the full historical batch.",
+  "P(click)": "Predicted probability that a user clicks an item; the canonical calibrated output of a CTR model used in ad auctions.",
+  "P5": "Pretrain-Personalize-Prompt-Predict-Plan. Early generative recsys paper that frames all recsys tasks as text-to-text via a single seq2seq model.",
+  "p99 latency": "The 99th percentile of response times. 1% of requests are slower; tail latency, often dominates SLA pain.",
+  "pairwise scoring": "Score (user, item_i) vs (user, item_j) pairs; loss rewards correct ordering between pairs. BPR is the canonical example.",
+  "PEFT": "Parameter-Efficient Fine-Tuning. Umbrella for techniques (LoRA, adapters, prefix-tuning) that fine-tune small fraction of params.",
+  "perceptual hash": "Hash that's similar for visually similar images (unlike cryptographic hash which is brittle). Used to detect known-bad reposts despite minor edits.",
+  "Platt scaling": "Post-hoc calibration: fit a sigmoid mapping from raw model score to calibrated probability. Simple, monotonic.",
+  "PLE": "Progressive Layered Extraction. Multi-task architecture with shared and task-specific experts at every layer; mitigates negative transfer.",
+  "pointwise scoring": "Score each (user, item) independently; ignores how items interact in the ranked list. Classic DLRM/HSTU framing.",
+  "policy lane": "A category of moderation policy with its own threshold, SLA, and review pool — e.g., self-harm vs spam vs intellectual-property.",
+  "policy threshold": "Per-policy confidence cutoff that decides auto-action vs escalation; tuned separately because each policy has different cost-of-error.",
+  "popularity bias": "Recommenders over-recommend already-popular items because they have more training signal, starving the long tail.",
+  "position bias": "Users click higher-ranked items more often regardless of relevance. Must be corrected to avoid feedback loops.",
+  "posterior collapse": "VAE failure: encoder ignores the latent, decoder reconstructs from its prior alone, latents stop carrying info.",
+  "PPO": "Proximal Policy Optimization. Reinforcement-learning algorithm; takes small policy-update steps to avoid catastrophic regression.",
+  "PQ": "Product Quantization. Split a vector into K equal subspaces and quantize each independently; used for compact ANN indexes (Faiss).",
+  "preference-AUC": "AUC computed over (preferred, dispreferred) pairs: probability the model scores the preferred item higher. Standard DPO offline metric.",
+  "prefix conditioning": "At decode step t, generate next item conditioned on the items already emitted (the prefix). Lets the model see the partial list.",
+  "prefix similarity": "Two Semantic IDs are similar to the extent their leading codes match. The core property RQ-VAE gives downstream consumers.",
+  "prompt template": "Fixed textual scaffold with slots (user history, candidate item) filled at runtime. Lets one LLM serve many tasks via task prefixes.",
+  "propensity score": "Probability that a unit received the treatment (or that an item was shown). Used in IPW corrections.",
+  "ProtoNet": "Prototypical Networks. Few-shot classifier: build a centroid per class from support examples, classify a query by nearest centroid.",
+  "PTQ": "Post-Training Quantization. Quantize weights/activations of an already-trained model without retraining.",
+  "push notification": "One-item-per-user message surface (e.g. mobile alerts). Single-slot ranking; MTGR's autoregressive prefix is empty here.",
+  "QAT": "Quantization-Aware Training. Insert fake-quant ops during training so the model learns to be robust to inference-time quantization noise.",
+  "ranked list": "Ordered list of items shown to the user. Order matters because users read top-down and clicks concentrate at the top.",
+  "recall@K": "Fraction of relevant items captured in the top-K retrieved list.",
+  "RecLLM": "Generative recsys that turns an LLM into a conversational recommender; user history and item descriptions are fed in as prompt text.",
+  "reconstruction loss": "Distance (usually MSE) between encoder input and decoder output. Drives the autoencoder to preserve information.",
+  "reranking": "Final-stage recsys: take the candidate set and apply a heavier scorer / diversification logic to produce the user-facing list.",
+  "residual quantization": "Repeated quantize-then-quantize-the-error trick. K codebooks; level k encodes what level k-1 missed. Captures fine detail with small vocabularies.",
+  "residual stream": "The token-wise vector that each transformer block reads from and writes to; carries information across layers.",
+  "retrain": "Refresh model weights on new data; usually periodic (weekly/daily) for systems where labels arrive from human reviewers.",
+  "retrieve-rank": "Two-stage recsys pipeline: a cheap retrieval narrows millions of items to a shortlist, then a heavier ranker reorders that shortlist.",
+  "reward hacking": "Policy exploits flaws in the reward model to score high without doing the intended task. Symptom of an under-constrained optimizer.",
+  "reward model": "Model trained to predict a scalar reward (e.g., watch-time) from (state, action) pairs. Supplies the supervisory signal for PPO/DPO.",
+  "RLHF": "Reinforcement Learning from Human Feedback. Train a reward model from human preferences, then optimize policy against it (usually with PPO).",
+  "RMSNorm": "Root-Mean-Square Norm. LayerNorm variant that drops the mean-subtract; faster and competitive in quality. Used in LLaMA-style transformers.",
+  "rotary embeddings": "RoPE. Encode position by rotating Q/K vectors by angle proportional to position; replaces additive position embeddings.",
+  "RQ-VAE": "Residual-Quantized VAE. Stacks K codebooks; each level quantizes the residual error from the previous level. Produces hierarchical semantic IDs.",
+  "sampled softmax": "Softmax over a sub-sampled candidate pool (e.g., 1000 items) instead of millions; trades exact normalization for speed.",
+  "SASRec": "Self-Attentive Sequential Recommendation. 2018 transformer over item-only sequences with binary cross-entropy; predecessor to HSTU.",
+  "scaling law": "Empirical relationship: model quality improves as a power-law function of compute, data, or parameters.",
+  "ScalingNote distillation": "Distill the heavy ranker's logits into the retrieval scorer each cycle so retrieval and ranking stay aligned without re-syncing indexes.",
+  "ScaNN": "Scalable Nearest Neighbors. Google ANN with anisotropic vector quantization: weights quantization error by inner-product loss direction.",
+  "secure aggregation": "Cryptographic protocol where a server sees only the SUM of client gradients (not individual ones); used in privacy-preserving federated learning.",
+  "selection bias": "Sample we observe is non-random; the act of observing changes which items appear. Common in MNAR rec data.",
+  "self-harm": "Moderation policy category covering suicide/self-injury content; has the tightest SLA (typically <30s) because of user-safety risk.",
+  "Semantic ID": "Discrete K-tuple code derived from item content (via RQ-VAE). Similar items share prefix codes; replaces random hashed IDs.",
+  "Semantic-ID collision": "When two distinct items map to the exact same K-tuple of codes; the model cannot tell them apart at decode time.",
+  "Sentence-T5": "T5-based sentence encoder; turns text into a fixed-size dense embedding. TIGER uses it as the RQ-VAE input encoder.",
+  "seq2seq": "Sequence-to-sequence transformer: encoder reads an input sequence, decoder autoregressively emits an output sequence.",
+  "sequence transduction": "Mapping an input sequence to per-position outputs (one score per candidate). HSTU does this; MTGR generates a sequence instead.",
+  "SFT": "Supervised Fine-Tuning. Train a pretrained model on labeled (input, target) pairs to specialize it.",
+  "shadow scoring": "Run a new model alongside production; record its predictions but ignore them at serving. First migration phase.",
+  "shadow serve": "Run a new model in parallel with production but discard its outputs; collects predictions/logs without exposing users to the new ranker.",
+  "shadow-ban": "Moderation action: user's posts are invisible to others but visible to themselves; user doesn't know they've been throttled.",
+  "Shapley value": "Game-theoretic feature attribution: average marginal contribution of a feature across all subsets; used for per-feature credit.",
+  "single-slot": "Product surface that shows only one item per request (push notification, hero card). No intra-list prefix to condition on.",
+  "SLA": "Service Level Agreement. A binding response-time target — e.g., 'self-harm posts must be reviewed within 30 seconds 99% of the time'.",
+  "SNGP": "Spectral-Normalized Gaussian Process layers. Single-forward-pass calibrated uncertainty by replacing the final layer with a GP head.",
+  "softmax": "Function that turns a vector of scores into a probability distribution (largest score → largest probability, all sum to 1).",
+  "softmax tail": "The low-probability region of a softmax output; FP8 underflow and calibration mismatches affect tail behavior most.",
+  "SSM": "State-Space Model. Sequence model that maintains a continuous hidden state updated by a linear recurrence; Mamba is a popular instance.",
+  "STE": "Straight-Through Estimator. Treats a non-differentiable op (quantization, rounding) as identity during backprop so gradients can flow.",
+  "straight-through estimator": "Backprop trick: forward pass uses a non-differentiable op (e.g. quantization); backward pass pretends it was identity so gradients flow.",
+  "stratified": "Sampling strategy that preserves class proportions across subgroups; ensures rare classes are represented in train/eval splits.",
+  "structuring": "Money-laundering pattern: split a large cash deposit into smaller sub-threshold ones to evade reporting requirements.",
+  "surge": "Sudden spike in inbound load — e.g., a breaking news event creates 10x normal posts/sec; system must throttle without crashing.",
+  "TabBERT": "BERT-style MLM pretraining on tabular transaction sequences (mask cells, predict). Used for fraud sequence modeling.",
+  "TabPFN": "Transformer pretrained on millions of synthetic small-n tabular datasets; does few-shot tabular classification with no per-task gradient updates.",
+  "temperature": "Logit-scaling knob before softmax. T>1 flattens the distribution (more random); T<1 sharpens it (more deterministic).",
+  "temperature softening": "Divide logits by T>1 before softmax. Smoothes the distribution; used in distillation so the student learns inter-class similarity.",
+  "TGN": "Temporal Graph Network. Each node carries an RNN-style memory updated as events arrive; supports temporal attention over neighbor history.",
+  "Thompson sampling": "Bandit algorithm: maintain a posterior over reward parameters, sample from it, act greedily on the sample.",
+  "throttle": "Slow or pause processing of low-priority work to free capacity for high-priority work — used during surge to protect SLA on critical lanes.",
+  "TIGER": "Transformer Index for GEnerative Recommenders. Google 2023 paper: emits items by generating semantic-ID code tuples instead of softmaxing over millions of items.",
+  "top-k": "Return the K highest-scoring items from a ranked list.",
+  "top-k sampling": "Sampling decoder: at each step, sample from the top-K most likely tokens; trades determinism for output diversity.",
+  "transducer": "Sequence model that maps an input sequence to per-position outputs (one output per input position). HSTU is a transducer.",
+  "trie": "Prefix tree. Each path from root to leaf spells a valid sequence; used to enforce valid Semantic-ID decoding.",
+  "twin-tower": "Synonym for two-tower: separate user and item encoder towers whose outputs are dot-producted to score (user, item) pairs.",
+  "two-tower": "Recsys architecture: separate user-encoder tower and item-encoder tower; dot-product their outputs to score (user, item) pairs.",
+  "typology": "In AML, the named pattern of laundering (e.g., trade-based, layering, smurfing). Detectors are usually typology-anchored.",
+  "UCB": "Upper Confidence Bound. Bandit rule that picks the action with the highest (mean + uncertainty) estimate; explicit exploration.",
+  "uplift modeling": "Estimates conditional treatment effect (CATE) — the per-user change in outcome from receiving a treatment.",
+  "ViT": "Vision Transformer. Applies transformer attention to image patches; more accurate than CNNs but heavier (~80ms inference typical).",
+  "VLM": "Vision-Language Model. Jointly trained on images and text; can describe images, answer questions about them, or embed both modalities.",
+  "VQ-VAE": "Vector-Quantized VAE. Quantizes encoder output to a single codebook; commitment loss keeps encoder near code centroids.",
+  "watch-time": "Total time a user spends watching a recommended item. Used as the engagement reward signal in OneRec and other video recsys.",
+  "β temperature": "DPO's KL-strength hyperparameter. Low β → policy can drift from SFT (reward-hack risk); high β → policy stays near SFT (no learning).",
+  "Bayesian framing (Ridge)": "Each weight has a prior; learning updates that prior. Bayesian linear regression with a zero-mean Gaussian prior on weights gives Ridge.",
+  "closed-form solution": "A solution expressible as a finite algebraic formula, with no iterative optimization required.",
+  "coefficient (linear model)": "Learned scalar weight w_j that multiplies feature x_j inside a linear model; the vector of all coefficients is the parameter w.",
+  "collinear columns": "Feature columns that are highly correlated (often near-linearly dependent). Inflate OLS variance and motivate Ridge or PCA.",
+  "constraint region": "Feasible region of weights with penalty bounded by t; bounds how large weights can grow. The shape of this region drives sparsity vs shrinkage.",
+  "convex (loss)": "A function whose graph holds water — any line segment between two points stays above the graph. Has a unique global minimum (no local traps).",
+  "cross-validation": "Holding out part of the training data K times to estimate generalization error before any final test-set evaluation.",
+  "eigenvalue": "Scaling factor associated with an eigenvector; large eigenvalue = strong signal in that direction.",
+  "eigenvector": "A direction in feature space whose vectors are scaled (not rotated) by XᵀX; the corresponding scaling factor is the eigenvalue.",
+  "Gaussian prior (weights)": "Normal distribution acting as a prior on weights; expresses 'small weights more likely than large' and is mathematically equivalent to an L2 penalty.",
+  "GCV (Ridge)": "Generalized Cross-Validation. Closed-form approximation to leave-one-out CV using the trace of the influence (hat) matrix; cheap to evaluate per α.",
+  "inference latency": "Time between when an input arrives and when the model returns a prediction; usually budgeted at the p99 tail.",
+  "intercept (linear model)": "Constant offset b in y = wᵀx + b. By convention not penalized by L2 (regularizing it would bias predictions away from the mean of y).",
+  "L2 ball": "Geometric region of an L2 budget Σw²≤t. Smooth, round, no axis-aligned corners — the root cause of L2's smooth-shrinkage behavior.",
+  "Lasso": "The L1 penalty α·Σ|w|. Produces sparse coefficients because its diamond-shaped constraint region has corners on the axes.",
+  "loss contour": "Set of weights at which the loss takes a constant value; in 2D these are concentric ellipses around the OLS solution.",
+  "MAP estimation": "Maximum a Posteriori estimation. Pick the parameters that maximize posterior probability under a chosen prior.",
+  "multicollinear": "Two or more input features are highly correlated. Design matrix becomes near-singular and OLS estimates explode in magnitude with opposite signs.",
+  "no corners (L2 ball)": "Points on a constraint surface where one of the coordinates is zero. L1's diamond has corners on the axes; L2's ball has none.",
+  "normal-equation matrix": "Matrix XᵀX appearing in the OLS closed form. Its eigen-spectrum decides whether OLS is well-conditioned; multicollinear features make it near-singular.",
+  "OLS": "Ordinary Least Squares. Minimize squared residuals with no penalty; closed form is (XᵀX)⁻¹Xᵀy, which fails when XᵀX is singular.",
+  "penalty (loss term)": "Term added to the loss whose role is to discourage certain solutions (here: large weights).",
+  "prior (Bayesian)": "Prior probability distribution over parameters expressing beliefs before seeing data; combined with the likelihood gives the posterior.",
+  "regularization": "Modification to the loss that discourages large weights, trading a bit of training fit for better generalization.",
+  "regularization strength α": "Scalar that controls how strong the penalty is relative to the data-fit term. Larger means more shrinkage.",
+  "shrinkage": "Pulling estimated coefficients toward a baseline (usually zero), trading a little bias for a lot of variance reduction.",
+  "sparsity (weights)": "Property that many coefficients are exactly zero, so the model implicitly drops those features.",
+  "weight decay": "Deep-learning name for L2 regularization. Every step, weights are multiplied by (1 - α·η) before the gradient update — they 'decay' toward zero.",
+  "SyncBN": "BN variant that pools batch statistics across GPUs/processes so the effective batch is the global batch. Reduces small-per-GPU-batch noise at the cost of a synchronization barrier.",
+  "InstanceNorm": "Per-sample, per-channel normalization. Originally for style transfer; widely used as a generative-model normalizer.",
+  "Lipschitz": "Bounded-derivative property: f is L-Lipschitz if |f(x)-f(y)| <= L*|x-y|. Smaller Lipschitz constant on the gradient means the loss landscape doesn't curve sharply.",
+  "EMA": "Exponential Moving Average. Smoothed running estimate that updates as new ← (1-m)·old + m·sample. BN uses EMA over per-batch stats during training.",
+  "ONNX": "Open Neural Network Exchange. Framework-neutral graph format for shipping models between training and inference runtimes.",
+  "TensorRT": "NVIDIA inference compiler that lowers ONNX/PyTorch graphs to optimized CUDA kernels, including BN-conv fusion and INT8 quantization.",
+  "internal covariate shift": "Hypothesized shift in the distribution of intermediate activations as upstream layers update. BN was originally pitched as a fix; Santurkar et al. 2018 showed loss-landscape smoothing is closer to the real cause.",
+  "ε (BN)": "Small constant (~1e-5) added inside BN's denominator √(σ² + ε). Prevents divide-by-zero and bounds the gradient w.r.t. variance.",
+  "affine transform": "Per-channel y = γ·x + β with learnable γ and β; the second half of BN/LayerNorm's transform.",
+  "affine map": "Transform of the form y = a·x + b: a scale plus a bias. Composes naturally with conv, so a frozen BN can be fused into the preceding conv.",
+  "scale-and-shift": "Linear rescaling and shift y = γ·x + β with learnable per-channel γ and β; the second half of BN's transform.",
+  "running statistics (BN)": "The running_mean and running_var buffers maintained as EMAs of per-batch statistics during training; used unchanged at eval.",
+  "train vs eval mode (PyTorch)": "The .train() vs .eval() flag on a module. Controls whether BN updates running stats and uses batch stats vs frozen running stats, and whether dropout is active.",
+  "batch dimension": "The N dimension of the input tensor — one of the N independent samples drawn together each step. BN reduces over this axis (per channel).",
+  "SGD": "Stochastic Gradient Descent. Update parameters with the gradient of one mini-batch's loss; the workhorse optimizer.",
+  "fine-tuning": "Continue training a model (or just its head) on a smaller, task-specific dataset starting from pretrained weights.",
+  "distributed training": "Splitting a training step across multiple GPUs/nodes — e.g. PyTorch DDP. Vanilla BN computes stats per-device; SyncBN pools globally.",
+  "CNN": "Convolutional Neural Network. Stacks convolution + nonlinearity + pooling; standard backbone for image tasks before ViT.",
+  "conv layer": "Layer using sliding-window kernels with shared weights over spatial positions; the workhorse of image models.",
+  "tensor": "Multi-axis array stored in row-major or channels-first order. For images, shape (N, C, H, W): batch, channels, height, width."
+}
+;</script>
   <script>
 // vis-components.js — design-system JSX components for the /visualize skill.
 // Exposed as window.VIS.{Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle}.
@@ -738,6 +1069,60 @@
     }, children);
   }
 
+  // autoGloss: scan a string for terms in window.__VIS_GLOSSARY (set by exporter
+  // before vis-components.js loads). Returns a React children array with each
+  // matched term wrapped in the same <span class="vis-term"> the Term component
+  // emits. First-mention only per call. Longest-match-first so "candidate
+  // generation" beats "candidate" alone.
+  let _glossPattern = null;
+  let _glossLookup = null;
+  function _buildGlossPattern() {
+    const g = (typeof window !== "undefined" && window.__VIS_GLOSSARY) || {};
+    const keys = Object.keys(g).filter(k => k && !k.startsWith("_"));
+    if (!keys.length) { _glossPattern = false; return; }
+    // Longest first to favor multi-word terms; escape regex metachars.
+    keys.sort((a, b) => b.length - a.length);
+    const escaped = keys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    // Word-boundary on each side. Allow internal hyphens/spaces; common ML terms
+    // like "DP-SGD", "feature cross", "p99 latency" are all matched naturally.
+    _glossPattern = new RegExp("(^|[^A-Za-z0-9_])(" + escaped.join("|") + ")(?=[^A-Za-z0-9_]|$)", "g");
+    _glossLookup = g;
+  }
+  function autoGloss(text) {
+    if (typeof text !== "string" || !text) return text;
+    if (_glossPattern === null) _buildGlossPattern();
+    if (_glossPattern === false) return text;
+    const seen = new Set();
+    const out = [];
+    let lastIdx = 0;
+    let m;
+    _glossPattern.lastIndex = 0;
+    while ((m = _glossPattern.exec(text)) !== null) {
+      const before = m[1];
+      const term = m[2];
+      const matchStart = m.index + before.length;
+      const matchEnd = matchStart + term.length;
+      // Emit text BEFORE this match
+      if (matchStart > lastIdx) out.push(text.slice(lastIdx, matchStart));
+      // Emit wrapped term (first-mention only)
+      if (seen.has(term.toLowerCase())) {
+        out.push(text.slice(matchStart, matchEnd));
+      } else {
+        seen.add(term.toLowerCase());
+        out.push(h("span", {
+          key: matchStart,
+          className: "vis-term",
+          "data-rv-info": _glossLookup[term],
+          "aria-label": _glossLookup[term],
+          tabIndex: 0,
+        }, term));
+      }
+      lastIdx = matchEnd;
+    }
+    if (lastIdx < text.length) out.push(text.slice(lastIdx));
+    return out.length === 1 ? out[0] : out;
+  }
+
   // Standalone hover tooltip for <VIS.Term>. If the report-viewer overlay
   // is loaded it already shows tooltips for any [data-rv-info] element, so
   // we short-circuit here to avoid double-rendering.
@@ -766,11 +1151,11 @@
     }
     function hide() { if (tip) tip.style.display = "none"; }
     document.addEventListener("mouseover", (e) => {
-      const el = e.target.closest && e.target.closest(".vis-term");
+      const el = e.target.closest && e.target.closest("[data-rv-info]");
       if (el) show(el); else hide();
     });
     document.addEventListener("focusin", (e) => {
-      const el = e.target.closest && e.target.closest(".vis-term");
+      const el = e.target.closest && e.target.closest("[data-rv-info]");
       if (el) show(el);
     });
     document.addEventListener("focusout", hide);
@@ -779,7 +1164,7 @@
     // Tapping anywhere else (including a different term) hides the current.
     let lastTappedTerm = null;
     document.addEventListener("click", (e) => {
-      const el = e.target.closest && e.target.closest(".vis-term");
+      const el = e.target.closest && e.target.closest("[data-rv-info]");
       if (el) {
         if (el === lastTappedTerm) { lastTappedTerm = null; hide(); }
         else { lastTappedTerm = el; show(el); }
@@ -930,6 +1315,8 @@
         h("strong", { className: "vis-trap-title" }, title),
         modeBadge ? h("span", { className: "vis-trap-multi-badge" }, modeBadge) : null
       ),
+      // NO autoGloss on scenario either — scenario is part of the question;
+      // glossing mechanism terms in it hints at the answer space.
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       diagram ? h("div", { className: "vis-trap-diagram" }, diagram) : null,
       h("div", { className: "vis-trap-options",
@@ -949,6 +1336,10 @@
           h("span", { className: "vis-trap-key" },
             optionPrefix(o) + " (" + o.key + ")"),
           " ",
+          // NO autoGloss here. Glossing terms inside option text leaks the
+          // answer mechanism via hover. Authors must keep options self-contained;
+          // a candidate who needs a definition can scroll up to the prose where
+          // the term is explicitly wrapped via <VIS.Term>.
           o.text
         ))
       ),
@@ -1266,6 +1657,8 @@
         h("strong", { className: "vis-trap-title" }, title),
         h("span", { className: "vis-cf-mode-badge" }, "Fill in the code")
       ),
+      // NO autoGloss on scenario either — scenario is part of the question;
+      // glossing mechanism terms in it hints at the answer space.
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       h("div", { className: "vis-cf-code-wrap" },
         h("div", { className: "vis-cf-code-lang" }, language),
@@ -1345,6 +1738,8 @@
         h("strong", { className: "vis-trap-title" }, title),
         h("span", { className: "vis-md-mode-badge" }, "Step-by-step proof")
       ),
+      // NO autoGloss on scenario either — scenario is part of the question;
+      // glossing mechanism terms in it hints at the answer space.
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       h("ol", { className: "vis-md-steps" },
         steps.map((step, idx) => {
@@ -1414,86 +1809,113 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// experimentation-platform — canvas
-// Architecturally divergent: EVENT-BUS + VARIANT-ASSIGNMENT plane separated
-// from metric/analysis plane, with experiment ledger as source of truth.
-// NOT a serving funnel — it's a policy + bookkeeping platform with mutex layers.
+// experimentation-platform — INTERACTIVE PRACTICE + STUDY ARTIFACT
+// Phase 1: drag pieces onto the canvas, connect them with arrows.
+// Phase 2 (after "Reveal model design"): pre-rendered correct DAG + math-grounded reasoning.
+// Concept: multi-tenant A/B platform — ~1000 concurrent experiments, billions of users.
 
 const PIECES = [
-  { id:`experiment_ledger`, category:`infra`, shape:`store`, label:`Experiment
-ledger (config,
-layers, holdouts)` },
-  { id:`assignment_svc`, category:`model`, shape:`service`, label:`Assignment svc
-hash(user, layer)
-edge-cached` },
-  { id:`sdk_clients`, category:`data`, shape:`stream_source`, label:`Web + iOS + Android
-SDK clients
-1B users` },
-  { id:`server_sdk`, category:`data`, shape:`stream_source`, label:`Server-side SDK
-(API tier
-assignment)` },
-  { id:`event_bus`, category:`infra`, shape:`queue`, label:`Event bus
-(Kafka: assign +
-exposure + metric)` },
-  { id:`exposure_log`, category:`infra`, shape:`store`, label:`Exposure log
-(who saw what,
-when)` },
-  { id:`metric_pipeline`, category:`infra`, shape:`queue`, label:`Metric pipeline
-(daily Spark,
-metric definitions)` },
-  { id:`metric_warehouse`, category:`infra`, shape:`store`, label:`Metric warehouse
-(per-user metric
-× day)` },
-  { id:`cuped_engine`, category:`model`, shape:`service`, label:`CUPED engine
-(pre-period
-covariate adjust)` },
-  { id:`analysis_svc`, category:`model`, shape:`service`, label:`Analysis svc
-seq. testing,
-alpha-spending` },
-  { id:`srm_monitor`, category:`monitor`, shape:`control`, label:`SRM alarm
-(sample-ratio
-mismatch)` },
-  { id:`layer_mgr`, category:`monitor`, shape:`control`, label:`Layer manager
-(mutex,
-overlap rules)` },
-  { id:`holdout_mgr`, category:`model`, shape:`service`, label:`Holdout mgr
-(long-cycle
-28d retention)` },
-  { id:`decision_ui`, category:`model`, shape:`service`, label:`Decision UI
-(metric panel,
-launch button)` },
-  { id:`client_assign`, category:`model`, shape:`service`, label:`Per-device
-random on client
-(no server hash)` },
-  { id:`naive_ttest`, category:`model`, shape:`service`, label:`Daily t-test
-per metric
-(no correction)` },
-  { id:`free_overlap`, category:`infra`, shape:`queue`, label:`No layer rules
-experiments
-overlap freely` },
+  // sources
+  { id:"event_collector_sdk", category:"data", shape:"stream_source", label:"Event collector SDK\nweb+iOS+Android\nbillions of users",
+    tooltip:"Client SDKs that emit assignment, exposure, and metric events from web/iOS/Android. Bounded at billions of users; payload schema is versioned." },
+  // spec / config
+  { id:"experiment_spec_service", category:"infra", shape:"service", label:"Experiment spec\nservice\n(variants, alloc %)",
+    tooltip:"Source-of-truth service for experiment definitions: variants, allocation %, primary metric, guardrails, layer, holdout flag." },
+  // assignment
+  { id:"user_bucketing_service", category:"model", shape:"service", label:"User bucketing svc\nhash(user||salt||exp)\n<5ms p99",
+    tooltip:"Stateless, edge-cached service that deterministically buckets a user into a variant using a salted hash. Cross-device, cross-session." },
+  { id:"salt_store", category:"infra", shape:"store", label:"Salt store\nper-experiment\nrandomization unit",
+    tooltip:"Cylinder: per-experiment salt. A fresh salt on re-randomization breaks correlation with previous experiments. Pinning a salt enables replay." },
+  { id:"allocation_store", category:"infra", shape:"store", label:"Allocation store\nlayer rules,\ntraffic %",
+    tooltip:"Stores layer membership, traffic percentages, and mutually-exclusive (mutex) group rules. Read by bucketing on every assignment." },
+  // mutex
+  { id:"mutex_lock_service", category:"monitor", shape:"control", label:"Mutex layer svc\nco-occurring exp\nconstraints",
+    tooltip:"Enforces that experiments sharing a surface (e.g., ranker) cannot co-assign the same user. Allocates one variant per layer per user." },
+  // telemetry pipeline
+  { id:"kafka_telemetry", category:"infra", shape:"queue", label:"Kafka telemetry\nassign + exposure\n+ metric events",
+    tooltip:"Three logical topics: assign (variant decided), exposure (user actually rendered the treated surface), metric (clicks/revenue/etc)." },
+  { id:"flink_processor", category:"model", shape:"service", label:"Flink processor\nsessionize +\nde-dup",
+    tooltip:"Streaming processor that joins events to assignments, sessionizes, drops duplicates, and emits per-user-per-day metric rows." },
+  // warehouses
+  { id:"metric_warehouse_hourly", category:"infra", shape:"store", label:"Metric warehouse\nhourly\n(SRM + guardrails)",
+    tooltip:"Hourly-rollup table used by SRM, guardrail monitors, and dashboards. Stale ≤1h; not used for launch decisions." },
+  { id:"metric_warehouse_daily", category:"infra", shape:"store", label:"Metric warehouse\ndaily rollup\n(user × day × metric)",
+    tooltip:"Daily-grain table — input to CUPED, sequential analysis, and launch decisions. Single source of truth for analyses." },
+  // label-delay handler
+  { id:"label_delay_handler", category:"infra", shape:"queue", label:"Label-delay handler\nretention + revenue\n(2-30d horizon)",
+    tooltip:"Buffers delayed-label metrics (D7/D30 retention, refund-adjusted revenue). Joins back when labels mature; signals analysis svc which rows are 'ripe'." },
+  // analysis
+  { id:"cuped_variance_reducer", category:"model", shape:"service", label:"CUPED reducer\npre-period covariate\nadjustment",
+    tooltip:"Regresses outcome on pre-period covariate to reduce variance; ~30-50% sample-size reduction at fixed power." },
+  { id:"sequential_test_layer", category:"model", shape:"service", label:"Sequential test layer\nα-spending\n(O'Brien-Fleming)",
+    tooltip:"Sequential analysis with α-spending so analysts can peek without inflating false-positive rate." },
+  { id:"srm_detector", category:"monitor", shape:"control", label:"SRM detector\nχ² on variant\nallocation",
+    tooltip:"Chi-square test against the designed split. χ² > 3.84 (df=1, α=0.05) halts the experiment and pages the on-call." },
+  // ui + alerts
+  { id:"analysis_ui", category:"model", shape:"service", label:"Analysis UI\nlaunch / iterate /\nkill",
+    tooltip:"Decision surface for analysts: primary metric, guardrails, SRM status, sequential p-value. Launch button is gated by SRM=green." },
+  { id:"alerting_service", category:"monitor", shape:"control", label:"Alerting service\nguardrail breach\n+ SRM page",
+    tooltip:"Routes guardrail-breach and SRM alarms to experiment owners. Distinct queue from system-availability paging." },
+  // distractors
+  { id:"distractor1", category:"model", shape:"service", label:"Deterministic-only\nassignment, no\nsequential peek",
+    tooltip:"DISTRACTOR. Deterministic bucketing is necessary, but without sequential α-spending every daily peek inflates false-positive rate. Stop-rule is the load-bearing protection, not just deterministic hashing." },
+  { id:"distractor2", category:"infra", shape:"store", label:"Single global\nmetric table, no\nper-exp isolation",
+    tooltip:"DISTRACTOR. One global table shared across experiments makes per-experiment slicing and label-maturity bookkeeping impossible; concurrent experiments can't be analyzed cleanly." },
 ];
 
-const EXPECTED_PIECES = [`experiment_ledger`,`assignment_svc`,`sdk_clients`,`server_sdk`,`event_bus`,`exposure_log`,`metric_pipeline`,`metric_warehouse`,`cuped_engine`,`analysis_svc`,`srm_monitor`,`layer_mgr`,`holdout_mgr`,`decision_ui`];
+const EXPECTED_PIECES = [
+  "event_collector_sdk",
+  "experiment_spec_service",
+  "user_bucketing_service","salt_store","allocation_store",
+  "mutex_lock_service",
+  "kafka_telemetry","flink_processor",
+  "metric_warehouse_hourly","metric_warehouse_daily",
+  "label_delay_handler",
+  "cuped_variance_reducer","sequential_test_layer",
+  "srm_detector","analysis_ui","alerting_service",
+];
 
 const EXPECTED_EDGES = [
-  [`experiment_ledger`, `assignment_svc`],
-  [`experiment_ledger`, `layer_mgr`],
-  [`layer_mgr`, `assignment_svc`],
-  [`holdout_mgr`, `assignment_svc`],
-  [`sdk_clients`, `assignment_svc`],
-  [`server_sdk`, `assignment_svc`],
-  [`assignment_svc`, `event_bus`],
-  [`sdk_clients`, `event_bus`],
-  [`server_sdk`, `event_bus`],
-  [`event_bus`, `exposure_log`],
-  [`event_bus`, `metric_pipeline`],
-  [`metric_pipeline`, `metric_warehouse`],
-  [`metric_warehouse`, `cuped_engine`],
-  [`cuped_engine`, `analysis_svc`],
-  [`exposure_log`, `srm_monitor`],
-  [`analysis_svc`, `decision_ui`],
-  [`srm_monitor`, `decision_ui`],
+  ["experiment_spec_service","user_bucketing_service"],
+  ["experiment_spec_service","allocation_store"],
+  ["experiment_spec_service","mutex_lock_service"],
+  ["salt_store","user_bucketing_service"],
+  ["allocation_store","user_bucketing_service"],
+  ["mutex_lock_service","user_bucketing_service"],
+  ["event_collector_sdk","user_bucketing_service"],
+  ["event_collector_sdk","kafka_telemetry"],
+  ["user_bucketing_service","kafka_telemetry"],
+  ["kafka_telemetry","flink_processor"],
+  ["flink_processor","metric_warehouse_hourly"],
+  ["flink_processor","metric_warehouse_daily"],
+  ["metric_warehouse_hourly","srm_detector"],
+  ["metric_warehouse_daily","cuped_variance_reducer"],
+  ["cuped_variance_reducer","sequential_test_layer"],
+  ["label_delay_handler","metric_warehouse_daily"],
+  ["sequential_test_layer","analysis_ui"],
+  ["srm_detector","analysis_ui"],
+  ["srm_detector","alerting_service"],
+  ["metric_warehouse_hourly","alerting_service"],
 ];
+
+const POSITIONS = {
+  event_collector_sdk:     { x: 60,  y: 30  },
+  experiment_spec_service: { x: 750, y: 30  },
+  salt_store:              { x: 60,  y: 200 },
+  allocation_store:        { x: 320, y: 200 },
+  mutex_lock_service:      { x: 600, y: 200 },
+  user_bucketing_service:  { x: 330, y: 380 },
+  kafka_telemetry:         { x: 330, y: 540 },
+  flink_processor:         { x: 330, y: 680 },
+  label_delay_handler:     { x: 60,  y: 680 },
+  metric_warehouse_hourly: { x: 60,  y: 830 },
+  metric_warehouse_daily:  { x: 330, y: 830 },
+  srm_detector:            { x: 60,  y: 1010 },
+  cuped_variance_reducer:  { x: 330, y: 1010 },
+  sequential_test_layer:   { x: 330, y: 1150 },
+  alerting_service:        { x: 60,  y: 1180 },
+  analysis_ui:             { x: 600, y: 1080 },
+};
 
 const CATEGORY_COLOR = { data:"#bae6fd", model:"#ddd6fe", infra:"#fde68a", monitor:"#bbf7d0" };
 
@@ -1510,7 +1932,10 @@ function loadExcalidraw() {
   return window.__excalidrawLoaded;
 }
 
-function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges }) {
+// ============================================================================
+// Phase 1: INTERACTIVE — drag pieces, draw arrows, hit Reveal for scoring.
+// ============================================================================
+function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges, onReveal }) {
   const containerRef = React.useRef(null);
   const [lib, setLib] = React.useState(null);
   const [api, setApi] = React.useState(null);
@@ -1539,16 +1964,22 @@ function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges }) {
       const W = spec.w, H = spec.h, lipH = 26;
       const groupId = `g-${piece.id}-${Date.now()}`;
       const common = { backgroundColor: color, strokeColor:"#1e293b", fillStyle:"solid", roughness:1, strokeWidth:1, groupIds:[groupId] };
-      const bodyArr = lib.convertToExcalidrawElements([{ type:"rectangle", x, y: y + lipH/2, width: W, height: H - lipH, ...common,
-        label: { text: piece.label, fontSize:14, textAlign:"center", verticalAlign:"middle" }, customData: { pieceId: piece.id } }]);
+      const bodyArr = lib.convertToExcalidrawElements([{
+        type:"rectangle", x, y: y + lipH/2, width: W, height: H - lipH, ...common,
+        label: { text: piece.label, fontSize:14, textAlign:"center", verticalAlign:"middle" },
+        customData: { pieceId: piece.id },
+      }]);
       const topEllipse = lib.convertToExcalidrawElements([{ type:"ellipse", x, y, width:W, height:lipH, ...common }])[0];
       const bottomEllipse = lib.convertToExcalidrawElements([{ type:"ellipse", x, y: y + H - lipH, width:W, height:lipH, ...common }])[0];
       generated = [...bodyArr, topEllipse, bottomEllipse];
       anchorEl = bodyArr.find((e) => e.type === "rectangle");
     } else {
-      const skeleton = { type: spec.type, x, y, width: spec.w, height: spec.h, backgroundColor: color, strokeColor:"#1e293b",
+      const skeleton = {
+        type: spec.type, x, y, width: spec.w, height: spec.h, backgroundColor: color, strokeColor:"#1e293b",
         fillStyle: spec.fillStyle, strokeStyle: spec.strokeStyle, strokeWidth: spec.strokeWidth, roughness:1,
-        label: { text: piece.label, fontSize:14, textAlign:"center", verticalAlign:"middle" }, customData: { pieceId: piece.id } };
+        label: { text: piece.label, fontSize:14, textAlign:"center", verticalAlign:"middle" },
+        customData: { pieceId: piece.id },
+      };
       if (spec.roundness) skeleton.roundness = spec.roundness;
       generated = lib.convertToExcalidrawElements([skeleton]);
       anchorEl = generated.find((e) => e.type === spec.type) || generated[0];
@@ -1591,6 +2022,7 @@ function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges }) {
       distractors, missingPieces, edgeCount: userEdges.length, correctEdgeCount: correctEdges.length,
       expectedEdgeCount: expectedEdges.length, wrongEdges, missingEdges });
     setRevealed(true);
+    if (onReveal) onReveal();
   }
   function reset() { if (api) api.updateScene({ elements: [] }); setPlacedIdMap({}); setReport(null); setRevealed(false); }
   if (!lib) return React.createElement("div", { style:{padding:24, color:"#64748b"} }, "Loading Excalidraw canvas...");
@@ -1598,106 +2030,664 @@ function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges }) {
   function lookupLabel(pieceId) { return pieces.find((p) => p.id === pieceId)?.label?.split("\n")[0] || pieceId; }
   return React.createElement("div", null,
     React.createElement("div", { style:{display:"flex", flexWrap:"wrap", gap:8, padding:"12px 14px", background:"#ffffff", border:"1px dashed #cbd5e1", borderRadius:8, marginBottom:10}},
-      React.createElement("div", { style:{width:"100%", fontSize:13, color:"#475569", fontWeight:600, marginBottom:4}}, "Palette — click to drop a piece onto the canvas"),
-      pieces.map((p) => React.createElement("button", { key: p.id, type:"button", onClick: () => addPiece(p), disabled: revealed || !!placedIdMap[p.id],
+      React.createElement("div", { style:{width:"100%", fontSize:13, color:"#475569", fontWeight:600, marginBottom:4}}, "Palette — click to drop a piece onto the canvas (hover for description)"),
+      pieces.map((p) => React.createElement("button", { key: p.id, type:"button", onClick: () => addPiece(p),
+        disabled: revealed || !!placedIdMap[p.id],
+        "data-rv-info": p.tooltip || undefined,
+        "aria-label": p.tooltip ? `${p.label.split("\n")[0]} — ${p.tooltip}` : undefined,
         style:{ padding:"6px 10px", fontSize:13, cursor: placedIdMap[p.id] ? "default" : "pointer",
           background: placedIdMap[p.id] ? "#f1f5f9" : "#ffffff", opacity: placedIdMap[p.id] ? 0.5 : 1,
           border:"1px solid #cbd5e1", borderLeft:`4px solid ${{data:"#0ea5e9", model:"#8b5cf6", infra:"#f59e0b", monitor:"#10b981"}[p.category] || "#94a3b8"}`,
-          borderRadius:6, whiteSpace:"nowrap" } }, p.label.split("\n")[0]))),
+          borderRadius:6, whiteSpace:"nowrap" } }, p.label.split("\n")[0]))
+    ),
     React.createElement("div", { ref: containerRef, style:{ height:600, border:"1px solid #cbd5e1", borderRadius:8, background:"#fefce8", position:"relative", overflow:"hidden", marginBottom:10 }},
       React.createElement(Excalidraw, { excalidrawAPI: (a) => setApi(a),
         initialData: { elements:[], appState:{ viewBackgroundColor:"#fefce8", currentItemRoughness:1 } },
         UIOptions: { canvasActions: { saveToActiveFile:false, loadScene:false, export:false, toggleTheme:false } } })),
     React.createElement("div", { style:{fontSize:13, color:"#64748b", marginBottom:8}}, "Tip: click a palette piece to drop it on the canvas, drag to position, use the arrow tool to connect."),
     !revealed ? React.createElement("button", { type:"button", onClick: reveal,
-      style:{background:"#2563eb", color:"#fff", border:"none", padding:"10px 18px", borderRadius:8, fontWeight:600, cursor:"pointer"} }, "Reveal model design") : null,
+      style:{background:"#2563eb", color:"#fff", border:"none", padding:"10px 18px", borderRadius:8, fontWeight:600, cursor:"pointer"} },
+      Object.keys(placedIdMap).length > 0 ? "Reveal model design" : "Skip & reveal solution") : null,
     revealed && report ? React.createElement("div", { style:{marginTop:12}},
       React.createElement("div", { style:{background:"#eff6ff", border:"1px solid #93c5fd", color:"#1e3a8a", padding:"10px 14px", borderRadius:8, fontSize:14, marginBottom:10}},
         `Pieces correct: ${report.correctPickCount} / ${report.expectedPickCount}. Connections correct: ${report.correctEdgeCount} / ${report.expectedEdgeCount}.`),
       report.distractors.length > 0 ? React.createElement("div", { style:{background:"#fee2e2", borderLeft:"4px solid #dc2626", color:"#7f1d1d", padding:"10px 14px", borderRadius:8, margin:"8px 0", fontSize:14}},
-        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "✗ Pieces that don't belong:"), report.distractors.map(lookupLabel).join(", ")) : null,
+        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "✗ Pieces that don't belong:"),
+        report.distractors.map(lookupLabel).join(", ")) : null,
       report.missingPieces.length > 0 ? React.createElement("div", { style:{background:"#fef3c7", borderLeft:"4px solid #d97706", color:"#78350f", padding:"10px 14px", borderRadius:8, margin:"8px 0", fontSize:14}},
-        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "⚠ Missing pieces:"), report.missingPieces.map(lookupLabel).join(", ")) : null,
+        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "⚠ Missing pieces:"),
+        report.missingPieces.map(lookupLabel).join(", ")) : null,
       report.missingEdges.length > 0 ? React.createElement("div", { style:{background:"#fef3c7", borderLeft:"4px solid #d97706", color:"#78350f", padding:"10px 14px", borderRadius:8, margin:"8px 0", fontSize:14}},
-        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "⚠ Missing connections:"), report.missingEdges.map(([s,t]) => `${lookupLabel(s)} → ${lookupLabel(t)}`).join("; ")) : null,
+        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "⚠ Missing connections:"),
+        report.missingEdges.map(([s,t]) => `${lookupLabel(s)} → ${lookupLabel(t)}`).join("; ")) : null,
       report.wrongEdges.length > 0 ? React.createElement("div", { style:{background:"#fee2e2", borderLeft:"4px solid #dc2626", color:"#7f1d1d", padding:"10px 14px", borderRadius:8, margin:"8px 0", fontSize:14}},
-        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "✗ Wrong connections:"), report.wrongEdges.map(([s,t]) => `${lookupLabel(s)} → ${lookupLabel(t)}`).join("; ")) : null,
+        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "✗ Wrong connections:"),
+        report.wrongEdges.map(([s,t]) => `${lookupLabel(s)} → ${lookupLabel(t)}`).join("; ")) : null,
       React.createElement("button", { type:"button", onClick: reset,
         style:{background:"#64748b", color:"#fff", border:"none", padding:"8px 14px", borderRadius:6, fontWeight:600, fontSize:13, cursor:"pointer", marginTop:8} }, "↺ Try again")
     ) : null
   );
 }
 
-const App = () => (
+// ============================================================================
+// App
+// ============================================================================
+const App = () => {
+  const [solutionVisible, setSolutionVisible] = React.useState(false);
+  return (
   <main style={{maxWidth: 1100, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill={`ML Systems · Canvas · Experimentation Platform`}
-      title={`A/B platform: 2K concurrent experiments, 1B users, mutex layers, no p-hacking.`}
-      subtitle={`Three planes: assignment (low-latency hash), event bus (exposure + metrics), analysis (CUPED + sequential testing + SRM alarms).`}
-      byline={[{label:"Difficulty", value:"Hard"}, {label:"Mode", value:"Excalidraw canvas"}]}
+      pill="ML Systems · Canvas · Experimentation Platform"
+      title="A/B platform: 1000 concurrent experiments, billions of users, mutex layers, peek-safe analysis."
+      subtitle="Three planes joined by an experiment ledger: assignment (deterministic hash), telemetry (Kafka → Flink → hourly/daily warehouses), analysis (CUPED + sequential testing + SRM)."
+      byline={[{label:"Difficulty", value:"Hard"}, {label:"Mode", value:"Build, then study"}]}
     />
 
     <VIS.TLDR>
-      <strong>An A/B platform is three planes joined by an experiment ledger.</strong> Assignment must be deterministic across web+iOS+Android (server-side hash, never client random) and obey <VIS.Term def="Mutually-exclusive layer groups: experiments that touch the same surface (e.g., search-rank) are placed in the same layer and assigned mutex variants so two ranking experiments never collide on the same user. Layers preserve marginal randomization and prevent confounded results.">layer mutex rules</VIS.Term>. The event bus separates exposure events from metric events, so SRM can be checked independently. Analysis applies <VIS.Term def="CUPED: Controlled-experiment Using Pre-Experiment Data. Reduces variance by regressing the outcome against a pre-experiment covariate (typically the same user's pre-period metric). 30-50% variance reduction is typical; same statistical power with smaller samples.">CUPED</VIS.Term> variance reduction and <VIS.Term def="Sequential testing with alpha-spending: lets you peek at results during the experiment without inflating false-positive rate. The total alpha is 'spent' across peeks via Lan-DeMets / O'Brien-Fleming functions instead of fixed at the end.">alpha-spending sequential tests</VIS.Term>. The discipline that prevents p-hacking is OMC: One Metric Decision — declare your primary metric before unblinding.
+      <strong>Not a serving funnel — a policy + bookkeeping platform.</strong> At ~1000 concurrent experiments and billions of users, the dominant failure modes are <em>not</em> latency: they are statistical (peeking inflates false-positive rate, multiple comparisons explode error budget) and operational (sample-ratio mismatch from a broken assignment, label-delay on retention metrics, mutex violations between concurrent experiments on the same surface). The architecture optimizes for <VIS.Term def="Variance reduction = 1 - rho-squared, where rho is the correlation between the metric and a pre-experiment covariate (e.g., the user's pre-period value of the same metric). 30-50% sample-size reduction at fixed power is typical.">variance reduction</VIS.Term> and <VIS.Term def="Sequential testing with alpha-spending lets analysts peek at interim results without inflating the false-positive rate. Alpha is 'spent' across peeks (O'Brien-Fleming, Pocock) instead of being concentrated at a fixed endpoint.">peek-safe inference</VIS.Term>, plus a <VIS.Term def="Sample-Ratio Mismatch: the observed split (e.g., 50.3 / 49.7) significantly diverges from the designed split (50/50). chi-squared test with threshold ~3.84 (df=1, alpha=0.05). A hot SRM means assignment is broken; do not trust the analysis.">SRM</VIS.Term> alarm that vetoes any launch decision when bucketing looks broken.
     </VIS.TLDR>
 
     <VIS.Section id="sec-brief" title="The brief">
-      <p>"2K concurrent experiments. 1B users. Web + iOS + Android + server. Deterministic per-user bucketing cross-device. Mutex layers. 28-day retention holdouts. CUPED. SRM alarms. Sequential tests without alpha inflation. 200 metrics per experiment — how do scientists declare a launch without p-hacking?"</p>
-      <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>Math that forces the shape</h3>
-      <VIS.Equation display={true} tex={String.raw`\\text{SRM } \\chi^2 = \\sum_v \\frac{(O_v - E_v)^2}{E_v}; \\quad \\chi^2 > \\text{threshold} \\Rightarrow \\text{halt and debug assignment}`} />
-      <p>If the observed variant split (e.g. 50.2% / 49.8%) significantly diverges from the design (50/50), the assignment is broken — do not analyze. SRM is the canary; trust no inference past a hot SRM.</p>
+      <p>"~1000 concurrent experiments. Billions of users across web + iOS + Android. Deterministic per-user bucketing cross-device. Hourly metrics for SRM + guardrails; daily rollup for launch decisions. Variance reduction with CUPED. Sequential testing without alpha inflation. 28-day retention metrics with delayed labels. Mutually-exclusive layers for experiments on the same surface (e.g., two ranker experiments). Network interference is real in marketplace experiments. How do analysts ship a launch decision without p-hacking?"</p>
     </VIS.Section>
 
     <VIS.Section id="sec-design" title="Build the design">
       <p style={{margin:"0 0 10px 0", fontSize:14, color:"#64748b"}}>
-        <strong>Shape legend:</strong> sharp rect = stateless service · cylinder = stateful store · solid ellipse = batch source · dashed hachure ellipse = streaming source · dashed hachure rounded rect = queue · cross-hatched diamond = monitor / control.
+        <strong>Shape legend:</strong> sharp rect = stateless service · cylinder = stateful store · dashed hachure ellipse = streaming source · dashed hachure rounded rect = queue · cross-hatched diamond = monitor/control.
       </p>
-      <ExcalidrawCanvas pieces={PIECES} expectedPieces={EXPECTED_PIECES} expectedEdges={EXPECTED_EDGES} />
+      <ExcalidrawCanvas
+        pieces={PIECES}
+        expectedPieces={EXPECTED_PIECES}
+        expectedEdges={EXPECTED_EDGES}
+        onReveal={() => setSolutionVisible(true)}
+      />
     </VIS.Section>
 
-    <VIS.Section id="sec-walk" title="Walking the system">
-      <ol>
-        <li><strong>Experiment ledger</strong> is the source of truth: name, hypothesis, layer, variants, target traffic %, primary metric, guardrail metrics, holdout flag.</li>
-        <li><strong>Assignment service</strong> is a stateless edge-cached service. <code>variant = hash(user_id || layer_id || experiment_id) % 100</code> bucket. Deterministic across devices because user_id is global.</li>
-        <li><strong>Layer manager</strong> enforces mutex: two ranking experiments share a layer; a user gets exactly one variant from each layer.</li>
-        <li><strong>Event bus.</strong> Three channels: <em>assign</em> (which variant), <em>exposure</em> (user actually saw the experiment surface), <em>metric</em> (click, conversion). SRM uses exposure not assign.</li>
-        <li><strong>Metric pipeline.</strong> Spark daily job materializes <code>(user, day, metric)</code> rows. Metric definitions live in code, reviewed.</li>
-        <li><strong>CUPED engine.</strong> For each (user, metric), join the user's pre-period value and adjust. Variance-reduced metric goes into analysis.</li>
-        <li><strong>Analysis svc.</strong> Sequential testing with O'Brien-Fleming alpha-spending lets scientists peek without inflation. Primary metric is locked at experiment-start.</li>
-        <li><strong>SRM monitor</strong> runs continuously; any hot SRM blocks the launch UI from showing 'ship'.</li>
-        <li><strong>Holdout manager.</strong> A 5% global holdout is permanently excluded from all experiments to measure long-cycle (28d retention, subscription) effects.</li>
-        <li><strong>Decision UI</strong> renders the primary metric + SRM status + guardrails; secondary metrics are visible but not the launch criterion.</li>
-      </ol>
-    </VIS.Section>
+    {solutionVisible && (
+      <React.Fragment>
+        <VIS.Section id="sec-reference" title="The reference design">
+          <p style={{margin:"0 0 10px 0", fontSize:14, color:"#64748b"}}>
+            Compare this against what you built above. Auto-routed; node colors mirror the palette categories.
+          </p>
+          <VIS.Mermaid chart={String.raw`
+flowchart TD
+  classDef data    fill:#bae6fd,stroke:#0369a1,color:#0c4a6e
+  classDef model   fill:#ddd6fe,stroke:#6d28d9,color:#312e81
+  classDef infra   fill:#fde68a,stroke:#b45309,color:#78350f
+  classDef monitor fill:#bbf7d0,stroke:#15803d,color:#14532d
 
-    <VIS.Section id="sec-distractors" title="What the distractors teach">
-      <ul>
-        <li><strong>"Per-device random on client."</strong> Same user gets different variants on web vs iOS. Breaks deterministic bucketing; muddies all cross-device metrics.</li>
-        <li><strong>"Daily t-test per metric, no correction."</strong> Peeking with no alpha-spending = 1-in-3 false positives. With 200 metrics it's worse.</li>
-        <li><strong>"No layer rules — experiments overlap freely."</strong> Two ranking experiments on the same surface contaminate each other. Effects measured are interactions, not individual treatments.</li>
-      </ul>
-    </VIS.Section>
+  sdk["Event collector SDK<br/>web+iOS+Android<br/>billions of users"]:::data
+  spec["Experiment spec svc<br/>variants, alloc %"]:::infra
 
-    <VIS.Section id="sec-watch" title="Watch-outs">
-      <ul>
-        <li><strong>Lock the primary metric before unblinding.</strong> If you pick the metric AFTER seeing data, you've p-hacked.</li>
-        <li><strong>Exposure ≠ assignment.</strong> A user assigned to variant B who never sees the surface shouldn't count.</li>
-        <li><strong>CUPED requires pre-period data.</strong> New users have none; partition the analysis.</li>
-        <li><strong>Holdouts are sacred.</strong> Never run a one-off experiment in the global holdout.</li>
-        <li><strong>Cross-experiment interactions are real.</strong> A Bayesian hierarchical model on the ledger surfaces interaction effects.</li>
-      </ul>
-    </VIS.Section>
+  subgraph assignPlane["Assignment plane (low-latency)"]
+    direction LR
+    salt[("Salt store<br/>per-experiment")]:::infra
+    alloc[("Allocation store<br/>layer rules, traffic %")]:::infra
+    mutex{{"Mutex layer svc<br/>co-occurring exp"}}:::monitor
+    bucket["User bucketing svc<br/>hash(user||salt||exp)<br/>&lt;5ms p99"]:::model
+  end
+
+  kafka[/"Kafka telemetry<br/>assign + exposure + metric"/]:::infra
+  flink["Flink processor<br/>sessionize + de-dup"]:::model
+
+  subgraph warehouse["Metric warehouse plane"]
+    direction LR
+    hourly[("Hourly rollup<br/>SRM + guardrails")]:::infra
+    daily[("Daily rollup<br/>user x day x metric")]:::infra
+  end
+
+  delay[/"Label-delay handler<br/>retention + revenue<br/>2-30d horizon"/]:::infra
+
+  subgraph analysisPlane["Analysis plane"]
+    direction TB
+    cuped["CUPED reducer<br/>pre-period covariate"]:::model
+    seq["Sequential test layer<br/>alpha-spending"]:::model
+  end
+
+  srm{{"SRM detector<br/>chi-squared on allocation"}}:::monitor
+  alert{{"Alerting service<br/>guardrail + SRM page"}}:::monitor
+  ui["Analysis UI<br/>launch / iterate / kill"]:::model
+
+  spec --> alloc
+  spec --> mutex
+  spec --> bucket
+  salt --> bucket
+  alloc --> bucket
+  mutex --> bucket
+  sdk -- "assignment request" --> bucket
+  sdk -- "exposure + metric" --> kafka
+  bucket -- "assign event" --> kafka
+  kafka --> flink
+  flink --> hourly
+  flink --> daily
+  delay --> daily
+  hourly --> srm
+  hourly --> alert
+  daily --> cuped
+  cuped --> seq
+  srm --> alert
+  srm -- "veto launch" --> ui
+  seq --> ui
+`} />
+        </VIS.Section>
+
+        <VIS.Section id="sec-walk" title="Walking the platform">
+          <ol>
+            <li><strong>The spec service is the source of truth.</strong> Every experiment is a row: variants, allocation %, layer, primary metric, guardrails, holdout flag, label-maturity SLA. Mutex group + salt are pinned at creation. <VIS.Equation tex={String.raw`\text{spec}\rightarrow\{\text{bucket},\text{alloc},\text{mutex}\}`} /></li>
+            <li><strong>User bucketing is deterministic, cross-device, edge-cached.</strong> <VIS.Equation tex={String.raw`v = h(\text{user\_id}\,\|\,\text{salt}\,\|\,\text{exp\_id})\bmod 100`} />. Same user, same variant, every device — because user_id is global and the salt is pinned. See <strong>§3a</strong>.</li>
+            <li><strong>Mutex layer service</strong> enforces that two experiments on the same surface cannot co-assign a user. The layer carves the user-space; the experiment claims a slice of one layer. See <strong>§3h</strong>.</li>
+            <li><strong>Kafka telemetry carries three streams.</strong> <em>assign</em> (which variant), <em>exposure</em> (user saw the treated surface), <em>metric</em> (click, revenue, retention proxy). SRM uses <em>exposure</em>, not assign, because an unseen treatment is not a treatment.</li>
+            <li><strong>Flink sessionizes, de-dupes, and emits per-user-per-day metric rows</strong> into both warehouses. Hourly is for monitoring; daily is for decisions. <VIS.Equation tex={String.raw`r_{u,d,m} = \sum_{e\in \text{day}(d)}\mathbb{1}[u,m,e]`} /></li>
+            <li><strong>Label-delay handler buffers retention and refund-adjusted revenue.</strong> Daily rollup rows are stamped with a <em>ripe-at</em> timestamp and analysis only consumes ripe rows. See <strong>§3f</strong>.</li>
+            <li><strong>CUPED reduces variance</strong> by adjusting each user's outcome with their pre-period covariate. <VIS.Equation tex={String.raw`Y_{\text{adj}} = Y - \theta(X - \bar X),\;\theta = \mathrm{Cov}(Y,X)/\mathrm{Var}(X)`} />. See <strong>§3b</strong>.</li>
+            <li><strong>Sequential analysis with alpha-spending</strong> lets analysts peek daily without inflating the false-positive rate. O'Brien-Fleming front-loads conservatism; Pocock spreads it. See <strong>§3c</strong>.</li>
+            <li><strong>SRM detector runs on every hourly tick.</strong> Chi-squared on the variant counts; a hot SRM vetoes the launch button. See <strong>§3d</strong>.</li>
+            <li><strong>Analysis UI surfaces the primary metric, guardrails, sequential p-value, SRM status.</strong> Launch is gated by SRM = green AND sequential p-value crosses the spending boundary on the locked primary metric.</li>
+          </ol>
+        </VIS.Section>
+
+        <VIS.Section id="sec-math" title="Why every stage is the way it is — the math">
+
+          <h3 style={{marginTop:14, marginBottom:6, fontSize:15, color:"#334155"}}>§3a. Deterministic bucketing and the salt</h3>
+          <p>For an experiment with variants <VIS.Equation tex={String.raw`V = \{0,\dots,k-1\}`} /> and traffic shares <VIS.Equation tex={String.raw`(p_0,\dots,p_{k-1})`} />:</p>
+          <VIS.Equation display={true} tex={String.raw`v(u) = F^{-1}\bigl(h(\text{user\_id}\,\|\,\text{salt}\,\|\,\text{exp\_id}) / 2^{B}\bigr)`} />
+          <p>where <VIS.Equation tex={String.raw`h`} /> is a B-bit uniform hash and <VIS.Equation tex={String.raw`F`} /> is the CDF over variant shares. The salt is per-experiment; re-randomizing means rotating the salt — same user, fresh variant. Pinning the salt enables exact replay of an experiment. Client-side randomization breaks this: device-A and device-B see different variants for the same user, contaminating every cross-device metric.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>§3b. CUPED variance reduction</h3>
+          <p>Given outcome <VIS.Equation tex={String.raw`Y`} /> and a pre-experiment covariate <VIS.Equation tex={String.raw`X`} /> (usually the user's pre-period value of the same metric), define the adjusted outcome:</p>
+          <VIS.Equation display={true} tex={String.raw`Y_{\text{adj}} = Y - \theta\,(X - \bar X),\qquad \theta = \frac{\mathrm{Cov}(Y,X)}{\mathrm{Var}(X)}`} />
+          <p>The variance of <VIS.Equation tex={String.raw`Y_{\text{adj}}`} /> shrinks by exactly the squared correlation:</p>
+          <VIS.Equation display={true} tex={String.raw`\frac{\mathrm{Var}(Y_{\text{adj}})}{\mathrm{Var}(Y)} = 1 - \rho^{2}`} />
+          <p>For a metric with <VIS.Equation tex={String.raw`\rho \approx 0.6`} /> against its pre-period self, variance drops ~36% — i.e., the same statistical power needs ~36% fewer users. CUPED is the single biggest sample-size win on most engagement metrics.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>§3c. Sequential testing and alpha-spending</h3>
+          <p>A fixed-horizon t-test peeked at daily inflates the Type-I error: at 30 daily peeks, naive false-positive rate climbs from 5% to ~26%. Alpha-spending pre-allocates the total alpha across peeks via a spending function <VIS.Equation tex={String.raw`\alpha(t)`} />, <VIS.Equation tex={String.raw`t \in [0,1]`} />:</p>
+          <VIS.Equation display={true} tex={String.raw`\alpha_{\text{OBF}}(t) = 2 - 2\,\Phi\!\Bigl(\frac{z_{1-\alpha/2}}{\sqrt{t}}\Bigr),\qquad \alpha_{\text{Pocock}}(t) = \alpha \ln\!\bigl(1 + (e-1)\,t\bigr)`} />
+          <p>O'Brien-Fleming gives near-zero alpha early and almost all of it at the end (good when you want to avoid early false stops); Pocock spreads alpha uniformly (good for ship-or-kill decisions where stopping early matters). Both preserve <VIS.Equation tex={String.raw`\sum_t \alpha_t = \alpha`} /> exactly under continuous-time monitoring.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>§3d. Sample-Ratio-Mismatch (SRM) chi-squared</h3>
+          <p>For a designed split <VIS.Equation tex={String.raw`(p_c, p_t)`} /> and observed counts <VIS.Equation tex={String.raw`(O_c, O_t)`} /> with total <VIS.Equation tex={String.raw`N`} />:</p>
+          <VIS.Equation display={true} tex={String.raw`\chi^{2} = \sum_{v}\frac{(O_v - p_v N)^{2}}{p_v N}`} />
+          <p>For a 2-arm 50/50 split, df = 1, the 0.05 critical value is <VIS.Equation tex={String.raw`\chi^{2} > 3.84`} /> — re-randomize. A 50.3/49.7 split looks innocent but at <VIS.Equation tex={String.raw`N = 10^{8}`} /> users:</p>
+          <VIS.Equation display={true} tex={String.raw`\chi^{2} \approx \frac{(3\times 10^{5})^{2}}{5\times 10^{7}} = 1800 \gg 3.84`} />
+          <p>SRM is the silent killer: the analysis looks fine but the bucketing is broken. Always check SRM first; any inference past a hot SRM is poisoned.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>§3e. Minimum-detectable-effect (MDE) and sample size</h3>
+          <p>For a two-sided test at significance <VIS.Equation tex={String.raw`\alpha`} /> and power <VIS.Equation tex={String.raw`1-\beta`} />, the smallest effect detectable with <VIS.Equation tex={String.raw`n`} /> users per arm is:</p>
+          <VIS.Equation display={true} tex={String.raw`\text{MDE} = (z_{1-\alpha/2} + z_{1-\beta})\,\sqrt{\frac{2\sigma^{2}}{n}}`} />
+          <p>For revenue per user with <VIS.Equation tex={String.raw`\sigma \approx \$5`} />, <VIS.Equation tex={String.raw`\alpha=0.05`} />, <VIS.Equation tex={String.raw`1-\beta=0.8`} />, to detect a 0.5% lift on a mean of $20:</p>
+          <VIS.Equation display={true} tex={String.raw`n = \frac{2 \cdot 25 \cdot (1.96+0.84)^{2}}{(0.1)^{2}} \approx 3.9\times 10^{4}\;\text{users/arm}`} />
+          <p>For a 0.1% lift the requirement is 25x bigger — ~1M users/arm. This is why FAANG-scale experiments need either CUPED variance reduction (§3b) or a longer horizon, and why low-MDE revenue metrics live on the daily-rollup warehouse, not on the hourly path.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>§3f. Label-delay handling for retention metrics</h3>
+          <p>D7-retention requires 7 days of post-exposure observation; D30 needs 30; refund-adjusted revenue waits for the chargeback window. The analysis frontier at time <VIS.Equation tex={String.raw`t`} /> is the subset of users whose label has matured:</p>
+          <VIS.Equation display={true} tex={String.raw`\mathcal{D}_{\text{ripe}}(t) = \{u : t - \text{exposure}(u) \ge \tau_{\text{mat}}\}`} />
+          <p>Treating non-ripe rows as zero is the textbook positive-unlabeled mistake — it suppresses lift in fast-converting users and inflates lift in slow ones. The label-delay handler stamps each row with <em>ripe-at</em> and analyses join against the frontier.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>§3g. Multiple comparisons across metrics and experiments</h3>
+          <p>With 200 secondary metrics per experiment and <VIS.Equation tex={String.raw`\alpha = 0.05`} />, the expected number of false discoveries from random noise alone is</p>
+          <VIS.Equation display={true} tex={String.raw`\mathbb{E}[\text{FD}] = 200 \cdot 0.05 = 10`} />
+          <p>Bonferroni controls the family-wise error rate by tightening to <VIS.Equation tex={String.raw`\alpha/m`} /> — conservative; few metrics survive. Benjamini-Hochberg (FDR) controls the expected false-discovery proportion:</p>
+          <VIS.Equation display={true} tex={String.raw`\text{reject } H_{(i)} \iff p_{(i)} \le \frac{i}{m}\,q`} />
+          <p>Across ~1000 concurrent experiments the platform additionally enforces the <strong>One-Metric Decision</strong> discipline: the primary metric is locked before unblinding. Secondaries are diagnostic, not decision-grade.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>§3h. Mutually-exclusive layers and interaction</h3>
+          <p>Two experiments on the same surface (e.g., two ranker variants) interact: the treatment effect of A measured under B's treatment is not the same as under B's control. The estimator</p>
+          <VIS.Equation display={true} tex={String.raw`\hat\Delta_A = \bar Y(A=1) - \bar Y(A=0)`} />
+          <p>is unbiased only when B is randomized independently of A. Layers carve the user-space so that experiments on the same surface are placed in the same layer and assigned mutex variants; experiments on different surfaces are placed in different layers and randomized independently. Interaction risk drops from <VIS.Equation tex={String.raw`O(k^{2})`} /> pairwise comparisons to <VIS.Equation tex={String.raw`O(k)`} /> within-layer.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>§3i. Network interference (SUTVA violation)</h3>
+          <p>The SUTVA assumption — a user's outcome depends only on their own treatment — fails in marketplaces (your treated seller affects an untreated buyer's experience). The naive between-user estimator</p>
+          <VIS.Equation display={true} tex={String.raw`\hat\Delta = \bar Y_T - \bar Y_C`} />
+          <p>under-estimates the true global treatment effect: spillover lifts the control. Mitigations: cluster randomization (whole markets, weeks, communities), graph-cluster designs, switchback experiments. Diagnostic: an A/A test that splits friends or graph-neighbors and looks for a non-zero estimate — if it appears, network interference is contaminating the regular A/B.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>§3j. Unit of randomization vs unit of analysis</h3>
+          <p>Randomize on users, analyze on sessions, and the standard error is wrong: sessions within a user are correlated, so the effective <VIS.Equation tex={String.raw`n`} /> is closer to the user count. The variance correction is</p>
+          <VIS.Equation display={true} tex={String.raw`\mathrm{Var}(\bar Y_{\text{cluster}}) \approx \frac{\sigma^{2}}{n}\,\bigl[1 + (\bar m - 1)\rho_{\text{intra}}\bigr]`} />
+          <p>where <VIS.Equation tex={String.raw`\bar m`} /> is the average cluster size and <VIS.Equation tex={String.raw`\rho_{\text{intra}}`} /> is the intra-cluster correlation. Ignoring the correction makes p-values look <em>smaller</em> than they are — false positives. Rule: the unit of analysis must equal (or be cluster-corrected against) the unit of randomization.</p>
+
+        </VIS.Section>
+
+        <VIS.Section id="sec-distractors" title="What the distractors teach">
+          <ul>
+            <li><strong>"Deterministic-only assignment, no sequential peek protection."</strong> Deterministic hashing is necessary but not sufficient. Without alpha-spending, daily peeks blow Type-I error from 5% to ~26% over a 30-day experiment. The peek-safe layer is load-bearing. Math: §3c.</li>
+            <li><strong>"Single global metric table, no per-experiment isolation."</strong> Concurrent experiments can't be analyzed cleanly when their rows are commingled. Mutex layers, label-maturity stamps, and per-experiment slicing all require per-experiment row identity. Math: §3f, §3h.</li>
+          </ul>
+        </VIS.Section>
+
+        <VIS.Section id="sec-traps" title="Trap drills">
+          <p style={{margin:"0 0 14px 0", fontSize:14, color:"#64748b"}}>
+            26 senior-MLE traps across five axes: <strong>business metrics</strong>, <strong>data collection</strong>, <strong>training (analysis)</strong>, <strong>monitoring</strong>, <strong>gotchas</strong>. Pick one option per problem; reveal explains why the wrong answers are tempting.
+          </p>
+
+          {/* ============================ AXIS A — BUSINESS METRICS ============================ */}
+
+          <VIS.TrapProblem
+            id="exp-q1"
+            difficulty="hard"
+            title="A 14-day experiment is ready for a ship/no-ship call. Pick the criterion the platform should enforce."
+            scenario={<>Four candidate decision rules are on the table. Three reward gaming or use unstable data; one composes the safety properties the platform was built to guarantee.</>}
+            options={[
+              {key:"a", text:"The pre-declared primary metric crosses the sequential alpha-spending boundary, SRM is green for the analysis date, and every guardrail in the spec remains within tolerance.", correct:true},
+              {key:"b", text:"At least one secondary metric reaches p below 0.05 in the daily dashboard and the team agrees the result is directionally consistent with the original hypothesis.", correct:false},
+              {key:"c", text:"The fixed-horizon t-test on the primary metric reaches p below 0.05 on the 14th day, regardless of any daily interim peeks performed earlier in the run.", correct:false},
+              {key:"d", text:"The 95% confidence interval for the primary effect lies entirely above zero on the most recent hourly rollup, computed on the raw outcome with no covariate adjustment.", correct:false},
+            ]}
+            trap={<>(b) is HARKing on a secondary. (c) is fixed-horizon with peek inflation. (d) uses an unstable hourly slice and skips CUPED.</>}
+            lens={<>A trustworthy launch composes locked primary, peek-safe inference, SRM green, and intact guardrails. Removing any single piece opens a gaming surface.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q2"
+            difficulty="hard"
+            title="A UI redesign shows a +4% first-week click-through lift that shrinks in week two."
+            scenario={<>The analyst proposes shipping on the week-one number, arguing users will keep clicking once it rolls out globally.</>}
+            options={[
+              {key:"a", text:"Ship now and let production tell you whether the lift persists; rolling back a UI later is cheap relative to the cost of waiting.", correct:false},
+              {key:"b", text:"Extend the experiment beyond the typical novelty-decay window of 4-6 weeks and decide on the sustained-effect slice, not the early-engagement slice.", correct:true},
+              {key:"c", text:"Trust the week-one reading because novelty engagement reliably converts into a long-term habit and therefore counts toward the metric.", correct:false},
+              {key:"d", text:"Restrict the analysis to users in their first session, where the novelty signal is strongest, to get the cleanest read of the redesign's appeal.", correct:false},
+            ]}
+            trap={<>(a) ignores rollback cost on a user-visible surface. (c) confuses novelty with sustained behavior change. (d) filters to the slice most contaminated by the bias.</>}
+            lens={<>Novelty decays over weeks. The decision-grade slice is the sustained-effect window, not the early-engagement spike.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q3"
+            difficulty="hard"
+            title="With ~1000 quarterly launches, how many spurious wins should leadership expect at a per-experiment 5% bar?"
+            scenario={<>Each launch locks one primary metric and reads it at alpha = 0.05; the platform applies no family-level correction across experiments. The CFO wants an order-of-magnitude expectation.</>}
+            options={[
+              {key:"a", text:"Zero in expectation, because the platform's sequential testing layer already controls the family-wise error rate across all running experiments simultaneously.", correct:false},
+              {key:"b", text:"Around 5 per quarter, because the per-experiment alpha-spending procedure preserves an overall 0.5% false-positive rate at the platform level.", correct:false},
+              {key:"c", text:"Around 50 per quarter, because 5% of 1000 independent reads at alpha = 0.05 reject the null by chance even when the treatment has no real effect.", correct:true},
+              {key:"d", text:"Around 250 per quarter, because daily peeking and 200-metric dashboards combine to push the platform-wide false-positive rate to roughly 25%.", correct:false},
+            ]}
+            trap={<>(a) confuses per-experiment alpha with platform-wide alpha. (b) understates by an order of magnitude. (d) over-states because peek inflation is bounded inside each sequential test.</>}
+            lens={<>Per-experiment alpha is not platform-wide alpha. Even with perfect within-experiment statistics, ~5% of attempts produce a false win.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q4"
+            difficulty="medium"
+            title="One chart per experiment lives on the launch-review board's daily dashboard. Pick the chart."
+            scenario={<>A weekly review board approves or vetoes experiments and gets one pinned chart per experiment. Pick the chart that matches the levers the reviewer actually controls.</>}
+            options={[
+              {key:"a", text:"A feature-importance bar chart for the model behind the treated surface, refreshed each retrain and grouped by feature family for readability.", correct:false},
+              {key:"b", text:"The hourly rollup of every secondary metric, ranked by absolute effect size, refreshed every hour with no covariate adjustment to keep the read live.", correct:false},
+              {key:"c", text:"A p-value histogram across all metrics in the experiment, overlaid against a uniform reference distribution as a per-experiment sanity check.", correct:false},
+              {key:"d", text:"The primary effect with sequential confidence band, guardrails traffic-lighted, SRM status, and ripe-row coverage on the chosen analysis date.", correct:true},
+            ]}
+            trap={<>(a) is model-internal. (b) tempts the reviewer into HARKing on secondaries. (c) is a useful diagnostic but not a decision artefact.</>}
+            lens={<>The launch dashboard surfaces the criterion plus its preconditions (SRM, ripe rows, guardrails). Anything else invites surface-mining.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q5"
+            difficulty="hard"
+            title="Why is revenue lift a poor sole evaluator for most experiments?"
+            scenario={<>A senior leader proposes dropping all guardrails and judging every experiment on quarterly revenue lift alone. Pick the strongest structural objection the platform should raise.</>}
+            options={[
+              {key:"a", text:"Revenue is the slowest, noisiest metric with the longest label-maturity horizon; modest product improvements at small revenue cost get killed by chance variance well before signal emerges.", correct:true},
+              {key:"b", text:"Revenue lifts are easy to game with promotions and discount-coupon experiments, so the platform should ban revenue as a primary metric across all experiments outright.", correct:false},
+              {key:"c", text:"Revenue is correlated with user satisfaction, so any revenue-positive change is by definition product-positive and additional gates on the same direction add no information.", correct:false},
+              {key:"d", text:"Revenue is a backend metric outside the experimentation platform's scope; analysts should run revenue analyses in a separate offline workflow on the data warehouse.", correct:false},
+            ]}
+            trap={<>(b) is a real concern but secondary to the statistical-power objection. (c) is the leader's own argument. (d) is a process dodge, not a statistical one.</>}
+            lens={<>Revenue's MDE is huge (see the sample-size math). Even a real improvement is undetectable on most experiments; guardrails exist because revenue alone is statistically inadequate.</>}
+          />
+
+          {/* ============================ AXIS B — DATA COLLECTION ============================ */}
+
+          <VIS.TrapProblem
+            id="exp-q6"
+            difficulty="hard"
+            title="An experiment shows a 50.3 / 49.7 split at N = 100M users. The owner says it is within noise."
+            scenario={<>The platform's detector reports chi-squared = 1800 against the designed 50/50 split. The experiment owner argues that 0.3 percentage points is normal variation at this scale.</>}
+            options={[
+              {key:"a", text:"Continue the experiment but down-weight the larger arm in the analysis to numerically compensate for the assignment imbalance and recover a balanced estimate.", correct:false},
+              {key:"b", text:"Halt the experiment, re-randomize, and root-cause the imbalance before any inference is reported; the chi-squared sits far above the 3.84 critical value for df = 1 at alpha = 0.05.", correct:true},
+              {key:"c", text:"Continue the experiment because a 0.3-percentage-point gap is well below the 1-percent imbalance threshold that most large experimentation platforms tolerate in practice.", correct:false},
+              {key:"d", text:"Continue the experiment but switch the analysis to a Bayesian framework that explicitly models the allocation prior so the chi-squared is dampened correctly.", correct:false},
+            ]}
+            trap={<>(a) treats an alarm as a numerical bias when it signals broken assignment. (c) invents a percentage threshold that the test does not use. (d) re-frames a broken-assignment problem as a statistics problem.</>}
+            lens={<>At large N, the detector is sensitive to fractional-percent gaps. A hot alarm means assignment is broken; do not analyze past it.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q7"
+            difficulty="hard"
+            title="Pick the cleanest event source for counting users in each variant."
+            scenario={<>The platform needs an event source for counting users per variant. Pick the source that minimizes contamination of the count.</>}
+            options={[
+              {key:"a", text:"Assignment events emitted by the bucketing service on every assignment call, including users who never reached the treated surface during the experiment window.", correct:false},
+              {key:"b", text:"Login events for every active user in the eligibility universe, filtered by the experiment's eligibility predicate after the fact at analysis time.", correct:false},
+              {key:"c", text:"Exposure events emitted only when the treated surface was actually rendered, joined back to the assignment event for the variant identifier at analysis time.", correct:true},
+              {key:"d", text:"Conversion events emitted only by users who took the primary outcome action of interest during the experiment window across all variants.", correct:false},
+            ]}
+            trap={<>(a) inflates the denominator with users who never saw the experiment. (b) does not reflect actual exposure. (d) conditions on the outcome — guaranteed selection bias.</>}
+            lens={<>The count must include users who could have responded to the treatment. Exposure is the correct boundary; assignment over-counts; conversion under-counts and selects.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q8"
+            difficulty="hard"
+            title="iOS-client logs arrive about 6 hours late on average. How does the platform respond?"
+            scenario={<>The hourly metric rollup under-counts iOS users for several hours per day; lift estimates wobble on the hourly dashboard but settle on the daily one.</>}
+            options={[
+              {key:"a", text:"Extrapolate iOS counts on the hourly rollup based on the prior week's diurnal arrival pattern, then proceed with the launch decision on the corrected hourly view.", correct:false},
+              {key:"b", text:"Drop iOS users from the experiment analysis entirely until the log-arrival delay is fixed at the SDK level, then resume the analysis once arrival skew converges.", correct:false},
+              {key:"c", text:"Switch the launch criterion to the hourly rollup with a 6-hour rolling-average smoothing, which absorbs the device-side skew without dropping any users from the read.", correct:false},
+              {key:"d", text:"Use the hourly rollup only for monitoring (SRM, guardrails) and gate every launch decision on the daily rollup with a label-arrival cutoff that exceeds the device skew.", correct:true},
+            ]}
+            trap={<>(a) makes up data. (b) discards a major platform. (c) keeps the launch on a stale path.</>}
+            lens={<>Log-arrival skew is a fact of mobile platforms. Decisions belong on the slower path; monitoring lives on the faster path; cutoffs are on label arrival, not wall-clock.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q9"
+            difficulty="hard"
+            title="An experiment uses D7-retention as the primary metric. When is the analysis frontier ready?"
+            scenario={<>An experiment exposes a user on day 0; the primary metric is whether they return on day 7. Pick the correct ripe-row frontier for the analysis.</>}
+            options={[
+              {key:"a", text:"Restrict the analysis to users exposed at least 7 days before the analysis date, so every row in the cohort has had its D7 return outcome actually observed.", correct:true},
+              {key:"b", text:"Use every exposed user; impute the D7 outcome for users in the most recent 7-day window based on prior-week return rates and pre-period covariates.", correct:false},
+              {key:"c", text:"Use every exposed user; treat users who have not yet returned as negatives even when their 7-day observation window has not finished elapsing yet.", correct:false},
+              {key:"d", text:"Restrict the analysis to users exposed exactly 7 days ago so the cohort is tight against the metric definition and free of right-censoring entirely.", correct:false},
+            ]}
+            trap={<>(b) makes up labels. (c) is the textbook positive-unlabeled mistake — pending windows are marked negative. (d) discards two-thirds of the eligible data.</>}
+            lens={<>The ripe-row frontier is the only honest analysis. Anything earlier biases lift toward conversion speed rather than conversion rate.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q10"
+            difficulty="hard"
+            title="A marketplace experiment treats sellers; the outcome metric is buyer conversion."
+            scenario={<>A new seller-side ranking is rolled out to a random 50% of sellers. Buyer conversion is measured across all buyers in the marketplace. Pick the strongest concern.</>}
+            options={[
+              {key:"a", text:"The seller-side randomization collides with the user-bucketing service's salt, contaminating the variant assignment for the affected sellers and biasing downstream buyer-side metrics.", correct:false},
+              {key:"b", text:"Buyers see a mix of treated and untreated sellers within the same browsing session, so the between-buyer estimator under-estimates the true global treatment effect from spillover.", correct:true},
+              {key:"c", text:"Buyers are not bucketed at all in this experiment, so the platform's SRM detector cannot be computed on the buyer side and the experiment fails launch readiness.", correct:false},
+              {key:"d", text:"Sellers carry different traffic volumes across the marketplace, so the variance of the buyer-side metric is unequal between the two seller arms in the experiment.", correct:false},
+            ]}
+            trap={<>(a) is a fictional mechanism — different randomization units do not collide on salts. (c) confuses randomization unit with detector scope. (d) is real but secondary to the SUTVA violation.</>}
+            lens={<>When the randomization unit is upstream of the analysis unit, interference is the dominant bias. Cluster on markets or weeks to recover.</>}
+          />
+
+          {/* ============================ AXIS C — TRAINING / ANALYSIS ============================ */}
+
+          <VIS.TrapProblem
+            id="exp-q11"
+            difficulty="hard"
+            title="The pre-period correlation differs by user segment. How should the variance reducer be configured?"
+            scenario={<>The pre-period covariate correlates at rho = 0.4 for median users and rho = 0.7 for whales. The analyst wants to apply the variance reducer globally and asks for guidance.</>}
+            options={[
+              {key:"a", text:"Skip variance reduction on this metric because heterogeneous correlation across user segments invalidates the underlying variance-reduction guarantee for the pooled estimator.", correct:false},
+              {key:"b", text:"Replace variance reduction with stratification on the pre-period spending decile and run a stratified t-test on the post-period spending column at analysis time.", correct:false},
+              {key:"c", text:"Apply variance reduction with a single theta estimated from the pooled pre-period data; the realized reduction is 1 - rho-squared at the pooled correlation level.", correct:true},
+              {key:"d", text:"Fit a separate theta per segment and stitch the per-segment adjusted means together at analysis time using inverse-variance weights across the strata.", correct:false},
+            ]}
+            trap={<>(a) abandons a free variance win. (b) is valid but does not deliver the closed-form 1 - rho-squared reduction. (d) is heavy-handed and risks double-dipping unless held out.</>}
+            lens={<>Unbiasedness comes from theta being a function of the pre-period only. A single pooled theta is the standard recipe; per-segment thetas require out-of-sample fitting.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q12"
+            difficulty="hard"
+            title="Leadership wants the ability to ship clear wins early to free up a busy layer."
+            scenario={<>The metric of interest is a fast-converting click-through rate. The team has to pick one alpha-spending shape for the sequential read.</>}
+            options={[
+              {key:"a", text:"A naive fixed-horizon t-test with no spending boundary applied at all, run at every daily peek, which gives the largest possible early-stopping power on real effects.", correct:false},
+              {key:"b", text:"Bonferroni correction across the number of planned peeks, which produces a tight boundary at every peek that is both peek-safe and early-stop-friendly across the run.", correct:false},
+              {key:"c", text:"O'Brien-Fleming spends most of alpha near the planned end of the experiment, leaving early peeks effectively unable to cross the boundary on most realistic effect sizes.", correct:false},
+              {key:"d", text:"Pocock spends alpha relatively uniformly across peeks, leaving meaningful power available at early peeks to stop the experiment when the true effect is real and large.", correct:true},
+            ]}
+            trap={<>(a) inflates Type-I error. (b) is valid but conservative compared to Pocock when peeks are dense. (c) is the opposite tradeoff to what the team asked for.</>}
+            lens={<>OBF and Pocock trade conservatism early vs late. For ship-fast-or-kill, pick the uniform spender; for avoid-false-stops, pick the end-heavy one.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q13"
+            difficulty="hard"
+            title="Two ranker experiments target the same home-feed surface in the same week."
+            scenario={<>A relevance-tuning experiment and a freshness-boost experiment both want to A/B on the home feed. Pick the platform's correct response to the scheduling conflict.</>}
+            options={[
+              {key:"a", text:"Place both into the same mutually-exclusive layer and assign each user to exactly one variant per layer, so the two experiments cannot co-treat the same user on that surface.", correct:true},
+              {key:"b", text:"Run both freely with independent salts; the bucketing hash will randomize their assignments orthogonally and produce unbiased estimates of each marginal effect across the user base.", correct:false},
+              {key:"c", text:"Run them sequentially: ship the first experiment, wait until it lands and stabilizes, then start the second experiment in the next quarter to avoid any cross-treatment effect.", correct:false},
+              {key:"d", text:"Run both freely and add an A-by-B interaction term to the analysis model at read time to recover the marginal effects from the joint randomization across user buckets.", correct:false},
+            ]}
+            trap={<>(b) randomization alone does not remove interaction on a shared surface. (c) wastes a quarter and slows the team. (d) is a fix but is statistically expensive and assumes a linear interaction structure.</>}
+            lens={<>Layers carve the user-space at assignment time. Independent randomization gives unbiased marginals but not freedom from interaction.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q14"
+            difficulty="hard"
+            title="An analyst runs a session-level t-test for an experiment randomized on users."
+            scenario={<>Sessions outnumber users by ~10x and the effect is small; the analyst hopes the larger row count will produce a smaller standard error on the lift estimate.</>}
+            options={[
+              {key:"a", text:"Use the session-level t-test as is, because more rows means a smaller standard error which is the right direction for sensitivity on a small-effect metric.", correct:false},
+              {key:"b", text:"Cluster the standard error at the user-id level, because sessions within a user are correlated and the naive session-level standard error understates the uncertainty.", correct:true},
+              {key:"c", text:"Switch the randomization unit from users to sessions so the unit of randomization matches the unit of analysis and the standard error becomes trustworthy again.", correct:false},
+              {key:"d", text:"Drop within-user repeated sessions and analyze only the first session of each user during the experiment, which removes the within-user correlation entirely.", correct:false},
+            ]}
+            trap={<>(a) inflates effective n and produces fake significance. (c) breaks deterministic cross-device bucketing. (d) throws away most of the data and biases toward first-session behavior.</>}
+            lens={<>The analysis unit must match (or be cluster-corrected against) the randomization unit. Ignoring within-user correlation manufactures false positives.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q15"
+            difficulty="hard"
+            title="200 secondary metrics live on every experiment dashboard. Pick the correction policy."
+            scenario={<>Per-experiment dashboards report ~200 secondaries. Without a platform-wide policy, secondary p-values are noisy and analysts cherry-pick. Pick the policy.</>}
+            options={[
+              {key:"a", text:"Apply Bonferroni across all 200 secondaries; treat any metric that survives at alpha/200 as a co-equal primary metric and allow it to gate the launch decision.", correct:false},
+              {key:"b", text:"Skip correction; require teams to use eyeballing and senior domain judgment to identify meaningful effects across the full secondary dashboard at decision time.", correct:false},
+              {key:"c", text:"Lock one primary per experiment in the spec; apply Benjamini-Hochberg FDR control across secondaries within each experiment; treat secondaries as diagnostic only.", correct:true},
+              {key:"d", text:"Apply a platform-wide Bonferroni across 200,000 metric-experiment cells; this single global threshold replaces all per-experiment statistics and per-experiment configuration.", correct:false},
+            ]}
+            trap={<>(a) over-tightens and turns every secondary into a launch criterion. (b) is the status quo that motivates the question. (d) confounds independent decisions and is operationally unworkable.</>}
+            lens={<>One primary per experiment for the decision; FDR on secondaries for diagnostics. The shape of the correction follows the role of the metric.</>}
+          />
+
+          {/* ============================ AXIS D — MONITORING ============================ */}
+
+          <VIS.TrapProblem
+            id="exp-q16"
+            difficulty="hard"
+            title="Pick the default guardrail bundle that every experiment should ship with."
+            scenario={<>Every experiment ships with a default bundle of guardrails. Pick the bundle whose breaches reliably indicate the experiment is harming users.</>}
+            options={[
+              {key:"a", text:"The ROC-AUC of every model touched by the treated surface, refreshed weekly on a randomly sampled offline slice of production traffic across regions.", correct:false},
+              {key:"b", text:"Daily revenue total at the company level, treated as a guardrail breach if it falls during the experiment window regardless of the experiment's traffic share.", correct:false},
+              {key:"c", text:"The count of secondary metrics that show a directionally negative effect on the daily rollup, regardless of statistical significance or magnitude of the effect.", correct:false},
+              {key:"d", text:"P95 latency on the treated surface, error rate, app-crash rate, and an opt-out / uninstall rate measured at the scope of the experiment's traffic.", correct:true},
+            ]}
+            trap={<>(a) is a model-monitoring bundle, not an experiment-guardrail one. (b) confuses company-wide noise with experiment effect. (c) is a HARKing artefact in disguise.</>}
+            lens={<>Guardrails are user-perceptible harm signals at the experiment's scope. Latency, errors, crashes, opt-out — direct, observable, attributable.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q17"
+            difficulty="hard"
+            title="The hourly dashboard has been stale for 4 hours after a Flink lag spike."
+            scenario={<>The streaming processor is 4 hours behind; hourly rollups are out of date. Pick the platform's correct response to the staleness.</>}
+            options={[
+              {key:"a", text:"Page the platform on-call for the Flink lag; pause real-time evaluations until staleness recovers; do not gate launch decisions on stale hourly state during the incident.", correct:true},
+              {key:"b", text:"Continue evaluating the real-time monitors on the stale data, because a 4-hour lag is within the daily-rollup's tolerance and the daily path still gates the launch decision anyway.", correct:false},
+              {key:"c", text:"Switch the real-time monitors over to the daily rollup until the hourly rollup catches up, so dashboards continue to refresh even with a stale upstream processor.", correct:false},
+              {key:"d", text:"Page experiment owners directly for every experiment whose hourly dashboard has stalled, so each team can investigate the lag independently within their own runbook.", correct:false},
+            ]}
+            trap={<>(b) trusts stale data for real-time signals. (c) loses the real-time character of the monitors. (d) fans out a platform issue to 1000 teams.</>}
+            lens={<>Dashboard staleness is a platform incident, not a per-experiment one. Pause real-time decisions, page the platform, restore the path.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q18"
+            difficulty="hard"
+            title="A 5-sigma effect lights up on a secondary metric outside the spec."
+            scenario={<>A secondary engagement metric has jumped sharply. The team had registered a different primary in the spec at experiment start. Pick the senior response.</>}
+            options={[
+              {key:"a", text:"Ship on the strength of the 5-sigma effect; the size of the effect makes pre-registration a formality and the platform should treat the result as confirmatory.", correct:false},
+              {key:"b", text:"Treat the secondary as a hypothesis to confirm in a follow-up experiment; the current experiment should still ship or kill on its pre-declared primary alone.", correct:true},
+              {key:"c", text:"Add the secondary to the primary set retroactively, because the team always cared about engagement and the spec was an oversight rather than a binding pre-registration.", correct:false},
+              {key:"d", text:"Average the secondary's effect with the primary's effect to produce a composite launch criterion that weights the two metrics by their realized magnitudes.", correct:false},
+            ]}
+            trap={<>(a) lets effect size override pre-registration discipline. (c) is HARKing in slow motion. (d) invents a composite metric the spec did not call for.</>}
+            lens={<>One Metric Decision: primary is locked before unblinding. Hypotheses generated mid-experiment require a fresh experiment to confirm.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q19"
+            difficulty="hard"
+            title="The transient alarm keeps firing. The owner asks to mute it for the rest of the run."
+            scenario={<>The alarm has fired three times this week, each time a mobile-log lag that resolved within an hour. The owner asks the platform to mute the alert for this experiment.</>}
+            options={[
+              {key:"a", text:"Mute the alert for the rest of the experiment and rely on the analyst to compute the chi-squared manually one time at the final launch-decision moment instead.", correct:false},
+              {key:"b", text:"Lower the chi-squared threshold below 3.84 so the detector becomes less sensitive to transient lags and the alarm stops firing on those short-window contaminations.", correct:false},
+              {key:"c", text:"Keep the alarm enabled but route transient pages to a soft-warning channel that escalates only when the alarm remains hot beyond a defined sustained-time window.", correct:true},
+              {key:"d", text:"Move evaluation to the daily rollup where transient lags are smoothed out by the wider window, so the alarm stops firing on short-lived mobile-log contaminations.", correct:false},
+            ]}
+            trap={<>(a) loses the safety property the analyst depends on at launch. (b) trades a real signal for noise reduction. (d) puts the safety check on a slower path than the launch decision.</>}
+            lens={<>The detector has to stay on. Alarm fatigue is real but the fix is alert shaping, not alert removal.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q20"
+            difficulty="hard"
+            title="A p95 latency guardrail is breached on a tier-2 country only; aggregate p95 looks fine."
+            scenario={<>Latency p95 is breached for users in one regional tier; the aggregate p95 across the experiment looks healthy. The owner wants to treat it as a regional capacity issue.</>}
+            options={[
+              {key:"a", text:"Dismiss the regional breach; the aggregate p95 is the platform's contractual guardrail and it remains intact across the experiment's overall traffic share.", correct:false},
+              {key:"b", text:"Adjust the experiment's regional traffic share to exclude the affected region and continue without re-running, so the aggregate guardrail stays clean for the launch.", correct:false},
+              {key:"c", text:"Add the regional p95 to the launch criterion as a third primary metric and require it to clear the alpha-spending boundary alongside the original primary metric.", correct:false},
+              {key:"d", text:"Treat the regional breach as a real guardrail breach; the aggregate p95 masks heterogeneous user impact and shipping the experiment would harm the affected region.", correct:true},
+            ]}
+            trap={<>(a) is the textbook Simpson's mistake on guardrails. (b) excludes the user segment that is being harmed. (c) confuses guardrails with primaries.</>}
+            lens={<>Guardrails are about user impact. Heterogeneous breach has to be respected; aggregate-only thinking ships harm to subgroups.</>}
+          />
+
+          {/* ============================ AXIS E — GOTCHAS ============================ */}
+
+          <VIS.TrapProblem
+            id="exp-q21"
+            difficulty="hard"
+            title="An analyst peeks the daily dashboard for 30 days and stops on the first day p < 0.05."
+            scenario={<>The experiment has a fixed-horizon design with alpha = 0.05. The analyst peeks every day and announces a winner on the first day the p-value drops below 0.05.</>}
+            options={[
+              {key:"a", text:"The realized false-positive rate is approximately 26%, because 30 daily peeks at alpha = 0.05 inflate Type-I error from 5% to far above the nominal alpha on the null hypothesis.", correct:true},
+              {key:"b", text:"The realized false-positive rate is 5%, because the test was pre-registered at alpha = 0.05 and the analyst's stopping rule does not affect the per-day p-value calculation.", correct:false},
+              {key:"c", text:"The realized false-positive rate is 0.17%, because each daily peek effectively divides the alpha across the 30 peeks by the Bonferroni rule applied at the experiment level.", correct:false},
+              {key:"d", text:"The realized false-positive rate is unchanged at 5%, because each daily peek is a separate experiment with its own independent alpha budget on the same underlying data.", correct:false},
+            ]}
+            trap={<>(b) is the analyst's belief — pre-registration of alpha does not survive stop-on-first-significance. (c) is what Bonferroni would do if applied, which it was not. (d) treats peeks as independent experiments, which they aren't.</>}
+            lens={<>Stop-on-first-significance on naive p-values is peeking; realized Type-I error explodes. Peek-safe protection has to be active at peek time, not invented after.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q22"
+            difficulty="hard"
+            title="The headline result is null; a tenure-decile slice shows a clear effect on power users."
+            scenario={<>The overall analysis is null. The analyst slices by tenure decile and finds p below 0.05 for the top decile. They propose shipping to power users only.</>}
+            options={[
+              {key:"a", text:"Ship to power users on the strength of the slice result; segment-level effects are perfectly valid conclusions of the experiment when the slicing dimension is a natural one.", correct:false},
+              {key:"b", text:"Treat the power-user finding as exploratory; pre-register a power-user-only follow-up experiment and re-test the hypothesis cleanly on a fresh sample at the registered alpha.", correct:true},
+              {key:"c", text:"Apply Bonferroni to the 10 decile slices and ship the treatment if the top decile survives at alpha / 10 after the post-hoc correction across all 10 evaluated tenure deciles.", correct:false},
+              {key:"d", text:"Average the slice effects across deciles with inverse-variance weights and ship the treatment if the weighted-average effect crosses zero with the expected confidence.", correct:false},
+            ]}
+            trap={<>(a) is subgroup p-hacking. (c) reduces but does not fix the issue — segment-mining was not in the registered plan. (d) hides the mining behind a weighting scheme.</>}
+            lens={<>Subgroup discoveries are hypotheses, not conclusions. Confirm them in a fresh, pre-registered experiment.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q23"
+            difficulty="hard"
+            title="Aggregate lift is +0.5%; within-region lift is negative in every region."
+            scenario={<>The aggregate lift is +0.5%; lift is -0.2% in NA, -0.1% in EMEA, -0.3% in APAC. The regional mix shifted during the experiment window.</>}
+            options={[
+              {key:"a", text:"Ship on the aggregate lift; the cohort-mix shift is part of the natural variation that the experiment is intended to capture across populations and across time.", correct:false},
+              {key:"b", text:"Ship and route the regional negatives to a future follow-up that tunes the treatment per region; the aggregate result establishes a baseline expectation across the population.", correct:false},
+              {key:"c", text:"Decompose the headline lift into within-region effect and mix-shift effect; if every within-region effect is negative, the experiment is harmful at the user level despite the aggregate sign.", correct:true},
+              {key:"d", text:"Drop the regions with negative within-region effects from the analysis and report the residual aggregate lift as the launch criterion for the experiment at decision time.", correct:false},
+            ]}
+            trap={<>(a) ships harm to every region. (b) defers the harm. (d) cherry-picks the analysis sample to manufacture a positive read.</>}
+            lens={<>Simpson's paradox: aggregate sign can flip the within-stratum sign. Decompose into within-region + mix-shift before shipping.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q24"
+            difficulty="hard"
+            title="A 5% global holdout is permanently excluded from every experiment. Pick the strongest reason."
+            scenario={<>The platform reserves a permanent 5% slice of users that receives no experimental treatment. Pick the strongest reason this slice is worth its opportunity cost in lost lift.</>}
+            options={[
+              {key:"a", text:"Provides a clean control for every per-experiment alarm-detector check, so the chi-squared can be calibrated against an unbiased reference population across the platform.", correct:false},
+              {key:"b", text:"Acts as a permanent eval set for the recommender models in production, providing a label distribution unaffected by treatment-related selection across the user base.", correct:false},
+              {key:"c", text:"Reduces the variance of every individual experiment by serving as a shared control population that all experiments draw from when computing their primary effect estimate.", correct:false},
+              {key:"d", text:"Measures the long-cycle aggregate effect of every shipped experiment combined against an untreated baseline; catches cumulative drift that per-experiment analyses cannot recover.", correct:true},
+            ]}
+            trap={<>(a) misframes the detector's role. (b) is a side benefit but not the primary one. (c) is incorrect — holdouts are excluded from experiments, not shared with them.</>}
+            lens={<>The holdout's value is long-cycle: it measures the cumulative impact of all shipped experiments together, which no per-experiment estimator can recover.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q25"
+            difficulty="hard"
+            title="The mobile team wants to compute the assignment hash on the device to save a round-trip."
+            scenario={<>The mobile team proposes computing hash(user || salt || exp) on the device. The bucketing-service call is replaced by a static-bundle download of the spec.</>}
+            options={[
+              {key:"a", text:"Push the salt and the spec to the client only for experiments whose assignment latency sits on the critical path; treat the spec payload as versioned, signed, and refreshable.", correct:true},
+              {key:"b", text:"Replace the server-side bucketing entirely with on-device hashing for every experiment, because the hash math is identical on both sides and the round-trip is operationally wasteful.", correct:false},
+              {key:"c", text:"Use a client-side random number generator instead of the hash, so the variant is decided locally on the device without any dependency on a downloaded spec payload at all.", correct:false},
+              {key:"d", text:"Keep assignment server-side but cache the chosen variant in the client for the entire user lifetime, so subsequent requests skip the round-trip after the first assignment call lands.", correct:false},
+            ]}
+            trap={<>(b) loses the ability to rotate the salt or kill an experiment instantly. (c) breaks cross-device determinism and the detector. (d) freezes the variant against spec changes like a holdout flip.</>}
+            lens={<>On-device hashing is acceptable when the spec is shipped versioned and signed; client-side randomness or stale caches break determinism and operability.</>}
+          />
+
+          <VIS.TrapProblem
+            id="exp-q26"
+            difficulty="hard"
+            title="A reward-maximizing allocator runs alongside a fixed-allocation test on the same home-feed surface."
+            scenario={<>An adaptive allocator shifts traffic toward higher-reward arms over time. A fixed-allocation test in the adjacent layer is on the same home-feed surface as the allocator.</>}
+            options={[
+              {key:"a", text:"Run both freely with independent salts; the adaptive allocator's traffic reshuffles do not affect the fixed-allocation test's randomization because the salts decouple the buckets.", correct:false},
+              {key:"b", text:"Place both into the same mutually-exclusive layer so a user gets one variant per layer; analyze the fixed test within strata of the allocator's reallocation schedule at read time.", correct:true},
+              {key:"c", text:"Pause the fixed-allocation test for the duration of the allocator's exploration phase, then resume the fixed test once the allocator has pinned itself to its winning arm in production.", correct:false},
+              {key:"d", text:"Convert the fixed-allocation test to an adaptive allocator as well, so the allocation schedules stay aligned across the surface and downstream metrics share a single sampling regime.", correct:false},
+            ]}
+            trap={<>(a) ignores surface interaction between two treatments on the same slot. (c) wastes time and conflates the allocator's converged state with a control. (d) replaces a confirmatory test with an exploratory mechanism.</>}
+            lens={<>Adaptive allocators and fixed tests share the same mutex constraint on a surface. Layer placement plus stratified analysis is the standard combination.</>}
+          />
+
+        </VIS.Section>
+
+        <VIS.Section id="sec-watch" title="Watch-outs">
+          <ul>
+            <li><strong>SRM is the silent killer.</strong> At billions of users, a 0.3-percentage-point split breaches chi-squared. Veto every launch on a hot SRM. Math: §3d.</li>
+            <li><strong>Peeking blows up Type-I error.</strong> Naive daily peeks turn 5% alpha into ~26% over a month. Alpha-spending has to be the default, not opt-in. Math: §3c.</li>
+            <li><strong>Label maturity gates the analysis frontier.</strong> Retention and revenue rows that aren't ripe are not zeros — they're censored. Math: §3f.</li>
+            <li><strong>One Metric Decision before unblinding.</strong> Lock the primary in the spec; secondaries are diagnostic. Math: §3g.</li>
+            <li><strong>Same-surface experiments need mutex layers.</strong> Independent randomization is not the same as freedom from interaction. Math: §3h.</li>
+            <li><strong>Network interference contaminates marketplace A/Bs.</strong> Between-user estimators under-estimate the global effect; cluster on markets or weeks. Math: §3i.</li>
+            <li><strong>Randomization unit must match analysis unit.</strong> Or cluster the standard error. Otherwise sessions-within-user correlation inflates significance. Math: §3j.</li>
+          </ul>
+        </VIS.Section>
+      </React.Fragment>
+    )}
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://www.kdd.org/exploration_files/19-1-Article2.pdf" target="_blank" rel="noopener"><strong>Kohavi et al.</strong></a> — Trustworthy Online Controlled Experiments (the canonical paper).</li>
-        <li><a href="https://exp-platform.com/Documents/2013-02-CUPED-ImprovingSensitivityOfControlledExperiments.pdf" target="_blank" rel="noopener"><strong>Deng et al.</strong></a> — CUPED original paper.</li>
-        <li><a href="https://www.microsoft.com/en-us/research/group/experimentation-platform-exp/" target="_blank" rel="noopener"><strong>Microsoft ExP</strong></a> — group page — production blog posts.</li>
-        <li><a href="https://booking.ai/" target="_blank" rel="noopener"><strong>Booking.com AI blog</strong></a> — industry experimentation patterns.</li>
+        <li><a href="https://www.kdd.org/exploration_files/19-1-Article2.pdf" target="_blank" rel="noopener"><strong>Kohavi et al. — Trustworthy Online Controlled Experiments</strong></a> — the canonical paper.</li>
+        <li><a href="https://exp-platform.com/Documents/2013-02-CUPED-ImprovingSensitivityOfControlledExperiments.pdf" target="_blank" rel="noopener"><strong>Deng et al. — CUPED</strong></a> — variance reduction with pre-experiment covariates.</li>
+        <li><a href="https://www.microsoft.com/en-us/research/group/experimentation-platform-exp/" target="_blank" rel="noopener"><strong>Microsoft ExP</strong></a> — production experimentation-platform writeups.</li>
+        <li><a href="https://eng.lyft.com/experimentation-in-a-ridesharing-marketplace-b39db027a66e" target="_blank" rel="noopener"><strong>Lyft Engineering — marketplace experimentation</strong></a> — interference in two-sided markets.</li>
+        <li><a href="https://booking.ai/" target="_blank" rel="noopener"><strong>Booking.com AI</strong></a> — industry experimentation patterns.</li>
       </ul>
     </VIS.Section>
   </main>
-);
+  );
+};
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 
