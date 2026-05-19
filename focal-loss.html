@@ -48,6 +48,289 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://unpkg.com/@lottiefiles/lottie-player@2.0.8/dist/lottie-player.js" async></script>
+  <script>window.__VIS_GLOSSARY = {
+  "_meta": {
+    "purpose": "Shared cache of jargon→plain-English glosses. Used by /visualize and trap-drill authors. Append new terms as encountered. Keep glosses ≤25 words, no jargon-in-jargon.",
+    "updated": "2026-05-19"
+  },
+  "α-balancing": "Per-class scalar weight α in focal loss; multiplies the per-sample modulating factor (1-p_t)^γ. Equivalent in spirit to class-weighted BCE.",
+  "anchor boxes": "Fixed bounding boxes laid over an image at multiple scales. Each is a binary classification candidate (object vs background) in single-stage detection.",
+  "backprop": "Backpropagation: chain-rule pass computing gradients of the loss w.r.t. each weight; consumed by SGD/AdamW for parameter updates.",
+  "batch": "The chunk of samples processed in one forward/backward pass. Gradient is summed over the batch before the optimizer step.",
+  "class-weighted BCE": "Per-class weighted binary cross-entropy. Multiplies the loss for the rare class by a fixed scalar > 1. Doesn't adapt to per-sample confidence.",
+  "class-weighted CE": "Cross-entropy with a fixed per-class scalar weight. Up-weights the rare class; doesn't depend on per-sample confidence.",
+  "cross-entropy": "Standard classification loss: -log(p_t) where p_t is the predicted probability for the correct class. Treats every sample equally.",
+  "dense classification": "ML setup where every pixel/anchor is a candidate class. Background dominates ~99.99% and drowns foreground signal under plain CE.",
+  "Faster R-CNN": "Two-stage object detector: region-proposal network shortlists ~1k boxes, then a classifier head refines. Two stages provide implicit hard-negative filtering.",
+  "gradient (focal loss)": "The signal that updates weights during backprop. Focal loss reduces this signal for confident-correct samples without altering predictions.",
+  "modulating factor": "The (1 - p_t)^γ multiplier in focal loss. Scales each sample's loss by how confident the model is about the right answer.",
+  "oversampling": "Sampling strategy that draws minority-class examples more often per epoch to balance per-batch class counts. Cheap alternative to focal loss.",
+  "RetinaNet": "Lin et al. 2017 single-stage object detector. Showed focal loss closes the accuracy gap with two-stage detectors at higher throughput.",
+  "RetinaNet default": "The (γ, α) focal-loss values Lin et al. recommended after sweep: γ=2, α=0.25 for the positive class.",
+  "single-stage object detection": "Object detector that predicts class and box directly from a feature map in one pass; no region-proposal stage.",
+  "temperature scaling": "Post-hoc calibration: divide pre-softmax logits by a learned scalar T on held-out data. Fixes over-confidence without changing argmax accuracy.",
+  "AdamW": "Adam optimizer with decoupled weight decay; default optimizer for transformer training.",
+  "aleatoric uncertainty": "Uncertainty from inherent noise in the data. Not reducible with more data.",
+  "AML": "Anti-Money-Laundering. The compliance domain of detecting and reporting laundering activity in financial systems.",
+  "ANN": "Approximate Nearest Neighbor. Family of algorithms (HNSW, IVF, ScaNN) that find close vectors much faster than exact search at small recall cost.",
+  "anti-redundancy": "Avoiding near-duplicate items in the same ranked list (e.g. five very similar sushi places). MTGR captures this via the prefix.",
+  "ATE": "Average Treatment Effect. Population-average causal effect of a treatment.",
+  "attention rollout": "Interpretability technique: multiply attention matrices across layers to attribute output to input tokens.",
+  "AUC": "Area Under the ROC Curve. Probability that a random positive scores higher than a random negative. Threshold-free ranking metric.",
+  "auction": "Real-time ad-bidding system that ranks ads by bid × predicted CTR; consumes calibrated probability, not raw logits.",
+  "AUPRC": "Area Under the Precision-Recall Curve. More informative than AUC for class-imbalanced problems.",
+  "autoregressive": "Generates a sequence one element at a time, each conditioned on what's already been emitted; classic next-token prediction.",
+  "backpressure": "Control loop that throttles incoming load when downstream capacity is exceeded (e.g., raise confidence threshold to send fewer posts to humans during surge).",
+  "BatchBALD": "Bayesian Active Learning by Disagreement, batch-corrected. Acquires K queries that JOINTLY maximize mutual information with model parameters.",
+  "BatchNorm": "Batch Normalization. Normalize each feature across the batch dimension; standard for CNNs, awkward for variable-length sequences.",
+  "BCE": "Binary cross-entropy. Loss function for yes/no prediction; pushes the predicted probability toward the true label (0 or 1).",
+  "beam search": "Decoding heuristic that keeps the top-B partial sequences at each step; trades compute for higher-quality outputs vs greedy decoding.",
+  "BERT": "Bidirectional Encoder Representations from Transformers. Pretrained text encoder; classic backbone for text classification (~50ms inference).",
+  "BERT4Rec": "BERT-style masked-item recsys. Bidirectional transformer trained with cloze masking on item sequences; pointwise scoring head.",
+  "BFloat16": "16-bit float with 8-bit exponent (vs FP16's 5). Wider range, lower precision; preferred for ML training stability.",
+  "BIN": "Bank Identification Number. First 6-8 digits of a card; identifies the issuer. Used as a fraud feature.",
+  "BPR": "Bayesian Personalized Ranking. Pairwise loss for recsys: predicted score of an observed item should exceed that of an unobserved item.",
+  "calibrated": "A model's predicted probability matches the true frequency (a 0.8 prediction is right 80% of the time). Re-calibrate as data shifts.",
+  "calibration": "How closely predicted probabilities match true frequencies. A model predicting 0.7 should be right 70% of the time.",
+  "candidate generation": "First stage of recsys: retrieve a few hundred items from the full catalog (millions). Usually ANN or two-tower.",
+  "candidate slate": "The set of items considered for display in one user-facing list. MTGR orders the slate; retrieval produces it.",
+  "cascade": "Multi-stage retrieval/ranking pipeline; each stage shrinks the candidate set and uses a heavier model.",
+  "CATE": "Conditional Average Treatment Effect. Treatment effect conditional on covariates — the per-user/per-context lift.",
+  "causal mask": "Mask applied to attention so each position can only attend to earlier positions; enforces left-to-right autoregressive structure.",
+  "CE": "Cross-entropy. Loss function for multi-class prediction; penalizes the model when the predicted class probability is low for the true class.",
+  "CLIP": "Contrastive Language-Image Pretraining. Joint image-text encoder producing aligned embeddings via contrastive loss.",
+  "code": "One entry in a codebook — a learned vector that an input snaps to during quantization. Identified by its integer index.",
+  "code utilization": "Fraction of codes (or entropy of code-assignments) actually used. Low utilization signals codebook collapse.",
+  "codebook": "Learned dictionary of discrete vectors (codes). An encoder snaps its output to the nearest code; that code's index becomes a token.",
+  "codebook collapse": "VQ/RQ-VAE failure: most codebook entries go unused; encoder maps all inputs to a few popular codes. Sign of broken quantization.",
+  "codebook drift": "Across catalog updates or retraining, codebook entries shift; the same item gets a different Semantic ID, breaking downstream consumers.",
+  "codebook size": "Codes per codebook (|V|, e.g. 256). Larger → finer reconstruction but less prefix-sharing across items.",
+  "cold-start": "When a new user or item has no interaction history, so embedding tables and behavioral features have nothing to learn from.",
+  "commitment loss": "VQ-VAE term that pulls encoder outputs toward their chosen code; prevents the encoder from drifting away from the codebook.",
+  "confidence router": "Routes inputs based on cheap-model output confidence: high confidence → auto-action, low confidence → escalate to expensive model or human.",
+  "conformal prediction": "Distribution-free method that produces prediction sets with guaranteed coverage (e.g., 95%) under exchangeability.",
+  "constrained decoding": "Mask the decoder's logits at each step so it can only emit tokens that lead to a valid sequence (e.g., a real catalog item).",
+  "contextual bandit": "Online decision algorithm: choose an action given context, observe reward, update; trades exploration vs exploitation.",
+  "contrastive loss": "Loss that pulls positive pairs together and pushes negatives apart in embedding space (e.g. InfoNCE).",
+  "cost-of-error": "The business/safety cost of a misclassification — varies by policy (false negative on self-harm vs false positive on spam).",
+  "cross-attention": "Attention layer where queries come from one sequence (e.g., decoder) and keys/values from another (e.g., encoder). Connects two streams.",
+  "CSAM": "Child Sexual Abuse Material. Highest-priority moderation category; detected via perceptual-hash matches against known-bad databases.",
+  "CTR": "Click-Through Rate. Fraction of impressions that lead to a click; the central calibration target for ads and feed ranking.",
+  "DAG": "Directed Acyclic Graph. Nodes connected by directed edges with no cycles; used to model causal structure or computation graphs.",
+  "dead codes": "Codebook entries that no encoder output ever snaps to; symptom of collapse. Fixed by periodic re-init near active encoder regions.",
+  "decode temperature": "Scalar dividing logits before softmax at decode time. Higher T → more diverse samples; lower T → more deterministic argmax-like decoding.",
+  "decoder": "Neural net that maps a latent vector (or token sequence) back to the output space (reconstructed input, next item).",
+  "decoder-only transformer": "Transformer with only the decoder stack (GPT-style); generates outputs one token at a time conditioned on what's been emitted so far.",
+  "deep classifier": "An expensive deep-learning model (transformer-based) used in the second tier of a cascade, after cheap heuristics have screened obvious cases.",
+  "Deep SVDD": "Deep Support Vector Data Description. One-class anomaly detector: maps inliers to a tight hypersphere; outliers fall outside.",
+  "dense retrieval": "Retrieval via dot-product (or cosine) between learned dense embeddings of queries and items; usually served by an ANN index.",
+  "diversification reranker": "Post-ranking layer that swaps items to spread categories/topics across the list. Patches intra-list redundancy that pointwise rankers miss.",
+  "DLRM": "Deep Learning Recommendation Model. Meta's classic recsys architecture: feature crosses + MLP top.",
+  "doubly robust": "Off-policy estimator with both an outcome model and a propensity model; unbiased if EITHER is correct.",
+  "DP-FTRL": "Variant of DP-SGD with correlated noise across steps via tree-aggregation; better privacy-utility trade for long training.",
+  "DP-SGD": "Differentially-Private SGD. Per-sample gradient clipping + Gaussian noise; provides (ε,δ)-DP privacy guarantee at some utility cost.",
+  "DPO": "Direct Preference Optimization. Trains a model on (winning, losing) pairs of outputs to align it with preferences — no separate reward model.",
+  "DPP": "Determinantal Point Process. Probabilistic model that prefers diverse subsets; selecting a new item discounts items similar to those already chosen.",
+  "drift": "When the data distribution at serving time diverges from the training distribution; model accuracy silently degrades.",
+  "DROCC": "Deep Robust One-Class Classification. Adversarially trains a one-class detector by perturbing points along a radius-r shell.",
+  "DyGFormer": "Dynamic Graph Transformer. Transformer over patches of temporal neighbor sequences (no per-node memory, stateless per call).",
+  "dynamic masking": "Attention mask that adapts per-request (here: prevents cross-feature tokens from attending to future emitted items in MTGR).",
+  "e-commerce ranking": "Ranking items on a shopping surface (search, category page, recommendations). Loaded with crosses (price×budget, brand×history).",
+  "ECE": "Expected Calibration Error. Average gap between predicted probability and true frequency, binned over the predicted-probability axis.",
+  "elastic shift": "Reviewer scheduling that scales pool size up/down across time zones to match incoming load; common in 24/7 global moderation ops.",
+  "EMA codebook update": "Update each codebook entry as an exponential moving average of the encoder outputs assigned to it. Stabilizes VQ/RQ-VAE training.",
+  "embedding": "Dense vector representation of a discrete item (word, user, product). Learned so that similar items have similar vectors.",
+  "encoder": "Neural net that maps raw input (image, text, item) into a dense latent vector consumed by downstream layers.",
+  "encoder-decoder": "Transformer with separate encoder (reads input) and decoder (writes output) stacks; T5-style; classic for sequence-to-sequence tasks.",
+  "engagement-bait": "Content engineered to maximize watch-time or clicks (cliffhangers, loops, ragebait) regardless of user satisfaction.",
+  "epistemic uncertainty": "Uncertainty from the model not knowing what it doesn't know. Reducible with more data; captured by ensembles or Bayesian methods.",
+  "exploration vs exploitation": "Tradeoff in online learning: try new actions to gather data vs pick the best-known action to maximize reward now.",
+  "exposure bias": "When the data only contains items the system already showed users; new items never get the chance to prove themselves.",
+  "factorized softmax": "Decompose softmax over a huge vocabulary into smaller softmaxes (e.g. one per code position) to make it tractable.",
+  "false negative": "Model classifies as 'safe' something that's actually a violation; the costliest error class for high-harm policies like self-harm.",
+  "false positive": "Model classifies as 'violation' something that's actually safe; costlier for low-harm policies like spam (annoys real users).",
+  "FastText": "Fast text classifier using subword n-grams; trains and serves in milliseconds. Common cheap-tier text moderation model.",
+  "feature cross": "Combining two raw features into a single signal (e.g. user-id × category). Captures interactions a single-feature model misses.",
+  "FedAvg": "Federated Averaging. Server averages client model weights; the canonical federated-learning aggregator.",
+  "federated learning": "Train a shared model across many clients without centralizing their data; each client computes gradients locally, server aggregates.",
+  "feed surface": "Product surface that shows a long ranked list (home feed, search results). Has many slots, so intra-list ordering matters.",
+  "FIFO": "First-In-First-Out queue. Items processed strictly in arrival order, no priority — wrong choice when policies have different urgency.",
+  "filter bubble": "Recommender concentrates each user on a narrow slice of content over time, suppressing exposure to other relevant items.",
+  "FlashAttention2": "FA2. GPU-optimized exact softmax-attention kernel; tiles QK^T to keep work in SRAM. Standard 2024 baseline for transformer attention speed.",
+  "FLOPs": "Floating-point operations. Standard unit of compute used in scaling-law plots and model-cost comparisons.",
+  "Focal loss": "Down-weights well-classified examples via (1-p)^γ; sharpens loss on hard examples. Used for class-imbalanced detection.",
+  "FP16": "16-bit floating point (IEEE half). Default training/inference precision for modern transformer kernels on Ampere+.",
+  "FP4": "4-bit floating point quantization. Reduces weight+activation memory ~8× vs BF16; aggressive low-precision serving format.",
+  "FP8": "8-bit floating point. Half the bits of FP16; trades precision for compute/memory savings, available on H100+.",
+  "FraudGPT": "LLM continually pretrained on financial-fraud text (typology vocabularies like 'structuring', 'smurfing', etc.) then SFT'd for case generation.",
+  "GCN": "Graph Convolutional Network. Layerwise neighborhood averaging with learned weights; transductive (needs full graph at train time).",
+  "generative recsys": "Recommendation systems where the model GENERATES the next item's identifier (or token sequence) instead of scoring a candidate list.",
+  "GLN": "Group-Layer Normalization. LayerNorm variant that normalizes within separate groups of features; preserves scale separation between heterogeneous token types.",
+  "GNN": "Graph Neural Network. Family of models that learn node/edge embeddings by iteratively aggregating from neighbors.",
+  "golden-set": "A small set of items with verified ground-truth labels, used to audit reviewer accuracy and detect label drift over time.",
+  "GraphSAGE": "Inductive GNN: each node aggregates features from sampled neighbors; works on unseen nodes (unlike transductive GCN).",
+  "GroupNorm": "Group Normalization (CV). Splits channels into G groups and normalizes within each group; works with small batch sizes where BN fails.",
+  "Gumbel-softmax": "Differentiable approximation to sampling from a categorical distribution; lets you backprop through discrete choices via reparameterization.",
+  "hallucination (decoder)": "Decoder emits a token sequence (Semantic ID) that does not correspond to any real item in the catalog.",
+  "HBM": "High-Bandwidth Memory. Stacked DRAM used on GPUs (H100, A100); the bandwidth bottleneck for memory-bound kernels.",
+  "HE": "Homomorphic Encryption. Compute on ciphertexts without decrypting; allows two parties to compute a joint function without revealing inputs.",
+  "hierarchical code": "Code where earlier positions capture coarse semantics, later positions capture fine residuals. Structure that RQ-VAE produces.",
+  "hit-rate": "Fraction of users whose top-K list contains at least one item they actually interacted with.",
+  "HITL": "Human-In-The-Loop. ML system that escalates uncertain cases to a human reviewer before acting; combines model speed with human judgment.",
+  "HNSW": "Hierarchical Navigable Small World. Graph-based ANN: layered proximity graph, greedy descent at each layer. RAM-heavy, log-time.",
+  "HSTU": "Hierarchical Sequential Transduction Units. Meta 2024 paper: sequence-modeling architecture for recommendation that scales past DLRM's plateau.",
+  "human-in-the-loop": "Workflow where uncertain model predictions are sent to a human reviewer; reviewer decisions feed back as training labels.",
+  "inductive bias": "Built-in assumption a model makes about data structure (e.g. locality, recency); shapes what it learns easily.",
+  "InfoNCE": "Contrastive loss: pulls positive (anchor, target) pairs together, pushes negatives apart, normalized over a batch of candidates.",
+  "INT8": "8-bit integer quantization. Reduces memory + compute ~4× vs FP32 at small accuracy cost; common at inference.",
+  "inter-rater agreement": "Statistical measure (Cohen's kappa, etc.) of how often two reviewers label the same item the same way; proxy for label quality.",
+  "intra-list dependencies": "How items in one ranked list interact (anti-redundancy, position effects). Pointwise scorers can't see them; list-generators can.",
+  "intra-list diversity": "Spread of categories/topics within a single ranked list. High diversity = less redundancy; valuable for exploration.",
+  "IPS": "Inverse Propensity Score. Same as IPW; widely used in counterfactual recsys evaluation.",
+  "IPW": "Inverse Propensity Weighting. Reweights samples by 1/probability-of-being-observed; corrects for selection bias.",
+  "isotonic regression": "Post-hoc calibration: fit a free-form monotonic step function from score to probability. More flexible than Platt.",
+  "iterative DPO": "DPO run in multiple rounds: collect on-policy preferences, run DPO, redeploy, repeat. Keeps preference data fresh as the policy evolves.",
+  "IVF-PQ": "Inverted File + Product Quantization. ANN: cluster space into K cells, encode each vector as a PQ code; lookup = nearest centroids + PQ distances.",
+  "K-means": "Clustering algorithm: pick K centroids, assign each point to nearest, recompute centroids; repeat until stable.",
+  "K-RagRec": "Knowledge-RAG Recommender. Uses retrieval-augmented generation: an LLM is grounded on retrieved item snippets to produce recommendations.",
+  "KL divergence": "Asymmetric measure of distance between two distributions. Used as a regularizer in VAEs to keep latents near a prior.",
+  "knowledge distillation": "Train a small 'student' model to match a large 'teacher' model's outputs (logits or features), often with temperature softening.",
+  "KV-cache": "Cached Key/Value tensors from prior transformer steps; lets autoregressive decoding skip recomputing past attention.",
+  "KYC": "Know-Your-Customer. Customer onboarding verification: document checks, face match, sanctions screening.",
+  "label smoothing": "Replace hard 0/1 targets with (ε, 1-ε); discourages over-confidence and helps calibration of softmax outputs.",
+  "latent space": "Vector space the encoder maps inputs into. Geometry here defines what 'similar' means downstream.",
+  "LayerNorm": "Per-token feature-vector normalization (subtract mean, divide by std, then learned affine). Stabilizes deep transformer training.",
+  "Lazy Decoder-Only": "OneRec V2 design: decoder cross-attends to user context only at chosen layers/steps; skipped steps reuse cached summaries. Cuts compute ~94%.",
+  "LDAM": "Label-Distribution-Aware Margin loss. Adds a class-dependent margin to logits; pushes the boundary away from rare-class points.",
+  "leave-last-out": "Eval protocol: for each user, hold out their most recent interaction as the test target, train on the rest.",
+  "linear attention": "Attention that replaces softmax with a kernel feature map so cost is O(n) in sequence length instead of O(n²).",
+  "LinUCB": "Linear Upper Confidence Bound. Contextual bandit assuming linear reward; picks the action with the highest (mean + confidence-bound) estimate.",
+  "list-wise": "Loss or metric defined over an entire ranked list (e.g., NDCG, mean watch-time per list) rather than per-item pairs.",
+  "listwise loss": "Loss computed over the whole ranked list at once (e.g. NDCG-based) instead of one item at a time. Captures list-level objectives.",
+  "LLM-rec": "Umbrella term for recsys approaches that wrap or distill an LLM as the scorer/generator rather than using a classic ID-embedding model.",
+  "Lloyd's algorithm": "Standard iterative procedure for k-means: assign points to nearest centroid, update centroids to cluster mean, repeat until stable.",
+  "LongER": "ByteDance long-sequence transformer for recsys; memory-efficient attention focused on long user histories.",
+  "LoRA": "Low-Rank Adaptation. Fine-tune a model by adding small low-rank weight deltas (A·B) instead of updating full weight matrices.",
+  "LSH": "Locality-Sensitive Hashing. Hash family where similar vectors collide with high probability; used for cheap approximate nearest neighbor.",
+  "Mamba": "State-space model with selective scan; processes sequences in linear time (O(L)) versus transformer's quadratic (O(L²)).",
+  "MAML": "Model-Agnostic Meta-Learning. Trains a model whose parameters can be fine-tuned to a new task in a few gradient steps.",
+  "MC dropout": "Monte-Carlo Dropout. Leave dropout on at inference and sample M forward passes; approximates a Bayesian posterior over weights.",
+  "MCC": "Merchant Category Code. 4-digit code (e.g., 5411 = grocery) categorizing what kind of merchant accepted a transaction.",
+  "membership inference": "Privacy attack that guesses whether a specific record was in the training set by querying the trained model.",
+  "millions-of-item softmax": "Computing softmax over the entire item catalog (millions of classes). Memory- and compute-prohibitive; usually approximated.",
+  "MiniLM": "Small distilled transformer (~22M params, 6 layers) producing sentence embeddings at a fraction of T5's compute.",
+  "mirror serving": "Both old and new models score every request; the old one still serves users. Used to fit new calibration heads.",
+  "MMoE": "Multi-gate Mixture-of-Experts. Each task has its own gate over a shared pool of experts; cheaper than fully task-specific networks.",
+  "MMR": "Maximal Marginal Relevance. Greedy reranker: each step picks the candidate maximizing (relevance − λ × similarity to already-chosen).",
+  "MNAR": "Missing Not At Random. The probability that a value is missing depends on the value itself (e.g., users only rate items they chose to see).",
+  "MobileNet": "Lightweight convolutional neural network designed for fast image inference on mobile/edge devices; ~10ms latency typical.",
+  "mode collapse": "When a generative model concentrates probability on a few outputs and stops covering the long tail of valid choices.",
+  "MoE": "Mixture-of-Experts. Multiple expert subnetworks + a gate that routes each input to one or few experts. Scales params without paying full FLOPs.",
+  "MovieLens": "Public movie-rating dataset (1M-25M ratings). Most-cited public recsys benchmark; small relative to industry data.",
+  "MPC": "Multi-Party Computation. Cryptographic protocol where parties jointly compute a function over private inputs, revealing only the output.",
+  "MRR": "Mean Reciprocal Rank. 1 / position of first relevant item, averaged across queries. Sensitive to top-1 only.",
+  "MTGR": "Meituan Generative Ranking. Decoder-only transformer that emits a ranked list of items autoregressively; captures intra-list dependencies natively.",
+  "NDCG": "Normalized Discounted Cumulative Gain. Ranking metric that rewards relevant items appearing near the top of the list.",
+  "negative sampling": "Train the model to score observed (positive) items above a sub-sample of random non-observed (negative) items; avoids full softmax.",
+  "negative transfer": "When training on multiple tasks hurts each task's accuracy compared to training them separately. The shared params get pulled in conflicting directions.",
+  "non-IID": "Non-Independent-and-Identically-Distributed. Clients in federated learning have different data distributions; breaks IID assumptions FedAvg relies on.",
+  "nucleus sampling": "Top-p decoding: sample the next token from the smallest set whose cumulative probability exceeds p. Adds controlled diversity.",
+  "on-policy": "Training data sampled from the current policy. DPO/PPO benefit because preferences reflect actions the deployed model would actually take.",
+  "OneRec": "Unified retrieve+rank model. Single backbone serves both retrieval and ranking via task-template prompts; eliminates retrieval-ranker train/serve skew.",
+  "online learning": "Updates the model continuously as new data arrives, rather than retraining on the full historical batch.",
+  "P(click)": "Predicted probability that a user clicks an item; the canonical calibrated output of a CTR model used in ad auctions.",
+  "P5": "Pretrain-Personalize-Prompt-Predict-Plan. Early generative recsys paper that frames all recsys tasks as text-to-text via a single seq2seq model.",
+  "p99 latency": "The 99th percentile of response times. 1% of requests are slower; tail latency, often dominates SLA pain.",
+  "pairwise scoring": "Score (user, item_i) vs (user, item_j) pairs; loss rewards correct ordering between pairs. BPR is the canonical example.",
+  "PEFT": "Parameter-Efficient Fine-Tuning. Umbrella for techniques (LoRA, adapters, prefix-tuning) that fine-tune small fraction of params.",
+  "perceptual hash": "Hash that's similar for visually similar images (unlike cryptographic hash which is brittle). Used to detect known-bad reposts despite minor edits.",
+  "Platt scaling": "Post-hoc calibration: fit a sigmoid mapping from raw model score to calibrated probability. Simple, monotonic.",
+  "PLE": "Progressive Layered Extraction. Multi-task architecture with shared and task-specific experts at every layer; mitigates negative transfer.",
+  "pointwise scoring": "Score each (user, item) independently; ignores how items interact in the ranked list. Classic DLRM/HSTU framing.",
+  "policy lane": "A category of moderation policy with its own threshold, SLA, and review pool — e.g., self-harm vs spam vs intellectual-property.",
+  "policy threshold": "Per-policy confidence cutoff that decides auto-action vs escalation; tuned separately because each policy has different cost-of-error.",
+  "popularity bias": "Recommenders over-recommend already-popular items because they have more training signal, starving the long tail.",
+  "position bias": "Users click higher-ranked items more often regardless of relevance. Must be corrected to avoid feedback loops.",
+  "posterior collapse": "VAE failure: encoder ignores the latent, decoder reconstructs from its prior alone, latents stop carrying info.",
+  "PPO": "Proximal Policy Optimization. Reinforcement-learning algorithm; takes small policy-update steps to avoid catastrophic regression.",
+  "PQ": "Product Quantization. Split a vector into K equal subspaces and quantize each independently; used for compact ANN indexes (Faiss).",
+  "preference-AUC": "AUC computed over (preferred, dispreferred) pairs: probability the model scores the preferred item higher. Standard DPO offline metric.",
+  "prefix conditioning": "At decode step t, generate next item conditioned on the items already emitted (the prefix). Lets the model see the partial list.",
+  "prefix similarity": "Two Semantic IDs are similar to the extent their leading codes match. The core property RQ-VAE gives downstream consumers.",
+  "prompt template": "Fixed textual scaffold with slots (user history, candidate item) filled at runtime. Lets one LLM serve many tasks via task prefixes.",
+  "propensity score": "Probability that a unit received the treatment (or that an item was shown). Used in IPW corrections.",
+  "ProtoNet": "Prototypical Networks. Few-shot classifier: build a centroid per class from support examples, classify a query by nearest centroid.",
+  "PTQ": "Post-Training Quantization. Quantize weights/activations of an already-trained model without retraining.",
+  "push notification": "One-item-per-user message surface (e.g. mobile alerts). Single-slot ranking; MTGR's autoregressive prefix is empty here.",
+  "QAT": "Quantization-Aware Training. Insert fake-quant ops during training so the model learns to be robust to inference-time quantization noise.",
+  "ranked list": "Ordered list of items shown to the user. Order matters because users read top-down and clicks concentrate at the top.",
+  "recall@K": "Fraction of relevant items captured in the top-K retrieved list.",
+  "RecLLM": "Generative recsys that turns an LLM into a conversational recommender; user history and item descriptions are fed in as prompt text.",
+  "reconstruction loss": "Distance (usually MSE) between encoder input and decoder output. Drives the autoencoder to preserve information.",
+  "reranking": "Final-stage recsys: take the candidate set and apply a heavier scorer / diversification logic to produce the user-facing list.",
+  "residual quantization": "Repeated quantize-then-quantize-the-error trick. K codebooks; level k encodes what level k-1 missed. Captures fine detail with small vocabularies.",
+  "residual stream": "The token-wise vector that each transformer block reads from and writes to; carries information across layers.",
+  "retrain": "Refresh model weights on new data; usually periodic (weekly/daily) for systems where labels arrive from human reviewers.",
+  "retrieve-rank": "Two-stage recsys pipeline: a cheap retrieval narrows millions of items to a shortlist, then a heavier ranker reorders that shortlist.",
+  "reward hacking": "Policy exploits flaws in the reward model to score high without doing the intended task. Symptom of an under-constrained optimizer.",
+  "reward model": "Model trained to predict a scalar reward (e.g., watch-time) from (state, action) pairs. Supplies the supervisory signal for PPO/DPO.",
+  "RLHF": "Reinforcement Learning from Human Feedback. Train a reward model from human preferences, then optimize policy against it (usually with PPO).",
+  "RMSNorm": "Root-Mean-Square Norm. LayerNorm variant that drops the mean-subtract; faster and competitive in quality. Used in LLaMA-style transformers.",
+  "rotary embeddings": "RoPE. Encode position by rotating Q/K vectors by angle proportional to position; replaces additive position embeddings.",
+  "RQ-VAE": "Residual-Quantized VAE. Stacks K codebooks; each level quantizes the residual error from the previous level. Produces hierarchical semantic IDs.",
+  "sampled softmax": "Softmax over a sub-sampled candidate pool (e.g., 1000 items) instead of millions; trades exact normalization for speed.",
+  "SASRec": "Self-Attentive Sequential Recommendation. 2018 transformer over item-only sequences with binary cross-entropy; predecessor to HSTU.",
+  "scaling law": "Empirical relationship: model quality improves as a power-law function of compute, data, or parameters.",
+  "ScalingNote distillation": "Distill the heavy ranker's logits into the retrieval scorer each cycle so retrieval and ranking stay aligned without re-syncing indexes.",
+  "ScaNN": "Scalable Nearest Neighbors. Google ANN with anisotropic vector quantization: weights quantization error by inner-product loss direction.",
+  "secure aggregation": "Cryptographic protocol where a server sees only the SUM of client gradients (not individual ones); used in privacy-preserving federated learning.",
+  "selection bias": "Sample we observe is non-random; the act of observing changes which items appear. Common in MNAR rec data.",
+  "self-harm": "Moderation policy category covering suicide/self-injury content; has the tightest SLA (typically <30s) because of user-safety risk.",
+  "Semantic ID": "Discrete K-tuple code derived from item content (via RQ-VAE). Similar items share prefix codes; replaces random hashed IDs.",
+  "Semantic-ID collision": "When two distinct items map to the exact same K-tuple of codes; the model cannot tell them apart at decode time.",
+  "Sentence-T5": "T5-based sentence encoder; turns text into a fixed-size dense embedding. TIGER uses it as the RQ-VAE input encoder.",
+  "seq2seq": "Sequence-to-sequence transformer: encoder reads an input sequence, decoder autoregressively emits an output sequence.",
+  "sequence transduction": "Mapping an input sequence to per-position outputs (one score per candidate). HSTU does this; MTGR generates a sequence instead.",
+  "SFT": "Supervised Fine-Tuning. Train a pretrained model on labeled (input, target) pairs to specialize it.",
+  "shadow scoring": "Run a new model alongside production; record its predictions but ignore them at serving. First migration phase.",
+  "shadow serve": "Run a new model in parallel with production but discard its outputs; collects predictions/logs without exposing users to the new ranker.",
+  "shadow-ban": "Moderation action: user's posts are invisible to others but visible to themselves; user doesn't know they've been throttled.",
+  "Shapley value": "Game-theoretic feature attribution: average marginal contribution of a feature across all subsets; used for per-feature credit.",
+  "single-slot": "Product surface that shows only one item per request (push notification, hero card). No intra-list prefix to condition on.",
+  "SLA": "Service Level Agreement. A binding response-time target — e.g., 'self-harm posts must be reviewed within 30 seconds 99% of the time'.",
+  "SNGP": "Spectral-Normalized Gaussian Process layers. Single-forward-pass calibrated uncertainty by replacing the final layer with a GP head.",
+  "softmax": "Function that turns a vector of scores into a probability distribution (largest score → largest probability, all sum to 1).",
+  "softmax tail": "The low-probability region of a softmax output; FP8 underflow and calibration mismatches affect tail behavior most.",
+  "SSM": "State-Space Model. Sequence model that maintains a continuous hidden state updated by a linear recurrence; Mamba is a popular instance.",
+  "STE": "Straight-Through Estimator. Treats a non-differentiable op (quantization, rounding) as identity during backprop so gradients can flow.",
+  "straight-through estimator": "Backprop trick: forward pass uses a non-differentiable op (e.g. quantization); backward pass pretends it was identity so gradients flow.",
+  "stratified": "Sampling strategy that preserves class proportions across subgroups; ensures rare classes are represented in train/eval splits.",
+  "structuring": "Money-laundering pattern: split a large cash deposit into smaller sub-threshold ones to evade reporting requirements.",
+  "surge": "Sudden spike in inbound load — e.g., a breaking news event creates 10x normal posts/sec; system must throttle without crashing.",
+  "TabBERT": "BERT-style MLM pretraining on tabular transaction sequences (mask cells, predict). Used for fraud sequence modeling.",
+  "TabPFN": "Transformer pretrained on millions of synthetic small-n tabular datasets; does few-shot tabular classification with no per-task gradient updates.",
+  "temperature": "Logit-scaling knob before softmax. T>1 flattens the distribution (more random); T<1 sharpens it (more deterministic).",
+  "temperature softening": "Divide logits by T>1 before softmax. Smoothes the distribution; used in distillation so the student learns inter-class similarity.",
+  "TGN": "Temporal Graph Network. Each node carries an RNN-style memory updated as events arrive; supports temporal attention over neighbor history.",
+  "Thompson sampling": "Bandit algorithm: maintain a posterior over reward parameters, sample from it, act greedily on the sample.",
+  "throttle": "Slow or pause processing of low-priority work to free capacity for high-priority work — used during surge to protect SLA on critical lanes.",
+  "TIGER": "Transformer Index for GEnerative Recommenders. Google 2023 paper: emits items by generating semantic-ID code tuples instead of softmaxing over millions of items.",
+  "top-k": "Return the K highest-scoring items from a ranked list.",
+  "top-k sampling": "Sampling decoder: at each step, sample from the top-K most likely tokens; trades determinism for output diversity.",
+  "transducer": "Sequence model that maps an input sequence to per-position outputs (one output per input position). HSTU is a transducer.",
+  "trie": "Prefix tree. Each path from root to leaf spells a valid sequence; used to enforce valid Semantic-ID decoding.",
+  "twin-tower": "Synonym for two-tower: separate user and item encoder towers whose outputs are dot-producted to score (user, item) pairs.",
+  "two-tower": "Recsys architecture: separate user-encoder tower and item-encoder tower; dot-product their outputs to score (user, item) pairs.",
+  "typology": "In AML, the named pattern of laundering (e.g., trade-based, layering, smurfing). Detectors are usually typology-anchored.",
+  "UCB": "Upper Confidence Bound. Bandit rule that picks the action with the highest (mean + uncertainty) estimate; explicit exploration.",
+  "uplift modeling": "Estimates conditional treatment effect (CATE) — the per-user change in outcome from receiving a treatment.",
+  "ViT": "Vision Transformer. Applies transformer attention to image patches; more accurate than CNNs but heavier (~80ms inference typical).",
+  "VLM": "Vision-Language Model. Jointly trained on images and text; can describe images, answer questions about them, or embed both modalities.",
+  "VQ-VAE": "Vector-Quantized VAE. Quantizes encoder output to a single codebook; commitment loss keeps encoder near code centroids.",
+  "watch-time": "Total time a user spends watching a recommended item. Used as the engagement reward signal in OneRec and other video recsys.",
+  "β temperature": "DPO's KL-strength hyperparameter. Low β → policy can drift from SFT (reward-hack risk); high β → policy stays near SFT (no learning)."
+}
+;</script>
   <script>
 // vis-components.js — design-system JSX components for the /visualize skill.
 // Exposed as window.VIS.{Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle}.
@@ -738,6 +1021,60 @@
     }, children);
   }
 
+  // autoGloss: scan a string for terms in window.__VIS_GLOSSARY (set by exporter
+  // before vis-components.js loads). Returns a React children array with each
+  // matched term wrapped in the same <span class="vis-term"> the Term component
+  // emits. First-mention only per call. Longest-match-first so "candidate
+  // generation" beats "candidate" alone.
+  let _glossPattern = null;
+  let _glossLookup = null;
+  function _buildGlossPattern() {
+    const g = (typeof window !== "undefined" && window.__VIS_GLOSSARY) || {};
+    const keys = Object.keys(g).filter(k => k && !k.startsWith("_"));
+    if (!keys.length) { _glossPattern = false; return; }
+    // Longest first to favor multi-word terms; escape regex metachars.
+    keys.sort((a, b) => b.length - a.length);
+    const escaped = keys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    // Word-boundary on each side. Allow internal hyphens/spaces; common ML terms
+    // like "DP-SGD", "feature cross", "p99 latency" are all matched naturally.
+    _glossPattern = new RegExp("(^|[^A-Za-z0-9_])(" + escaped.join("|") + ")(?=[^A-Za-z0-9_]|$)", "g");
+    _glossLookup = g;
+  }
+  function autoGloss(text) {
+    if (typeof text !== "string" || !text) return text;
+    if (_glossPattern === null) _buildGlossPattern();
+    if (_glossPattern === false) return text;
+    const seen = new Set();
+    const out = [];
+    let lastIdx = 0;
+    let m;
+    _glossPattern.lastIndex = 0;
+    while ((m = _glossPattern.exec(text)) !== null) {
+      const before = m[1];
+      const term = m[2];
+      const matchStart = m.index + before.length;
+      const matchEnd = matchStart + term.length;
+      // Emit text BEFORE this match
+      if (matchStart > lastIdx) out.push(text.slice(lastIdx, matchStart));
+      // Emit wrapped term (first-mention only)
+      if (seen.has(term.toLowerCase())) {
+        out.push(text.slice(matchStart, matchEnd));
+      } else {
+        seen.add(term.toLowerCase());
+        out.push(h("span", {
+          key: matchStart,
+          className: "vis-term",
+          "data-rv-info": _glossLookup[term],
+          "aria-label": _glossLookup[term],
+          tabIndex: 0,
+        }, term));
+      }
+      lastIdx = matchEnd;
+    }
+    if (lastIdx < text.length) out.push(text.slice(lastIdx));
+    return out.length === 1 ? out[0] : out;
+  }
+
   // Standalone hover tooltip for <VIS.Term>. If the report-viewer overlay
   // is loaded it already shows tooltips for any [data-rv-info] element, so
   // we short-circuit here to avoid double-rendering.
@@ -766,11 +1103,11 @@
     }
     function hide() { if (tip) tip.style.display = "none"; }
     document.addEventListener("mouseover", (e) => {
-      const el = e.target.closest && e.target.closest(".vis-term");
+      const el = e.target.closest && e.target.closest("[data-rv-info]");
       if (el) show(el); else hide();
     });
     document.addEventListener("focusin", (e) => {
-      const el = e.target.closest && e.target.closest(".vis-term");
+      const el = e.target.closest && e.target.closest("[data-rv-info]");
       if (el) show(el);
     });
     document.addEventListener("focusout", hide);
@@ -779,7 +1116,7 @@
     // Tapping anywhere else (including a different term) hides the current.
     let lastTappedTerm = null;
     document.addEventListener("click", (e) => {
-      const el = e.target.closest && e.target.closest(".vis-term");
+      const el = e.target.closest && e.target.closest("[data-rv-info]");
       if (el) {
         if (el === lastTappedTerm) { lastTappedTerm = null; hide(); }
         else { lastTappedTerm = el; show(el); }
@@ -930,6 +1267,8 @@
         h("strong", { className: "vis-trap-title" }, title),
         modeBadge ? h("span", { className: "vis-trap-multi-badge" }, modeBadge) : null
       ),
+      // NO autoGloss on scenario either — scenario is part of the question;
+      // glossing mechanism terms in it hints at the answer space.
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       diagram ? h("div", { className: "vis-trap-diagram" }, diagram) : null,
       h("div", { className: "vis-trap-options",
@@ -949,6 +1288,10 @@
           h("span", { className: "vis-trap-key" },
             optionPrefix(o) + " (" + o.key + ")"),
           " ",
+          // NO autoGloss here. Glossing terms inside option text leaks the
+          // answer mechanism via hover. Authors must keep options self-contained;
+          // a candidate who needs a definition can scroll up to the prose where
+          // the term is explicitly wrapped via <VIS.Term>.
           o.text
         ))
       ),
@@ -1266,6 +1609,8 @@
         h("strong", { className: "vis-trap-title" }, title),
         h("span", { className: "vis-cf-mode-badge" }, "Fill in the code")
       ),
+      // NO autoGloss on scenario either — scenario is part of the question;
+      // glossing mechanism terms in it hints at the answer space.
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       h("div", { className: "vis-cf-code-wrap" },
         h("div", { className: "vis-cf-code-lang" }, language),
@@ -1345,6 +1690,8 @@
         h("strong", { className: "vis-trap-title" }, title),
         h("span", { className: "vis-md-mode-badge" }, "Step-by-step proof")
       ),
+      // NO autoGloss on scenario either — scenario is part of the question;
+      // glossing mechanism terms in it hints at the answer space.
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       h("ol", { className: "vis-md-steps" },
         steps.map((step, idx) => {
@@ -1414,7 +1761,7 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// Focal loss — row 19
+// Focal loss — ml-fund concept visual (G20 hover-gloss + trap drills)
 
 const FL_SPEC = {
   width: 600, height: 280,
@@ -1433,28 +1780,499 @@ const FL_DATA = Array.from({length:50}, (_,i) => {
   return { p, ce: -Math.log(p), fl2: Math.pow(1-p,2)*(-Math.log(p)), fl5: Math.pow(1-p,5)*(-Math.log(p)) };
 });
 
+// Modulating-factor curve: (1 - p_t)^γ across γ ∈ {0, 0.5, 1, 2, 5}
+const MOD_SPEC = {
+  width: 600, height: 260,
+  encoding: {
+    x: { field: "p", type: "quantitative", title: "p_t (predicted prob for true class)" },
+    y: { field: "w", type: "quantitative", title: "Modulating factor (1 - p_t)^γ" },
+    color: { field: "gamma", type: "nominal", title: "γ",
+             scale: { domain: ["0","0.5","1","2","5"],
+                      range: ["#0f172a","#6366f1","#16a34a","#dc2626","#d97706"] } }
+  },
+  mark: { type: "line", strokeWidth: 3 }
+};
+const MOD_DATA = [];
+[0, 0.5, 1, 2, 5].forEach(g => {
+  for (let i = 1; i <= 50; i++) {
+    const p = i / 50;
+    MOD_DATA.push({ p, w: Math.pow(1 - p, g), gamma: String(g) });
+  }
+});
+
 const App = () => (
-  <main style={{maxWidth:880,margin:"2em auto",padding:"0 16px"}}>
-    <VIS.Hero pill="ML Fund" title="Focal loss"
-      subtitle="The loss that ate easy negatives and made one-stage object detection work."
-      byline={[{label:"L2",value:"Imbalance"},{label:"L3",value:"Focal loss"},{label:"Origin",value:"Lin et al. 2017 (RetinaNet)"}]}/>
+  <main style={{maxWidth:880,margin:"2em auto",padding:"0 16px",fontSize:16,lineHeight:1.65}}>
+    <VIS.Hero pill="ML Fund · Concept" title="Focal loss"
+      subtitle={<>A loss that down-weights easy examples per-sample (not per-class), making single-stage <VIS.Term def="An ML setup where every pixel/anchor is a candidate class. Background dominates 99.99% of candidates and drowns the foreground signal under plain cross-entropy.">dense classification</VIS.Term> trainable under extreme imbalance.</>}
+      byline={[
+        {label:"Audience",value:"smart but new to ML"},
+        {label:"Origin",value:"Lin et al. 2017 (RetinaNet)"},
+      ]}/>
+
     <VIS.TLDR>
-      <code>FL = -(1-p_t)^γ · log(p_t)</code>. The <code>(1-p_t)^γ</code> factor downweights easy examples (high confidence on the right answer); gradient focuses on hard examples. γ=2 is the standard.
+      <code>FL = -(1 - p_t)^γ · log(p_t)</code>, where <code>p_t</code> = the model's predicted probability for the true class. The <VIS.Term def="The (1 - p_t)^γ factor in focal loss. It scales each sample's loss by how confident the model already is about the right answer.">modulating factor</VIS.Term> <code>(1 - p_t)^γ</code> shrinks toward 0 for easy examples (high <code>p_t</code>) and stays near 1 for hard ones (low <code>p_t</code>) — so <VIS.Term def="The signal that updates weights during backprop. Focal loss reduces this signal for confident-correct samples; it does not change the predictions themselves.">gradient</VIS.Term> concentrates on hard examples. Standard value: γ=2, from <VIS.Term def="Lin et al. 2017 single-stage object detector. Showed focal loss closes the accuracy gap with two-stage detectors (Faster R-CNN) at 5× the speed.">RetinaNet</VIS.Term>.
     </VIS.TLDR>
-    <VIS.Section id="sec-curve" title="What γ does to the loss curve">
+
+    <VIS.Section id="sec-curve" title="Beat 1 — What γ does to the per-sample loss">
+      <p>
+        Below: total loss as a function of <code>p_t</code>. Black = plain <VIS.Term def="The standard classification loss: -log(p_t) where p_t is the predicted probability for the correct class. Treats every sample equally regardless of confidence.">cross-entropy</VIS.Term>. Red = focal loss at γ=2 (the <VIS.Term def="The (γ, α) values Lin et al. recommended after sweep: γ=2, α=0.25 for the rare class. Most production focal-loss deployments start here.">RetinaNet default</VIS.Term>). Amber dashed = γ=5 (aggressive). At <code>p_t=0.9</code>, plain <VIS.Term def="Cross-entropy. Equivalent to log-loss; the standard loss for classification.">CE</VIS.Term> loss ≈ 0.1, focal loss (γ=2) ≈ 0.001 — a 100× down-weight on the already-easy case.
+      </p>
       <VIS.VegaLite spec={FL_SPEC} data={FL_DATA}/>
-      <p>Black = standard <VIS.Term def="The standard classification loss: -log(p_t) where p_t is the predicted probability for the correct class.">cross-entropy</VIS.Term>. Red = focal loss γ=2 (RetinaNet default). Amber dashed = γ=5 (aggressive). At p_t=0.9, CE has loss ≈ 0.1, FL(γ=2) has ≈ 0.001 — 100× downweight on the easy case.</p>
+      <p>
+        The mechanism lives in the multiplicative <code>(1 - p_t)^γ</code> term. Think of it as a per-sample weight that the model assigns to itself based on its own confidence. Plot this weight alone across γ:
+      </p>
+      <VIS.VegaLite spec={MOD_SPEC} data={MOD_DATA}/>
+      <p>
+        At γ=0, the factor is 1 everywhere — focal loss collapses back to plain <VIS.Term def="Binary cross-entropy. The loss function for yes/no predictions; equals -log(p_t) for the true class.">BCE</VIS.Term>/CE. At γ=2, an example with <code>p_t=0.9</code> gets a weight of 0.01 (essentially silent), while a hard one at <code>p_t=0.1</code> stays near 0.81. The well-classified samples are still in the <VIS.Term def="The chunk of samples processed together in one forward/backward pass; the gradient is summed over the batch before optimizer step.">batch</VIS.Term> — they just stop pulling gradient during <VIS.Term def="Backpropagation: the chain-rule pass that computes gradients of the loss w.r.t. each weight; consumed by SGD/AdamW to update parameters.">backprop</VIS.Term>.
+      </p>
     </VIS.Section>
-    <VIS.Section id="sec-when" title="When to use it">
-      <VIS.Callout kind="info" title="Extreme imbalance + many easy negatives">
-        <VIS.Term def="An ML setup where most candidate samples are obviously not the positive class — e.g., 99.99% of image-region candidates are not 'cat'. Plain CE gradient is dominated by these easy ones.">Dense classification</VIS.Term>: every pixel in an image is a candidate, 99.99% are background. Plain CE loss is dominated by easy background; the model never focuses on hard cases. Focal loss fixes this.
+
+    <VIS.Section id="sec-formal" title="Beat 2 — Definition, naming, and the α companion">
+      <p>
+        Formal definition for a single sample, with true class <code>y</code> and model probability <code>p_y</code> = <code>p_t</code>:
+      </p>
+      <VIS.Equation display
+        tex="\mathrm{FL}(p_t) \;=\; -\,(1 - p_t)^{\gamma}\,\log(p_t)" />
+      <p>
+        The full form used in RetinaNet adds an <VIS.Term def="The per-class scalar weight in focal loss. Lin et al. use α=0.25 for the positive class; different from the per-sample (1-p_t)^γ modulation.">α-balancing</VIS.Term> term — a per-class scalar weight, exactly like <VIS.Term def="Cross-entropy loss with a fixed per-class scalar weight. Up-weights the rare class. Does NOT adapt to per-sample confidence; that's the focal-loss innovation.">class-weighted CE</VIS.Term>:
+      </p>
+      <VIS.Equation display
+        tex="\mathrm{FL}_{\alpha}(p_t) \;=\; -\,\alpha_t\,(1 - p_t)^{\gamma}\,\log(p_t)" />
+      <p>
+        Two distinct knobs, two distinct jobs:
+      </p>
+      <ul>
+        <li><strong>α (per-class)</strong> — a fixed scalar attached to each class label. Re-weights the loss by the rarity of the class. Identical in spirit to class-weighted BCE.</li>
+        <li><strong>(1 - p_t)^γ (per-sample)</strong> — a multiplier that depends on <em>this specific example's</em> predicted probability. Adapts during training as the model improves.</li>
+      </ul>
+      <VIS.Callout kind="info" title="Different from class-weighted BCE">
+        <VIS.Term def="Per-class weighted binary cross-entropy. The classic baseline for imbalanced binary classification: multiply the loss for the rare class by a fixed scalar > 1.">Class-weighted BCE</VIS.Term> applies the SAME weight to every example in a class, no matter how easy or hard it is for the model. Focal loss applies a DIFFERENT weight to every example based on its own <code>p_t</code>. That per-sample adaptivity is the load-bearing idea — and it's what α alone cannot do.
       </VIS.Callout>
-      <VIS.Callout kind="info" title="α balance term — usually pair with γ">
-        Full form: <code>FL = -α(1-p_t)^γ log(p_t)</code> where α is a class weight. Paper uses α=0.25 for positives, γ=2 for object detection. Tune as a pair.
+    </VIS.Section>
+
+    <VIS.Section id="sec-when" title="Beat 3 — When focal loss earns its complexity">
+      <VIS.Callout kind="info" title="Extreme imbalance + many easy negatives (the RetinaNet case)">
+        <VIS.Term def="Object detector that predicts class and box directly from a feature map in one pass (no region-proposal stage). Fast but historically less accurate than two-stage; focal loss closed that gap.">Single-stage object detection</VIS.Term> scores ~100k <VIS.Term def="Fixed bounding boxes laid over the image at multiple scales. Each is a binary classification candidate (object vs background). RetinaNet has ~100k per image.">anchor boxes</VIS.Term> per image; <strong>~99.99% are background</strong>. Most are trivially easy (clear sky, blank wall) and dominate the plain-CE gradient by sheer count. Focal loss silences them so the few hard foreground anchors and hard background anchors drive learning. Without it, two-stage detectors like <VIS.Term def="A two-stage object detector: a region-proposal network shortlists ~1k candidate boxes, then a classifier head refines them. Two stages provide implicit hard-negative filtering.">Faster R-CNN</VIS.Term> dominated; with it, RetinaNet matched accuracy at higher throughput.
       </VIS.Callout>
       <VIS.Callout kind="gotcha" title="Overkill for moderate imbalance">
-        For 90/10 or even 99/1, class-weighted CE is simpler and usually just as good. Focal loss earns its complexity at 99.99/0.01 or denser.
+        For a 90/10 or even 99/1 split with reasonable feature signal, class-weighted CE plus <VIS.Term def="Sampling strategy that draws from the minority class more often per epoch to balance per-batch class counts. Cheap alternative to focal loss.">oversampling</VIS.Term> usually closes the gap. Focal loss earns its complexity at 99.99/0.01 or denser, where the easy-negative count overwhelms gradients regardless of class weighting.
       </VIS.Callout>
+      <VIS.Callout kind="warn" title="γ=0 sanity check">
+        <code>(1 - p_t)^0 = 1</code> for all samples, so focal loss with γ=0 (and α=1) is mathematically identical to plain CE. Useful as a sanity-check baseline when debugging a focal-loss implementation.
+      </VIS.Callout>
+      <VIS.Callout kind="gotcha" title="Focal-trained models often need post-hoc calibration">
+        Down-weighting confident-correct examples removes the gradient signal that normally pulls predicted probabilities toward observed frequencies, so focal models tend to be over-confident. Standard fix: <VIS.Term def="Post-hoc calibration. Divide pre-softmax logits by a single scalar T, learned on a held-out set; spreads bimodal predictions back across the probability axis without changing argmax accuracy.">temperature scaling</VIS.Term> on a held-out set (Mukhoti et al. 2020).
+      </VIS.Callout>
+    </VIS.Section>
+
+    <VIS.Section id="sec-drill" title="Test yourself — concept drill">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        Twenty-five interview-grade trap problems. Each is built around a confusingly-similar decoy that a candidate with ~80% understanding could plausibly defend. Bias toward mechanism (axis C) and application (axis B), with some identity (A), intuition (D), operations (E), and failure (F) mixed in.
+      </p>
+
+      <VIS.TrapProblem
+        id="fl-q1"
+        difficulty="medium"
+        title="Q1 — What exactly does the (1 - p_t)^γ factor do to a sample's contribution?"
+        scenario={<><em>Discriminating insight:</em> the factor's effect is on the LOSS magnitude per sample, leaving the model's prediction and the label untouched. Compare a sample with p_t=0.95 vs one with p_t=0.20 — what differs in training?</>}
+        options={[
+          {key:"a", text:"It lowers the predicted probability of confident examples so they look harder than they are, forcing the model to revisit them."},
+          {key:"b", text:"It modifies the soft-target label distribution from one-hot toward (γ, 1-γ), softening confident predictions."},
+          {key:"c", text:"It scales each sample's loss (and therefore gradient) by a confidence-dependent weight: tiny weight for high p_t, near-1 weight for low p_t.", correct:true},
+          {key:"d", text:"It applies a per-class scalar weight to every sample of the rare class, identical to what class-balanced BCE does."},
+        
+        ]}
+        trap={<>(a) reverses the mechanism — focal loss leaves the model's outputs alone and changes the loss; it doesn't doctor predictions. (b) confuses focal with label smoothing (which softens TARGETS, not LOSS). (d) confuses focal with α-balancing (per-class, not per-sample).</>}
+        lens={<>(c). Focal loss is purely a per-sample loss multiplier. The model still predicts whatever it predicts; the (1-p_t)^γ term just shrinks the gradient that confident-correct samples send back during backprop, freeing capacity for hard cases.</>}
+        stretch={<>What does the factor do when the model is confidently WRONG (p_t near 0)?</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q2"
+        difficulty="medium"
+        title="Q2 — Focal loss with γ=0 reduces to what?"
+        scenario={<><em>Discriminating insight:</em> any exponent-0 expression collapses to 1 for any base. Substitute and inspect the resulting formula.</>}
+        options={[
+          {key:"a", text:"Label-smoothed cross-entropy at smoothing ε=0.1 (the most common default)."},
+          {key:"b", text:"Standard cross-entropy: -log(p_t), since (1-p_t)^0 = 1 for every sample.", correct:true},
+          {key:"c", text:"Class-weighted BCE with weight ratio matching the empirical class frequencies."},
+          {key:"d", text:"Hinge loss with margin 1, because the modulating factor vanishes and only the linear part remains."},
+        
+        ]}
+        trap={<>(a) and (c) are unrelated regularizers with similar-sounding names. (d) confuses with SVM-family losses; nothing in focal loss involves a margin.</>}
+        lens={<>(b). At γ=0 the modulating factor is identically 1, so FL(p_t) = -log(p_t) = plain CE. This is the canonical sanity check when validating a focal-loss implementation.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q3"
+        difficulty="hard"
+        title="Q3 — At p_t=0.9, what is the approximate down-weight factor for γ=2?"
+        scenario={<><em>Discriminating insight:</em> the factor is (1 - p_t)^γ. Plug in p_t=0.9 and γ=2.</>}
+        options={[
+          {key:"a", text:"Roughly 0.1 — the factor is 1 - 0.9^2 = 1 - 0.81 = 0.19, so about 0.1 when rounded to one significant figure."},
+          {key:"b", text:"Roughly 0.9 — focal loss preserves nearly all of the cross-entropy magnitude even at high confidence."},
+          {key:"c", text:"Roughly 0.5 — by construction the modulating factor sits near 0.5 in the middle of the confidence range."},
+          {key:"d", text:"Roughly 0.01 — substituting gives (1 - 0.9)^2 = 0.1^2 = 0.01, so the down-weight is two orders of magnitude.", correct:true},
+        
+        ]}
+        trap={<>(a) swaps the exponent and the subtraction (1 - p_t^γ vs (1 - p_t)^γ — a common slip when reading the formula fast). (b) and (c) describe magnitudes that would defeat the whole point of focal loss.</>}
+        lens={<>(d). The factor is (1 - 0.9)^2 = 0.01. So a sample the model already gets right with 90% confidence contributes only 1% as much loss as plain CE would assign it.</>}
+        stretch={<>What about γ=5 at the same p_t=0.9? Roughly?</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q4"
+        difficulty="hard"
+        title="Q4 — Is focal loss equivalent to label smoothing?"
+        scenario={<><em>Discriminating insight:</em> identify which quantity each technique modifies in the (target, prediction, loss) trio.</>}
+        options={[
+          {key:"a", text:"No. Label smoothing softens the TARGET; focal loss scales the per-sample LOSS by predicted confidence. Different levers.", correct:true},
+          {key:"b", text:"Yes. Both produce identical gradients when γ matches the smoothing ε, because both work by reducing over-confidence."},
+          {key:"c", text:"Yes, but only for binary classification; in multi-class the two differ by a constant temperature-scaling factor."},
+          {key:"d", text:"No, but they are mathematically dual: focal applied to one-hot targets equals label smoothing applied to the logits."},
+        
+        ]}
+        trap={<>(b) is a popular misconception — both touch over-confidence but via opposite levers. (c) invents a binary-only equivalence that doesn't hold. (d) sounds principled but no such duality exists.</>}
+        lens={<>(a). Label smoothing replaces a hard 0/1 target with (ε, 1-ε), which softens the SUPERVISION. Focal loss leaves the target as one-hot and instead reweights the LOSS by (1-p_t)^γ. The first changes what the model is asked to match; the second changes how loudly each sample asks.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q5"
+        difficulty="hard"
+        title="Q5 — Why focal loss instead of class-weighted BCE for dense object detection?"
+        scenario={<><em>Discriminating insight:</em> object detection has ~100k anchors per image, ~99.99% background. The dominant problem is the COUNT of easy negatives, going beyond pure class imbalance alone.</>}
+        options={[
+          {key:"a", text:"Class-weighted BCE produces uncalibrated probabilities at deployment time; focal loss is naturally calibrated by its design."},
+          {key:"b", text:"Class-weighted BCE up-weights ALL positives equally but ignores the flood of easy background anchors; focal silences each easy negative individually.", correct:true},
+          {key:"c", text:"Focal loss is differentiable everywhere while class-weighted BCE has discontinuities at the per-class threshold boundary."},
+          {key:"d", text:"Focal loss provides a free regularization effect that obviates the need for weight decay, simplifying the training pipeline overall."},
+        
+        ]}
+        trap={<>(a) is backwards — focal loss is often LESS calibrated than plain CE (and needs post-hoc calibration). (c) is false; both are smooth. (d) overclaims; focal does not replace weight decay.</>}
+        lens={<>(b). Per-class weighting cannot distinguish a confidently-classified easy background anchor from a confidently-misclassified hard one — they get the same weight. Per-sample (1-p_t)^γ does distinguish them, which is exactly what dense detection needs.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q6"
+        difficulty="medium"
+        title="Q6 — Which best describes the role of α in αFL = -α_t (1-p_t)^γ log(p_t)?"
+        scenario={<><em>Discriminating insight:</em> α has a subscript t indexed by the TRUE CLASS, while (1-p_t)^γ has p_t which depends on the model's PREDICTION for that sample.</>}
+        options={[
+          {key:"a", text:"α is a per-sample confidence threshold that gates whether the focal modulation actually applies to this sample's loss."},
+          {key:"b", text:"α is the temperature scaling parameter applied to the softmax before computing p_t for the focal modulation."},
+          {key:"c", text:"α is a per-class scalar weight (e.g. 0.25 for positive) that re-weights by class; orthogonal to (1-p_t)^γ.", correct:true},
+          {key:"d", text:"α is the learning rate multiplier that focal loss applies to the rare class during the backprop update."},
+        
+        ]}
+        trap={<>(a) invents a gating mechanism that doesn't exist. (b) confuses α with temperature scaling. (d) confuses a class weight with an optimizer hyperparameter.</>}
+        lens={<>(c). α is the classic per-class weighting term — a fixed scalar attached to the class label, like in class-weighted BCE. It composes multiplicatively with the per-sample (1-p_t)^γ but does a separate job.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q7"
+        difficulty="hard"
+        title="Q7 — In which setting is focal loss roughly tied with class-weighted BCE?"
+        scenario={<><em>Discriminating insight:</em> focal loss earns its keep when easy examples dominate the gradient by sheer count. Which environment lacks that property?</>}
+        options={[
+          {key:"a", text:"Single-stage object detection on COCO with ~100k anchor boxes per image and ~99.99% background — extreme dense imbalance."},
+          {key:"b", text:"Pixel-wise semantic segmentation where the background class is roughly 95% of pixels per training image, every batch."},
+          {key:"c", text:"Speech keyword spotting with 99.999% non-keyword frames in a continuous audio stream — extreme negative dominance."},
+          {key:"d", text:"Tabular fraud at 1% positive rate with 200k transactions per batch — moderate imbalance, class-weighted CE keeps up.", correct:true},
+        
+        ]}
+        trap={<>(a), (b), (c) are all the prototype use-cases where focal loss matters. (d) is the case where focal loss is overkill and class-weighted CE is competitive.</>}
+        lens={<>(d). Focal loss earns complexity at 99.99/0.01 or denser. At 99/1 with a few hundred thousand samples, the easy-negative count isn't large enough to overwhelm class-weighted CE; the simpler baseline usually matches.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q8"
+        difficulty="medium"
+        title="Q8 — What happens to a confidently-wrong sample (p_t near 0) under focal loss?"
+        scenario={<><em>Discriminating insight:</em> evaluate (1 - p_t)^γ when p_t is near 0 and γ=2.</>}
+        options={[
+          {key:"a", text:"(1 - p_t)^γ approaches 0, so the sample is ignored — focal loss is biased toward already-easy cases."},
+          {key:"b", text:"(1 - p_t)^γ approaches 1, so the sample contributes nearly the full -log(p_t) loss — a large gradient that drives the model to fix it.", correct:true},
+          {key:"c", text:"The loss is clipped to a finite ceiling to prevent the rare confidently-wrong sample from destabilizing training."},
+          {key:"d", text:"The loss reduces to hinge form because cross-entropy diverges and focal loss compensates by switching to a margin-based objective."},
+        
+        ]}
+        trap={<>(a) reverses the math. (c) invents a clipping rule that focal loss doesn't include by default. (d) invents a phase switch that doesn't exist.</>}
+        lens={<>(b). At p_t→0, (1-p_t)^γ → 1, so focal loss is essentially uncapped CE for confidently-wrong samples — they get the loud signal they deserve. The modulation only silences confidently-RIGHT samples.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q9"
+        difficulty="hard"
+        title="Q9 — Why are focal-loss models often poorly calibrated?"
+        scenario={<><em>Discriminating insight:</em> calibration depends on the model believing its own confident predictions. Focal loss tells the model to STOP CARING about its confident predictions during training.</>}
+        options={[
+          {key:"a", text:"Down-weighting confident-correct examples removes the gradient signal that normally pulls predicted probabilities toward observed frequencies.", correct:true},
+          {key:"b", text:"The modulating factor (1-p_t)^γ acts as a strong L2 regularizer on the logits, shrinking them and squeezing predicted probabilities toward 0.5."},
+          {key:"c", text:"Focal loss inverts the sign of the loss for over-confident predictions, deliberately mis-calibrating the model to encourage exploration during training."},
+          {key:"d", text:"Focal loss is naturally calibrated by construction; reports of mis-calibration are due to bugs in popular implementations such as the original Detectron2."},
+        
+        ]}
+        trap={<>(b) misattributes the mechanism to L2-like shrinkage. (c) invents a sign flip. (d) is wishful thinking — Mukhoti et al. 2020 document the mis-calibration empirically.</>}
+        lens={<>(a). Focal loss intentionally reduces the loss contribution of confident-correct samples; that's exactly the gradient signal calibration would normally use to fine-tune predicted probabilities. Result: focal models often need post-hoc calibration (e.g. temperature scaling).</>}
+        stretch={<>What's the standard post-hoc fix?</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q10"
+        difficulty="hard"
+        title="Q10 — How should γ scale with the difficulty of the imbalance?"
+        scenario={<><em>Discriminating insight:</em> γ controls how aggressively easy examples are silenced. Larger γ = more aggressive silencing.</>}
+        options={[
+          {key:"a", text:"Larger γ up-weights the rare class more aggressively; use γ proportional to the inverse class frequency ratio."},
+          {key:"b", text:"Larger γ lowers the model's effective learning rate, so increase γ to compensate for unstable training."},
+          {key:"c", text:"Larger γ silences easy examples more aggressively; use γ=2 by default (RetinaNet), γ=5 only for extreme imbalance or many easy negatives.", correct:true},
+          {key:"d", text:"Larger γ shifts the decision threshold toward the rare class; tune γ until precision and recall balance."},
+        
+        ]}
+        trap={<>(a) confuses γ with α. (b) confuses with optimizer hyperparameters. (d) confuses with threshold tuning.</>}
+        lens={<>(c). γ controls per-sample down-weighting steepness. Lin et al. swept γ ∈ {0, 0.5, 1, 2, 5} and recommended γ=2 as the default; larger γ helps when easy examples are even more dominant than RetinaNet's ~99.99% background.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q11"
+        difficulty="medium"
+        title="Q11 — At p_t=0.5, what loss does focal loss (γ=2) assign compared to plain CE?"
+        scenario={<><em>Discriminating insight:</em> compute (1 - 0.5)^2 × (-log 0.5) and compare to -log(0.5) ≈ 0.693.</>}
+        options={[
+          {key:"a", text:"About 1/4 of plain CE, since (1 - 0.5)^2 = 0.25 — so focal loss ≈ 0.173 vs CE ≈ 0.693.", correct:true},
+          {key:"b", text:"About the same as plain CE, since the modulating factor is near 1 in the middle of the probability range."},
+          {key:"c", text:"About twice plain CE, because the modulating factor amplifies losses for borderline samples."},
+          {key:"d", text:"Exactly 0, because p_t=0.5 is the decision boundary where focal loss treats the prediction as undecided."},
+        
+        ]}
+        trap={<>(b) confuses the modulating factor with a near-1 baseline. (c) inverts the direction. (d) invents a boundary rule.</>}
+        lens={<>(a). (1-0.5)^2 = 0.25. So even at the most "uncertain" point p_t=0.5, focal loss applies a 4× down-weight relative to plain CE. The down-weight at p_t=0.9 (factor 0.01, 100×) is much more dramatic, but the modulation is at work everywhere except p_t→0.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q12"
+        difficulty="hard"
+        title="Q12 — Does focal loss eliminate the need for hard-negative mining?"
+        scenario={<><em>Discriminating insight:</em> compare what hard-negative mining does (explicit subsetting of negatives) vs what focal loss does (implicit re-weighting in the loss).</>}
+        options={[
+          {key:"a", text:"No — focal loss must always be paired with online hard-example mining; the two are complementary and both required in detection pipelines."},
+          {key:"b", text:"It eliminates hard-negative mining for two-stage detectors like Faster R-CNN but does not for single-stage detectors like RetinaNet."},
+          {key:"c", text:"It eliminates the need for any negative samples — focal loss is trained only on positive samples, similar to a one-class SVM objective."},
+          {key:"d", text:"In RetinaNet it largely replaces hard-negative mining: all anchors stay in the loss and (1-p_t)^γ does the prioritization.", correct:true},
+        
+        ]}
+        trap={<>(a) overstates required pairing. (b) inverts the use case. (c) invents a one-class focal variant.</>}
+        lens={<>(d). The original RetinaNet paper showed focal loss alone — keeping all ~100k anchors in the batch and letting (1-p_t)^γ down-weight the easy ones — outperforms the hard-negative-mining pipelines used in prior single-stage detectors.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q13"
+        difficulty="hard"
+        title="Q13 — In ablation, fixing γ=2 and sweeping α — what is typically observed?"
+        scenario={<><em>Discriminating insight:</em> γ and α target different problems. Once γ handles easy/hard, α's job is mostly cosmetic class balance.</>}
+        options={[
+          {key:"a", text:"α has a dominant effect on accuracy; γ matters only when α is mis-tuned, so γ should be set last in any hyperparameter sweep."},
+          {key:"b", text:"Once γ=2 is set, α has a small effect; Lin et al. found α≈0.25 (counter-intuitive — down-weighting positives is what γ needs).", correct:true},
+          {key:"c", text:"Optimal α equals the inverse class frequency ratio; this is the only setting under which training converges to non-degenerate weights."},
+          {key:"d", text:"α and γ are mathematically equivalent under a logarithmic reparametrization; tuning either one suffices for any imbalance level."},
+        
+        ]}
+        trap={<>(a) inverts the priority order. (c) overstates a heuristic; inverse-frequency α is a starting point, not a requirement. (d) is false — α is per-class scalar, γ is per-sample exponent.</>}
+        lens={<>(b). The original paper recommends γ=2, α=0.25 (down-weighting the rare positive class — the opposite of what class-weighting intuition suggests, because γ already concentrates gradient on hard positives, and α=0.25 prevents over-emphasis).</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q14"
+        difficulty="medium"
+        title="Q14 — How does focal loss differ from oversampling the minority class?"
+        scenario={<><em>Discriminating insight:</em> oversampling changes the empirical class distribution seen by the model; focal loss leaves the distribution alone.</>}
+        options={[
+          {key:"a", text:"Oversampling repeats minority examples in batches; focal loss leaves the batch alone and reweights each sample's loss by predicted confidence.", correct:true},
+          {key:"b", text:"They are mathematically identical when the oversampling ratio equals (1 - p_t)^γ for some γ — duality between data and loss intervention."},
+          {key:"c", text:"Oversampling adapts to the model's current confidence per sample; focal loss applies one fixed weight regardless of training progress."},
+          {key:"d", text:"Both modify the target distribution; focal loss does so via (1-p_t)^γ, oversampling via duplication of minority-class examples in batches."},
+        
+        ]}
+        trap={<>(b) overstates a mathematical equivalence that doesn't hold (oversampling is per-class, focal is per-sample). (c) reverses the adaptivity property. (d) misattributes the target as what's changed.</>}
+        lens={<>(a). Oversampling is a data-level intervention (batch composition); focal loss is a loss-level intervention (per-sample weighting). They compose — focal-on-oversampled data is a valid recipe — but they are not substitutes.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q15"
+        difficulty="hard"
+        title="Q15 — Why is γ called a 'focusing parameter'?"
+        scenario={<><em>Discriminating insight:</em> visualize the loss curve as γ increases. Where does the model's attention concentrate?</>}
+        options={[
+          {key:"a", text:"γ literally implements visual attention, weighting pixels by how 'focused' the image is at that location."},
+          {key:"b", text:"γ focuses the model's optimizer on a smaller learning-rate region around the minimum, similar to a learning-rate annealing schedule."},
+          {key:"c", text:"As γ increases, the loss curve flattens for high p_t and stays steep for low p_t — concentrating learning signal on the hard (low-p_t) region.", correct:true},
+          {key:"d", text:"γ focuses the softmax distribution by raising every logit to the γ power, sharpening predictions."},
+        
+        ]}
+        trap={<>(a) confuses with image-attention mechanisms. (b) confuses with learning-rate schedules. (d) invents a logit-power op.</>}
+        lens={<>(c). Higher γ means stronger silencing of high-p_t samples — the gradient budget gets concentrated (focused) on the low-p_t hard cases. The name describes what happens to gradient allocation, not anything to do with visual or optimizer attention.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q16"
+        difficulty="medium"
+        title="Q16 — What's the right baseline to validate a focal-loss implementation?"
+        scenario={<><em>Discriminating insight:</em> exploit the γ=0 collapse to plain CE.</>}
+        options={[
+          {key:"a", text:"Set γ=0 (and α=1); verify the loss value and gradients match plain CE/BCE exactly on a small batch.", correct:true},
+          {key:"b", text:"Set γ=2 and check that the loss equals the published RetinaNet COCO mAP within 0.1 points."},
+          {key:"c", text:"Set α=0 and confirm the model trains successfully on a binary classification task."},
+          {key:"d", text:"Train for one epoch and verify the loss decreases monotonically; focal loss is monotonic in batch order."},
+        
+        ]}
+        trap={<>(b) confuses loss validation with end-to-end accuracy validation. (c) breaks the loss (α=0 kills the rare class). (d) "monotonic in batch order" is meaningless.</>}
+        lens={<>(a). The cleanest unit test: γ=0, α=1 should make focal loss numerically equal to plain CE. Run a tiny tensor through both, assert allclose. Catches the bulk of implementation bugs (wrong exponent, swapped subtraction, broken broadcast).</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q17"
+        difficulty="hard"
+        title="Q17 — Multi-label setting (one image, multiple labels): how does focal loss change?"
+        scenario={<><em>Discriminating insight:</em> multi-label uses sigmoid per class (rather than softmax over classes). Each per-class p_t is independent of the others.</>}
+        options={[
+          {key:"a", text:"It must first reduce to single-label via argmax over the active label set; focal loss is not directly defined for multi-label outputs."},
+          {key:"b", text:"The modulating factor becomes (1 - p_top)^γ where p_top is the maximum predicted probability across the active class labels."},
+          {key:"c", text:"Focal loss is applied only to the dominant predicted class per image; other active labels fall back to plain BCE for the gradient."},
+          {key:"d", text:"It's applied per-class as sigmoid focal: sum over classes of -α_c (1 - p_c)^γ log(p_c) for positives and the symmetric form for negatives.", correct:true},
+        
+        ]}
+        trap={<>(a), (b), (c) all invent restrictions or modifications that aren't in standard implementations.</>}
+        lens={<>(d). Sigmoid focal loss is the standard generalization. Each class gets its own (1-p_c)^γ modulation, separately for the positive and negative branch of BCE — used widely in multi-label object detection and pixel-wise segmentation.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q18"
+        difficulty="hard"
+        title="Q18 — A team reports focal loss UNDERPERFORMS plain CE on their 70/30 imbalance binary task. Most likely diagnosis?"
+        scenario={<><em>Discriminating insight:</em> focal loss is designed for extreme imbalance (99.99/0.01) and many easy negatives. 70/30 is mild.</>}
+        options={[
+          {key:"a", text:"γ must be set negative for mild imbalance; γ=2 is only correct for the extreme dense-detection regime that motivated the paper."},
+          {key:"b", text:"Imbalance is too mild for focal loss to help; γ=2 silences moderately-confident correct samples that plain CE still needs.", correct:true},
+          {key:"c", text:"Focal loss requires at least 1M training samples to converge; with smaller datasets it consistently underperforms plain CE baselines."},
+          {key:"d", text:"They forgot to apply label smoothing on top of focal loss; the two must always be combined for fine-tuned models to perform well."},
+        
+        ]}
+        trap={<>(a) γ<0 is undefined (it would explode the loss for high p_t). (c) invents a sample-size floor. (d) invents a mandatory pairing.</>}
+        lens={<>(b). Focal loss earns its complexity at extreme imbalance. At 70/30, plain CE plus class-weighting (or no weighting) is competitive — and focal loss's aggressive silencing of confident-correct samples can hurt by removing gradient signal the model still needed.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q19"
+        difficulty="hard"
+        title="Q19 — Does focal loss change the model's predictions or its loss curve?"
+        scenario={<><em>Discriminating insight:</em> separate "what the model outputs" from "what the loss function says about those outputs."</>}
+        options={[
+          {key:"a", text:"It changes both: the modulating factor is applied to the softmax output before it reaches the user, lowering easy-case predicted probabilities."},
+          {key:"b", text:"It changes neither — focal loss is essentially a renaming of cross-entropy; the underlying math reduces to the same gradient update."},
+          {key:"c", text:"It changes the loss curve and the gradients that update weights; the per-sample predicted probabilities themselves are unchanged.", correct:true},
+          {key:"d", text:"It changes only predictions: easy examples have their predicted probabilities artificially lowered so that future gradients become larger."},
+        
+        ]}
+        trap={<>(a) and (d) invent a prediction-modification step that doesn't exist. (b) ignores the (1-p_t)^γ factor entirely.</>}
+        lens={<>(c). The loss function is a scalar applied AFTER the model has produced its predictions. Focal loss changes the scalar (and hence the gradient flowing back into weights), not the predictions themselves. A focal-trained model and a CE-trained model can have different predictions at inference because they were OPTIMIZED differently — but neither loss alters predictions at runtime.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q20"
+        difficulty="medium"
+        title="Q20 — How is focal loss combined with α-balancing in practice?"
+        scenario={<><em>Discriminating insight:</em> the two factors multiply; the per-sample modulation and per-class weight are independent.</>}
+        options={[
+          {key:"a", text:"They are exclusive choices: use α for class-imbalance, or γ for confidence-imbalance, but not both simultaneously."},
+          {key:"b", text:"They multiply: αFL = -α_t · (1 - p_t)^γ · log(p_t). α is a per-class scalar; (1-p_t)^γ is a per-sample modulator. Both are tuned together.", correct:true},
+          {key:"c", text:"α replaces γ when classes are extremely imbalanced (>99/1); below that, γ is sufficient."},
+          {key:"d", text:"α is applied to the modulating factor itself: (α(1-p_t))^γ — α modifies the steepness of the focal curve."},
+        
+        ]}
+        trap={<>(a) and (c) invent mutual exclusivity. (d) misplaces α inside the exponent.</>}
+        lens={<>(b). The αFL formulation uses both: α handles per-class re-weighting (like class-weighted BCE), and (1-p_t)^γ handles per-sample down-weighting. They commute, multiply, and are tuned together (Lin et al. recommend γ=2, α=0.25).</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q21"
+        difficulty="hard"
+        title="Q21 — RetinaNet's α=0.25 for the positive class seems backwards. Why down-weight positives?"
+        scenario={<><em>Discriminating insight:</em> γ already concentrates gradient on hard positives. α=0.25 prevents γ's effect on positives from over-shooting.</>}
+        options={[
+          {key:"a", text:"γ already over-emphasizes hard positives, so α=0.25 dampens that to keep the overall positive/negative loss contribution balanced.", correct:true},
+          {key:"b", text:"Because positives in COCO are mislabeled at roughly a 75% rate; α=0.25 down-weights the noisy labels in the loss to compensate."},
+          {key:"c", text:"Because RetinaNet's anchor-matching heuristic produces about 4× more positive anchors than needed, and α=0.25 corrects the over-supply."},
+          {key:"d", text:"Because positive anchors are placed by a separate ground-truth oracle whose confidence averages 0.25; α matches that confidence by design."},
+        
+        ]}
+        trap={<>(b), (c), (d) invent plausible-sounding mechanisms with no basis in the paper.</>}
+        lens={<>(a). γ amplifies the gradient from hard positives (low p_t for the positive class), which would otherwise overwhelm the gradient from hard negatives. α=0.25 brings the positive contribution back into balance. The result is a γ-α pair that's tuned together; you can't read α in isolation.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q22"
+        difficulty="hard"
+        title="Q22 — A practitioner says 'focal loss reduces the gradient on easy negatives by lowering their predicted probability.' Where's the error?"
+        scenario={<><em>Discriminating insight:</em> separate two things — what the model PREDICTS for a sample, and how much that sample's loss CONTRIBUTES to the gradient.</>}
+        options={[
+          {key:"a", text:"The error is using 'easy negatives' — focal loss only modifies the gradient for hard positives, not negatives, by design of (1-p_t)^γ."},
+          {key:"b", text:"There is no error in the statement; it is a clean and accurate restatement of the focal-loss mechanism used by RetinaNet at COCO."},
+          {key:"c", text:"The error is the loss reduction — focal loss actually INCREASES the gradient on easy negatives to force the model to revisit them later."},
+          {key:"d", text:"The direction is wrong: focal loss does not change predicted probabilities; it just scales each sample's loss contribution down.", correct:true},
+        
+        ]}
+        trap={<>(a) reverses which class focal loss applies to (it applies to both). (b) endorses a wrong statement. (c) reverses the direction again.</>}
+        lens={<>(d). The misconception is that focal loss somehow tampers with the model's outputs. It does not — predictions are computed by the model's forward pass. Focal loss is a scalar applied to the per-sample loss; it changes the gradient flowing back during training, but a focal-trained model's prediction at inference time is just whatever the trained weights produce.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q23"
+        difficulty="medium"
+        title="Q23 — In segmentation with 95% background pixels, would you reach for focal loss?"
+        scenario={<><em>Discriminating insight:</em> 95% background is dense but well shy of the dense-detection extreme; many practitioners reach for Dice or weighted BCE first. Focal is one option among several.</>}
+        options={[
+          {key:"a", text:"Always — focal loss is strictly better than the alternatives whenever the imbalance ratio exceeds 90/10 in the per-pixel training set."},
+          {key:"b", text:"Never — focal loss is designed for object detection only; pixel-wise segmentation requires Dice or weighted-BCE objectives by convention."},
+          {key:"c", text:"Maybe — focal loss is reasonable but not unique; Dice loss or weighted BCE or focal+Dice all show up depending on the failure mode.", correct:true},
+          {key:"d", text:"Always — γ=10 is the segmentation-specific setting; it dominates Dice and weighted BCE across the standard semantic-segmentation benchmarks."},
+        
+        ]}
+        trap={<>(a), (b), (d) all overclaim. (b) is wrong (focal-segmentation is widely used); (a) and (d) overstate dominance.</>}
+        lens={<>(c). Focal loss is one of several reasonable choices for dense segmentation. Dice optimizes region overlap, weighted BCE handles class imbalance per-pixel, focal handles easy-pixel dominance. Combinations (focal+Dice) are common. The right pick depends on the specific failure mode — region miss vs easy-negative drown.</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q24"
+        difficulty="hard"
+        title="Q24 — A focal-loss model gets 97% accuracy but its predicted probabilities cluster at 0.999 or 0.001 with little in between. Fix?"
+        scenario={<><em>Discriminating insight:</em> bimodal output probabilities are a classic mis-calibration symptom. The model is right but over-confident.</>}
+        options={[
+          {key:"a", text:"Post-hoc temperature scaling: divide pre-softmax logits by a learned scalar T fit on a held-out set; spreads predictions back.", correct:true},
+          {key:"b", text:"Retrain the model from scratch with γ doubled to 4; more aggressive focal modulation will reduce the over-confidence at deployment."},
+          {key:"c", text:"Increase α on the rare class up to 0.75; the α hyperparameter directly controls calibration of probabilities in focal loss."},
+          {key:"d", text:"Switch the final activation from softmax to sparsemax; sparsemax produces naturally calibrated probabilities by construction."},
+        
+        ]}
+        trap={<>(b) doubles down on the cause — larger γ silences confident samples MORE, which is what created the mis-calibration. (c) confuses α with calibration. (d) invents a sparsemax-fixes-calibration claim.</>}
+        lens={<>(a). Focal loss is known to produce over-confident outputs because it stops penalizing confident-correct predictions. The standard post-hoc fix is temperature scaling: fit a single scalar T on a held-out set such that softmax(logits/T) is well-calibrated (Mukhoti et al. 2020).</>}
+        stretch={<>What does temperature scaling do to accuracy?</>}
+      />
+
+      <VIS.TrapProblem
+        id="fl-q25"
+        difficulty="hard"
+        title="Q25 — Cross-batch: how does focal loss differ from class-weighted BCE in a single sentence?"
+        scenario={<><em>Discriminating insight:</em> focal weighs per-sample by confidence; class-weighted weighs per-class by frequency. The two work on different axes.</>}
+        options={[
+          {key:"a", text:"Class-weighted BCE is a special case of focal loss when γ is tuned to match the empirical class frequency ratio in the training data."},
+          {key:"b", text:"Class-weighted BCE applies one scalar per class regardless of sample difficulty; focal applies a sample-specific scalar from current confidence.", correct:true},
+          {key:"c", text:"Focal loss is a special case of class-weighted BCE where the class weight is recomputed every batch from the running mean of (1-p_t)."},
+          {key:"d", text:"They are equivalent under uniform class distributions and differ only when classes are imbalanced — meaning focal loss is just a rebrand."},
+        
+        ]}
+        trap={<>(a) and (c) try to nest one inside the other. The two are fundamentally orthogonal — per-class scalar vs per-sample confidence-modulated scalar. (d) ignores the per-sample axis entirely.</>}
+        lens={<>(b). The axis distinction is the whole point. Class-weighted BCE: per-class scalar, fixed for the run. Focal loss: per-sample scalar, adapts every forward pass as p_t changes. They compose (the αFL formulation does both), but they are not nested.</>}
+      />
     </VIS.Section>
   </main>
 );
