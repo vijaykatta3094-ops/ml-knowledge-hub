@@ -48,6 +48,289 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://unpkg.com/@lottiefiles/lottie-player@2.0.8/dist/lottie-player.js" async></script>
+  <script>window.__VIS_GLOSSARY = {
+  "_meta": {
+    "purpose": "Shared cache of jargon→plain-English glosses. Used by /visualize and trap-drill authors. Append new terms as encountered. Keep glosses ≤25 words, no jargon-in-jargon.",
+    "updated": "2026-05-19"
+  },
+  "α-balancing": "Per-class scalar weight α in focal loss; multiplies the per-sample modulating factor (1-p_t)^γ. Equivalent in spirit to class-weighted BCE.",
+  "anchor boxes": "Fixed bounding boxes laid over an image at multiple scales. Each is a binary classification candidate (object vs background) in single-stage detection.",
+  "backprop": "Backpropagation: chain-rule pass computing gradients of the loss w.r.t. each weight; consumed by SGD/AdamW for parameter updates.",
+  "batch": "The chunk of samples processed in one forward/backward pass. Gradient is summed over the batch before the optimizer step.",
+  "class-weighted BCE": "Per-class weighted binary cross-entropy. Multiplies the loss for the rare class by a fixed scalar > 1. Doesn't adapt to per-sample confidence.",
+  "class-weighted CE": "Cross-entropy with a fixed per-class scalar weight. Up-weights the rare class; doesn't depend on per-sample confidence.",
+  "cross-entropy": "Standard classification loss: -log(p_t) where p_t is the predicted probability for the correct class. Treats every sample equally.",
+  "dense classification": "ML setup where every pixel/anchor is a candidate class. Background dominates ~99.99% and drowns foreground signal under plain CE.",
+  "Faster R-CNN": "Two-stage object detector: region-proposal network shortlists ~1k boxes, then a classifier head refines. Two stages provide implicit hard-negative filtering.",
+  "gradient (focal loss)": "The signal that updates weights during backprop. Focal loss reduces this signal for confident-correct samples without altering predictions.",
+  "modulating factor": "The (1 - p_t)^γ multiplier in focal loss. Scales each sample's loss by how confident the model is about the right answer.",
+  "oversampling": "Sampling strategy that draws minority-class examples more often per epoch to balance per-batch class counts. Cheap alternative to focal loss.",
+  "RetinaNet": "Lin et al. 2017 single-stage object detector. Showed focal loss closes the accuracy gap with two-stage detectors at higher throughput.",
+  "RetinaNet default": "The (γ, α) focal-loss values Lin et al. recommended after sweep: γ=2, α=0.25 for the positive class.",
+  "single-stage object detection": "Object detector that predicts class and box directly from a feature map in one pass; no region-proposal stage.",
+  "temperature scaling": "Post-hoc calibration: divide pre-softmax logits by a learned scalar T on held-out data. Fixes over-confidence without changing argmax accuracy.",
+  "AdamW": "Adam optimizer with decoupled weight decay; default optimizer for transformer training.",
+  "aleatoric uncertainty": "Uncertainty from inherent noise in the data. Not reducible with more data.",
+  "AML": "Anti-Money-Laundering. The compliance domain of detecting and reporting laundering activity in financial systems.",
+  "ANN": "Approximate Nearest Neighbor. Family of algorithms (HNSW, IVF, ScaNN) that find close vectors much faster than exact search at small recall cost.",
+  "anti-redundancy": "Avoiding near-duplicate items in the same ranked list (e.g. five very similar sushi places). MTGR captures this via the prefix.",
+  "ATE": "Average Treatment Effect. Population-average causal effect of a treatment.",
+  "attention rollout": "Interpretability technique: multiply attention matrices across layers to attribute output to input tokens.",
+  "AUC": "Area Under the ROC Curve. Probability that a random positive scores higher than a random negative. Threshold-free ranking metric.",
+  "auction": "Real-time ad-bidding system that ranks ads by bid × predicted CTR; consumes calibrated probability, not raw logits.",
+  "AUPRC": "Area Under the Precision-Recall Curve. More informative than AUC for class-imbalanced problems.",
+  "autoregressive": "Generates a sequence one element at a time, each conditioned on what's already been emitted; classic next-token prediction.",
+  "backpressure": "Control loop that throttles incoming load when downstream capacity is exceeded (e.g., raise confidence threshold to send fewer posts to humans during surge).",
+  "BatchBALD": "Bayesian Active Learning by Disagreement, batch-corrected. Acquires K queries that JOINTLY maximize mutual information with model parameters.",
+  "BatchNorm": "Batch Normalization. Normalize each feature across the batch dimension; standard for CNNs, awkward for variable-length sequences.",
+  "BCE": "Binary cross-entropy. Loss function for yes/no prediction; pushes the predicted probability toward the true label (0 or 1).",
+  "beam search": "Decoding heuristic that keeps the top-B partial sequences at each step; trades compute for higher-quality outputs vs greedy decoding.",
+  "BERT": "Bidirectional Encoder Representations from Transformers. Pretrained text encoder; classic backbone for text classification (~50ms inference).",
+  "BERT4Rec": "BERT-style masked-item recsys. Bidirectional transformer trained with cloze masking on item sequences; pointwise scoring head.",
+  "BFloat16": "16-bit float with 8-bit exponent (vs FP16's 5). Wider range, lower precision; preferred for ML training stability.",
+  "BIN": "Bank Identification Number. First 6-8 digits of a card; identifies the issuer. Used as a fraud feature.",
+  "BPR": "Bayesian Personalized Ranking. Pairwise loss for recsys: predicted score of an observed item should exceed that of an unobserved item.",
+  "calibrated": "A model's predicted probability matches the true frequency (a 0.8 prediction is right 80% of the time). Re-calibrate as data shifts.",
+  "calibration": "How closely predicted probabilities match true frequencies. A model predicting 0.7 should be right 70% of the time.",
+  "candidate generation": "First stage of recsys: retrieve a few hundred items from the full catalog (millions). Usually ANN or two-tower.",
+  "candidate slate": "The set of items considered for display in one user-facing list. MTGR orders the slate; retrieval produces it.",
+  "cascade": "Multi-stage retrieval/ranking pipeline; each stage shrinks the candidate set and uses a heavier model.",
+  "CATE": "Conditional Average Treatment Effect. Treatment effect conditional on covariates — the per-user/per-context lift.",
+  "causal mask": "Mask applied to attention so each position can only attend to earlier positions; enforces left-to-right autoregressive structure.",
+  "CE": "Cross-entropy. Loss function for multi-class prediction; penalizes the model when the predicted class probability is low for the true class.",
+  "CLIP": "Contrastive Language-Image Pretraining. Joint image-text encoder producing aligned embeddings via contrastive loss.",
+  "code": "One entry in a codebook — a learned vector that an input snaps to during quantization. Identified by its integer index.",
+  "code utilization": "Fraction of codes (or entropy of code-assignments) actually used. Low utilization signals codebook collapse.",
+  "codebook": "Learned dictionary of discrete vectors (codes). An encoder snaps its output to the nearest code; that code's index becomes a token.",
+  "codebook collapse": "VQ/RQ-VAE failure: most codebook entries go unused; encoder maps all inputs to a few popular codes. Sign of broken quantization.",
+  "codebook drift": "Across catalog updates or retraining, codebook entries shift; the same item gets a different Semantic ID, breaking downstream consumers.",
+  "codebook size": "Codes per codebook (|V|, e.g. 256). Larger → finer reconstruction but less prefix-sharing across items.",
+  "cold-start": "When a new user or item has no interaction history, so embedding tables and behavioral features have nothing to learn from.",
+  "commitment loss": "VQ-VAE term that pulls encoder outputs toward their chosen code; prevents the encoder from drifting away from the codebook.",
+  "confidence router": "Routes inputs based on cheap-model output confidence: high confidence → auto-action, low confidence → escalate to expensive model or human.",
+  "conformal prediction": "Distribution-free method that produces prediction sets with guaranteed coverage (e.g., 95%) under exchangeability.",
+  "constrained decoding": "Mask the decoder's logits at each step so it can only emit tokens that lead to a valid sequence (e.g., a real catalog item).",
+  "contextual bandit": "Online decision algorithm: choose an action given context, observe reward, update; trades exploration vs exploitation.",
+  "contrastive loss": "Loss that pulls positive pairs together and pushes negatives apart in embedding space (e.g. InfoNCE).",
+  "cost-of-error": "The business/safety cost of a misclassification — varies by policy (false negative on self-harm vs false positive on spam).",
+  "cross-attention": "Attention layer where queries come from one sequence (e.g., decoder) and keys/values from another (e.g., encoder). Connects two streams.",
+  "CSAM": "Child Sexual Abuse Material. Highest-priority moderation category; detected via perceptual-hash matches against known-bad databases.",
+  "CTR": "Click-Through Rate. Fraction of impressions that lead to a click; the central calibration target for ads and feed ranking.",
+  "DAG": "Directed Acyclic Graph. Nodes connected by directed edges with no cycles; used to model causal structure or computation graphs.",
+  "dead codes": "Codebook entries that no encoder output ever snaps to; symptom of collapse. Fixed by periodic re-init near active encoder regions.",
+  "decode temperature": "Scalar dividing logits before softmax at decode time. Higher T → more diverse samples; lower T → more deterministic argmax-like decoding.",
+  "decoder": "Neural net that maps a latent vector (or token sequence) back to the output space (reconstructed input, next item).",
+  "decoder-only transformer": "Transformer with only the decoder stack (GPT-style); generates outputs one token at a time conditioned on what's been emitted so far.",
+  "deep classifier": "An expensive deep-learning model (transformer-based) used in the second tier of a cascade, after cheap heuristics have screened obvious cases.",
+  "Deep SVDD": "Deep Support Vector Data Description. One-class anomaly detector: maps inliers to a tight hypersphere; outliers fall outside.",
+  "dense retrieval": "Retrieval via dot-product (or cosine) between learned dense embeddings of queries and items; usually served by an ANN index.",
+  "diversification reranker": "Post-ranking layer that swaps items to spread categories/topics across the list. Patches intra-list redundancy that pointwise rankers miss.",
+  "DLRM": "Deep Learning Recommendation Model. Meta's classic recsys architecture: feature crosses + MLP top.",
+  "doubly robust": "Off-policy estimator with both an outcome model and a propensity model; unbiased if EITHER is correct.",
+  "DP-FTRL": "Variant of DP-SGD with correlated noise across steps via tree-aggregation; better privacy-utility trade for long training.",
+  "DP-SGD": "Differentially-Private SGD. Per-sample gradient clipping + Gaussian noise; provides (ε,δ)-DP privacy guarantee at some utility cost.",
+  "DPO": "Direct Preference Optimization. Trains a model on (winning, losing) pairs of outputs to align it with preferences — no separate reward model.",
+  "DPP": "Determinantal Point Process. Probabilistic model that prefers diverse subsets; selecting a new item discounts items similar to those already chosen.",
+  "drift": "When the data distribution at serving time diverges from the training distribution; model accuracy silently degrades.",
+  "DROCC": "Deep Robust One-Class Classification. Adversarially trains a one-class detector by perturbing points along a radius-r shell.",
+  "DyGFormer": "Dynamic Graph Transformer. Transformer over patches of temporal neighbor sequences (no per-node memory, stateless per call).",
+  "dynamic masking": "Attention mask that adapts per-request (here: prevents cross-feature tokens from attending to future emitted items in MTGR).",
+  "e-commerce ranking": "Ranking items on a shopping surface (search, category page, recommendations). Loaded with crosses (price×budget, brand×history).",
+  "ECE": "Expected Calibration Error. Average gap between predicted probability and true frequency, binned over the predicted-probability axis.",
+  "elastic shift": "Reviewer scheduling that scales pool size up/down across time zones to match incoming load; common in 24/7 global moderation ops.",
+  "EMA codebook update": "Update each codebook entry as an exponential moving average of the encoder outputs assigned to it. Stabilizes VQ/RQ-VAE training.",
+  "embedding": "Dense vector representation of a discrete item (word, user, product). Learned so that similar items have similar vectors.",
+  "encoder": "Neural net that maps raw input (image, text, item) into a dense latent vector consumed by downstream layers.",
+  "encoder-decoder": "Transformer with separate encoder (reads input) and decoder (writes output) stacks; T5-style; classic for sequence-to-sequence tasks.",
+  "engagement-bait": "Content engineered to maximize watch-time or clicks (cliffhangers, loops, ragebait) regardless of user satisfaction.",
+  "epistemic uncertainty": "Uncertainty from the model not knowing what it doesn't know. Reducible with more data; captured by ensembles or Bayesian methods.",
+  "exploration vs exploitation": "Tradeoff in online learning: try new actions to gather data vs pick the best-known action to maximize reward now.",
+  "exposure bias": "When the data only contains items the system already showed users; new items never get the chance to prove themselves.",
+  "factorized softmax": "Decompose softmax over a huge vocabulary into smaller softmaxes (e.g. one per code position) to make it tractable.",
+  "false negative": "Model classifies as 'safe' something that's actually a violation; the costliest error class for high-harm policies like self-harm.",
+  "false positive": "Model classifies as 'violation' something that's actually safe; costlier for low-harm policies like spam (annoys real users).",
+  "FastText": "Fast text classifier using subword n-grams; trains and serves in milliseconds. Common cheap-tier text moderation model.",
+  "feature cross": "Combining two raw features into a single signal (e.g. user-id × category). Captures interactions a single-feature model misses.",
+  "FedAvg": "Federated Averaging. Server averages client model weights; the canonical federated-learning aggregator.",
+  "federated learning": "Train a shared model across many clients without centralizing their data; each client computes gradients locally, server aggregates.",
+  "feed surface": "Product surface that shows a long ranked list (home feed, search results). Has many slots, so intra-list ordering matters.",
+  "FIFO": "First-In-First-Out queue. Items processed strictly in arrival order, no priority — wrong choice when policies have different urgency.",
+  "filter bubble": "Recommender concentrates each user on a narrow slice of content over time, suppressing exposure to other relevant items.",
+  "FlashAttention2": "FA2. GPU-optimized exact softmax-attention kernel; tiles QK^T to keep work in SRAM. Standard 2024 baseline for transformer attention speed.",
+  "FLOPs": "Floating-point operations. Standard unit of compute used in scaling-law plots and model-cost comparisons.",
+  "Focal loss": "Down-weights well-classified examples via (1-p)^γ; sharpens loss on hard examples. Used for class-imbalanced detection.",
+  "FP16": "16-bit floating point (IEEE half). Default training/inference precision for modern transformer kernels on Ampere+.",
+  "FP4": "4-bit floating point quantization. Reduces weight+activation memory ~8× vs BF16; aggressive low-precision serving format.",
+  "FP8": "8-bit floating point. Half the bits of FP16; trades precision for compute/memory savings, available on H100+.",
+  "FraudGPT": "LLM continually pretrained on financial-fraud text (typology vocabularies like 'structuring', 'smurfing', etc.) then SFT'd for case generation.",
+  "GCN": "Graph Convolutional Network. Layerwise neighborhood averaging with learned weights; transductive (needs full graph at train time).",
+  "generative recsys": "Recommendation systems where the model GENERATES the next item's identifier (or token sequence) instead of scoring a candidate list.",
+  "GLN": "Group-Layer Normalization. LayerNorm variant that normalizes within separate groups of features; preserves scale separation between heterogeneous token types.",
+  "GNN": "Graph Neural Network. Family of models that learn node/edge embeddings by iteratively aggregating from neighbors.",
+  "golden-set": "A small set of items with verified ground-truth labels, used to audit reviewer accuracy and detect label drift over time.",
+  "GraphSAGE": "Inductive GNN: each node aggregates features from sampled neighbors; works on unseen nodes (unlike transductive GCN).",
+  "GroupNorm": "Group Normalization (CV). Splits channels into G groups and normalizes within each group; works with small batch sizes where BN fails.",
+  "Gumbel-softmax": "Differentiable approximation to sampling from a categorical distribution; lets you backprop through discrete choices via reparameterization.",
+  "hallucination (decoder)": "Decoder emits a token sequence (Semantic ID) that does not correspond to any real item in the catalog.",
+  "HBM": "High-Bandwidth Memory. Stacked DRAM used on GPUs (H100, A100); the bandwidth bottleneck for memory-bound kernels.",
+  "HE": "Homomorphic Encryption. Compute on ciphertexts without decrypting; allows two parties to compute a joint function without revealing inputs.",
+  "hierarchical code": "Code where earlier positions capture coarse semantics, later positions capture fine residuals. Structure that RQ-VAE produces.",
+  "hit-rate": "Fraction of users whose top-K list contains at least one item they actually interacted with.",
+  "HITL": "Human-In-The-Loop. ML system that escalates uncertain cases to a human reviewer before acting; combines model speed with human judgment.",
+  "HNSW": "Hierarchical Navigable Small World. Graph-based ANN: layered proximity graph, greedy descent at each layer. RAM-heavy, log-time.",
+  "HSTU": "Hierarchical Sequential Transduction Units. Meta 2024 paper: sequence-modeling architecture for recommendation that scales past DLRM's plateau.",
+  "human-in-the-loop": "Workflow where uncertain model predictions are sent to a human reviewer; reviewer decisions feed back as training labels.",
+  "inductive bias": "Built-in assumption a model makes about data structure (e.g. locality, recency); shapes what it learns easily.",
+  "InfoNCE": "Contrastive loss: pulls positive (anchor, target) pairs together, pushes negatives apart, normalized over a batch of candidates.",
+  "INT8": "8-bit integer quantization. Reduces memory + compute ~4× vs FP32 at small accuracy cost; common at inference.",
+  "inter-rater agreement": "Statistical measure (Cohen's kappa, etc.) of how often two reviewers label the same item the same way; proxy for label quality.",
+  "intra-list dependencies": "How items in one ranked list interact (anti-redundancy, position effects). Pointwise scorers can't see them; list-generators can.",
+  "intra-list diversity": "Spread of categories/topics within a single ranked list. High diversity = less redundancy; valuable for exploration.",
+  "IPS": "Inverse Propensity Score. Same as IPW; widely used in counterfactual recsys evaluation.",
+  "IPW": "Inverse Propensity Weighting. Reweights samples by 1/probability-of-being-observed; corrects for selection bias.",
+  "isotonic regression": "Post-hoc calibration: fit a free-form monotonic step function from score to probability. More flexible than Platt.",
+  "iterative DPO": "DPO run in multiple rounds: collect on-policy preferences, run DPO, redeploy, repeat. Keeps preference data fresh as the policy evolves.",
+  "IVF-PQ": "Inverted File + Product Quantization. ANN: cluster space into K cells, encode each vector as a PQ code; lookup = nearest centroids + PQ distances.",
+  "K-means": "Clustering algorithm: pick K centroids, assign each point to nearest, recompute centroids; repeat until stable.",
+  "K-RagRec": "Knowledge-RAG Recommender. Uses retrieval-augmented generation: an LLM is grounded on retrieved item snippets to produce recommendations.",
+  "KL divergence": "Asymmetric measure of distance between two distributions. Used as a regularizer in VAEs to keep latents near a prior.",
+  "knowledge distillation": "Train a small 'student' model to match a large 'teacher' model's outputs (logits or features), often with temperature softening.",
+  "KV-cache": "Cached Key/Value tensors from prior transformer steps; lets autoregressive decoding skip recomputing past attention.",
+  "KYC": "Know-Your-Customer. Customer onboarding verification: document checks, face match, sanctions screening.",
+  "label smoothing": "Replace hard 0/1 targets with (ε, 1-ε); discourages over-confidence and helps calibration of softmax outputs.",
+  "latent space": "Vector space the encoder maps inputs into. Geometry here defines what 'similar' means downstream.",
+  "LayerNorm": "Per-token feature-vector normalization (subtract mean, divide by std, then learned affine). Stabilizes deep transformer training.",
+  "Lazy Decoder-Only": "OneRec V2 design: decoder cross-attends to user context only at chosen layers/steps; skipped steps reuse cached summaries. Cuts compute ~94%.",
+  "LDAM": "Label-Distribution-Aware Margin loss. Adds a class-dependent margin to logits; pushes the boundary away from rare-class points.",
+  "leave-last-out": "Eval protocol: for each user, hold out their most recent interaction as the test target, train on the rest.",
+  "linear attention": "Attention that replaces softmax with a kernel feature map so cost is O(n) in sequence length instead of O(n²).",
+  "LinUCB": "Linear Upper Confidence Bound. Contextual bandit assuming linear reward; picks the action with the highest (mean + confidence-bound) estimate.",
+  "list-wise": "Loss or metric defined over an entire ranked list (e.g., NDCG, mean watch-time per list) rather than per-item pairs.",
+  "listwise loss": "Loss computed over the whole ranked list at once (e.g. NDCG-based) instead of one item at a time. Captures list-level objectives.",
+  "LLM-rec": "Umbrella term for recsys approaches that wrap or distill an LLM as the scorer/generator rather than using a classic ID-embedding model.",
+  "Lloyd's algorithm": "Standard iterative procedure for k-means: assign points to nearest centroid, update centroids to cluster mean, repeat until stable.",
+  "LongER": "ByteDance long-sequence transformer for recsys; memory-efficient attention focused on long user histories.",
+  "LoRA": "Low-Rank Adaptation. Fine-tune a model by adding small low-rank weight deltas (A·B) instead of updating full weight matrices.",
+  "LSH": "Locality-Sensitive Hashing. Hash family where similar vectors collide with high probability; used for cheap approximate nearest neighbor.",
+  "Mamba": "State-space model with selective scan; processes sequences in linear time (O(L)) versus transformer's quadratic (O(L²)).",
+  "MAML": "Model-Agnostic Meta-Learning. Trains a model whose parameters can be fine-tuned to a new task in a few gradient steps.",
+  "MC dropout": "Monte-Carlo Dropout. Leave dropout on at inference and sample M forward passes; approximates a Bayesian posterior over weights.",
+  "MCC": "Merchant Category Code. 4-digit code (e.g., 5411 = grocery) categorizing what kind of merchant accepted a transaction.",
+  "membership inference": "Privacy attack that guesses whether a specific record was in the training set by querying the trained model.",
+  "millions-of-item softmax": "Computing softmax over the entire item catalog (millions of classes). Memory- and compute-prohibitive; usually approximated.",
+  "MiniLM": "Small distilled transformer (~22M params, 6 layers) producing sentence embeddings at a fraction of T5's compute.",
+  "mirror serving": "Both old and new models score every request; the old one still serves users. Used to fit new calibration heads.",
+  "MMoE": "Multi-gate Mixture-of-Experts. Each task has its own gate over a shared pool of experts; cheaper than fully task-specific networks.",
+  "MMR": "Maximal Marginal Relevance. Greedy reranker: each step picks the candidate maximizing (relevance − λ × similarity to already-chosen).",
+  "MNAR": "Missing Not At Random. The probability that a value is missing depends on the value itself (e.g., users only rate items they chose to see).",
+  "MobileNet": "Lightweight convolutional neural network designed for fast image inference on mobile/edge devices; ~10ms latency typical.",
+  "mode collapse": "When a generative model concentrates probability on a few outputs and stops covering the long tail of valid choices.",
+  "MoE": "Mixture-of-Experts. Multiple expert subnetworks + a gate that routes each input to one or few experts. Scales params without paying full FLOPs.",
+  "MovieLens": "Public movie-rating dataset (1M-25M ratings). Most-cited public recsys benchmark; small relative to industry data.",
+  "MPC": "Multi-Party Computation. Cryptographic protocol where parties jointly compute a function over private inputs, revealing only the output.",
+  "MRR": "Mean Reciprocal Rank. 1 / position of first relevant item, averaged across queries. Sensitive to top-1 only.",
+  "MTGR": "Meituan Generative Ranking. Decoder-only transformer that emits a ranked list of items autoregressively; captures intra-list dependencies natively.",
+  "NDCG": "Normalized Discounted Cumulative Gain. Ranking metric that rewards relevant items appearing near the top of the list.",
+  "negative sampling": "Train the model to score observed (positive) items above a sub-sample of random non-observed (negative) items; avoids full softmax.",
+  "negative transfer": "When training on multiple tasks hurts each task's accuracy compared to training them separately. The shared params get pulled in conflicting directions.",
+  "non-IID": "Non-Independent-and-Identically-Distributed. Clients in federated learning have different data distributions; breaks IID assumptions FedAvg relies on.",
+  "nucleus sampling": "Top-p decoding: sample the next token from the smallest set whose cumulative probability exceeds p. Adds controlled diversity.",
+  "on-policy": "Training data sampled from the current policy. DPO/PPO benefit because preferences reflect actions the deployed model would actually take.",
+  "OneRec": "Unified retrieve+rank model. Single backbone serves both retrieval and ranking via task-template prompts; eliminates retrieval-ranker train/serve skew.",
+  "online learning": "Updates the model continuously as new data arrives, rather than retraining on the full historical batch.",
+  "P(click)": "Predicted probability that a user clicks an item; the canonical calibrated output of a CTR model used in ad auctions.",
+  "P5": "Pretrain-Personalize-Prompt-Predict-Plan. Early generative recsys paper that frames all recsys tasks as text-to-text via a single seq2seq model.",
+  "p99 latency": "The 99th percentile of response times. 1% of requests are slower; tail latency, often dominates SLA pain.",
+  "pairwise scoring": "Score (user, item_i) vs (user, item_j) pairs; loss rewards correct ordering between pairs. BPR is the canonical example.",
+  "PEFT": "Parameter-Efficient Fine-Tuning. Umbrella for techniques (LoRA, adapters, prefix-tuning) that fine-tune small fraction of params.",
+  "perceptual hash": "Hash that's similar for visually similar images (unlike cryptographic hash which is brittle). Used to detect known-bad reposts despite minor edits.",
+  "Platt scaling": "Post-hoc calibration: fit a sigmoid mapping from raw model score to calibrated probability. Simple, monotonic.",
+  "PLE": "Progressive Layered Extraction. Multi-task architecture with shared and task-specific experts at every layer; mitigates negative transfer.",
+  "pointwise scoring": "Score each (user, item) independently; ignores how items interact in the ranked list. Classic DLRM/HSTU framing.",
+  "policy lane": "A category of moderation policy with its own threshold, SLA, and review pool — e.g., self-harm vs spam vs intellectual-property.",
+  "policy threshold": "Per-policy confidence cutoff that decides auto-action vs escalation; tuned separately because each policy has different cost-of-error.",
+  "popularity bias": "Recommenders over-recommend already-popular items because they have more training signal, starving the long tail.",
+  "position bias": "Users click higher-ranked items more often regardless of relevance. Must be corrected to avoid feedback loops.",
+  "posterior collapse": "VAE failure: encoder ignores the latent, decoder reconstructs from its prior alone, latents stop carrying info.",
+  "PPO": "Proximal Policy Optimization. Reinforcement-learning algorithm; takes small policy-update steps to avoid catastrophic regression.",
+  "PQ": "Product Quantization. Split a vector into K equal subspaces and quantize each independently; used for compact ANN indexes (Faiss).",
+  "preference-AUC": "AUC computed over (preferred, dispreferred) pairs: probability the model scores the preferred item higher. Standard DPO offline metric.",
+  "prefix conditioning": "At decode step t, generate next item conditioned on the items already emitted (the prefix). Lets the model see the partial list.",
+  "prefix similarity": "Two Semantic IDs are similar to the extent their leading codes match. The core property RQ-VAE gives downstream consumers.",
+  "prompt template": "Fixed textual scaffold with slots (user history, candidate item) filled at runtime. Lets one LLM serve many tasks via task prefixes.",
+  "propensity score": "Probability that a unit received the treatment (or that an item was shown). Used in IPW corrections.",
+  "ProtoNet": "Prototypical Networks. Few-shot classifier: build a centroid per class from support examples, classify a query by nearest centroid.",
+  "PTQ": "Post-Training Quantization. Quantize weights/activations of an already-trained model without retraining.",
+  "push notification": "One-item-per-user message surface (e.g. mobile alerts). Single-slot ranking; MTGR's autoregressive prefix is empty here.",
+  "QAT": "Quantization-Aware Training. Insert fake-quant ops during training so the model learns to be robust to inference-time quantization noise.",
+  "ranked list": "Ordered list of items shown to the user. Order matters because users read top-down and clicks concentrate at the top.",
+  "recall@K": "Fraction of relevant items captured in the top-K retrieved list.",
+  "RecLLM": "Generative recsys that turns an LLM into a conversational recommender; user history and item descriptions are fed in as prompt text.",
+  "reconstruction loss": "Distance (usually MSE) between encoder input and decoder output. Drives the autoencoder to preserve information.",
+  "reranking": "Final-stage recsys: take the candidate set and apply a heavier scorer / diversification logic to produce the user-facing list.",
+  "residual quantization": "Repeated quantize-then-quantize-the-error trick. K codebooks; level k encodes what level k-1 missed. Captures fine detail with small vocabularies.",
+  "residual stream": "The token-wise vector that each transformer block reads from and writes to; carries information across layers.",
+  "retrain": "Refresh model weights on new data; usually periodic (weekly/daily) for systems where labels arrive from human reviewers.",
+  "retrieve-rank": "Two-stage recsys pipeline: a cheap retrieval narrows millions of items to a shortlist, then a heavier ranker reorders that shortlist.",
+  "reward hacking": "Policy exploits flaws in the reward model to score high without doing the intended task. Symptom of an under-constrained optimizer.",
+  "reward model": "Model trained to predict a scalar reward (e.g., watch-time) from (state, action) pairs. Supplies the supervisory signal for PPO/DPO.",
+  "RLHF": "Reinforcement Learning from Human Feedback. Train a reward model from human preferences, then optimize policy against it (usually with PPO).",
+  "RMSNorm": "Root-Mean-Square Norm. LayerNorm variant that drops the mean-subtract; faster and competitive in quality. Used in LLaMA-style transformers.",
+  "rotary embeddings": "RoPE. Encode position by rotating Q/K vectors by angle proportional to position; replaces additive position embeddings.",
+  "RQ-VAE": "Residual-Quantized VAE. Stacks K codebooks; each level quantizes the residual error from the previous level. Produces hierarchical semantic IDs.",
+  "sampled softmax": "Softmax over a sub-sampled candidate pool (e.g., 1000 items) instead of millions; trades exact normalization for speed.",
+  "SASRec": "Self-Attentive Sequential Recommendation. 2018 transformer over item-only sequences with binary cross-entropy; predecessor to HSTU.",
+  "scaling law": "Empirical relationship: model quality improves as a power-law function of compute, data, or parameters.",
+  "ScalingNote distillation": "Distill the heavy ranker's logits into the retrieval scorer each cycle so retrieval and ranking stay aligned without re-syncing indexes.",
+  "ScaNN": "Scalable Nearest Neighbors. Google ANN with anisotropic vector quantization: weights quantization error by inner-product loss direction.",
+  "secure aggregation": "Cryptographic protocol where a server sees only the SUM of client gradients (not individual ones); used in privacy-preserving federated learning.",
+  "selection bias": "Sample we observe is non-random; the act of observing changes which items appear. Common in MNAR rec data.",
+  "self-harm": "Moderation policy category covering suicide/self-injury content; has the tightest SLA (typically <30s) because of user-safety risk.",
+  "Semantic ID": "Discrete K-tuple code derived from item content (via RQ-VAE). Similar items share prefix codes; replaces random hashed IDs.",
+  "Semantic-ID collision": "When two distinct items map to the exact same K-tuple of codes; the model cannot tell them apart at decode time.",
+  "Sentence-T5": "T5-based sentence encoder; turns text into a fixed-size dense embedding. TIGER uses it as the RQ-VAE input encoder.",
+  "seq2seq": "Sequence-to-sequence transformer: encoder reads an input sequence, decoder autoregressively emits an output sequence.",
+  "sequence transduction": "Mapping an input sequence to per-position outputs (one score per candidate). HSTU does this; MTGR generates a sequence instead.",
+  "SFT": "Supervised Fine-Tuning. Train a pretrained model on labeled (input, target) pairs to specialize it.",
+  "shadow scoring": "Run a new model alongside production; record its predictions but ignore them at serving. First migration phase.",
+  "shadow serve": "Run a new model in parallel with production but discard its outputs; collects predictions/logs without exposing users to the new ranker.",
+  "shadow-ban": "Moderation action: user's posts are invisible to others but visible to themselves; user doesn't know they've been throttled.",
+  "Shapley value": "Game-theoretic feature attribution: average marginal contribution of a feature across all subsets; used for per-feature credit.",
+  "single-slot": "Product surface that shows only one item per request (push notification, hero card). No intra-list prefix to condition on.",
+  "SLA": "Service Level Agreement. A binding response-time target — e.g., 'self-harm posts must be reviewed within 30 seconds 99% of the time'.",
+  "SNGP": "Spectral-Normalized Gaussian Process layers. Single-forward-pass calibrated uncertainty by replacing the final layer with a GP head.",
+  "softmax": "Function that turns a vector of scores into a probability distribution (largest score → largest probability, all sum to 1).",
+  "softmax tail": "The low-probability region of a softmax output; FP8 underflow and calibration mismatches affect tail behavior most.",
+  "SSM": "State-Space Model. Sequence model that maintains a continuous hidden state updated by a linear recurrence; Mamba is a popular instance.",
+  "STE": "Straight-Through Estimator. Treats a non-differentiable op (quantization, rounding) as identity during backprop so gradients can flow.",
+  "straight-through estimator": "Backprop trick: forward pass uses a non-differentiable op (e.g. quantization); backward pass pretends it was identity so gradients flow.",
+  "stratified": "Sampling strategy that preserves class proportions across subgroups; ensures rare classes are represented in train/eval splits.",
+  "structuring": "Money-laundering pattern: split a large cash deposit into smaller sub-threshold ones to evade reporting requirements.",
+  "surge": "Sudden spike in inbound load — e.g., a breaking news event creates 10x normal posts/sec; system must throttle without crashing.",
+  "TabBERT": "BERT-style MLM pretraining on tabular transaction sequences (mask cells, predict). Used for fraud sequence modeling.",
+  "TabPFN": "Transformer pretrained on millions of synthetic small-n tabular datasets; does few-shot tabular classification with no per-task gradient updates.",
+  "temperature": "Logit-scaling knob before softmax. T>1 flattens the distribution (more random); T<1 sharpens it (more deterministic).",
+  "temperature softening": "Divide logits by T>1 before softmax. Smoothes the distribution; used in distillation so the student learns inter-class similarity.",
+  "TGN": "Temporal Graph Network. Each node carries an RNN-style memory updated as events arrive; supports temporal attention over neighbor history.",
+  "Thompson sampling": "Bandit algorithm: maintain a posterior over reward parameters, sample from it, act greedily on the sample.",
+  "throttle": "Slow or pause processing of low-priority work to free capacity for high-priority work — used during surge to protect SLA on critical lanes.",
+  "TIGER": "Transformer Index for GEnerative Recommenders. Google 2023 paper: emits items by generating semantic-ID code tuples instead of softmaxing over millions of items.",
+  "top-k": "Return the K highest-scoring items from a ranked list.",
+  "top-k sampling": "Sampling decoder: at each step, sample from the top-K most likely tokens; trades determinism for output diversity.",
+  "transducer": "Sequence model that maps an input sequence to per-position outputs (one output per input position). HSTU is a transducer.",
+  "trie": "Prefix tree. Each path from root to leaf spells a valid sequence; used to enforce valid Semantic-ID decoding.",
+  "twin-tower": "Synonym for two-tower: separate user and item encoder towers whose outputs are dot-producted to score (user, item) pairs.",
+  "two-tower": "Recsys architecture: separate user-encoder tower and item-encoder tower; dot-product their outputs to score (user, item) pairs.",
+  "typology": "In AML, the named pattern of laundering (e.g., trade-based, layering, smurfing). Detectors are usually typology-anchored.",
+  "UCB": "Upper Confidence Bound. Bandit rule that picks the action with the highest (mean + uncertainty) estimate; explicit exploration.",
+  "uplift modeling": "Estimates conditional treatment effect (CATE) — the per-user change in outcome from receiving a treatment.",
+  "ViT": "Vision Transformer. Applies transformer attention to image patches; more accurate than CNNs but heavier (~80ms inference typical).",
+  "VLM": "Vision-Language Model. Jointly trained on images and text; can describe images, answer questions about them, or embed both modalities.",
+  "VQ-VAE": "Vector-Quantized VAE. Quantizes encoder output to a single codebook; commitment loss keeps encoder near code centroids.",
+  "watch-time": "Total time a user spends watching a recommended item. Used as the engagement reward signal in OneRec and other video recsys.",
+  "β temperature": "DPO's KL-strength hyperparameter. Low β → policy can drift from SFT (reward-hack risk); high β → policy stays near SFT (no learning)."
+}
+;</script>
   <script>
 // vis-components.js — design-system JSX components for the /visualize skill.
 // Exposed as window.VIS.{Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle}.
@@ -738,6 +1021,60 @@
     }, children);
   }
 
+  // autoGloss: scan a string for terms in window.__VIS_GLOSSARY (set by exporter
+  // before vis-components.js loads). Returns a React children array with each
+  // matched term wrapped in the same <span class="vis-term"> the Term component
+  // emits. First-mention only per call. Longest-match-first so "candidate
+  // generation" beats "candidate" alone.
+  let _glossPattern = null;
+  let _glossLookup = null;
+  function _buildGlossPattern() {
+    const g = (typeof window !== "undefined" && window.__VIS_GLOSSARY) || {};
+    const keys = Object.keys(g).filter(k => k && !k.startsWith("_"));
+    if (!keys.length) { _glossPattern = false; return; }
+    // Longest first to favor multi-word terms; escape regex metachars.
+    keys.sort((a, b) => b.length - a.length);
+    const escaped = keys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    // Word-boundary on each side. Allow internal hyphens/spaces; common ML terms
+    // like "DP-SGD", "feature cross", "p99 latency" are all matched naturally.
+    _glossPattern = new RegExp("(^|[^A-Za-z0-9_])(" + escaped.join("|") + ")(?=[^A-Za-z0-9_]|$)", "g");
+    _glossLookup = g;
+  }
+  function autoGloss(text) {
+    if (typeof text !== "string" || !text) return text;
+    if (_glossPattern === null) _buildGlossPattern();
+    if (_glossPattern === false) return text;
+    const seen = new Set();
+    const out = [];
+    let lastIdx = 0;
+    let m;
+    _glossPattern.lastIndex = 0;
+    while ((m = _glossPattern.exec(text)) !== null) {
+      const before = m[1];
+      const term = m[2];
+      const matchStart = m.index + before.length;
+      const matchEnd = matchStart + term.length;
+      // Emit text BEFORE this match
+      if (matchStart > lastIdx) out.push(text.slice(lastIdx, matchStart));
+      // Emit wrapped term (first-mention only)
+      if (seen.has(term.toLowerCase())) {
+        out.push(text.slice(matchStart, matchEnd));
+      } else {
+        seen.add(term.toLowerCase());
+        out.push(h("span", {
+          key: matchStart,
+          className: "vis-term",
+          "data-rv-info": _glossLookup[term],
+          "aria-label": _glossLookup[term],
+          tabIndex: 0,
+        }, term));
+      }
+      lastIdx = matchEnd;
+    }
+    if (lastIdx < text.length) out.push(text.slice(lastIdx));
+    return out.length === 1 ? out[0] : out;
+  }
+
   // Standalone hover tooltip for <VIS.Term>. If the report-viewer overlay
   // is loaded it already shows tooltips for any [data-rv-info] element, so
   // we short-circuit here to avoid double-rendering.
@@ -766,11 +1103,11 @@
     }
     function hide() { if (tip) tip.style.display = "none"; }
     document.addEventListener("mouseover", (e) => {
-      const el = e.target.closest && e.target.closest(".vis-term");
+      const el = e.target.closest && e.target.closest("[data-rv-info]");
       if (el) show(el); else hide();
     });
     document.addEventListener("focusin", (e) => {
-      const el = e.target.closest && e.target.closest(".vis-term");
+      const el = e.target.closest && e.target.closest("[data-rv-info]");
       if (el) show(el);
     });
     document.addEventListener("focusout", hide);
@@ -779,7 +1116,7 @@
     // Tapping anywhere else (including a different term) hides the current.
     let lastTappedTerm = null;
     document.addEventListener("click", (e) => {
-      const el = e.target.closest && e.target.closest(".vis-term");
+      const el = e.target.closest && e.target.closest("[data-rv-info]");
       if (el) {
         if (el === lastTappedTerm) { lastTappedTerm = null; hide(); }
         else { lastTappedTerm = el; show(el); }
@@ -930,6 +1267,8 @@
         h("strong", { className: "vis-trap-title" }, title),
         modeBadge ? h("span", { className: "vis-trap-multi-badge" }, modeBadge) : null
       ),
+      // NO autoGloss on scenario either — scenario is part of the question;
+      // glossing mechanism terms in it hints at the answer space.
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       diagram ? h("div", { className: "vis-trap-diagram" }, diagram) : null,
       h("div", { className: "vis-trap-options",
@@ -949,6 +1288,10 @@
           h("span", { className: "vis-trap-key" },
             optionPrefix(o) + " (" + o.key + ")"),
           " ",
+          // NO autoGloss here. Glossing terms inside option text leaks the
+          // answer mechanism via hover. Authors must keep options self-contained;
+          // a candidate who needs a definition can scroll up to the prose where
+          // the term is explicitly wrapped via <VIS.Term>.
           o.text
         ))
       ),
@@ -1266,6 +1609,8 @@
         h("strong", { className: "vis-trap-title" }, title),
         h("span", { className: "vis-cf-mode-badge" }, "Fill in the code")
       ),
+      // NO autoGloss on scenario either — scenario is part of the question;
+      // glossing mechanism terms in it hints at the answer space.
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       h("div", { className: "vis-cf-code-wrap" },
         h("div", { className: "vis-cf-code-lang" }, language),
@@ -1345,6 +1690,8 @@
         h("strong", { className: "vis-trap-title" }, title),
         h("span", { className: "vis-md-mode-badge" }, "Step-by-step proof")
       ),
+      // NO autoGloss on scenario either — scenario is part of the question;
+      // glossing mechanism terms in it hints at the answer space.
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       h("ol", { className: "vis-md-steps" },
         steps.map((step, idx) => {
@@ -1419,17 +1766,41 @@
 const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px"}}>
     <VIS.Hero pill="ML Fund" title="L2 regularization (Ridge)"
-      subtitle="The default 'shrink everything a little' penalty."
+      subtitle={<>The default <VIS.Term def="A modification to the loss that discourages large weights, trading a bit of training fit for better generalization.">regularization</VIS.Term> penalty for linear and deep models — shrinks every{" "}
+      <VIS.Term def="A learned scalar weight w_j that multiplies feature x_j inside a linear model; the vector of all coefficients is the parameter w.">coefficient</VIS.Term>{" "}
+      smoothly toward zero without ever quite getting there. Common knobs include the strength α and whether the{" "}
+      <VIS.Term def="Constant offset b in y = wᵀx + b. By convention not penalized by L2 (regularizing it would bias predictions away from the mean of y).">intercept</VIS.Term>{" "}
+      is penalized.</>}
       byline={[{label:"L2",value:"Regularization"},{label:"L3",value:"L2"},{label:"Origin",value:"Tikhonov / Hoerl 1970"}]}/>
     <VIS.TLDR>
-      L2 adds <code>α·Σw²</code> to the loss. Squared penalty pulls every weight smoothly toward zero but rarely to exactly zero — distributed shrinkage rather than sparsity.
+      L2 adds <code>α·Σw²</code> to the loss. The squared{" "}
+      <VIS.Term def="A term added to the loss whose role is to discourage certain solutions (here: large weights).">penalty</VIS.Term>{" "}
+      pulls every weight smoothly toward zero but almost never to exactly zero — distributed{" "}
+      <VIS.Term def="Pulling estimated coefficients toward a baseline (usually zero), trading a little bias for a lot of variance reduction.">shrinkage</VIS.Term>{" "}
+      rather than{" "}
+      <VIS.Term def="Property that many coefficients are exactly zero, so the model implicitly drops those features.">sparsity</VIS.Term>.
+      Equivalent under{" "}
+      <VIS.Term def="Maximum a Posteriori estimation. Pick the parameters that maximize posterior probability under a chosen prior.">MAP estimation</VIS.Term>{" "}
+      to a{" "}
+      <VIS.Term def="A prior probability distribution over parameters expressing beliefs before seeing data; combined with the likelihood gives the posterior.">prior</VIS.Term>{" "}
+      Gaussian on the weights.
     </VIS.TLDR>
     <VIS.Section id="sec-math" title="The penalty">
       <VIS.Equation display tex="\mathcal{L}_{\text{L2}}(w) \;=\; \mathcal{L}_{\text{fit}}(w) \;+\; \alpha \sum_{j=1}^{d} w_j^2"/>
       <p>
-        The squared term means large weights are penalized disproportionately more than small ones — so L2 spreads coefficient mass evenly rather than concentrating it. Equivalent under{" "}
-        <VIS.Term def="Statistical model where each weight has a prior probability distribution, and learning updates that prior given data. Bayesian linear regression with a Gaussian prior on weights gives Ridge.">Bayesian framing</VIS.Term>{" "}
-        to a Gaussian prior on weights.
+        The squared term penalizes large weights disproportionately more than small ones — so L2 spreads coefficient mass evenly across correlated columns rather than concentrating it on one. Geometrically the{" "}
+        <VIS.Term def="The feasible region of weights with penalty bounded by t; bounds how large weights can grow. The shape of this region drives sparsity vs shrinkage.">constraint region</VIS.Term>{" "}
+        <code>Σw² ≤ t</code> is a smooth ball with{" "}
+        <VIS.Term def="Points on a constraint surface where one of the coordinates is zero. L1's diamond has corners on the axes; L2's ball has none.">no corners</VIS.Term>, so the optimum lands on its{" "}
+        <VIS.Term def="A set of weights at which the loss takes a constant value; in 2D these are concentric ellipses around the OLS solution.">loss contour</VIS.Term>{" "}
+        but rarely on an axis. Equivalent under{" "}
+        <VIS.Term def="Statistical framing where each weight has a prior probability distribution, and learning updates that prior given data. Bayesian linear regression with a zero-mean Gaussian prior gives Ridge.">Bayesian framing</VIS.Term>{" "}
+        to a zero-mean{" "}
+        <VIS.Term def="The normal distribution. Acting as a prior on weights, it expresses 'small weights more likely than large'; mathematically equivalent to an L2 penalty.">Gaussian prior</VIS.Term>{" "}
+        on weights — the negative log of which is exactly the <code>w²</code> term. The{" "}
+        <VIS.Term def="A scalar that controls how strong the penalty is relative to the data-fit term. Larger means more shrinkage.">strength α</VIS.Term>{" "}
+        is the lone hyperparameter; conventional practice picks it via{" "}
+        <VIS.Term def="Holding out part of the training data K times to estimate generalization error before any final test-set evaluation.">cross-validation</VIS.Term>.
       </p>
     </VIS.Section>
     <VIS.Section id="sec-when" title="When to use L2">
@@ -1443,18 +1814,449 @@ flowchart TD
   style L1 fill:#fef9c3,stroke:#d97706
   style EN fill:#dcfce7,stroke:#16a34a
       `}/>
-      <p>L2 is the default in most deep-learning frameworks — under the name{" "}
-      <VIS.Term def="A common name for L2 regularization in deep learning: every step, weights are multiplied by (1 - α·η) before the gradient update — they 'decay' toward zero.">weight decay</VIS.Term>.</p>
+      <p>L2 is the default in most{" "}
+      <VIS.Term def="Frameworks like PyTorch, JAX, TensorFlow where optimizers expose a 'weight_decay' argument that implements an L2-style pull on parameters.">deep-learning frameworks</VIS.Term>{" "}
+      under the alias{" "}
+      <VIS.Term def="The deep-learning name for L2 regularization. Every step, weights are multiplied by (1 - α·η) before the gradient update — they 'decay' toward zero.">weight decay</VIS.Term>.
+      It is especially well-suited when features are{" "}
+      <VIS.Term def="Two or more input features are highly correlated. The design matrix becomes near-singular and OLS estimates explode in magnitude with opposite signs.">multicollinear</VIS.Term>{" "}
+      because the squared penalty splits the shared signal across{" "}
+      <VIS.Term def="Feature columns that are highly correlated (often near-linearly dependent). They inflate OLS variance and motivate Ridge or PCA.">collinear columns</VIS.Term>{" "}
+      rather than arbitrarily picking one. Under{" "}
+      <VIS.Term def="Adam optimizer with decoupled weight decay; default optimizer for transformer training.">AdamW</VIS.Term>{" "}
+      the decay is applied directly to the parameter rather than via the loss gradient, which the original Adam paper conflated.</p>
     </VIS.Section>
     <VIS.Section id="sec-mechanics" title="Solver mechanics">
       <VIS.Callout kind="info" title="Closed-form for linear regression">
-        Ridge has a closed-form solution: <code>w* = (XᵀX + αI)⁻¹Xᵀy</code>. The +αI on the diagonal is also what makes Ridge stable when{" "}
-        <VIS.Term def="Two or more input features are highly correlated. The design matrix becomes near-singular and OLS estimates explode.">multicollinearity</VIS.Term>{" "}
-        would break OLS (no inverse exists).
+        Ridge has an exact{" "}
+        <VIS.Term def="A solution expressible as a finite algebraic formula, with no iterative optimization required.">closed-form solution</VIS.Term>:{" "}
+        <code>w* = (XᵀX + αI)⁻¹Xᵀy</code>. The <code>+αI</code> on the diagonal of the{" "}
+        <VIS.Term def="The matrix XᵀX appearing in the OLS closed form. Its eigen-spectrum decides whether OLS is well-conditioned; multicollinear features make it near-singular.">normal-equation matrix</VIS.Term>{" "}
+        is the same trick that makes Ridge numerically stable when ordinary{" "}
+        <VIS.Term def="Ordinary Least Squares. Minimize squared residuals with no penalty; the closed form is (XᵀX)⁻¹Xᵀy, which fails when XᵀX is singular.">OLS</VIS.Term>{" "}
+        would break (no inverse exists for near-singular <code>XᵀX</code>). Shrinkage acts per{" "}
+        <VIS.Term def="A direction in feature space whose vectors are scaled (not rotated) by XᵀX; the corresponding scaling factor is the eigenvalue.">eigenvector</VIS.Term>{" "}
+        of <code>XᵀX</code> by factor λᵢ/(λᵢ+α), so directions with large{" "}
+        <VIS.Term def="The scaling factor associated with an eigenvector; large eigenvalue = strong signal in that direction.">eigenvalue</VIS.Term>{" "}
+        barely move while low-signal directions get squeezed hard.
       </VIS.Callout>
       <VIS.Callout kind="gotcha" title="L2 ≠ feature selection">
-        Coefficients shrink but stay nonzero, so L2 doesn't give you a feature shortlist. If you need a smaller deployed model for inference latency, reach for L1 — or train with L2 then prune small weights as a post-hoc step.
+        Coefficients shrink but stay nonzero, so L2 does not produce a feature shortlist. If you need a smaller deployed model for{" "}
+        <VIS.Term def="The time between when an input arrives and when the model returns a prediction; usually budgeted at the p99 tail.">inference latency</VIS.Term>, reach for L1 — or train with L2 then prune small weights as a post-hoc step. The smooth{" "}
+        <VIS.Term def="A function whose graph holds water — any line segment between two points on it stays above the graph. Has a unique global minimum (no local traps).">convex</VIS.Term>{" "}
+        loss landscape of L2 is also its operational advantage: every optimizer converges to the same minimum regardless of init. Practically this means tools like{" "}
+        <VIS.Term def="Generalized Cross-Validation. Closed-form approximation to leave-one-out CV using the trace of the influence (hat) matrix; cheap to evaluate per α.">GCV</VIS.Term>{" "}
+        let you sweep α at near-zero cost.
       </VIS.Callout>
+    </VIS.Section>
+
+    <VIS.Section id="sec-drill" title="Test yourself — concept drill">
+      <p style={{color:"#475569", marginBottom: 16}}>
+        Twenty-five interview-grade trap problems. Each decoy is a real-but-wrong belief held by someone with 80% understanding. Coverage skews toward mechanism (why the{" "}
+        <VIS.Term def="Geometric region of an L2 budget Σw²≤t. Smooth, round, no axis-aligned corners — the root cause of L2's smooth-shrinkage behavior.">L2 ball</VIS.Term>{" "}
+        has no corners) and application (when L2 beats{" "}
+        <VIS.Term def="The L1 penalty α·Σ|w|. Produces sparse coefficients because its diamond-shaped constraint region has corners on the axes.">Lasso</VIS.Term>).
+      </p>
+
+      <VIS.TrapProblem
+        id="l2-q1"
+        difficulty="medium"
+        title="Why does L2 shrink weights smoothly toward zero while almost always keeping them strictly positive?"
+        scenario={<><em>Discriminating insight:</em> the shape of the constraint region. Imagine the L2 budget as a region in weight space and ask where the loss contour first touches it.</>}
+        options={[
+          {key:"a", text:"The region Σw²≤t is a smooth ball; the loss contour generically touches its surface at a non-axis point, so both weights stay nonzero.", correct:true},
+          {key:"b", text:"L2 uses gradient descent with momentum, which physically prevents any weight from settling at exactly zero in finite time."},
+          {key:"c", text:"The penalty α·Σw² has subgradients only at zero, trapping the optimizer arbitrarily close to but always above zero on each axis."},
+          {key:"d", text:"L2 weights are floored at machine epsilon by the solver to avoid numerical division-by-zero downstream."},
+        ]}
+        trap={<>(b) confuses the optimizer with the geometry — the result is intrinsic to the penalty, not the solver. (c) is backwards: |w| has subgradient issues at zero, w² is smoothly differentiable everywhere. (d) is invented — real solvers do no such thing.</>}
+        lens={<>The level set Σw²≤t is a Euclidean ball, perfectly round. The ellipsoidal loss contour touches the ball at the closest point — generically off the axes. With no corners on the ball, there is no geometric reason for an optimum coordinate to land at exactly zero. L1's diamond has corners on the axes; L2's circle does not.</>}
+        stretch={<>What happens to the touch point as α→∞?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q2"
+        difficulty="medium"
+        title="A team has 200 features, almost all weakly informative. Which regularizer is the natural first choice?"
+        scenario={<><em>Discriminating insight:</em> match the regularizer to the signal-density assumption. Ask which penalty matches a 'most features carry some signal' world.</>}
+        options={[
+          {key:"a", text:"L1 alone — it will drop the weakest features and produce a deployable sparse model with minimal accuracy loss."},
+          {key:"b", text:"Elastic Net with α=0.9 — almost-pure L1 gives the cleanest interpretable subset with a touch of L2 stability."},
+          {key:"c", text:"Skip regularization — with 200 weakly-informative features the problem already has low variance."},
+          {key:"d", text:"L2 — when most features carry signal, smooth shrinkage preserves all of them while controlling their magnitude.", correct:true},
+        ]}
+        trap={<>(a) is the L1 reflex applied to the wrong regime; killing weak-but-real features hurts when the signal is distributed. (b) inherits L1's selection behavior. (c) ignores that 'weak' features still produce variance when summed.</>}
+        lens={<>L2 is the right default when the analyst believes most features contribute a little. It splits weight across them rather than picking one. L1 thrives in the opposite world: many features are pure noise and only a handful matter.</>}
+        stretch={<>How does your answer shift if 195 of the 200 features are pure noise?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q3"
+        difficulty="hard"
+        title="Why is the Ridge closed form (XᵀX + αI)⁻¹Xᵀy numerically stable when OLS fails?"
+        scenario={<><em>Discriminating insight:</em> the eigenvalues of the matrix being inverted. Track what +αI does to the spectrum of XᵀX.</>}
+        options={[
+          {key:"a", text:"+αI shifts every eigenvalue of XᵀX up by α, so the smallest eigenvalue is bounded away from zero and the condition number falls.", correct:true},
+          {key:"b", text:"+αI orthogonalizes the columns of X so the resulting matrix is diagonal and trivially invertible."},
+          {key:"c", text:"+αI replaces the Moore-Penrose pseudoinverse with a true inverse only when X is square."},
+          {key:"d", text:"+αI subtracts the rank-deficient component of XᵀX, restoring full rank by Gaussian elimination."},
+        ]}
+        trap={<>(b) is false: +αI does not orthogonalize columns, it shifts eigenvalues. (c) confuses the stability story with a square-vs-rectangular distinction that does not apply. (d) describes a different (and incorrect) intervention.</>}
+        lens={<>If XᵀX has eigenvalues λᵢ, then XᵀX + αI has eigenvalues λᵢ + α. The smallest eigenvalue moves from possibly zero to at least α, so the condition number κ = λ_max/λ_min stays bounded. That bounded κ is what gives Ridge its numerical resilience against multicollinearity.</>}
+        stretch={<>What is the condition number of Ridge in the limit α→∞?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q4"
+        difficulty="medium"
+        title="Two features are nearly identical. What does L2 do with their coefficients?"
+        scenario={<><em>Discriminating insight:</em> the squared penalty's preference between (1,0) and (0.5,0.5). Compute Σw² for each.</>}
+        options={[
+          {key:"a", text:"Picks one feature and zeros the other, since the second adds no marginal signal under a redundant column."},
+          {key:"b", text:"Assigns the full weight to whichever feature has lower index, since ties are broken alphabetically by the solver."},
+          {key:"c", text:"Returns NaN until one of the two collinear columns is dropped manually before re-running the fit."},
+          {key:"d", text:"Splits the weight roughly equally across both, because (0.5,0.5) has lower Σw² than (1,0) for the same prediction.", correct:true},
+        ]}
+        trap={<>(a) is L1's behavior, attributed to L2. (b) is invented. (c) describes OLS without regularization; the +αI shift prevents that pathology under L2.</>}
+        lens={<>For the same fitted output, Σw² = 0.5² + 0.5² = 0.5 beats 1² + 0² = 1. L2 prefers equal splits across correlated features — coefficient-sharing — while L1 picks one and zeros the other. This is the most important practical difference at inference time.</>}
+        stretch={<>Why does this property make L2 unsuitable for feature selection?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q5"
+        difficulty="hard"
+        title="The Bayesian view: which prior does the L2 penalty correspond to under MAP estimation?"
+        scenario={<><em>Discriminating insight:</em> take the negative log of a prior and see which one yields α·Σw². The exponent of the prior IS the penalty term.</>}
+        options={[
+          {key:"a", text:"A Laplace prior with scale 1/α — its log-density is proportional to |w|."},
+          {key:"b", text:"A uniform prior on a hypercube — its log-density is constant inside and -∞ outside."},
+          {key:"c", text:"A zero-mean Gaussian prior with variance 1/(2α) — its log-density is proportional to -w².", correct:true},
+          {key:"d", text:"A Cauchy prior with location 0 and scale α — heavy tails encourage shrinkage of small weights only."},
+        ]}
+        trap={<>(a) is L1's prior, not L2's. (b) does not depend on w so cannot produce a w² penalty. (d) is heavy-tailed and would give a non-quadratic penalty.</>}
+        lens={<>Negative log of N(0, σ²) is proportional to w²/(2σ²). Setting σ² = 1/(2α) recovers α·w² exactly. L2 = MAP under a Gaussian prior; L1 = MAP under a Laplace prior. Different prior, different geometry, different selection behavior.</>}
+        stretch={<>What would you call MAP under no prior at all?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q6"
+        difficulty="medium"
+        title="A junior says 'with large enough α, L2 will set most weights to exactly zero — that is how it does selection.' Where does this claim break?"
+        scenario={<><em>Discriminating insight:</em> what is the L2 solution at finite α vs in the limit α→∞? Examine the closed form coordinate by coordinate.</>}
+        options={[
+          {key:"a", text:"The claim is correct in practice — Ridge with cross-validated α does select features by zeroing out the weakest coefficients."},
+          {key:"b", text:"L2 zeros weights only when α is exactly equal to the largest eigenvalue of XᵀX, which the CV grid usually skips by accident."},
+          {key:"c", text:"The closed form w* = (XᵀX + αI)⁻¹Xᵀy shrinks every coordinate smoothly; weights only approach zero in the limit α→∞ and stay strictly positive at finite α.", correct:true},
+          {key:"d", text:"L2 zeros only the intercept term at high α; the slope coefficients on the features stay nonzero across all α."},
+        ]}
+        trap={<>(a) attributes L1's behavior to L2 — the most common confusion this skill tests. (b) is invented. (d) is invented; α typically does not regularize the intercept at all.</>}
+        lens={<>From (XᵀX + αI)⁻¹Xᵀy, as α grows each coordinate scales toward zero by roughly 1/(λᵢ + α), but stays nonzero at any finite α. 'Most weights exactly zero' is the geometric signature of L1's diamond corners, not L2's smooth ball.</>}
+        stretch={<>What does the limit α→∞ look like in terms of the predicted ŷ?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q7"
+        difficulty="hard"
+        title="Why is L2's optimization landscape friendlier than L1's at the origin?"
+        scenario={<><em>Discriminating insight:</em> differentiability of the penalty term at zero. Compare ∂(w²)/∂w and ∂(|w|)/∂w around w=0.</>}
+        options={[
+          {key:"a", text:"L2 is convex while L1 is non-convex, so only L2 has a unique global minimum and a well-defined gradient direction."},
+          {key:"b", text:"L2 uses second-order methods automatically; L1 is restricted to first-order solvers by construction of the |·| penalty."},
+          {key:"c", text:"L1's diamond geometry makes its loss surface fractal at corners, requiring specialized fractal-aware solvers to converge."},
+          {key:"d", text:"L2's penalty w² is smoothly differentiable everywhere including zero, so vanilla gradient descent converges with no subgradient handling.", correct:true},
+        ]}
+        trap={<>(a) is false — both penalties are convex. (b) is invented; solvers are a choice, not a constraint of the penalty. (c) is colorful nonsense — L1's corners are kinks, not fractals.</>}
+        lens={<>The squared penalty has derivative 2w everywhere, including at w=0. The absolute-value penalty has a kink at zero with subgradient in [-1, 1], so gradient descent oscillates near zero unless you use subgradient or proximal methods. L2 stays friendly to any optimizer; L1 needs care at the origin.</>}
+        stretch={<>Name one solver designed specifically for L1's kink.</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q8"
+        difficulty="medium"
+        title="When you double α in Ridge, what happens to every fitted coefficient (approximately)?"
+        scenario={<><em>Discriminating insight:</em> the closed form (XᵀX + αI)⁻¹Xᵀy as a smooth function of α. Use eigendecomposition to track each coordinate.</>}
+        options={[
+          {key:"a", text:"Every coefficient halves exactly, by linearity of the Ridge closed-form solution."},
+          {key:"b", text:"Coefficients in directions of large eigenvalues barely move; those in small-eigenvalue directions shrink the most.", correct:true},
+          {key:"c", text:"All coefficients shift by the same additive amount, equal to α divided by the number of training rows."},
+          {key:"d", text:"Half the coefficients drop to exactly zero on the doubled α; the other half stay unchanged as they were."},
+        ]}
+        trap={<>(a) is the naive 'doubling α doubles shrinkage' reflex but ignores that shrinkage acts per-eigenvalue: factor λᵢ/(λᵢ+α). (c) confuses additive with multiplicative shrinkage. (d) describes L1's behavior.</>}
+        lens={<>In the principal-component basis of XᵀX, Ridge shrinks the i-th component by factor λᵢ/(λᵢ+α). High-signal directions (large λᵢ) shrink barely; low-signal directions (small λᵢ) shrink a lot. This is why L2 implicitly down-weights noisy directions without dropping them.</>}
+        stretch={<>How does this connect to principal-component regression?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q9"
+        difficulty="medium"
+        title="A claim: 'L2's closed-form solution only exists when features are normalized to unit variance.' True or false?"
+        scenario={<><em>Discriminating insight:</em> what does (XᵀX + αI) need to be invertible — anything about feature scale?</>}
+        options={[
+          {key:"a", text:"True — without normalization XᵀX is singular and the inverse fails to exist for the closed form."},
+          {key:"b", text:"True — α is defined as a fraction of feature variance and undefined when features are on arbitrary scales."},
+          {key:"c", text:"False — the closed form always exists for α>0; feature scale only affects how α trades off across features.", correct:true},
+          {key:"d", text:"False, but only because modern solvers silently re-normalize features internally before inverting the matrix."},
+        ]}
+        trap={<>(a) is the 'normalize-or-die' reflex applied to the wrong concept. (b) invents a definition of α. (d) makes the right conclusion for the wrong reason — solvers do not silently rescale.</>}
+        lens={<>The +αI shift guarantees invertibility for any α>0 regardless of scale. Normalization matters for a practical reason — without it, a feature measured in meters and one in millimeters get wildly different effective penalties — but it is not a condition for the closed form to exist.</>}
+        stretch={<>If you forgot to normalize, would Ridge still converge? Would the answer be sensible?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q10"
+        difficulty="hard"
+        title="A linear model with ReLU activations and L2 weight decay: is the total loss still convex?"
+        scenario={<><em>Discriminating insight:</em> separate the convexity of the penalty from the convexity of the data-fit term. ReLU enters via the data-fit term, well away from the penalty itself.</>}
+        options={[
+          {key:"a", text:"Yes — L2 weight decay is convex, and adding a convex term preserves convexity of any underlying training loss."},
+          {key:"b", text:"It is the ReLU composition that makes the data-fit term non-convex; L2 itself remains a convex regularizer regardless of the architecture.", correct:true},
+          {key:"c", text:"L2 becomes non-convex once any nonlinear activation is introduced, because the gradient of the penalty interacts with the activation gradient."},
+          {key:"d", text:"Only if the network has more than one hidden layer; single-layer ReLU + L2 is provably convex by composition rules."},
+        ]}
+        trap={<>(a) is wrong in the direction the question tests — the sum is non-convex but for a different reason. (c) blames L2 for the non-convexity; the truth is the activation, not the penalty. (d) is invented.</>}
+        lens={<>w² is convex in w forever; ReLU composed inside a multi-layer net is what breaks convexity of the data-fit term. The sum of convex + non-convex is non-convex, but attributing it to L2 is the trap. L2 stays a benign regularizer in any architecture.</>}
+        stretch={<>Does this mean weight decay is unhelpful in deep nets? Why or why not?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q11"
+        difficulty="medium"
+        title="The cheapest practical way to pick α in Ridge is:"
+        scenario={<><em>Discriminating insight:</em> Ridge admits efficient α sweeps because it has a closed form. Which procedure exploits that?</>}
+        options={[
+          {key:"a", text:"Grid search with full retraining per α value — accurate, with unavoidable retraining cost per grid point."},
+          {key:"b", text:"Bayesian optimization with 1000 trials — Ridge's smoothness rewards Bayesian methods over simple grid search."},
+          {key:"c", text:"Generalized cross-validation (GCV) using the trace of the hat matrix — a closed-form approximation to leave-one-out CV.", correct:true},
+          {key:"d", text:"A single train/val split with α chosen by visual inspection of the validation loss curve over a coarse log-grid."},
+        ]}
+        trap={<>(a) ignores that Ridge has a closed form that makes leave-one-out CV tractable analytically. (b) is overkill for a 1D hyperparameter on a smooth convex objective. (d) is the brittle baseline.</>}
+        lens={<>GCV uses the influence matrix H = X(XᵀX + αI)⁻¹Xᵀ to compute leave-one-out CV error without re-fitting. Total cost is one eigendecomposition + cheap α sweeps. Ridge's structure rewards this trick uniquely; L1 does not admit a comparable closed-form CV.</>}
+        stretch={<>Why does L1 not have a clean GCV analogue?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q12"
+        difficulty="hard"
+        title="What is the geometric reason 'no corners' implies 'no sparsity' for L2?"
+        scenario={<><em>Discriminating insight:</em> a level set of the penalty meets a generic loss contour at one point. Whether that point lies on an axis depends on the level set's shape.</>}
+        options={[
+          {key:"a", text:"Sparsity requires a discrete penalty term; L2 is continuous and therefore cannot produce zero weights at any α."},
+          {key:"b", text:"On a smooth ball, the tangent plane at any axis point is not parallel to a generic ellipsoidal loss contour, so the touch point lies off-axis almost surely.", correct:true},
+          {key:"c", text:"The L2 ball has constant curvature; constant-curvature surfaces by theorem cannot produce sparse intersections with linear contours."},
+          {key:"d", text:"L2 penalizes the intercept along with the weights, which spreads the budget too thinly to drive any individual weight to zero."},
+        ]}
+        trap={<>(a) is a category confusion — L1 is also continuous but produces sparsity via geometry, not discreteness. (c) is invented theorem-naming. (d) is false — most implementations skip the intercept.</>}
+        lens={<>L1's diamond has corners on the axes — sharp points where many ellipsoidal contours can be tangent. L2's ball has smooth tangent planes everywhere, and a generic ellipsoidal contour will touch the ball at exactly one non-axis point. The geometry is the whole story; the math just confirms it.</>}
+        stretch={<>What is the L_p ball for p between 1 and 2? Does it produce sparsity?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q13"
+        difficulty="medium"
+        title="A 50,000-feature gene-expression regression with only 500 patients: which regularizer typically wins?"
+        scenario={<><em>Discriminating insight:</em> n &lt;&lt; p with a strong prior that only a few genes matter biologically.</>}
+        options={[
+          {key:"a", text:"L2 — it stabilizes the ill-conditioned XᵀX via the +αI shift and uses every gene's tiny signal in the prediction."},
+          {key:"b", text:"OLS with pseudoinverse — works fine in n &lt;&lt; p settings when the design matrix X has full row rank."},
+          {key:"c", text:"Skip regularization in favor of a deep neural network — the n &lt;&lt; p problem is unsolvable with linear models."},
+          {key:"d", text:"L1 — when n &lt;&lt; p and the truth is sparse, picking a small subset of genes is both more accurate and interpretable.", correct:true},
+        ]}
+        trap={<>(a) is the 'L2 is the default' reflex applied to a regime where L1 is built. (b) ignores that pseudoinverse OLS overfits catastrophically with n &lt;&lt; p. (c) is the 'always reach for deep learning' fallacy.</>}
+        lens={<>n &lt;&lt; p plus a sparse-truth prior is L1's home turf. L2 will spread weight across thousands of irrelevant genes and produce an uninterpretable model that does not generalize. L1's sparsity yields ~30 nonzero coefficients you can biologically validate.</>}
+        stretch={<>When in genomics would you still prefer L2 (or Elastic Net) over L1?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q14"
+        difficulty="medium"
+        title="In deep learning frameworks, 'weight decay' and 'L2 regularization' are:"
+        scenario={<><em>Discriminating insight:</em> for SGD the two are equivalent; for adaptive optimizers like Adam they decouple. AdamW exists for exactly this reason.</>}
+        options={[
+          {key:"a", text:"Identical in all optimizers; they are simply two interchangeable names for the same gradient term added to the loss."},
+          {key:"b", text:"Different by construction — weight decay multiplies, L2 adds, so the math fails to line up in any practical optimizer."},
+          {key:"c", text:"Identical mathematically but differ in numerical implementation, with weight decay running about 10% slower than L2 in benchmarks."},
+          {key:"d", text:"Equivalent under SGD; under Adam and other adaptive methods, decoupled weight decay applied to the parameter differs from L2 added to the loss.", correct:true},
+        ]}
+        trap={<>(a) is the common claim that AdamW was created to refute. (b) overstates the difference — they coincide for SGD. (c) is invented.</>}
+        lens={<>For SGD: dw = -η∇L + 2αηw is the same whether α·w² was added to the loss or w was scaled by (1 - 2αη) each step. For Adam, the adaptive learning rates rescale the L2 gradient but not the direct weight-decay step, so AdamW (decoupled weight decay) regularizes more consistently across parameter scales.</>}
+        stretch={<>Which one is the right default for transformer fine-tuning?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q15"
+        difficulty="hard"
+        title="When you add L2 to a logistic regression, what changes about the gradient of the loss?"
+        scenario={<><em>Discriminating insight:</em> the data-fit gradient is the standard logistic gradient; the penalty adds a linear pull toward the origin. Combine and inspect.</>}
+        options={[
+          {key:"a", text:"The data-fit gradient is replaced by a Gaussian likelihood gradient; the original logistic loss falls away."},
+          {key:"b", text:"Each component gains an additive 2αw term — a linear pull toward zero whose magnitude grows with the weight itself.", correct:true},
+          {key:"c", text:"The gradient becomes piecewise linear, with a discontinuity at each coordinate's zero crossing."},
+          {key:"d", text:"The Hessian becomes diagonal, allowing per-parameter learning rates by construction of the L2 term."},
+        ]}
+        trap={<>(a) confuses linear regression's Ridge identity with what L2 means for logistic. (c) describes L1's gradient near zero. (d) is unrelated — the Hessian gains +2αI on its diagonal but stays non-diagonal overall.</>}
+        lens={<>∇(L_fit + α·Σw²) = ∇L_fit + 2αw. The penalty contributes a per-weight linear force toward zero, proportional to the current magnitude. The Hessian gains +2αI, which is also why L2 makes the optimization landscape strongly convex and easier to optimize.</>}
+        stretch={<>How does this 2αw term interact with very large gradients early in training?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q16"
+        difficulty="medium"
+        title="Same predicted ŷ from a spread-out coefficient vector versus a concentrated one. Which does Ridge prefer?"
+        scenario={<><em>Discriminating insight:</em> two fits produce the same ŷ. Fit P concentrates weight on a single coordinate; Fit Q spreads it equally across two coordinates with half the magnitude on each. Compute the squared-sum penalty for each.</>}
+        options={[
+          {key:"a", text:"The spread-out fit Q — for the same prediction, splitting weight halves the squared-norm relative to concentrating it on one coordinate.", correct:true},
+          {key:"b", text:"The concentrated fit P — fewer nonzero weights means a smaller penalty by virtue of sparsity-friendly geometry under any L_p norm."},
+          {key:"c", text:"Both equally — Ridge's penalty depends only on the sum of weights, and the two fits have identical sums by construction."},
+          {key:"d", text:"The concentrated fit P — L2's preference for axis-aligned solutions favors sparse, single-coordinate representations of the signal."},
+        ]}
+        trap={<>(b) confuses L2 with L1's sparsity preference. (c) confuses squared-sum with sum-squared. (d) inverts L2's actual geometry.</>}
+        lens={<>If Fit P has one weight of magnitude 4 and Fit Q has two weights of magnitude 2 each, Σw²(P) = 16 versus Σw²(Q) = 8. L2 systematically prefers spreading weight equally across coordinates — the squared term punishes concentration. This is also why L2 distributes coefficients across correlated features rather than picking one.</>}
+        stretch={<>What does L1 prefer between these two solutions?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q17"
+        difficulty="hard"
+        title="Why is the L2 coefficient ranking a fragile feature-importance shortlist even at high α?"
+        scenario={<><em>Discriminating insight:</em> at high α every coefficient shrinks proportionally toward zero while staying strictly positive, so 'small' versus 'irrelevant' is a fuzzy threshold call by the analyst.</>}
+        options={[
+          {key:"a", text:"L2 leaves slope coefficients untouched and shrinks only the intercept, so feature importance is invariant under α."},
+          {key:"b", text:"L2 randomizes coefficient signs at high α, destroying any interpretable ordering of the features for downstream readers."},
+          {key:"c", text:"All coefficients shrink continuously toward zero; ranking them by magnitude requires a post-hoc threshold chosen by the analyst, with no help from the model itself.", correct:true},
+          {key:"d", text:"L2 shrinkage is non-monotonic in α, so increasing the penalty can grow a small coefficient back toward its OLS value."},
+        ]}
+        trap={<>(a) inverts a common implementation detail. (b) is invented. (d) is false — shrinkage is monotone per eigenvalue direction.</>}
+        lens={<>Because every coefficient survives at finite α, 'which features matter' requires you to pick a cutoff. L1 dodges this by giving exact zeros, producing a self-thresholding shortlist. L2 produces a smooth ranking that the analyst must hand-thresh — fine for prediction, awkward for interpretation.</>}
+        stretch={<>How do you 'sparsify' a Ridge model post-hoc and what is lost?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q18"
+        difficulty="medium"
+        title="A ReLU MLP is trained with weight decay λ=0.0001. The training loss plateaus high. The team raises weight decay to 0.1. What happens?"
+        scenario={<><em>Discriminating insight:</em> the U-shape of regularization. Past the sweet spot, more penalty causes underfitting.</>}
+        options={[
+          {key:"a", text:"Training loss drops further as the network finally generalizes under the heavier penalty applied during training."},
+          {key:"b", text:"Training loss stays flat; validation loss improves substantially due to the much stronger anti-overfitting pressure."},
+          {key:"c", text:"Weight decay 0.1 triggers gradient explosion in the ReLU layers and the training run diverges within a few steps."},
+          {key:"d", text:"Both training and validation loss rise as the penalty crushes weights toward zero and the network degenerates toward a mean predictor.", correct:true},
+        ]}
+        trap={<>(a) ignores the bias-variance U-shape. (b) is the 'regularization is free' fallacy. (c) is invented — weight decay reduces magnitudes, it does not blow them up.</>}
+        lens={<>Past the sweet spot, L2 trades a small variance reduction for a large bias increase. Training and val both rise. The diagnostic is symmetric — train loss going UP with increased λ is the signal that you have over-regularized.</>}
+        stretch={<>Sketch the bias and variance curves separately as λ sweeps from 0 to large.</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q19"
+        difficulty="hard"
+        title="Ridge applied to a sparse-truth regime (only 10 of 1000 features matter): what failure mode appears?"
+        scenario={<><em>Discriminating insight:</em> L2 spreads weight across all features, including the 990 noise ones. Each carries a tiny coefficient, and the aggregate of those tiny coefficients summed at inference adds variance.</>}
+        options={[
+          {key:"a", text:"Ridge shrinks all 1000 coefficients but keeps every noise feature nonzero, accumulating small errors that lose to a sparse L1 fit on test loss.", correct:true},
+          {key:"b", text:"Ridge perfectly identifies the 10 true features because their coefficients dominate the 990 spurious ones after enough shrinkage."},
+          {key:"c", text:"Ridge becomes numerically unstable because most columns have zero true coefficient and the +αI shift overcorrects on a degenerate spectrum."},
+          {key:"d", text:"Ridge diverges; only L1 has a well-defined optimum in sparse-truth regimes due to its corner geometry on the constraint."},
+        ]}
+        trap={<>(b) confuses 'small' with 'zero'. (c) is the wrong stability story — Ridge handles ill-conditioned X by design. (d) is invented; Ridge always has a unique optimum.</>}
+        lens={<>Each of the 990 noise features contributes a small but nonzero coefficient. Summed at prediction time, the noise terms add variance to ŷ. L1 zeroes them outright, removing the noise. This is the canonical L1-beats-L2 regime: truly sparse truth.</>}
+        stretch={<>At what sparsity level does L2 start to win again?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q20"
+        difficulty="medium"
+        title="A practitioner says 'I tuned α with cross-validation and got α=0. So I will drop Ridge.' What is the right response?"
+        scenario={<><em>Discriminating insight:</em> CV-selected α=0 is a legitimate finding that signals the data has enough rows relative to features that shrinkage offers little.</>}
+        options={[
+          {key:"a", text:"They are right — α=0 means OLS, which is preferable to Ridge in general because OLS gives unbiased estimates."},
+          {key:"b", text:"They are wrong — CV cannot choose α=0; that result indicates a bug in the CV procedure or grid setup."},
+          {key:"c", text:"They are right in spirit; worth checking the CV grid included small but nonzero α and that XᵀX is well-conditioned without the +αI shift.", correct:true},
+          {key:"d", text:"They are wrong — Ridge always strictly improves over OLS in test error, so α=0 cannot be the genuine CV optimum."},
+        ]}
+        trap={<>(a) overclaims unbiasedness as a goal — Ridge trades bias for variance intentionally. (b) is false; α=0 is a valid CV outcome. (d) overstates the theoretical guarantee — Ridge dominates OLS in expectation but a particular CV draw can pick α=0.</>}
+        lens={<>α=0 from CV is genuinely informative — it says 'on this data, the variance reduction from shrinkage costs more in bias than it saves.' Sanity-check that the grid extended to small nonzero values and that XᵀX is well-conditioned, then trust the result.</>}
+        stretch={<>What does CV picking the largest α in your grid suggest?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q21"
+        difficulty="hard"
+        title="A factory: 100 sensors, all measuring slightly noisy versions of the same underlying physical variable. Ridge fits coefficients. What pattern emerges?"
+        scenario={<><em>Discriminating insight:</em> highly correlated features under L2 share the signal equally. Predict what 100 near-identical sensors will produce.</>}
+        options={[
+          {key:"a", text:"One sensor gets a large coefficient; the remaining 99 are zeroed out by Ridge as redundant under shrinkage."},
+          {key:"b", text:"All 100 sensors receive roughly equal small coefficients, summing to the effective signal weight a single sensor would carry alone.", correct:true},
+          {key:"c", text:"Coefficients alternate in sign across the 100 sensors, canceling pairwise and producing an unstable but technically valid fit."},
+          {key:"d", text:"Ridge refuses to fit and raises a multicollinearity error before producing any coefficients on the near-redundant columns."},
+        ]}
+        trap={<>(a) describes L1's behavior. (c) describes unregularized OLS's pathology under near-collinearity. (d) is false; the +αI shift handles collinearity gracefully.</>}
+        lens={<>L2 prefers (s/100, s/100, ..., s/100) over (s, 0, ..., 0) because Σw² = s²/100 versus s² — a hundred-fold reduction in penalty. The sensors share the signal evenly. This is the stability story: L2 averages over correlated columns; L1 picks one.</>}
+        stretch={<>What does this imply for interpretability if you want to identify the 'most important' sensor?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q22"
+        difficulty="hard"
+        title="Comparing Ridge to early stopping on a deep network: how are they related?"
+        scenario={<><em>Discriminating insight:</em> both bound the effective magnitude of weights. The early-stopping connection is geometric.</>}
+        options={[
+          {key:"a", text:"They are unrelated — early stopping affects optimization time, Ridge affects loss shape, and the two operate on disjoint axes of the system."},
+          {key:"b", text:"Early stopping is strictly stronger than L2 because it can produce sparse weights, an outcome L2 cannot generate by construction."},
+          {key:"c", text:"Ridge is a hyperparameter while early stopping is a heuristic — the two share no formal mathematical relationship worth deriving."},
+          {key:"d", text:"Early stopping under gradient descent is approximately equivalent to L2 with α inversely related to the number of training steps taken.", correct:true},
+        ]}
+        trap={<>(a) and (c) miss the well-known connection. (b) attributes sparsity to early stopping incorrectly.</>}
+        lens={<>For quadratic losses, t gradient-descent steps from origin produce weights confined to a region whose radius scales with t·η. Stopping early caps weight magnitudes — the same job L2 does explicitly. The equivalence is approximate but tight in the linear regime and motivates 'why early stopping works.'</>}
+        stretch={<>Which is preferred in practice when both are available, and why?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q23"
+        difficulty="medium"
+        title="Why is Elastic Net (αL1 + (1-α)L2) often a safer default than pure L1 when features are correlated?"
+        scenario={<><em>Discriminating insight:</em> pure L1 has a known instability under correlated features. L2 fixes it. Combining them gets both benefits.</>}
+        options={[
+          {key:"a", text:"L1 alone arbitrarily picks one of a correlated group and zeros the rest; the L2 term encourages sharing across the group while preserving some sparsity.", correct:true},
+          {key:"b", text:"Elastic Net is mathematically equivalent to L1 with a rescaled α, so it produces the same fitted coefficients as pure Lasso under any dataset."},
+          {key:"c", text:"The L2 term lets Elastic Net produce sparser solutions than pure L1 because it adds extra multiplicative pressure pulling coefficients toward zero."},
+          {key:"d", text:"Elastic Net replaces L1's diamond with a square constraint region, producing axis-aligned fits that abandon sparsity in exchange for stability."},
+        ]}
+        trap={<>(b) is mathematically false. (c) is backwards — adding L2 makes solutions less sparse than pure L1. (d) is invented geometry.</>}
+        lens={<>L1 alone is unstable across correlated columns — small data perturbations flip which column gets the weight. Adding L2 smooths that behavior: the squared term encourages weight-sharing across the group while L1's diamond still produces zeros for the irrelevant features. You get a sparse-but-stable solution.</>}
+        stretch={<>How would you choose the mixing ratio between L1 and L2 in Elastic Net?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q24"
+        difficulty="hard"
+        title="In Bayesian linear regression with a Gaussian prior, what does the MAP estimate equal?"
+        scenario={<><em>Discriminating insight:</em> write the negative log posterior. Likelihood term + prior term. The prior term is what?</>}
+        options={[
+          {key:"a", text:"The OLS estimate (XᵀX)⁻¹Xᵀy, independent of the prior and unchanged by the choice of prior variance."},
+          {key:"b", text:"The Ridge estimate, with the penalty strength α set by the ratio of the noise variance to the prior variance of the weights.", correct:true},
+          {key:"c", text:"The Lasso estimate, because Gaussian priors induce sparsity in MAP solutions under linear-regression likelihoods."},
+          {key:"d", text:"The posterior mean, which equals the prior mean of zero by symmetry of the Gaussian and the convexity of MAP estimation."},
+        ]}
+        trap={<>(a) ignores the prior entirely. (c) confuses Gaussian with Laplace priors. (d) confuses posterior MEAN with the MAP under a strong Gaussian prior — and even then the value would shift away from zero given any data.</>}
+        lens={<>Negative log posterior = (1/2σ²) Σ(y - Xw)² + (1/2τ²) Σw² + const. Setting α = σ²/τ² gives exactly the Ridge objective. MAP under a zero-mean Gaussian prior IS Ridge regression — they are the same estimator viewed through two different lenses.</>}
+        stretch={<>For a Gaussian prior, when does the MAP equal the posterior mean exactly?</>}
+      />
+
+      <VIS.TrapProblem
+        id="l2-q25"
+        difficulty="medium"
+        title="A team adds L2 to fix overfitting. Train loss drops, val loss is flat. What is the most likely diagnosis?"
+        scenario={<><em>Discriminating insight:</em> L2 is a variance-reduction tool. If val loss stays flat when L2 is added, the underlying gap came from somewhere other than variance.</>}
+        options={[
+          {key:"a", text:"The model was bias-limited, so L2 (which fights variance) addresses the wrong bottleneck. Reach for richer features or a bigger model instead.", correct:true},
+          {key:"b", text:"L2 worked perfectly — train loss dropping is the canonical success signal and means the model is healthy."},
+          {key:"c", text:"α is set too high; lower it gradually until val loss starts moving in the right direction."},
+          {key:"d", text:"L2 broke the optimizer; switch over to L1 for a sparser fit and the val loss will follow train down."},
+        ]}
+        trap={<>(b) is the 'any change is good' fallacy. (c) confuses the failure mode — at high α train loss would rise, not drop. (d) confuses regularizers with optimizers.</>}
+        lens={<>If train ≈ val and both are high, you have a bias problem; L2 fights variance and offers little. The signature 'train dropped, val flat' says L2 trimmed a few benign coefficients but missed the underfit. Bigger model, richer features, or different architecture is the move.</>}
+        stretch={<>What would the same scenario look like if L2 actually addressed the gap?</>}
+      />
     </VIS.Section>
   </main>
 );
