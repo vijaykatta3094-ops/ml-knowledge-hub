@@ -1421,7 +1421,7 @@ const App = () => (
   <main style={{maxWidth: 880, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
       pill="RecSys SOTA · Generative recommendation (HSTU family)"
-      title="MTGR — Meituan Generative Ranking"
+      title={<><VIS.Term def="Meituan Generative Ranking. Decoder-only transformer that emits a ranked list of items autoregressively; captures intra-list dependencies natively.">MTGR</VIS.Term> — Meituan Generative Ranking</>}
       subtitle="Decoder-only transformer that emits the ranked list auto-regressively. Re-injects DLRM cross-features as a separate token group via Group-Layer Normalization."
       byline={[
         {label: "Paper", value: "Han et al., CIKM 2025"},
@@ -1430,12 +1430,12 @@ const App = () => (
       ]}/>
 
     <VIS.TLDR>
-      MTGR is a decoder-only transformer that generates the ranked list <em>auto-regressively</em>: each emitted item is conditioned on the items already placed, so intra-list dependencies (position effects, anti-redundancy) are captured natively. It also re-injects DLRM <VIS.Term def="Derived features combining two or more raw signals (user×item×ctx) that an MLP cannot easily induce. Carry hard-won business signal in mature DLRM systems.">cross-features</VIS.Term> as additional tokens via <VIS.Term def="Group-Layer Normalization — normalizes cross-feature tokens and sequence tokens independently in separate sub-spaces, so the cross signal isn't washed out by the sequence signal.">Group-Layer Normalization</VIS.Term>. Distinct from <VIS.Term def="Hierarchical Sequential Transduction Units — encoder/transducer that maps user history to a score per candidate. NOT autoregressive over the ranked list.">HSTU</VIS.Term> (transduction, not list generation) and from <VIS.Term def="Transformer Index for Generative Recommender. Generates semantic-ID token sequences per item; retrieval, not list-level ranking.">TIGER</VIS.Term> (semantic-ID generation). Production at Meituan: +1.22% conversion, +1.31% CTR; inference down 12%. Source: <a href="https://arxiv.org/abs/2505.18654" target="_blank" rel="noopener">arXiv:2505.18654</a>.
+      MTGR is a <VIS.Term def="Transformer with only the decoder stack (GPT-style); generates outputs one token at a time conditioned on what's been emitted so far.">decoder-only transformer</VIS.Term> that generates the <VIS.Term def="Ordered list of items shown to the user. Order matters because users read top-down and clicks concentrate at the top.">ranked list</VIS.Term> <em><VIS.Term def="Generates a sequence one element at a time, each conditioned on what's already been emitted; classic next-token prediction.">auto-regressively</VIS.Term></em>: each emitted item is conditioned on the items already placed, so <VIS.Term def="How items in one ranked list interact (anti-redundancy, position effects). Pointwise scorers can't see them; list-generators can.">intra-list dependencies</VIS.Term> (<VIS.Term def="Users click higher-ranked items more often regardless of relevance. Must be corrected to avoid feedback loops.">position effects</VIS.Term>, <VIS.Term def="Avoiding near-duplicate items in the same ranked list (e.g. five very similar sushi places). MTGR captures this via the prefix.">anti-redundancy</VIS.Term>) are captured natively. It also re-injects <VIS.Term def="Deep Learning Recommendation Model. Meta's classic recsys architecture: feature crosses + MLP top.">DLRM</VIS.Term> <VIS.Term def="Derived features combining two or more raw signals (user×item×ctx) that an MLP cannot easily induce. Carry hard-won business signal in mature DLRM systems.">cross-features</VIS.Term> as additional tokens via <VIS.Term def="Group-Layer Normalization — normalizes cross-feature tokens and sequence tokens independently in separate sub-spaces, so the cross signal isn't washed out by the sequence signal.">Group-Layer Normalization</VIS.Term>. Distinct from <VIS.Term def="Hierarchical Sequential Transduction Units — encoder/transducer that maps user history to a score per candidate. NOT autoregressive over the ranked list.">HSTU</VIS.Term> (<VIS.Term def="Sequence model that maps an input sequence to per-position outputs (one output per input position). HSTU is a transducer.">transduction</VIS.Term>, not list generation) and from <VIS.Term def="Transformer Index for Generative Recommender. Generates semantic-ID token sequences per item; retrieval, not list-level ranking.">TIGER</VIS.Term> (<VIS.Term def="Discrete code (or tuple of codes) representing an item by its meaning rather than a random ID. Produced by RQ-VAE in TIGER.">semantic-ID</VIS.Term> generation). Production at Meituan: +1.22% conversion, +1.31% <VIS.Term def="Click-Through Rate. Fraction of impressions that lead to a click; the central calibration target for ads and feed ranking.">CTR</VIS.Term>; inference down 12%. Source: <a href="https://arxiv.org/abs/2505.18654" target="_blank" rel="noopener">arXiv:2505.18654</a>.
     </VIS.TLDR>
 
     <VIS.Section id="sec-what" title="Beat 1 — What it is">
       <p>
-        MTGR is a decoder-only transformer that <em>generates a ranked sequence</em> of items auto-regressively. At each decode step the model emits the next item conditioned on the prefix of already-placed items plus the user's history tokens and the cross-feature tokens. Group-Layer Normalization keeps cross-feature tokens in their own normalization sub-space; dynamic masking prevents cross tokens from peeking at future emitted items.
+        MTGR is a decoder-only transformer that <em>generates a ranked sequence</em> of items autoregressively. At each decode step the model emits the next item conditioned on the <VIS.Term def="At decode step t, generate next item conditioned on the items already emitted (the prefix). Lets the model see the partial list.">prefix</VIS.Term> of already-placed items plus the user's history tokens and the cross-feature tokens. Group-Layer Normalization keeps cross-feature tokens in their own normalization sub-space; <VIS.Term def="Attention mask that adapts per-request (here: prevents cross-feature tokens from attending to future emitted items in MTGR).">dynamic masking</VIS.Term> prevents cross tokens from peeking at future emitted items.
       </p>
       <VIS.Mermaid chart={`
 flowchart TB
@@ -1454,19 +1454,19 @@ flowchart TB
 
     <VIS.Section id="sec-diff" title="Beat 2 — vs HSTU, vs TIGER, vs DLRM">
       <p>
-        <strong>vs HSTU.</strong> HSTU is a transducer that maps a user-history sequence to a score per candidate; ranking is independent per item. MTGR generates the ranked list itself, so intra-list dependencies (positions, redundancy) are modeled.
+        <strong>vs HSTU.</strong> HSTU is a <VIS.Term def="Sequence model that maps an input sequence to per-position outputs (one output per input position). HSTU is a transducer.">transducer</VIS.Term> that maps a user-history sequence to a score per candidate; ranking is independent per item. MTGR generates the ranked list itself, so intra-list dependencies (positions, redundancy) are modeled.
       </p>
       <p>
         <strong>vs TIGER.</strong> TIGER generates a sequence of <em>semantic-ID tokens</em> that decode to a single retrieved item. MTGR generates a sequence of <em>items</em> as the ranked list. Different what's-being-generated.
       </p>
       <p>
-        <strong>vs DLRM.</strong> DLRM scores each (user,item) pointwise with crossed features. MTGR keeps the crosses but moves to autoregressive list emission.
+        <strong>vs DLRM.</strong> DLRM scores each (user,item) <VIS.Term def="Score each (user, item) independently; ignores how items interact in the ranked list. Classic DLRM/HSTU framing.">pointwise</VIS.Term> with crossed features. MTGR keeps the crosses but moves to autoregressive list emission.
       </p>
     </VIS.Section>
 
     <VIS.Section id="sec-when" title="Beat 3 — When to pick MTGR">
       <p>
-        Pick MTGR when (a) you have a mature DLRM-tuned ranker, (b) cross-features carry meaningful signal, (c) intra-list dependencies (anti-redundancy, position effects) matter, and (d) you can absorb decoder-only autoregressive serving costs.
+        Pick MTGR when (a) you have a mature DLRM-tuned ranker, (b) cross-features carry meaningful signal, (c) intra-list dependencies (anti-redundancy, <VIS.Term def="Users click higher-ranked items more often regardless of relevance. Must be corrected to avoid feedback loops.">position bias</VIS.Term> effects) matter, and (d) you can absorb decoder-only autoregressive serving costs.
       </p>
     </VIS.Section>
 
@@ -1478,7 +1478,7 @@ flowchart TB
 
     <VIS.Section id="sec-drill" title="Drill — trap problems">
       <p style={{color:"#475569", marginBottom: 16}}>
-        Each problem turns on MTGR's load-bearing detail: <em>autoregressive ranked-list generation</em> + GLN-isolated cross tokens + dynamic masking.
+        Each problem turns on MTGR's load-bearing detail: <em>autoregressive ranked-list generation</em> + <VIS.Term def="Group-Layer Normalization. LayerNorm variant that normalizes within separate groups of features; preserves scale separation between heterogeneous token types.">GLN</VIS.Term>-isolated cross tokens + dynamic masking.
       </p>
 
       <h3 style={{marginTop:24, color:"#1f3a5f"}}>A. Identity & comparison</h3>
@@ -1495,9 +1495,9 @@ flowchart TB
           {key:"c", text:"MTGR replaces HSTU's attention with linear attention to handle longer histories; ranking pipeline and per-candidate scoring otherwise unchanged."},
           {key:"d", text:"HSTU outputs a softmax over items; MTGR outputs a sigmoid per item — both still score candidates independently per request, no list-level coupling."},
         ]}
-        trap={<>(a) confuses MTGR with a loss-head retrofit. (c) is a Performer/Linformer-style edit, not MTGR. (d) treats both as pointwise rankers and misses the autoregressive list generation.</>}
+        trap={<>(a) confuses MTGR with a loss-head retrofit. (c) is a Performer/Linformer-style edit, not MTGR. (d) treats both as <VIS.Term def="Score each (user, item) independently; ignores how items interact in the ranked list. Classic DLRM/HSTU framing.">pointwise</VIS.Term> rankers and misses the autoregressive list generation.</>}
         lens={<>The discriminator is whether the model emits items independently (HSTU) or auto-regressively as a list (MTGR). All loss/attention-variant framings miss the load-bearing axis.</>}
-        stretch={<>If you wrap HSTU with a beam-search decoder over candidates, does it become MTGR?</>}
+        stretch={<>If you wrap HSTU with a <VIS.Term def="Decoding heuristic that keeps the top-B partial sequences at each step; trades compute for higher-quality outputs vs greedy decoding.">beam-search</VIS.Term> decoder over candidates, does it become MTGR?</>}
       />
 
       {/* A2 */}
@@ -1505,7 +1505,7 @@ flowchart TB
         id="mtgr-a2"
         difficulty="hard"
         title="A2 — Is MTGR 'DLRM with attention'?"
-        scenario={<>A teammate frames MTGR as "DLRM with self-attention bolted on top of the cross-feature MLP." Which response is correct?</>}
+        scenario={<>A teammate frames MTGR as "<VIS.Term def="Deep Learning Recommendation Model. Meta's classic recsys architecture: feature crosses + MLP top.">DLRM</VIS.Term> with self-attention bolted on top of the cross-feature MLP." Which response is correct?</>}
         options={[
           {key:"a", text:"True — MTGR is a feature-interaction MLP plus an attention block over the candidate side. Loss and training loop unchanged from DLRM."},
           {key:"b", text:"Partially — MTGR adds attention but keeps DLRM's pointwise sigmoid loss per candidate; ranking is still independent across items."},
@@ -1513,7 +1513,7 @@ flowchart TB
           {key:"d", text:"Wrong — MTGR drops crosses entirely and is pure attention over user history, like HSTU; nothing of DLRM remains."},
         ]}
         trap={<>(a) and (b) treat MTGR as a DLRM retrofit, missing the autoregressive list emission. (d) over-corrects and confuses MTGR with vanilla HSTU.</>}
-        lens={<>The framing matters because MTGR's operational story (decoder-step latency, beam-vs-greedy, intra-list redundancy control) only makes sense once you grant that the model generates the list, not just scores items.</>}
+        lens={<>The framing matters because MTGR's operational story (decoder-step latency, <VIS.Term def="Decoding heuristic that keeps the top-B partial sequences at each step; trades compute for higher-quality outputs vs greedy decoding.">beam</VIS.Term>-vs-greedy, intra-list redundancy control) only makes sense once you grant that the model generates the list, not just scores items.</>}
         stretch={<>Why is "pointwise DLRM + attention" too weak to capture anti-redundancy in the emitted list?</>}
       />
 
@@ -1522,7 +1522,7 @@ flowchart TB
         id="mtgr-a3"
         difficulty="hard"
         title="A3 — Fallback if MTGR didn't exist"
-        scenario={<>You want intra-list-aware ranking with HSTU-class scaling but MTGR doesn't exist. Which fallback is closest in spirit?</>}
+        scenario={<>You want <VIS.Term def="How items in one ranked list interact (anti-redundancy, position effects). Pointwise scorers can't see them; list-generators can.">intra-list</VIS.Term>-aware ranking with HSTU-class scaling but MTGR doesn't exist. Which fallback is closest in spirit?</>}
         options={[
           {key:"a", text:"Train HSTU for per-item scoring, then add an autoregressive list-decoding head over the top-K candidates — recovers list-level conditioning, though without GLN-isolated crosses.", correct:true},
           {key:"b", text:"Use vanilla HSTU and trust the score-then-sort cascade to surface intra-list dependencies through downstream rerankers in the existing serving stack."},
@@ -1539,7 +1539,7 @@ flowchart TB
         id="mtgr-a4"
         difficulty="hard"
         title="A4 — Can MTGR compose with TIGER?"
-        scenario={<>Can a pipeline use TIGER for retrieval and MTGR for ranking together?</>}
+        scenario={<>Can a pipeline use TIGER for <VIS.Term def="First stage of recsys: retrieve a few hundred items from the full catalog (millions). Usually ANN or two-tower.">retrieval</VIS.Term> and MTGR for ranking together?</>}
         options={[
           {key:"a", text:"No — TIGER and MTGR both decode token sequences and would deadlock on shared semantic-ID codebooks at training time, so they can't co-exist in one stack."},
           {key:"b", text:"No — MTGR re-derives candidate retrieval internally from the history tokens, so TIGER's retrieval output would be ignored or double-counted at ranking time."},
@@ -1547,7 +1547,7 @@ flowchart TB
           {key:"d", text:"Yes — TIGER decodes semantic-ID sequences to retrieve candidates; MTGR then autoregressively orders those candidates as a ranked list. Different stages, orthogonal.", correct:true},
         ]}
         trap={<>(a) over-states the coupling. (b) is false. (c) is a plausible plumbing concern but isn't a blocker — item IDs are the shared interface.</>}
-        lens={<>TIGER answers "which items?" via semantic-ID generation; MTGR answers "in what order?" via item-sequence generation. Composing them is the natural cascade.</>}
+        lens={<>TIGER answers "which items?" via <VIS.Term def="Discrete code (or tuple of codes) representing an item by its meaning rather than a random ID. Produced by RQ-VAE in TIGER.">semantic-ID</VIS.Term> generation; MTGR answers "in what order?" via item-sequence generation. Composing them is the natural <VIS.Term def="Multi-stage retrieval/ranking pipeline; each stage shrinks the candidate set and uses a heavier model.">cascade</VIS.Term>.</>}
         stretch={<>What state does MTGR need from TIGER beyond the candidate set?</>}
       />
 
@@ -1617,7 +1617,7 @@ flowchart TB
           {key:"d", text:"It's a decoder-only transformer that emits the ranked list auto-regressively, so intra-list dependencies — position effects and anti-redundancy — are captured natively, not patched in by a downstream reranker.", correct:true},
         ]}
         trap={<>(a) is the HSTU framing (transduction, per-candidate scoring). (b) is the TIGER framing (semantic-ID generation). (c) is listwise-classification framing. (d) is the only pitch whose load-bearing claim — autoregressive emission of the list — fails to describe HSTU, TIGER, or listwise heads.</>}
-        lens={<>The discriminating mechanism is autoregressive ranked-list emission. A junior who knows HSTU picks (a); who knows TIGER picks (b); who knows listwise loss picks (c). The senior picks (d) because intra-list autoregression is what HSTU and TIGER and listwise heads all lack.</>}
+        lens={<>The discriminating mechanism is autoregressive ranked-list emission. A junior who knows HSTU picks (a); who knows TIGER picks (b); who knows <VIS.Term def="Loss computed over the whole ranked list at once (e.g. NDCG-based) instead of one item at a time. Captures list-level objectives.">listwise loss</VIS.Term> picks (c). The senior picks (d) because intra-list autoregression is what HSTU and TIGER and listwise heads all lack.</>}
         stretch={<>If you strip the autoregressive list emission from MTGR, which of the three decoys does it collapse to?</>}
       />
 
@@ -1626,15 +1626,15 @@ flowchart TB
         id="mtgr-b4"
         difficulty="hard"
         title="B4 — Which surface gives MTGR no marginal lift over HSTU?"
-        scenario={<>Four product surfaces. Pick the one where you'd expect MTGR to underperform HSTU on a per-FLOP basis.</>}
+        scenario={<>Four product surfaces. Pick the one where you'd expect MTGR to underperform HSTU on a per-<VIS.Term def="Floating-point operations. Standard unit of compute used in scaling-law plots and model-cost comparisons.">FLOP</VIS.Term> basis.</>}
         options={[
           {key:"a", text:"Mature ads platform with 50+ active cross-features and a 20-slot ad carousel; cross channel is rich and downstream reranker enforces ad-quota diversity after ranking."},
           {key:"b", text:"Push-notification ranking that surfaces one item per user per day; rich crosses, but the displayed slate is a single slot drawn from a candidate pool of ~200 items.", correct:true},
           {key:"c", text:"Food-delivery home-feed with cuisine×region×time-of-day crosses, a 30-slot list, and a strong intra-list redundancy penalty learned end-to-end."},
           {key:"d", text:"E-commerce category page with 30 product slots, rich product-attribute crosses, and a position-bias correction layer trained jointly with the ranker."},
         ]}
-        trap={<>(a) has rich crosses and a multi-slot list. (c) and (d) have multi-slot lists with intra-list dependencies MTGR's prefix-conditioning captures. (b) strips the list dimension to one slot — the prefix MTGR conditions on is empty.</>}
-        lens={<>MTGR's marginal lift over HSTU comes from conditioning each emitted item on the already-emitted prefix. When the displayed slate is one slot, the prefix is empty and MTGR reduces to pointwise scoring, paying decoder cost for HSTU-class quality.</>}
+        trap={<>(a) has rich crosses and a multi-slot list. (c) and (d) have multi-slot lists with intra-list dependencies MTGR's <VIS.Term def="At decode step t, generate next item conditioned on the items already emitted (the prefix). Lets the model see the partial list.">prefix-conditioning</VIS.Term> captures. (b) strips the list dimension to one slot — the prefix MTGR conditions on is empty.</>}
+        lens={<>MTGR's marginal lift over HSTU comes from conditioning each emitted item on the already-emitted prefix. When the displayed <VIS.Term def="The set of items considered for display in one user-facing list. MTGR orders the slate; retrieval produces it.">candidate slate</VIS.Term> is <VIS.Term def="Product surface that shows only one item per request (push notification, hero card). No intra-list prefix to condition on.">single-slot</VIS.Term>, the prefix is empty and MTGR reduces to pointwise scoring, paying decoder cost for HSTU-class quality.</>}
         stretch={<>At what list length does conditioning on the emitted prefix start to earn back its serving cost?</>}
       />
 
@@ -1645,7 +1645,7 @@ flowchart TB
         id="mtgr-c1"
         difficulty="hard"
         title="C1 — Why Group-Layer Norm fits MTGR's mixed token stream"
-        scenario={<>Among plain LN, BatchNorm, RMSNorm, and GLN, which match MTGR's mixed token-type structure best, and why?</>}
+        scenario={<>Among plain <VIS.Term def="Per-token feature-vector normalization (subtract mean, divide by std, then learned affine). Stabilizes deep transformer training.">LN</VIS.Term>, <VIS.Term def="Batch Normalization. Normalize each feature across the batch dimension; standard for CNNs, awkward for variable-length sequences.">BatchNorm</VIS.Term>, <VIS.Term def="Root-Mean-Square Norm. LayerNorm variant that drops the mean-subtract; faster and competitive in quality. Used in LLaMA-style transformers.">RMSNorm</VIS.Term>, and GLN, which match MTGR's mixed token-type structure best, and why?</>}
         options={[
           {key:"a", text:"GLN is faster on modern GPUs than LN, BN, and RMSNorm; the throughput win is what pays for the extra cross tokens MTGR injects into the stream, so it's chosen for compute efficiency."},
           {key:"b", text:"RMSNorm would be a strict improvement over GLN but the paper is older; production teams should upgrade to RMSNorm and drop GLN, which is now a legacy choice with no quality return."},
@@ -1662,7 +1662,7 @@ flowchart TB
         id="mtgr-c2"
         difficulty="hard"
         title="C2 — What does dynamic masking prevent?"
-        scenario={<>MTGR uses dynamic masking on top of the decoder's causal mask. What specific leak does it block?</>}
+        scenario={<>MTGR uses dynamic masking on top of the decoder's <VIS.Term def="Mask applied to attention so each position can only attend to earlier positions; enforces left-to-right autoregressive structure.">causal mask</VIS.Term>. What specific leak does it block?</>}
         options={[
           {key:"a", text:"Cross tokens encoding aggregations computed up to time t (e.g. user×30-day-purchases) would, under a plain causal mask, attend to future emitted items at decode time and leak the prediction target into the cross channel.", correct:true},
           {key:"b", text:"Dynamic masking prevents the decoder from re-emitting the same item twice in the ranked list, by masking already-placed items at each autoregressive step."},
@@ -1679,7 +1679,7 @@ flowchart TB
         id="mtgr-c3"
         difficulty="hard"
         title="C3 — What does MTGR restore from DLRM that HSTU dropped?"
-        scenario={<>Pick everything MTGR explicitly restores from DLRM that HSTU had let go.</>}
+        scenario={<>Pick everything MTGR explicitly restores from <VIS.Term def="Deep Learning Recommendation Model. Meta's classic recsys architecture: feature crosses + MLP top.">DLRM</VIS.Term> that <VIS.Term def="Hierarchical Sequential Transduction Units — encoder/transducer that maps user history to a score per candidate. NOT autoregressive over the ranked list.">HSTU</VIS.Term> had let go.</>}
         multiSelect
         options={[
           {key:"a", text:"Hand-engineered cross-features as first-class model inputs, encoded as tokens rather than concatenated MLP features.", correct:true},
@@ -1760,7 +1760,7 @@ flowchart TB
           {key:"d", text:"HSTU's attention variant is incompatible with GLN; you'd need to switch to softmax attention before GLN's gain materializes in offline ranking metrics on this surface."},
         ]}
         trap={<>(b) cites convergence. (c) entangles GLN with masking incorrectly. (d) blames the attention variant. All sound plausible.</>}
-        lens={<>GLN is meaningful only with heterogeneous token classes. The simplest test is "do I have more than one semantic token class?"; if not, GLN ≡ LN.</>}
+        lens={<>GLN is meaningful only with heterogeneous token classes. The simplest test is "do I have more than one semantic token class?"; if not, <VIS.Term def="Group-Layer Normalization. LayerNorm variant that normalizes within separate groups of features; preserves scale separation between heterogeneous token types.">GLN</VIS.Term> ≡ <VIS.Term def="Per-token feature-vector normalization (subtract mean, divide by std, then learned affine). Stabilizes deep transformer training.">LN</VIS.Term>.</>}
         stretch={<>What's the smallest extension that would make GLN bite in this setup?</>}
       />
 
@@ -1769,7 +1769,7 @@ flowchart TB
         id="mtgr-d1b"
         difficulty="hard"
         title="D1b — Does the 65× FLOPs scaling claim transfer?"
-        scenario={<>A junior cites MTGR's 65× FLOPs scaling and proposes scaling your model 65×. What's the flaw?</>}
+        scenario={<>A junior cites MTGR's 65× <VIS.Term def="Floating-point operations. Standard unit of compute used in scaling-law plots and model-cost comparisons.">FLOPs</VIS.Term> scaling and proposes scaling your model 65×. What's the flaw?</>}
         options={[
           {key:"a", text:"65× refers to scaling Meituan's compute budget — your platform must match Meituan's GPU generation and interconnect bandwidth before the same FLOP envelope is reachable."},
           {key:"b", text:"65× is the scaling slope measured on Meituan's surface — how quickly quality improves per FLOP. It doesn't translate to '65× model size = 65× quality'; the slope itself is platform-dependent.", correct:true},
@@ -1804,7 +1804,7 @@ flowchart TB
         id="mtgr-d3"
         difficulty="hard"
         title="D3 — MTGR is below HSTU offline; what does the senior do?"
-        scenario={<>Offline NDCG on MTGR is below vanilla HSTU. A junior proposes a larger model. What does the senior check first?</>}
+        scenario={<>Offline <VIS.Term def="Normalized Discounted Cumulative Gain. Ranking metric that rewards relevant items appearing near the top of the list.">NDCG</VIS.Term> on MTGR is below vanilla HSTU. A junior proposes a larger model. What does the senior check first?</>}
         options={[
           {key:"a", text:"Switch loss from generative to pointwise sigmoid so per-item calibration is stable; underperformance is usually a loss-shape problem before it's an architecture problem."},
           {key:"b", text:"Increase the autoregressive decoder's beam width — narrow beams collapse to greedy emission and lose intra-list quality, manifesting as below-HSTU offline numbers."},
@@ -1821,7 +1821,7 @@ flowchart TB
         id="mtgr-d4"
         difficulty="hard"
         title="D4 — CTR up 1.31%, conversion only 1.22% — why the gap?"
-        scenario={<>MTGR's reported gains: CTR +1.31%, conversion +1.22%. What's the most informative reading?</>}
+        scenario={<>MTGR's reported gains: <VIS.Term def="Click-Through Rate. Fraction of impressions that lead to a click; the central calibration target for ads and feed ranking.">CTR</VIS.Term> +1.31%, conversion +1.22%. What's the most informative reading?</>}
         options={[
           {key:"a", text:"Autoregressive list decoding boosted CTR via better top-of-list ordering, but downstream funnel dropoff (checkout, payment) ate part of the conversion gain — fix the funnel, not the ranker."},
           {key:"b", text:"The numbers are within measurement noise of each other; differential interpretation is not warranted — both report a roughly equal +1.25% gain across both objectives."},
@@ -1840,7 +1840,7 @@ flowchart TB
         id="mtgr-e1"
         difficulty="hard"
         title="E1 — Cross-feature pipeline goes stale silently"
-        scenario={<>The Spark DAG that computes user_country×item_category breaks Friday morning; MTGR keeps serving. What's the failure mode?</>}
+        scenario={<>The Spark <VIS.Term def="Directed Acyclic Graph. Nodes connected by directed edges with no cycles; used to model causal structure or computation graphs.">DAG</VIS.Term> that computes user_country×item_category breaks Friday morning; MTGR keeps serving. What's the failure mode?</>}
         options={[
           {key:"a", text:"MTGR silently regresses: cross tokens carry stale values, the sequence side still works, so the model degrades to ≈ HSTU minus one cross. Detection needs a cross-feature freshness signal.", correct:true},
           {key:"b", text:"MTGR fails closed and returns an error per request, surfacing the stale cross immediately in the request-error-rate dashboard so the on-call sees the issue within minutes of the DAG break."},
@@ -1930,7 +1930,7 @@ flowchart TB
         id="mtgr-e6"
         difficulty="hard"
         title="E6 — Why is standard NDCG@10 insufficient for MTGR?"
-        scenario={<>You evaluate MTGR with NDCG@10 over a fixed candidate set. Why is this insufficient?</>}
+        scenario={<>You evaluate MTGR with NDCG@10 over a fixed <VIS.Term def="The set of items considered for display in one user-facing list. MTGR orders the slate; retrieval produces it.">candidate set</VIS.Term>. Why is this insufficient?</>}
         options={[
           {key:"a", text:"NDCG@10 measures pointwise relevance; MTGR's lift comes from list-level diversity, which is not in the metric, so MTGR's gains are undercounted across the board."},
           {key:"b", text:"NDCG@10 saturates at the top-1 position; MTGR's autoregressive decoder differentiates positions 2-10 most, so the metric is blind to MTGR's main improvement region."},
@@ -2051,7 +2051,7 @@ flowchart TB
         id="mtgr-f3b"
         difficulty="hard"
         title="F3b — Training loss flatlines after epoch 2"
-        scenario={<>You train MTGR. CE loss flatlines after epoch 2; vanilla HSTU on the same data keeps dropping through epoch 10. Diagnose.</>}
+        scenario={<>You train MTGR. <VIS.Term def="Cross-entropy. Loss function for multi-class prediction; penalizes the model when the predicted class probability is low for the true class.">CE</VIS.Term> loss flatlines after epoch 2; vanilla HSTU on the same data keeps dropping through epoch 10. Diagnose.</>}
         options={[
           {key:"a", text:"Cross-token embedding table is over-parameterized for your cross cardinality — few examples per cross value, embeddings memorize quickly, no further gradient signal. Reduce embedding dim or use frequency bucketing.", correct:true},
           {key:"b", text:"GLN's group-statistic estimation requires more warm-up than LN; the loss curve is real but cosmetic — continue training and the gradient signal will resume after epoch 5."},
@@ -2085,7 +2085,7 @@ flowchart TB
         id="mtgr-d2b"
         difficulty="medium"
         title="D2b — MTGR vs OneRec: which is the bigger architectural change?"
-        scenario={<>Which 2025 paper is the bigger architectural change relative to the existing recsys cascade?</>}
+        scenario={<>Which 2025 paper is the bigger architectural change relative to the existing recsys <VIS.Term def="Multi-stage retrieval/ranking pipeline; each stage shrinks the candidate set and uses a heavier model.">cascade</VIS.Term>?</>}
         options={[
           {key:"a", text:"MTGR — it generates ranked lists autoregressively, while OneRec only swaps the per-stage scoring function and leaves the cascade structure intact across retrieval and ranking."},
           {key:"b", text:"They are the same magnitude — both replace one cascade stage (ranking) with a generative transformer; the OneRec/MTGR distinction is paper-branding rather than a real cascade-scope axis."},
@@ -2102,7 +2102,7 @@ flowchart TB
         id="mtgr-a2b"
         difficulty="medium"
         title="A2b — Is GLN the same as GroupNorm from CV?"
-        scenario={<>Is MTGR's Group-Layer Normalization the same as GroupNorm from computer vision?</>}
+        scenario={<>Is MTGR's Group-Layer Normalization the same as <VIS.Term def="Group Normalization (CV). Splits channels into G groups and normalizes within each group; works with small batch sizes where BN fails.">GroupNorm</VIS.Term> from computer vision?</>}
         options={[
           {key:"a", text:"Identical — GLN is GroupNorm re-applied without modification; the paper is renaming an existing operator without any new contribution, and the CV implementation can be dropped in unchanged."},
           {key:"b", text:"Different math — GroupNorm normalizes across spatial dims while GLN normalizes across the embedding dim; the two operations are not interchangeable and require separate fused-kernel implementations."},
@@ -2127,7 +2127,7 @@ flowchart TB
           {key:"d", text:"Retrain MTGR from scratch daily on the current vocab to keep the embedding table aligned with the current cross-value distribution."},
         ]}
         trap={<>(b), (c), (d) are each plausible single-strategy choices that under-engineer or over-engineer the problem.</>}
-        lens={<>Cross-token vocab management is MTGR's analog of TIGER's codebook drift. Both are about non-stationary discrete IDs; hybrid hash + dict is the practical answer.</>}
+        lens={<>Cross-token vocab management is MTGR's analog of TIGER's <VIS.Term def="Across catalog updates or retraining, codebook entries shift; the same item gets a different Semantic ID, breaking downstream consumers.">codebook drift</VIS.Term>. Both are about non-stationary discrete IDs; hybrid hash + dict is the practical answer.</>}
         stretch={<>Compare cross-token drift management vs TIGER's codebook drift.</>}
       />
 
@@ -2136,7 +2136,7 @@ flowchart TB
         id="mtgr-c2b"
         difficulty="hard"
         title="C2b — Which sequence positions should cross tokens attend to?"
-        scenario={<>For MTGR's dynamic masking, should cross tokens attend to past sequence, future sequence, both, or neither?</>}
+        scenario={<>For MTGR's <VIS.Term def="Attention mask that adapts per-request (here: prevents cross-feature tokens from attending to future emitted items in MTGR).">dynamic masking</VIS.Term>, should cross tokens attend to past sequence, future sequence, both, or neither?</>}
         options={[
           {key:"a", text:"Future only — cross-features encode forward-looking context (e.g. user×predicted-intent) and need to see future emitted items to ground that intent against the realized list."},
           {key:"b", text:"Past only — a cross like 'user×30-day-purchases' encodes information up to the present, so it can safely attend to all past sequence; attending to future emitted items would leak the prediction target.", correct:true},
@@ -2170,7 +2170,7 @@ flowchart TB
         id="mtgr-f4b"
         difficulty="hard"
         title="F4b — Does MTGR's cross channel fix calibration drift?"
-        scenario={<>Does MTGR's cross channel address HSTU's calibration problem (predicted CTR drifting from realized CTR)?</>}
+        scenario={<>Does MTGR's cross channel address HSTU's <VIS.Term def="How closely predicted probabilities match true frequencies. A model predicting 0.7 should be right 70% of the time.">calibration</VIS.Term> problem (predicted CTR drifting from realized CTR)?</>}
         options={[
           {key:"a", text:"Yes — cross-features are explicit ground-truth signals (clicks, purchases) that anchor predictions to realized values; MTGR's calibration is materially better than HSTU's out of the box."},
           {key:"b", text:"No — adding cross tokens worsens calibration because GLN's per-group statistics shift the output distribution away from realized rates; expect calibration to regress vs HSTU."},
@@ -2223,7 +2223,7 @@ flowchart TB
         id="mtgr-a5b"
         difficulty="hard"
         title="A5b — Migrating a sparse-DLRM feature store to MTGR"
-        scenario={<>Your platform has a mature sparse-DLRM feature store (parameter server, <code>(cross_key → embedding)</code> lookups). Which specific MTGR property makes the migration cheap vs vanilla HSTU?</>}
+        scenario={<>Your platform has a mature sparse-DLRM feature store (parameter server, <code>(cross_key → <VIS.Term def="Dense vector representation of a discrete item (word, user, product). Learned so that similar items have similar vectors.">embedding</VIS.Term>)</code> lookups). Which specific MTGR property makes the migration cheap vs vanilla HSTU?</>}
         options={[
           {key:"a", text:"MTGR has more parameters than HSTU, so the existing parameter server is automatically compatible at the same scale; no per-cross statistical adaptation needed at any layer of the migration plan."},
           {key:"b", text:"GLN treats each cross-feature group as its own normalization sub-space; sparse cross-embeddings plug in as a separate token group without rescaling stats into the action-token regime.", correct:true},
