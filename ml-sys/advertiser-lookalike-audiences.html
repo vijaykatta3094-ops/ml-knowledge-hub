@@ -48,6 +48,337 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://unpkg.com/@lottiefiles/lottie-player@2.0.8/dist/lottie-player.js" async></script>
+  <script>window.__VIS_GLOSSARY = {
+  "_meta": {
+    "purpose": "Shared cache of jargon→plain-English glosses. Used by /visualize and trap-drill authors. Append new terms as encountered. Keep glosses ≤25 words, no jargon-in-jargon.",
+    "updated": "2026-05-19"
+  },
+  "α-balancing": "Per-class scalar weight α in focal loss; multiplies the per-sample modulating factor (1-p_t)^γ. Equivalent in spirit to class-weighted BCE.",
+  "anchor boxes": "Fixed bounding boxes laid over an image at multiple scales. Each is a binary classification candidate (object vs background) in single-stage detection.",
+  "backprop": "Backpropagation: chain-rule pass computing gradients of the loss w.r.t. each weight; consumed by SGD/AdamW for parameter updates.",
+  "batch": "The chunk of samples processed in one forward/backward pass. Gradient is summed over the batch before the optimizer step.",
+  "class-weighted BCE": "Per-class weighted binary cross-entropy. Multiplies the loss for the rare class by a fixed scalar > 1. Doesn't adapt to per-sample confidence.",
+  "class-weighted CE": "Cross-entropy with a fixed per-class scalar weight. Up-weights the rare class; doesn't depend on per-sample confidence.",
+  "cross-entropy": "Standard classification loss: -log(p_t) where p_t is the predicted probability for the correct class. Treats every sample equally.",
+  "dense classification": "ML setup where every pixel/anchor is a candidate class. Background dominates ~99.99% and drowns foreground signal under plain CE.",
+  "Faster R-CNN": "Two-stage object detector: region-proposal network shortlists ~1k boxes, then a classifier head refines. Two stages provide implicit hard-negative filtering.",
+  "gradient (focal loss)": "The signal that updates weights during backprop. Focal loss reduces this signal for confident-correct samples without altering predictions.",
+  "modulating factor": "The (1 - p_t)^γ multiplier in focal loss. Scales each sample's loss by how confident the model is about the right answer.",
+  "oversampling": "Sampling strategy that draws minority-class examples more often per epoch to balance per-batch class counts. Cheap alternative to focal loss.",
+  "RetinaNet": "Lin et al. 2017 single-stage object detector. Showed focal loss closes the accuracy gap with two-stage detectors at higher throughput.",
+  "RetinaNet default": "The (γ, α) focal-loss values Lin et al. recommended after sweep: γ=2, α=0.25 for the positive class.",
+  "single-stage object detection": "Object detector that predicts class and box directly from a feature map in one pass; no region-proposal stage.",
+  "temperature scaling": "Post-hoc calibration: divide pre-softmax logits by a learned scalar T on held-out data. Fixes over-confidence without changing argmax accuracy.",
+  "AdamW": "Adam optimizer with decoupled weight decay; default optimizer for transformer training.",
+  "aleatoric uncertainty": "Uncertainty from inherent noise in the data. Not reducible with more data.",
+  "AML": "Anti-Money-Laundering. The compliance domain of detecting and reporting laundering activity in financial systems.",
+  "ANN": "Approximate Nearest Neighbor. Family of algorithms (HNSW, IVF, ScaNN) that find close vectors much faster than exact search at small recall cost.",
+  "anti-redundancy": "Avoiding near-duplicate items in the same ranked list (e.g. five very similar sushi places). MTGR captures this via the prefix.",
+  "ATE": "Average Treatment Effect. Population-average causal effect of a treatment.",
+  "attention rollout": "Interpretability technique: multiply attention matrices across layers to attribute output to input tokens.",
+  "AUC": "Area Under the ROC Curve. Probability that a random positive scores higher than a random negative. Threshold-free ranking metric.",
+  "auction": "Real-time ad-bidding system that ranks ads by bid × predicted CTR; consumes calibrated probability, not raw logits.",
+  "AUPRC": "Area Under the Precision-Recall Curve. More informative than AUC for class-imbalanced problems.",
+  "autoregressive": "Generates a sequence one element at a time, each conditioned on what's already been emitted; classic next-token prediction.",
+  "backpressure": "Control loop that throttles incoming load when downstream capacity is exceeded (e.g., raise confidence threshold to send fewer posts to humans during surge).",
+  "BatchBALD": "Bayesian Active Learning by Disagreement, batch-corrected. Acquires K queries that JOINTLY maximize mutual information with model parameters.",
+  "BatchNorm": "Batch Normalization. Normalize each feature across the batch dimension; standard for CNNs, awkward for variable-length sequences.",
+  "BCE": "Binary cross-entropy. Loss function for yes/no prediction; pushes the predicted probability toward the true label (0 or 1).",
+  "beam search": "Decoding heuristic that keeps the top-B partial sequences at each step; trades compute for higher-quality outputs vs greedy decoding.",
+  "BERT": "Bidirectional Encoder Representations from Transformers. Pretrained text encoder; classic backbone for text classification (~50ms inference).",
+  "BERT4Rec": "BERT-style masked-item recsys. Bidirectional transformer trained with cloze masking on item sequences; pointwise scoring head.",
+  "BFloat16": "16-bit float with 8-bit exponent (vs FP16's 5). Wider range, lower precision; preferred for ML training stability.",
+  "BIN": "Bank Identification Number. First 6-8 digits of a card; identifies the issuer. Used as a fraud feature.",
+  "BPR": "Bayesian Personalized Ranking. Pairwise loss for recsys: predicted score of an observed item should exceed that of an unobserved item.",
+  "calibrated": "A model's predicted probability matches the true frequency (a 0.8 prediction is right 80% of the time). Re-calibrate as data shifts.",
+  "calibration": "How closely predicted probabilities match true frequencies. A model predicting 0.7 should be right 70% of the time.",
+  "candidate generation": "First stage of recsys: retrieve a few hundred items from the full catalog (millions). Usually ANN or two-tower.",
+  "candidate slate": "The set of items considered for display in one user-facing list. MTGR orders the slate; retrieval produces it.",
+  "cascade": "Multi-stage retrieval/ranking pipeline; each stage shrinks the candidate set and uses a heavier model.",
+  "CATE": "Conditional Average Treatment Effect. Treatment effect conditional on covariates — the per-user/per-context lift.",
+  "causal mask": "Mask applied to attention so each position can only attend to earlier positions; enforces left-to-right autoregressive structure.",
+  "CE": "Cross-entropy. Loss function for multi-class prediction; penalizes the model when the predicted class probability is low for the true class.",
+  "CLIP": "Contrastive Language-Image Pretraining. Joint image-text encoder producing aligned embeddings via contrastive loss.",
+  "code": "One entry in a codebook — a learned vector that an input snaps to during quantization. Identified by its integer index.",
+  "code utilization": "Fraction of codes (or entropy of code-assignments) actually used. Low utilization signals codebook collapse.",
+  "codebook": "Learned dictionary of discrete vectors (codes). An encoder snaps its output to the nearest code; that code's index becomes a token.",
+  "codebook collapse": "VQ/RQ-VAE failure: most codebook entries go unused; encoder maps all inputs to a few popular codes. Sign of broken quantization.",
+  "codebook drift": "Across catalog updates or retraining, codebook entries shift; the same item gets a different Semantic ID, breaking downstream consumers.",
+  "codebook size": "Codes per codebook (|V|, e.g. 256). Larger → finer reconstruction but less prefix-sharing across items.",
+  "cold-start": "When a new user or item has no interaction history, so embedding tables and behavioral features have nothing to learn from.",
+  "commitment loss": "VQ-VAE term that pulls encoder outputs toward their chosen code; prevents the encoder from drifting away from the codebook.",
+  "confidence router": "Routes inputs based on cheap-model output confidence: high confidence → auto-action, low confidence → escalate to expensive model or human.",
+  "conformal prediction": "Distribution-free method that produces prediction sets with guaranteed coverage (e.g., 95%) under exchangeability.",
+  "constrained decoding": "Mask the decoder's logits at each step so it can only emit tokens that lead to a valid sequence (e.g., a real catalog item).",
+  "contextual bandit": "Online decision algorithm: choose an action given context, observe reward, update; trades exploration vs exploitation.",
+  "contrastive loss": "Loss that pulls positive pairs together and pushes negatives apart in embedding space (e.g. InfoNCE).",
+  "cost-of-error": "The business/safety cost of a misclassification — varies by policy (false negative on self-harm vs false positive on spam).",
+  "cross-attention": "Attention layer where queries come from one sequence (e.g., decoder) and keys/values from another (e.g., encoder). Connects two streams.",
+  "CSAM": "Child Sexual Abuse Material. Highest-priority moderation category; detected via perceptual-hash matches against known-bad databases.",
+  "CTR": "Click-Through Rate. Fraction of impressions that lead to a click; the central calibration target for ads and feed ranking.",
+  "DAG": "Directed Acyclic Graph. Nodes connected by directed edges with no cycles; used to model causal structure or computation graphs.",
+  "dead codes": "Codebook entries that no encoder output ever snaps to; symptom of collapse. Fixed by periodic re-init near active encoder regions.",
+  "decode temperature": "Scalar dividing logits before softmax at decode time. Higher T → more diverse samples; lower T → more deterministic argmax-like decoding.",
+  "decoder": "Neural net that maps a latent vector (or token sequence) back to the output space (reconstructed input, next item).",
+  "decoder-only transformer": "Transformer with only the decoder stack (GPT-style); generates outputs one token at a time conditioned on what's been emitted so far.",
+  "deep classifier": "An expensive deep-learning model (transformer-based) used in the second tier of a cascade, after cheap heuristics have screened obvious cases.",
+  "Deep SVDD": "Deep Support Vector Data Description. One-class anomaly detector: maps inliers to a tight hypersphere; outliers fall outside.",
+  "dense retrieval": "Retrieval via dot-product (or cosine) between learned dense embeddings of queries and items; usually served by an ANN index.",
+  "diversification reranker": "Post-ranking layer that swaps items to spread categories/topics across the list. Patches intra-list redundancy that pointwise rankers miss.",
+  "DLRM": "Deep Learning Recommendation Model. Meta's classic recsys architecture: feature crosses + MLP top.",
+  "doubly robust": "Off-policy estimator with both an outcome model and a propensity model; unbiased if EITHER is correct.",
+  "DP-FTRL": "Variant of DP-SGD with correlated noise across steps via tree-aggregation; better privacy-utility trade for long training.",
+  "DP-SGD": "Differentially-Private SGD. Per-sample gradient clipping + Gaussian noise; provides (ε,δ)-DP privacy guarantee at some utility cost.",
+  "DPO": "Direct Preference Optimization. Trains a model on (winning, losing) pairs of outputs to align it with preferences — no separate reward model.",
+  "DPP": "Determinantal Point Process. Probabilistic model that prefers diverse subsets; selecting a new item discounts items similar to those already chosen.",
+  "drift": "When the data distribution at serving time diverges from the training distribution; model accuracy silently degrades.",
+  "DROCC": "Deep Robust One-Class Classification. Adversarially trains a one-class detector by perturbing points along a radius-r shell.",
+  "DyGFormer": "Dynamic Graph Transformer. Transformer over patches of temporal neighbor sequences (no per-node memory, stateless per call).",
+  "dynamic masking": "Attention mask that adapts per-request (here: prevents cross-feature tokens from attending to future emitted items in MTGR).",
+  "e-commerce ranking": "Ranking items on a shopping surface (search, category page, recommendations). Loaded with crosses (price×budget, brand×history).",
+  "ECE": "Expected Calibration Error. Average gap between predicted probability and true frequency, binned over the predicted-probability axis.",
+  "elastic shift": "Reviewer scheduling that scales pool size up/down across time zones to match incoming load; common in 24/7 global moderation ops.",
+  "EMA codebook update": "Update each codebook entry as an exponential moving average of the encoder outputs assigned to it. Stabilizes VQ/RQ-VAE training.",
+  "embedding": "Dense vector representation of a discrete item (word, user, product). Learned so that similar items have similar vectors.",
+  "encoder": "Neural net that maps raw input (image, text, item) into a dense latent vector consumed by downstream layers.",
+  "encoder-decoder": "Transformer with separate encoder (reads input) and decoder (writes output) stacks; T5-style; classic for sequence-to-sequence tasks.",
+  "engagement-bait": "Content engineered to maximize watch-time or clicks (cliffhangers, loops, ragebait) regardless of user satisfaction.",
+  "epistemic uncertainty": "Uncertainty from the model not knowing what it doesn't know. Reducible with more data; captured by ensembles or Bayesian methods.",
+  "exploration vs exploitation": "Tradeoff in online learning: try new actions to gather data vs pick the best-known action to maximize reward now.",
+  "exposure bias": "When the data only contains items the system already showed users; new items never get the chance to prove themselves.",
+  "factorized softmax": "Decompose softmax over a huge vocabulary into smaller softmaxes (e.g. one per code position) to make it tractable.",
+  "false negative": "Model classifies as 'safe' something that's actually a violation; the costliest error class for high-harm policies like self-harm.",
+  "false positive": "Model classifies as 'violation' something that's actually safe; costlier for low-harm policies like spam (annoys real users).",
+  "FastText": "Fast text classifier using subword n-grams; trains and serves in milliseconds. Common cheap-tier text moderation model.",
+  "feature cross": "Combining two raw features into a single signal (e.g. user-id × category). Captures interactions a single-feature model misses.",
+  "FedAvg": "Federated Averaging. Server averages client model weights; the canonical federated-learning aggregator.",
+  "federated learning": "Train a shared model across many clients without centralizing their data; each client computes gradients locally, server aggregates.",
+  "feed surface": "Product surface that shows a long ranked list (home feed, search results). Has many slots, so intra-list ordering matters.",
+  "FIFO": "First-In-First-Out queue. Items processed strictly in arrival order, no priority — wrong choice when policies have different urgency.",
+  "filter bubble": "Recommender concentrates each user on a narrow slice of content over time, suppressing exposure to other relevant items.",
+  "FlashAttention2": "FA2. GPU-optimized exact softmax-attention kernel; tiles QK^T to keep work in SRAM. Standard 2024 baseline for transformer attention speed.",
+  "FLOPs": "Floating-point operations. Standard unit of compute used in scaling-law plots and model-cost comparisons.",
+  "Focal loss": "Down-weights well-classified examples via (1-p)^γ; sharpens loss on hard examples. Used for class-imbalanced detection.",
+  "FP16": "16-bit floating point (IEEE half). Default training/inference precision for modern transformer kernels on Ampere+.",
+  "FP4": "4-bit floating point quantization. Reduces weight+activation memory ~8× vs BF16; aggressive low-precision serving format.",
+  "FP8": "8-bit floating point. Half the bits of FP16; trades precision for compute/memory savings, available on H100+.",
+  "FraudGPT": "LLM continually pretrained on financial-fraud text (typology vocabularies like 'structuring', 'smurfing', etc.) then SFT'd for case generation.",
+  "GCN": "Graph Convolutional Network. Layerwise neighborhood averaging with learned weights; transductive (needs full graph at train time).",
+  "generative recsys": "Recommendation systems where the model GENERATES the next item's identifier (or token sequence) instead of scoring a candidate list.",
+  "GLN": "Group-Layer Normalization. LayerNorm variant that normalizes within separate groups of features; preserves scale separation between heterogeneous token types.",
+  "GNN": "Graph Neural Network. Family of models that learn node/edge embeddings by iteratively aggregating from neighbors.",
+  "golden-set": "A small set of items with verified ground-truth labels, used to audit reviewer accuracy and detect label drift over time.",
+  "GraphSAGE": "Inductive GNN: each node aggregates features from sampled neighbors; works on unseen nodes (unlike transductive GCN).",
+  "GroupNorm": "Group Normalization (CV). Splits channels into G groups and normalizes within each group; works with small batch sizes where BN fails.",
+  "Gumbel-softmax": "Differentiable approximation to sampling from a categorical distribution; lets you backprop through discrete choices via reparameterization.",
+  "hallucination (decoder)": "Decoder emits a token sequence (Semantic ID) that does not correspond to any real item in the catalog.",
+  "HBM": "High-Bandwidth Memory. Stacked DRAM used on GPUs (H100, A100); the bandwidth bottleneck for memory-bound kernels.",
+  "HE": "Homomorphic Encryption. Compute on ciphertexts without decrypting; allows two parties to compute a joint function without revealing inputs.",
+  "hierarchical code": "Code where earlier positions capture coarse semantics, later positions capture fine residuals. Structure that RQ-VAE produces.",
+  "hit-rate": "Fraction of users whose top-K list contains at least one item they actually interacted with.",
+  "HITL": "Human-In-The-Loop. ML system that escalates uncertain cases to a human reviewer before acting; combines model speed with human judgment.",
+  "HNSW": "Hierarchical Navigable Small World. Graph-based ANN: layered proximity graph, greedy descent at each layer. RAM-heavy, log-time.",
+  "HSTU": "Hierarchical Sequential Transduction Units. Meta 2024 paper: sequence-modeling architecture for recommendation that scales past DLRM's plateau.",
+  "human-in-the-loop": "Workflow where uncertain model predictions are sent to a human reviewer; reviewer decisions feed back as training labels.",
+  "inductive bias": "Built-in assumption a model makes about data structure (e.g. locality, recency); shapes what it learns easily.",
+  "InfoNCE": "Contrastive loss: pulls positive (anchor, target) pairs together, pushes negatives apart, normalized over a batch of candidates.",
+  "INT8": "8-bit integer quantization. Reduces memory + compute ~4× vs FP32 at small accuracy cost; common at inference.",
+  "inter-rater agreement": "Statistical measure (Cohen's kappa, etc.) of how often two reviewers label the same item the same way; proxy for label quality.",
+  "intra-list dependencies": "How items in one ranked list interact (anti-redundancy, position effects). Pointwise scorers can't see them; list-generators can.",
+  "intra-list diversity": "Spread of categories/topics within a single ranked list. High diversity = less redundancy; valuable for exploration.",
+  "IPS": "Inverse Propensity Score. Same as IPW; widely used in counterfactual recsys evaluation.",
+  "IPW": "Inverse Propensity Weighting. Reweights samples by 1/probability-of-being-observed; corrects for selection bias.",
+  "isotonic regression": "Post-hoc calibration: fit a free-form monotonic step function from score to probability. More flexible than Platt.",
+  "iterative DPO": "DPO run in multiple rounds: collect on-policy preferences, run DPO, redeploy, repeat. Keeps preference data fresh as the policy evolves.",
+  "IVF-PQ": "Inverted File + Product Quantization. ANN: cluster space into K cells, encode each vector as a PQ code; lookup = nearest centroids + PQ distances.",
+  "K-means": "Clustering algorithm: pick K centroids, assign each point to nearest, recompute centroids; repeat until stable.",
+  "K-RagRec": "Knowledge-RAG Recommender. Uses retrieval-augmented generation: an LLM is grounded on retrieved item snippets to produce recommendations.",
+  "KL divergence": "Asymmetric measure of distance between two distributions. Used as a regularizer in VAEs to keep latents near a prior.",
+  "knowledge distillation": "Train a small 'student' model to match a large 'teacher' model's outputs (logits or features), often with temperature softening.",
+  "KV-cache": "Cached Key/Value tensors from prior transformer steps; lets autoregressive decoding skip recomputing past attention.",
+  "KYC": "Know-Your-Customer. Customer onboarding verification: document checks, face match, sanctions screening.",
+  "label smoothing": "Replace hard 0/1 targets with (ε, 1-ε); discourages over-confidence and helps calibration of softmax outputs.",
+  "latent space": "Vector space the encoder maps inputs into. Geometry here defines what 'similar' means downstream.",
+  "LayerNorm": "Per-token feature-vector normalization (subtract mean, divide by std, then learned affine). Stabilizes deep transformer training.",
+  "Lazy Decoder-Only": "OneRec V2 design: decoder cross-attends to user context only at chosen layers/steps; skipped steps reuse cached summaries. Cuts compute ~94%.",
+  "LDAM": "Label-Distribution-Aware Margin loss. Adds a class-dependent margin to logits; pushes the boundary away from rare-class points.",
+  "leave-last-out": "Eval protocol: for each user, hold out their most recent interaction as the test target, train on the rest.",
+  "linear attention": "Attention that replaces softmax with a kernel feature map so cost is O(n) in sequence length instead of O(n²).",
+  "LinUCB": "Linear Upper Confidence Bound. Contextual bandit assuming linear reward; picks the action with the highest (mean + confidence-bound) estimate.",
+  "list-wise": "Loss or metric defined over an entire ranked list (e.g., NDCG, mean watch-time per list) rather than per-item pairs.",
+  "listwise loss": "Loss computed over the whole ranked list at once (e.g. NDCG-based) instead of one item at a time. Captures list-level objectives.",
+  "LLM-rec": "Umbrella term for recsys approaches that wrap or distill an LLM as the scorer/generator rather than using a classic ID-embedding model.",
+  "Lloyd's algorithm": "Standard iterative procedure for k-means: assign points to nearest centroid, update centroids to cluster mean, repeat until stable.",
+  "LongER": "ByteDance long-sequence transformer for recsys; memory-efficient attention focused on long user histories.",
+  "LoRA": "Low-Rank Adaptation. Fine-tune a model by adding small low-rank weight deltas (A·B) instead of updating full weight matrices.",
+  "LSH": "Locality-Sensitive Hashing. Hash family where similar vectors collide with high probability; used for cheap approximate nearest neighbor.",
+  "Mamba": "State-space model with selective scan; processes sequences in linear time (O(L)) versus transformer's quadratic (O(L²)).",
+  "MAML": "Model-Agnostic Meta-Learning. Trains a model whose parameters can be fine-tuned to a new task in a few gradient steps.",
+  "MC dropout": "Monte-Carlo Dropout. Leave dropout on at inference and sample M forward passes; approximates a Bayesian posterior over weights.",
+  "MCC": "Merchant Category Code. 4-digit code (e.g., 5411 = grocery) categorizing what kind of merchant accepted a transaction.",
+  "membership inference": "Privacy attack that guesses whether a specific record was in the training set by querying the trained model.",
+  "millions-of-item softmax": "Computing softmax over the entire item catalog (millions of classes). Memory- and compute-prohibitive; usually approximated.",
+  "MiniLM": "Small distilled transformer (~22M params, 6 layers) producing sentence embeddings at a fraction of T5's compute.",
+  "mirror serving": "Both old and new models score every request; the old one still serves users. Used to fit new calibration heads.",
+  "MMoE": "Multi-gate Mixture-of-Experts. Each task has its own gate over a shared pool of experts; cheaper than fully task-specific networks.",
+  "MMR": "Maximal Marginal Relevance. Greedy reranker: each step picks the candidate maximizing (relevance − λ × similarity to already-chosen).",
+  "MNAR": "Missing Not At Random. The probability that a value is missing depends on the value itself (e.g., users only rate items they chose to see).",
+  "MobileNet": "Lightweight convolutional neural network designed for fast image inference on mobile/edge devices; ~10ms latency typical.",
+  "mode collapse": "When a generative model concentrates probability on a few outputs and stops covering the long tail of valid choices.",
+  "MoE": "Mixture-of-Experts. Multiple expert subnetworks + a gate that routes each input to one or few experts. Scales params without paying full FLOPs.",
+  "MovieLens": "Public movie-rating dataset (1M-25M ratings). Most-cited public recsys benchmark; small relative to industry data.",
+  "MPC": "Multi-Party Computation. Cryptographic protocol where parties jointly compute a function over private inputs, revealing only the output.",
+  "MRR": "Mean Reciprocal Rank. 1 / position of first relevant item, averaged across queries. Sensitive to top-1 only.",
+  "MTGR": "Meituan Generative Ranking. Decoder-only transformer that emits a ranked list of items autoregressively; captures intra-list dependencies natively.",
+  "NDCG": "Normalized Discounted Cumulative Gain. Ranking metric that rewards relevant items appearing near the top of the list.",
+  "negative sampling": "Train the model to score observed (positive) items above a sub-sample of random non-observed (negative) items; avoids full softmax.",
+  "negative transfer": "When training on multiple tasks hurts each task's accuracy compared to training them separately. The shared params get pulled in conflicting directions.",
+  "non-IID": "Non-Independent-and-Identically-Distributed. Clients in federated learning have different data distributions; breaks IID assumptions FedAvg relies on.",
+  "nucleus sampling": "Top-p decoding: sample the next token from the smallest set whose cumulative probability exceeds p. Adds controlled diversity.",
+  "on-policy": "Training data sampled from the current policy. DPO/PPO benefit because preferences reflect actions the deployed model would actually take.",
+  "OneRec": "Unified retrieve+rank model. Single backbone serves both retrieval and ranking via task-template prompts; eliminates retrieval-ranker train/serve skew.",
+  "online learning": "Updates the model continuously as new data arrives, rather than retraining on the full historical batch.",
+  "P(click)": "Predicted probability that a user clicks an item; the canonical calibrated output of a CTR model used in ad auctions.",
+  "P5": "Pretrain-Personalize-Prompt-Predict-Plan. Early generative recsys paper that frames all recsys tasks as text-to-text via a single seq2seq model.",
+  "p99 latency": "The 99th percentile of response times. 1% of requests are slower; tail latency, often dominates SLA pain.",
+  "pairwise scoring": "Score (user, item_i) vs (user, item_j) pairs; loss rewards correct ordering between pairs. BPR is the canonical example.",
+  "PEFT": "Parameter-Efficient Fine-Tuning. Umbrella for techniques (LoRA, adapters, prefix-tuning) that fine-tune small fraction of params.",
+  "perceptual hash": "Hash that's similar for visually similar images (unlike cryptographic hash which is brittle). Used to detect known-bad reposts despite minor edits.",
+  "Platt scaling": "Post-hoc calibration: fit a sigmoid mapping from raw model score to calibrated probability. Simple, monotonic.",
+  "PLE": "Progressive Layered Extraction. Multi-task architecture with shared and task-specific experts at every layer; mitigates negative transfer.",
+  "pointwise scoring": "Score each (user, item) independently; ignores how items interact in the ranked list. Classic DLRM/HSTU framing.",
+  "policy lane": "A category of moderation policy with its own threshold, SLA, and review pool — e.g., self-harm vs spam vs intellectual-property.",
+  "policy threshold": "Per-policy confidence cutoff that decides auto-action vs escalation; tuned separately because each policy has different cost-of-error.",
+  "popularity bias": "Recommenders over-recommend already-popular items because they have more training signal, starving the long tail.",
+  "position bias": "Users click higher-ranked items more often regardless of relevance. Must be corrected to avoid feedback loops.",
+  "posterior collapse": "VAE failure: encoder ignores the latent, decoder reconstructs from its prior alone, latents stop carrying info.",
+  "PPO": "Proximal Policy Optimization. Reinforcement-learning algorithm; takes small policy-update steps to avoid catastrophic regression.",
+  "PQ": "Product Quantization. Split a vector into K equal subspaces and quantize each independently; used for compact ANN indexes (Faiss).",
+  "preference-AUC": "AUC computed over (preferred, dispreferred) pairs: probability the model scores the preferred item higher. Standard DPO offline metric.",
+  "prefix conditioning": "At decode step t, generate next item conditioned on the items already emitted (the prefix). Lets the model see the partial list.",
+  "prefix similarity": "Two Semantic IDs are similar to the extent their leading codes match. The core property RQ-VAE gives downstream consumers.",
+  "prompt template": "Fixed textual scaffold with slots (user history, candidate item) filled at runtime. Lets one LLM serve many tasks via task prefixes.",
+  "propensity score": "Probability that a unit received the treatment (or that an item was shown). Used in IPW corrections.",
+  "ProtoNet": "Prototypical Networks. Few-shot classifier: build a centroid per class from support examples, classify a query by nearest centroid.",
+  "PTQ": "Post-Training Quantization. Quantize weights/activations of an already-trained model without retraining.",
+  "push notification": "One-item-per-user message surface (e.g. mobile alerts). Single-slot ranking; MTGR's autoregressive prefix is empty here.",
+  "QAT": "Quantization-Aware Training. Insert fake-quant ops during training so the model learns to be robust to inference-time quantization noise.",
+  "ranked list": "Ordered list of items shown to the user. Order matters because users read top-down and clicks concentrate at the top.",
+  "recall@K": "Fraction of relevant items captured in the top-K retrieved list.",
+  "RecLLM": "Generative recsys that turns an LLM into a conversational recommender; user history and item descriptions are fed in as prompt text.",
+  "reconstruction loss": "Distance (usually MSE) between encoder input and decoder output. Drives the autoencoder to preserve information.",
+  "reranking": "Final-stage recsys: take the candidate set and apply a heavier scorer / diversification logic to produce the user-facing list.",
+  "residual quantization": "Repeated quantize-then-quantize-the-error trick. K codebooks; level k encodes what level k-1 missed. Captures fine detail with small vocabularies.",
+  "residual stream": "The token-wise vector that each transformer block reads from and writes to; carries information across layers.",
+  "retrain": "Refresh model weights on new data; usually periodic (weekly/daily) for systems where labels arrive from human reviewers.",
+  "retrieve-rank": "Two-stage recsys pipeline: a cheap retrieval narrows millions of items to a shortlist, then a heavier ranker reorders that shortlist.",
+  "reward hacking": "Policy exploits flaws in the reward model to score high without doing the intended task. Symptom of an under-constrained optimizer.",
+  "reward model": "Model trained to predict a scalar reward (e.g., watch-time) from (state, action) pairs. Supplies the supervisory signal for PPO/DPO.",
+  "RLHF": "Reinforcement Learning from Human Feedback. Train a reward model from human preferences, then optimize policy against it (usually with PPO).",
+  "RMSNorm": "Root-Mean-Square Norm. LayerNorm variant that drops the mean-subtract; faster and competitive in quality. Used in LLaMA-style transformers.",
+  "rotary embeddings": "RoPE. Encode position by rotating Q/K vectors by angle proportional to position; replaces additive position embeddings.",
+  "RQ-VAE": "Residual-Quantized VAE. Stacks K codebooks; each level quantizes the residual error from the previous level. Produces hierarchical semantic IDs.",
+  "sampled softmax": "Softmax over a sub-sampled candidate pool (e.g., 1000 items) instead of millions; trades exact normalization for speed.",
+  "SASRec": "Self-Attentive Sequential Recommendation. 2018 transformer over item-only sequences with binary cross-entropy; predecessor to HSTU.",
+  "scaling law": "Empirical relationship: model quality improves as a power-law function of compute, data, or parameters.",
+  "ScalingNote distillation": "Distill the heavy ranker's logits into the retrieval scorer each cycle so retrieval and ranking stay aligned without re-syncing indexes.",
+  "ScaNN": "Scalable Nearest Neighbors. Google ANN with anisotropic vector quantization: weights quantization error by inner-product loss direction.",
+  "secure aggregation": "Cryptographic protocol where a server sees only the SUM of client gradients (not individual ones); used in privacy-preserving federated learning.",
+  "selection bias": "Sample we observe is non-random; the act of observing changes which items appear. Common in MNAR rec data.",
+  "self-harm": "Moderation policy category covering suicide/self-injury content; has the tightest SLA (typically <30s) because of user-safety risk.",
+  "Semantic ID": "Discrete K-tuple code derived from item content (via RQ-VAE). Similar items share prefix codes; replaces random hashed IDs.",
+  "Semantic-ID collision": "When two distinct items map to the exact same K-tuple of codes; the model cannot tell them apart at decode time.",
+  "Sentence-T5": "T5-based sentence encoder; turns text into a fixed-size dense embedding. TIGER uses it as the RQ-VAE input encoder.",
+  "seq2seq": "Sequence-to-sequence transformer: encoder reads an input sequence, decoder autoregressively emits an output sequence.",
+  "sequence transduction": "Mapping an input sequence to per-position outputs (one score per candidate). HSTU does this; MTGR generates a sequence instead.",
+  "SFT": "Supervised Fine-Tuning. Train a pretrained model on labeled (input, target) pairs to specialize it.",
+  "shadow scoring": "Run a new model alongside production; record its predictions but ignore them at serving. First migration phase.",
+  "shadow serve": "Run a new model in parallel with production but discard its outputs; collects predictions/logs without exposing users to the new ranker.",
+  "shadow-ban": "Moderation action: user's posts are invisible to others but visible to themselves; user doesn't know they've been throttled.",
+  "Shapley value": "Game-theoretic feature attribution: average marginal contribution of a feature across all subsets; used for per-feature credit.",
+  "single-slot": "Product surface that shows only one item per request (push notification, hero card). No intra-list prefix to condition on.",
+  "SLA": "Service Level Agreement. A binding response-time target — e.g., 'self-harm posts must be reviewed within 30 seconds 99% of the time'.",
+  "SNGP": "Spectral-Normalized Gaussian Process layers. Single-forward-pass calibrated uncertainty by replacing the final layer with a GP head.",
+  "softmax": "Function that turns a vector of scores into a probability distribution (largest score → largest probability, all sum to 1).",
+  "softmax tail": "The low-probability region of a softmax output; FP8 underflow and calibration mismatches affect tail behavior most.",
+  "SSM": "State-Space Model. Sequence model that maintains a continuous hidden state updated by a linear recurrence; Mamba is a popular instance.",
+  "STE": "Straight-Through Estimator. Treats a non-differentiable op (quantization, rounding) as identity during backprop so gradients can flow.",
+  "straight-through estimator": "Backprop trick: forward pass uses a non-differentiable op (e.g. quantization); backward pass pretends it was identity so gradients flow.",
+  "stratified": "Sampling strategy that preserves class proportions across subgroups; ensures rare classes are represented in train/eval splits.",
+  "structuring": "Money-laundering pattern: split a large cash deposit into smaller sub-threshold ones to evade reporting requirements.",
+  "surge": "Sudden spike in inbound load — e.g., a breaking news event creates 10x normal posts/sec; system must throttle without crashing.",
+  "TabBERT": "BERT-style MLM pretraining on tabular transaction sequences (mask cells, predict). Used for fraud sequence modeling.",
+  "TabPFN": "Transformer pretrained on millions of synthetic small-n tabular datasets; does few-shot tabular classification with no per-task gradient updates.",
+  "temperature": "Logit-scaling knob before softmax. T>1 flattens the distribution (more random); T<1 sharpens it (more deterministic).",
+  "temperature softening": "Divide logits by T>1 before softmax. Smoothes the distribution; used in distillation so the student learns inter-class similarity.",
+  "TGN": "Temporal Graph Network. Each node carries an RNN-style memory updated as events arrive; supports temporal attention over neighbor history.",
+  "Thompson sampling": "Bandit algorithm: maintain a posterior over reward parameters, sample from it, act greedily on the sample.",
+  "throttle": "Slow or pause processing of low-priority work to free capacity for high-priority work — used during surge to protect SLA on critical lanes.",
+  "TIGER": "Transformer Index for GEnerative Recommenders. Google 2023 paper: emits items by generating semantic-ID code tuples instead of softmaxing over millions of items.",
+  "top-k": "Return the K highest-scoring items from a ranked list.",
+  "top-k sampling": "Sampling decoder: at each step, sample from the top-K most likely tokens; trades determinism for output diversity.",
+  "transducer": "Sequence model that maps an input sequence to per-position outputs (one output per input position). HSTU is a transducer.",
+  "trie": "Prefix tree. Each path from root to leaf spells a valid sequence; used to enforce valid Semantic-ID decoding.",
+  "twin-tower": "Synonym for two-tower: separate user and item encoder towers whose outputs are dot-producted to score (user, item) pairs.",
+  "two-tower": "Recsys architecture: separate user-encoder tower and item-encoder tower; dot-product their outputs to score (user, item) pairs.",
+  "typology": "In AML, the named pattern of laundering (e.g., trade-based, layering, smurfing). Detectors are usually typology-anchored.",
+  "UCB": "Upper Confidence Bound. Bandit rule that picks the action with the highest (mean + uncertainty) estimate; explicit exploration.",
+  "uplift modeling": "Estimates conditional treatment effect (CATE) — the per-user change in outcome from receiving a treatment.",
+  "ViT": "Vision Transformer. Applies transformer attention to image patches; more accurate than CNNs but heavier (~80ms inference typical).",
+  "VLM": "Vision-Language Model. Jointly trained on images and text; can describe images, answer questions about them, or embed both modalities.",
+  "VQ-VAE": "Vector-Quantized VAE. Quantizes encoder output to a single codebook; commitment loss keeps encoder near code centroids.",
+  "watch-time": "Total time a user spends watching a recommended item. Used as the engagement reward signal in OneRec and other video recsys.",
+  "β temperature": "DPO's KL-strength hyperparameter. Low β → policy can drift from SFT (reward-hack risk); high β → policy stays near SFT (no learning).",
+  "Bayesian framing (Ridge)": "Each weight has a prior; learning updates that prior. Bayesian linear regression with a zero-mean Gaussian prior on weights gives Ridge.",
+  "closed-form solution": "A solution expressible as a finite algebraic formula, with no iterative optimization required.",
+  "coefficient (linear model)": "Learned scalar weight w_j that multiplies feature x_j inside a linear model; the vector of all coefficients is the parameter w.",
+  "collinear columns": "Feature columns that are highly correlated (often near-linearly dependent). Inflate OLS variance and motivate Ridge or PCA.",
+  "constraint region": "Feasible region of weights with penalty bounded by t; bounds how large weights can grow. The shape of this region drives sparsity vs shrinkage.",
+  "convex (loss)": "A function whose graph holds water — any line segment between two points stays above the graph. Has a unique global minimum (no local traps).",
+  "cross-validation": "Holding out part of the training data K times to estimate generalization error before any final test-set evaluation.",
+  "eigenvalue": "Scaling factor associated with an eigenvector; large eigenvalue = strong signal in that direction.",
+  "eigenvector": "A direction in feature space whose vectors are scaled (not rotated) by XᵀX; the corresponding scaling factor is the eigenvalue.",
+  "Gaussian prior (weights)": "Normal distribution acting as a prior on weights; expresses 'small weights more likely than large' and is mathematically equivalent to an L2 penalty.",
+  "GCV (Ridge)": "Generalized Cross-Validation. Closed-form approximation to leave-one-out CV using the trace of the influence (hat) matrix; cheap to evaluate per α.",
+  "inference latency": "Time between when an input arrives and when the model returns a prediction; usually budgeted at the p99 tail.",
+  "intercept (linear model)": "Constant offset b in y = wᵀx + b. By convention not penalized by L2 (regularizing it would bias predictions away from the mean of y).",
+  "L2 ball": "Geometric region of an L2 budget Σw²≤t. Smooth, round, no axis-aligned corners — the root cause of L2's smooth-shrinkage behavior.",
+  "Lasso": "The L1 penalty α·Σ|w|. Produces sparse coefficients because its diamond-shaped constraint region has corners on the axes.",
+  "loss contour": "Set of weights at which the loss takes a constant value; in 2D these are concentric ellipses around the OLS solution.",
+  "MAP estimation": "Maximum a Posteriori estimation. Pick the parameters that maximize posterior probability under a chosen prior.",
+  "multicollinear": "Two or more input features are highly correlated. Design matrix becomes near-singular and OLS estimates explode in magnitude with opposite signs.",
+  "no corners (L2 ball)": "Points on a constraint surface where one of the coordinates is zero. L1's diamond has corners on the axes; L2's ball has none.",
+  "normal-equation matrix": "Matrix XᵀX appearing in the OLS closed form. Its eigen-spectrum decides whether OLS is well-conditioned; multicollinear features make it near-singular.",
+  "OLS": "Ordinary Least Squares. Minimize squared residuals with no penalty; closed form is (XᵀX)⁻¹Xᵀy, which fails when XᵀX is singular.",
+  "penalty (loss term)": "Term added to the loss whose role is to discourage certain solutions (here: large weights).",
+  "prior (Bayesian)": "Prior probability distribution over parameters expressing beliefs before seeing data; combined with the likelihood gives the posterior.",
+  "regularization": "Modification to the loss that discourages large weights, trading a bit of training fit for better generalization.",
+  "regularization strength α": "Scalar that controls how strong the penalty is relative to the data-fit term. Larger means more shrinkage.",
+  "shrinkage": "Pulling estimated coefficients toward a baseline (usually zero), trading a little bias for a lot of variance reduction.",
+  "sparsity (weights)": "Property that many coefficients are exactly zero, so the model implicitly drops those features.",
+  "weight decay": "Deep-learning name for L2 regularization. Every step, weights are multiplied by (1 - α·η) before the gradient update — they 'decay' toward zero.",
+  "SyncBN": "BN variant that pools batch statistics across GPUs/processes so the effective batch is the global batch. Reduces small-per-GPU-batch noise at the cost of a synchronization barrier.",
+  "InstanceNorm": "Per-sample, per-channel normalization. Originally for style transfer; widely used as a generative-model normalizer.",
+  "Lipschitz": "Bounded-derivative property: f is L-Lipschitz if |f(x)-f(y)| <= L*|x-y|. Smaller Lipschitz constant on the gradient means the loss landscape doesn't curve sharply.",
+  "EMA": "Exponential Moving Average. Smoothed running estimate that updates as new ← (1-m)·old + m·sample. BN uses EMA over per-batch stats during training.",
+  "ONNX": "Open Neural Network Exchange. Framework-neutral graph format for shipping models between training and inference runtimes.",
+  "TensorRT": "NVIDIA inference compiler that lowers ONNX/PyTorch graphs to optimized CUDA kernels, including BN-conv fusion and INT8 quantization.",
+  "internal covariate shift": "Hypothesized shift in the distribution of intermediate activations as upstream layers update. BN was originally pitched as a fix; Santurkar et al. 2018 showed loss-landscape smoothing is closer to the real cause.",
+  "ε (BN)": "Small constant (~1e-5) added inside BN's denominator √(σ² + ε). Prevents divide-by-zero and bounds the gradient w.r.t. variance.",
+  "affine transform": "Per-channel y = γ·x + β with learnable γ and β; the second half of BN/LayerNorm's transform.",
+  "affine map": "Transform of the form y = a·x + b: a scale plus a bias. Composes naturally with conv, so a frozen BN can be fused into the preceding conv.",
+  "scale-and-shift": "Linear rescaling and shift y = γ·x + β with learnable per-channel γ and β; the second half of BN's transform.",
+  "running statistics (BN)": "The running_mean and running_var buffers maintained as EMAs of per-batch statistics during training; used unchanged at eval.",
+  "train vs eval mode (PyTorch)": "The .train() vs .eval() flag on a module. Controls whether BN updates running stats and uses batch stats vs frozen running stats, and whether dropout is active.",
+  "batch dimension": "The N dimension of the input tensor — one of the N independent samples drawn together each step. BN reduces over this axis (per channel).",
+  "SGD": "Stochastic Gradient Descent. Update parameters with the gradient of one mini-batch's loss; the workhorse optimizer.",
+  "fine-tuning": "Continue training a model (or just its head) on a smaller, task-specific dataset starting from pretrained weights.",
+  "distributed training": "Splitting a training step across multiple GPUs/nodes — e.g. PyTorch DDP. Vanilla BN computes stats per-device; SyncBN pools globally.",
+  "CNN": "Convolutional Neural Network. Stacks convolution + nonlinearity + pooling; standard backbone for image tasks before ViT.",
+  "conv layer": "Layer using sliding-window kernels with shared weights over spatial positions; the workhorse of image models.",
+  "tensor": "Multi-axis array stored in row-major or channels-first order. For images, shape (N, C, H, W): batch, channels, height, width."
+}
+;</script>
   <script>
 // vis-components.js — design-system JSX components for the /visualize skill.
 // Exposed as window.VIS.{Hero, TLDR, Pill, Tag, Card, ByLine, Section, setTitle}.
@@ -738,6 +1069,60 @@
     }, children);
   }
 
+  // autoGloss: scan a string for terms in window.__VIS_GLOSSARY (set by exporter
+  // before vis-components.js loads). Returns a React children array with each
+  // matched term wrapped in the same <span class="vis-term"> the Term component
+  // emits. First-mention only per call. Longest-match-first so "candidate
+  // generation" beats "candidate" alone.
+  let _glossPattern = null;
+  let _glossLookup = null;
+  function _buildGlossPattern() {
+    const g = (typeof window !== "undefined" && window.__VIS_GLOSSARY) || {};
+    const keys = Object.keys(g).filter(k => k && !k.startsWith("_"));
+    if (!keys.length) { _glossPattern = false; return; }
+    // Longest first to favor multi-word terms; escape regex metachars.
+    keys.sort((a, b) => b.length - a.length);
+    const escaped = keys.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    // Word-boundary on each side. Allow internal hyphens/spaces; common ML terms
+    // like "DP-SGD", "feature cross", "p99 latency" are all matched naturally.
+    _glossPattern = new RegExp("(^|[^A-Za-z0-9_])(" + escaped.join("|") + ")(?=[^A-Za-z0-9_]|$)", "g");
+    _glossLookup = g;
+  }
+  function autoGloss(text) {
+    if (typeof text !== "string" || !text) return text;
+    if (_glossPattern === null) _buildGlossPattern();
+    if (_glossPattern === false) return text;
+    const seen = new Set();
+    const out = [];
+    let lastIdx = 0;
+    let m;
+    _glossPattern.lastIndex = 0;
+    while ((m = _glossPattern.exec(text)) !== null) {
+      const before = m[1];
+      const term = m[2];
+      const matchStart = m.index + before.length;
+      const matchEnd = matchStart + term.length;
+      // Emit text BEFORE this match
+      if (matchStart > lastIdx) out.push(text.slice(lastIdx, matchStart));
+      // Emit wrapped term (first-mention only)
+      if (seen.has(term.toLowerCase())) {
+        out.push(text.slice(matchStart, matchEnd));
+      } else {
+        seen.add(term.toLowerCase());
+        out.push(h("span", {
+          key: matchStart,
+          className: "vis-term",
+          "data-rv-info": _glossLookup[term],
+          "aria-label": _glossLookup[term],
+          tabIndex: 0,
+        }, term));
+      }
+      lastIdx = matchEnd;
+    }
+    if (lastIdx < text.length) out.push(text.slice(lastIdx));
+    return out.length === 1 ? out[0] : out;
+  }
+
   // Standalone hover tooltip for <VIS.Term>. If the report-viewer overlay
   // is loaded it already shows tooltips for any [data-rv-info] element, so
   // we short-circuit here to avoid double-rendering.
@@ -766,11 +1151,11 @@
     }
     function hide() { if (tip) tip.style.display = "none"; }
     document.addEventListener("mouseover", (e) => {
-      const el = e.target.closest && e.target.closest(".vis-term");
+      const el = e.target.closest && e.target.closest("[data-rv-info]");
       if (el) show(el); else hide();
     });
     document.addEventListener("focusin", (e) => {
-      const el = e.target.closest && e.target.closest(".vis-term");
+      const el = e.target.closest && e.target.closest("[data-rv-info]");
       if (el) show(el);
     });
     document.addEventListener("focusout", hide);
@@ -779,7 +1164,7 @@
     // Tapping anywhere else (including a different term) hides the current.
     let lastTappedTerm = null;
     document.addEventListener("click", (e) => {
-      const el = e.target.closest && e.target.closest(".vis-term");
+      const el = e.target.closest && e.target.closest("[data-rv-info]");
       if (el) {
         if (el === lastTappedTerm) { lastTappedTerm = null; hide(); }
         else { lastTappedTerm = el; show(el); }
@@ -930,6 +1315,8 @@
         h("strong", { className: "vis-trap-title" }, title),
         modeBadge ? h("span", { className: "vis-trap-multi-badge" }, modeBadge) : null
       ),
+      // NO autoGloss on scenario either — scenario is part of the question;
+      // glossing mechanism terms in it hints at the answer space.
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       diagram ? h("div", { className: "vis-trap-diagram" }, diagram) : null,
       h("div", { className: "vis-trap-options",
@@ -949,6 +1336,10 @@
           h("span", { className: "vis-trap-key" },
             optionPrefix(o) + " (" + o.key + ")"),
           " ",
+          // NO autoGloss here. Glossing terms inside option text leaks the
+          // answer mechanism via hover. Authors must keep options self-contained;
+          // a candidate who needs a definition can scroll up to the prose where
+          // the term is explicitly wrapped via <VIS.Term>.
           o.text
         ))
       ),
@@ -1266,6 +1657,8 @@
         h("strong", { className: "vis-trap-title" }, title),
         h("span", { className: "vis-cf-mode-badge" }, "Fill in the code")
       ),
+      // NO autoGloss on scenario either — scenario is part of the question;
+      // glossing mechanism terms in it hints at the answer space.
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       h("div", { className: "vis-cf-code-wrap" },
         h("div", { className: "vis-cf-code-lang" }, language),
@@ -1345,6 +1738,8 @@
         h("strong", { className: "vis-trap-title" }, title),
         h("span", { className: "vis-md-mode-badge" }, "Step-by-step proof")
       ),
+      // NO autoGloss on scenario either — scenario is part of the question;
+      // glossing mechanism terms in it hints at the answer space.
       scenario ? h("div", { className: "vis-trap-scenario" }, scenario) : null,
       h("ol", { className: "vis-md-steps" },
         steps.map((step, idx) => {
@@ -1414,76 +1809,97 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-// advertiser-lookalike-audiences — canvas
-// Architecturally divergent: SEED-SET centroid + graph-walk expansion +
-// class-balance sampling + advertiser-CRM dedup at segment-write time.
-// NOT a recommender funnel — batch audience-build pipeline with ad-side gates.
+// advertiser-lookalike-audiences — INTERACTIVE PRACTICE + STUDY ARTIFACT
+// Phase 1: drag pieces onto the canvas, connect them with arrows.
+// Phase 2 (after "Reveal model design"): pre-rendered correct DAG + math-grounded reasoning + trap drills.
 
 const PIECES = [
-  { id:`seed_upload`, category:`data`, shape:`source`, label:`Seed list
-upload (CSV)
-1K–500K IDs` },
-  { id:`seed_validate`, category:`model`, shape:`service`, label:`Seed validate
-(min-size, dedup,
-GDPR consent)` },
-  { id:`user_embeddings`, category:`infra`, shape:`store`, label:`User embedding
-store (600M
-users, refreshed)` },
-  { id:`centroid_calc`, category:`model`, shape:`service`, label:`Seed centroid
-+ covariance
-(trimmed mean)` },
-  { id:`ann_expand`, category:`model`, shape:`service`, label:`ANN expand
-(top-N by
-seed similarity)` },
-  { id:`graph_walk`, category:`model`, shape:`service`, label:`Graph walk
-(social co-engage
-for coverage)` },
-  { id:`class_balance`, category:`model`, shape:`service`, label:`Class balance
-sampler (gender,
-age, geo)` },
-  { id:`crm_dedup`, category:`model`, shape:`service`, label:`Advertiser CRM
-dedup (exclude
-existing customers)` },
-  { id:`segment_store`, category:`infra`, shape:`store`, label:`Segment store
-(addressable
-audience ID)` },
-  { id:`auction_loader`, category:`model`, shape:`service`, label:`Auction loader
-(segment → ad
-request matcher)` },
-  { id:`uplift_eval`, category:`monitor`, shape:`control`, label:`Held-out uplift
-monitor (vs random,
-3x bar)` },
-  { id:`refresh_sched`, category:`monitor`, shape:`control`, label:`Daily refresh
-scheduler
-(embed drift)` },
-  { id:`include_seed`, category:`model`, shape:`service`, label:`Include seed IDs
-in output
-segment` },
-  { id:`no_balance`, category:`model`, shape:`service`, label:`Top-N by sim
-no balance
-(amplifies bias)` },
-  { id:`online_expand`, category:`model`, shape:`service`, label:`Expand at
-auction time
-(per-bid scan)` },
+  // ingest
+  { id:"seed_audience_ingest", category:"data", shape:"source", label:"Seed audience\ningest\n10K–100K IDs",
+    tooltip:"Advertiser uploads a seed list (existing customers, pixel-fired converters). Typical size 10K–100K user IDs. Source for the entire pipeline." },
+  { id:"seed_validator_size_check", category:"model", shape:"service", label:"Seed validator\nmin size, dedup,\nconsent gate",
+    tooltip:"Validates seed: minimum size (≥1K), dedup, GDPR consent, opt-out exclusion. Tiny seeds get rejected — centroid would be too noisy." },
+  // embedding store + refresh
+  { id:"user_embedding_store", category:"infra", shape:"store", label:"User embedding\nstore\n600M users",
+    tooltip:"Precomputed dense embeddings for every platform user. Refreshed daily from the behavioral feature pipeline." },
+  { id:"behavioral_feature_pipeline", category:"data", shape:"stream_source", label:"Behavioral feature\npipeline\nclicks/views/buys",
+    tooltip:"Streaming feature pipeline. Aggregates clicks, dwell, purchases, app opens. Feeds the embedding trainer." },
+  { id:"embed_refresh_daily", category:"monitor", shape:"control", label:"Embed refresh\nscheduler\ndaily",
+    tooltip:"Daily orchestrator. Decides when to retrain user embeddings vs reuse yesterday's vectors. Drives the freshness-vs-cost tradeoff." },
+  // centroid + retrieval
+  { id:"centroid_aggregator", category:"model", shape:"service", label:"Centroid\naggregator\ntrim + covar",
+    tooltip:"Computes seed centroid + covariance in embedding space. Trimmed mean drops 5% outliers (bot accounts in upload)." },
+  { id:"ann_index_hnsw", category:"infra", shape:"store", label:"ANN index (HNSW)\nover user\nembeddings",
+    tooltip:"HNSW index over the 600M user embedding store. Retrieves top-K by cosine to centroid (or per-seed nearest-neighbor)." },
+  { id:"per_seed_expand_strategy", category:"model", shape:"service", label:"Per-seed expand\nstrategy\nk-NN per seed",
+    tooltip:"Alternative retrieval: instead of one centroid, run k-NN from each seed and union. Captures multi-modal seeds (e.g., two distinct customer types)." },
+  // gates
+  { id:"similarity_threshold_gate", category:"monitor", shape:"control", label:"Similarity gate\ncos ≥ τ\nprecision/reach",
+    tooltip:"Threshold τ on cosine similarity. Below τ → drop. Tighter τ = higher precision, smaller reach. Calibrated on holdout AUC." },
+  { id:"exclusion_filter", category:"model", shape:"service", label:"Exclusion filter\nCRM + opt-out\n+ sanctioned",
+    tooltip:"Removes (a) advertiser's existing customers (no point re-targeting), (b) platform opted-out users, (c) sanctioned-country IDs." },
+  { id:"kanon_privacy_filter", category:"model", shape:"service", label:"k-anonymity\nfilter\nk ≥ 100",
+    tooltip:"Drops the audience if final size < 100 (re-identification risk). Adds DP noise to centroid for very small seeds." },
+  // sync + eval
+  { id:"audience_sync_ad_platforms", category:"infra", shape:"queue", label:"Audience sync\nto ad platforms\nhashed IDs",
+    tooltip:"Pushes the dedup'd audience to ad-serving systems as hashed IDs. Batch — usually nightly." },
+  { id:"lift_eval_holdout", category:"monitor", shape:"control", label:"Lift eval\n5% holdout\n3× bar",
+    tooltip:"5% of the audience held out from auction. After 7d measure conversion-rate vs random. Lift = CR(lookalike)/CR(random). Below 3× → rebuild." },
+  { id:"retrain_loop", category:"model", shape:"service", label:"Retrain loop\nweekly\non new conversions",
+    tooltip:"Weekly job — re-fits the embedding tower using fresh conversion labels. Independent from the daily embedding refresh." },
+  { id:"drift_monitor", category:"monitor", shape:"control", label:"Drift monitor\nembed shift\nPSI alert",
+    tooltip:"Tracks population stability of the embedding distribution. Alerts on PSI > 0.2 — usually a behavior-shift event (holiday, product launch)." },
+  // distractor
+  { id:"no_holdout_distractor", category:"model", shape:"service", label:"Skip holdout\nuse all seeds\nfor centroid+eval",
+    tooltip:"DISTRACTOR. Using the same seeds to build the centroid AND to evaluate lift is a textbook data leak — lift number is meaningless." },
 ];
 
-const EXPECTED_PIECES = [`seed_upload`,`seed_validate`,`user_embeddings`,`centroid_calc`,`ann_expand`,`graph_walk`,`class_balance`,`crm_dedup`,`segment_store`,`auction_loader`,`uplift_eval`,`refresh_sched`];
+const EXPECTED_PIECES = [
+  "seed_audience_ingest","seed_validator_size_check",
+  "behavioral_feature_pipeline","user_embedding_store","embed_refresh_daily",
+  "centroid_aggregator","ann_index_hnsw","per_seed_expand_strategy",
+  "similarity_threshold_gate","exclusion_filter","kanon_privacy_filter",
+  "audience_sync_ad_platforms",
+  "lift_eval_holdout","retrain_loop","drift_monitor",
+];
 
 const EXPECTED_EDGES = [
-  [`seed_upload`, `seed_validate`],
-  [`seed_validate`, `centroid_calc`],
-  [`user_embeddings`, `centroid_calc`],
-  [`centroid_calc`, `ann_expand`],
-  [`user_embeddings`, `ann_expand`],
-  [`ann_expand`, `graph_walk`],
-  [`graph_walk`, `class_balance`],
-  [`class_balance`, `crm_dedup`],
-  [`crm_dedup`, `segment_store`],
-  [`segment_store`, `auction_loader`],
-  [`segment_store`, `uplift_eval`],
-  [`refresh_sched`, `ann_expand`],
-  [`refresh_sched`, `user_embeddings`],
+  ["seed_audience_ingest","seed_validator_size_check"],
+  ["seed_validator_size_check","centroid_aggregator"],
+  ["behavioral_feature_pipeline","user_embedding_store"],
+  ["embed_refresh_daily","user_embedding_store"],
+  ["user_embedding_store","ann_index_hnsw"],
+  ["centroid_aggregator","ann_index_hnsw"],
+  ["seed_validator_size_check","per_seed_expand_strategy"],
+  ["per_seed_expand_strategy","ann_index_hnsw"],
+  ["ann_index_hnsw","similarity_threshold_gate"],
+  ["similarity_threshold_gate","exclusion_filter"],
+  ["exclusion_filter","kanon_privacy_filter"],
+  ["kanon_privacy_filter","audience_sync_ad_platforms"],
+  ["audience_sync_ad_platforms","lift_eval_holdout"],
+  ["lift_eval_holdout","retrain_loop"],
+  ["retrain_loop","user_embedding_store"],
+  ["user_embedding_store","drift_monitor"],
+  ["drift_monitor","embed_refresh_daily"],
 ];
+
+const POSITIONS = {
+  seed_audience_ingest:        { x: 60,  y: 30 },
+  behavioral_feature_pipeline: { x: 700, y: 30 },
+  seed_validator_size_check:   { x: 60,  y: 180 },
+  user_embedding_store:        { x: 700, y: 180 },
+  embed_refresh_daily:         { x: 980, y: 180 },
+  centroid_aggregator:         { x: 60,  y: 330 },
+  per_seed_expand_strategy:    { x: 320, y: 330 },
+  ann_index_hnsw:              { x: 700, y: 360 },
+  similarity_threshold_gate:   { x: 380, y: 510 },
+  exclusion_filter:            { x: 380, y: 660 },
+  kanon_privacy_filter:        { x: 380, y: 810 },
+  audience_sync_ad_platforms:  { x: 380, y: 960 },
+  lift_eval_holdout:           { x: 60,  y: 1110 },
+  retrain_loop:                { x: 380, y: 1110 },
+  drift_monitor:               { x: 980, y: 360 },
+};
 
 const CATEGORY_COLOR = { data:"#bae6fd", model:"#ddd6fe", infra:"#fde68a", monitor:"#bbf7d0" };
 
@@ -1500,7 +1916,10 @@ function loadExcalidraw() {
   return window.__excalidrawLoaded;
 }
 
-function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges }) {
+// ============================================================================
+// Phase 1: INTERACTIVE — drag pieces, draw arrows, hit Reveal for scoring.
+// ============================================================================
+function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges, onReveal }) {
   const containerRef = React.useRef(null);
   const [lib, setLib] = React.useState(null);
   const [api, setApi] = React.useState(null);
@@ -1529,16 +1948,22 @@ function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges }) {
       const W = spec.w, H = spec.h, lipH = 26;
       const groupId = `g-${piece.id}-${Date.now()}`;
       const common = { backgroundColor: color, strokeColor:"#1e293b", fillStyle:"solid", roughness:1, strokeWidth:1, groupIds:[groupId] };
-      const bodyArr = lib.convertToExcalidrawElements([{ type:"rectangle", x, y: y + lipH/2, width: W, height: H - lipH, ...common,
-        label: { text: piece.label, fontSize:14, textAlign:"center", verticalAlign:"middle" }, customData: { pieceId: piece.id } }]);
+      const bodyArr = lib.convertToExcalidrawElements([{
+        type:"rectangle", x, y: y + lipH/2, width: W, height: H - lipH, ...common,
+        label: { text: piece.label, fontSize:14, textAlign:"center", verticalAlign:"middle" },
+        customData: { pieceId: piece.id },
+      }]);
       const topEllipse = lib.convertToExcalidrawElements([{ type:"ellipse", x, y, width:W, height:lipH, ...common }])[0];
       const bottomEllipse = lib.convertToExcalidrawElements([{ type:"ellipse", x, y: y + H - lipH, width:W, height:lipH, ...common }])[0];
       generated = [...bodyArr, topEllipse, bottomEllipse];
       anchorEl = bodyArr.find((e) => e.type === "rectangle");
     } else {
-      const skeleton = { type: spec.type, x, y, width: spec.w, height: spec.h, backgroundColor: color, strokeColor:"#1e293b",
+      const skeleton = {
+        type: spec.type, x, y, width: spec.w, height: spec.h, backgroundColor: color, strokeColor:"#1e293b",
         fillStyle: spec.fillStyle, strokeStyle: spec.strokeStyle, strokeWidth: spec.strokeWidth, roughness:1,
-        label: { text: piece.label, fontSize:14, textAlign:"center", verticalAlign:"middle" }, customData: { pieceId: piece.id } };
+        label: { text: piece.label, fontSize:14, textAlign:"center", verticalAlign:"middle" },
+        customData: { pieceId: piece.id },
+      };
       if (spec.roundness) skeleton.roundness = spec.roundness;
       generated = lib.convertToExcalidrawElements([skeleton]);
       anchorEl = generated.find((e) => e.type === spec.type) || generated[0];
@@ -1581,6 +2006,7 @@ function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges }) {
       distractors, missingPieces, edgeCount: userEdges.length, correctEdgeCount: correctEdges.length,
       expectedEdgeCount: expectedEdges.length, wrongEdges, missingEdges });
     setRevealed(true);
+    if (onReveal) onReveal();
   }
   function reset() { if (api) api.updateScene({ elements: [] }); setPlacedIdMap({}); setReport(null); setRevealed(false); }
   if (!lib) return React.createElement("div", { style:{padding:24, color:"#64748b"} }, "Loading Excalidraw canvas...");
@@ -1588,105 +2014,729 @@ function ExcalidrawCanvas({ pieces, expectedPieces, expectedEdges }) {
   function lookupLabel(pieceId) { return pieces.find((p) => p.id === pieceId)?.label?.split("\n")[0] || pieceId; }
   return React.createElement("div", null,
     React.createElement("div", { style:{display:"flex", flexWrap:"wrap", gap:8, padding:"12px 14px", background:"#ffffff", border:"1px dashed #cbd5e1", borderRadius:8, marginBottom:10}},
-      React.createElement("div", { style:{width:"100%", fontSize:13, color:"#475569", fontWeight:600, marginBottom:4}}, "Palette — click to drop a piece onto the canvas"),
-      pieces.map((p) => React.createElement("button", { key: p.id, type:"button", onClick: () => addPiece(p), disabled: revealed || !!placedIdMap[p.id],
+      React.createElement("div", { style:{width:"100%", fontSize:13, color:"#475569", fontWeight:600, marginBottom:4}}, "Palette — click to drop a piece onto the canvas (hover for description)"),
+      pieces.map((p) => React.createElement("button", { key: p.id, type:"button", onClick: () => addPiece(p),
+        disabled: revealed || !!placedIdMap[p.id],
+        "data-rv-info": p.tooltip || undefined,
+        "aria-label": p.tooltip ? `${p.label.split("\n")[0]} — ${p.tooltip}` : undefined,
         style:{ padding:"6px 10px", fontSize:13, cursor: placedIdMap[p.id] ? "default" : "pointer",
           background: placedIdMap[p.id] ? "#f1f5f9" : "#ffffff", opacity: placedIdMap[p.id] ? 0.5 : 1,
           border:"1px solid #cbd5e1", borderLeft:`4px solid ${{data:"#0ea5e9", model:"#8b5cf6", infra:"#f59e0b", monitor:"#10b981"}[p.category] || "#94a3b8"}`,
-          borderRadius:6, whiteSpace:"nowrap" } }, p.label.split("\n")[0]))),
+          borderRadius:6, whiteSpace:"nowrap" } }, p.label.split("\n")[0]))
+    ),
     React.createElement("div", { ref: containerRef, style:{ height:600, border:"1px solid #cbd5e1", borderRadius:8, background:"#fefce8", position:"relative", overflow:"hidden", marginBottom:10 }},
       React.createElement(Excalidraw, { excalidrawAPI: (a) => setApi(a),
         initialData: { elements:[], appState:{ viewBackgroundColor:"#fefce8", currentItemRoughness:1 } },
         UIOptions: { canvasActions: { saveToActiveFile:false, loadScene:false, export:false, toggleTheme:false } } })),
     React.createElement("div", { style:{fontSize:13, color:"#64748b", marginBottom:8}}, "Tip: click a palette piece to drop it on the canvas, drag to position, use the arrow tool to connect."),
     !revealed ? React.createElement("button", { type:"button", onClick: reveal,
-      style:{background:"#2563eb", color:"#fff", border:"none", padding:"10px 18px", borderRadius:8, fontWeight:600, cursor:"pointer"} }, "Reveal model design") : null,
+      style:{background:"#2563eb", color:"#fff", border:"none", padding:"10px 18px", borderRadius:8, fontWeight:600, cursor:"pointer"} },
+      Object.keys(placedIdMap).length > 0 ? "Reveal model design" : "Skip & reveal solution") : null,
     revealed && report ? React.createElement("div", { style:{marginTop:12}},
       React.createElement("div", { style:{background:"#eff6ff", border:"1px solid #93c5fd", color:"#1e3a8a", padding:"10px 14px", borderRadius:8, fontSize:14, marginBottom:10}},
         `Pieces correct: ${report.correctPickCount} / ${report.expectedPickCount}. Connections correct: ${report.correctEdgeCount} / ${report.expectedEdgeCount}.`),
       report.distractors.length > 0 ? React.createElement("div", { style:{background:"#fee2e2", borderLeft:"4px solid #dc2626", color:"#7f1d1d", padding:"10px 14px", borderRadius:8, margin:"8px 0", fontSize:14}},
-        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "✗ Pieces that don't belong:"), report.distractors.map(lookupLabel).join(", ")) : null,
+        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "Pieces that don't belong:"),
+        report.distractors.map(lookupLabel).join(", ")) : null,
       report.missingPieces.length > 0 ? React.createElement("div", { style:{background:"#fef3c7", borderLeft:"4px solid #d97706", color:"#78350f", padding:"10px 14px", borderRadius:8, margin:"8px 0", fontSize:14}},
-        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "⚠ Missing pieces:"), report.missingPieces.map(lookupLabel).join(", ")) : null,
+        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "Missing pieces:"),
+        report.missingPieces.map(lookupLabel).join(", ")) : null,
       report.missingEdges.length > 0 ? React.createElement("div", { style:{background:"#fef3c7", borderLeft:"4px solid #d97706", color:"#78350f", padding:"10px 14px", borderRadius:8, margin:"8px 0", fontSize:14}},
-        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "⚠ Missing connections:"), report.missingEdges.map(([s,t]) => `${lookupLabel(s)} → ${lookupLabel(t)}`).join("; ")) : null,
+        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "Missing connections:"),
+        report.missingEdges.map(([s,t]) => `${lookupLabel(s)} -> ${lookupLabel(t)}`).join("; ")) : null,
       report.wrongEdges.length > 0 ? React.createElement("div", { style:{background:"#fee2e2", borderLeft:"4px solid #dc2626", color:"#7f1d1d", padding:"10px 14px", borderRadius:8, margin:"8px 0", fontSize:14}},
-        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "✗ Wrong connections:"), report.wrongEdges.map(([s,t]) => `${lookupLabel(s)} → ${lookupLabel(t)}`).join("; ")) : null,
+        React.createElement("strong", {style:{display:"block", marginBottom:4}}, "Wrong connections:"),
+        report.wrongEdges.map(([s,t]) => `${lookupLabel(s)} -> ${lookupLabel(t)}`).join("; ")) : null,
       React.createElement("button", { type:"button", onClick: reset,
-        style:{background:"#64748b", color:"#fff", border:"none", padding:"8px 14px", borderRadius:6, fontWeight:600, fontSize:13, cursor:"pointer", marginTop:8} }, "↺ Try again")
+        style:{background:"#64748b", color:"#fff", border:"none", padding:"8px 14px", borderRadius:6, fontWeight:600, fontSize:13, cursor:"pointer", marginTop:8} }, "Try again")
     ) : null
   );
 }
 
-const App = () => (
+// ============================================================================
+// App
+// ============================================================================
+const App = () => {
+  const [solutionVisible, setSolutionVisible] = React.useState(false);
+  return (
   <main style={{maxWidth: 1100, margin: "2em auto", padding: "0 16px", fontSize: 16, lineHeight: 1.65}}>
     <VIS.Hero
-      pill={`ML Systems · Canvas · Lookalike`}
-      title={`Lookalike audiences: 1K–500K seeds → 1M–50M users in 30 min, 3× uplift.`}
-      subtitle={`Centroid + ANN + graph-walk + class-balance + CRM-dedup. The dedup is at write-time so the auction doesn't double-count.`}
-      byline={[{label:"Difficulty", value:"Hard"}, {label:"Mode", value:"Excalidraw canvas"}]}
+      pill="ML Systems · Canvas · Advertiser Lookalike"
+      title="Lookalike audiences: 10K-100K seeds to 1M-10M users, 3x conversion lift bar."
+      subtitle={<>A batch <VIS.Term def="An audience-build pipeline takes a seed list and outputs an expanded user set. Distinct from a recommender: it produces a static segment, not a per-request ranking.">audience-build pipeline</VIS.Term> with <VIS.Term def="Approximate Nearest Neighbor retrieval: HNSW or IVF-PQ index. Trades small recall loss for sub-millisecond lookup over hundreds of millions of vectors.">ANN retrieval</VIS.Term> over user embeddings, a <VIS.Term def="The mean (or trimmed mean) of seed-user embeddings — represents the seed in vector space. Variance scales as 1/sqrt(n_seeds).">centroid</VIS.Term> from the seed, and a write-time <VIS.Term def="Removes advertiser's existing customers, opted-out users, and sanctioned-country IDs before the audience is synced to the ad platform.">exclusion filter</VIS.Term>.</>}
+      byline={[{label:"Difficulty", value:"Hard"}, {label:"Mode", value:"Build, then study"}]}
     />
 
     <VIS.TLDR>
-      <strong>Lookalike is a batch audience-build problem, not online inference.</strong> Three pieces matter: (1) the <VIS.Term def="Seed-set representation: arbitrary seed sizes (1K–500K) need a stable representation. Trimmed-mean centroid of embeddings + covariance to model directional spread. With covariance, you can sample along the seed's principal axes instead of a tight ball around the mean — better coverage with same lift.">seed representation</VIS.Term> must be stable across seed sizes (trimmed-mean centroid + covariance, not max-pool); (2) <VIS.Term def="Class-balance sampling: the seed set is biased (e.g., 80% female, 60% urban). Naive nearest-neighbor expansion amplifies that bias to the expanded audience. Class-balance sampler reweights candidates so the expanded distribution matches the platform's overall distribution — except where the seed signal is genuinely predictive.">class-balance sampling</VIS.Term> prevents amplifying the seed's demographic skew; (3) <VIS.Term def="Advertiser CRM dedup: the advertiser already has a list of existing customers. Lookalike output must EXCLUDE these (don't pay to re-acquire) and must not leak the seed identity. Dedup happens at segment-write time, so the auction layer sees only the dedup'd segment.">CRM dedup</VIS.Term> is done at segment-write time so the auction system doesn't burn budget re-targeting existing customers. The uplift bar (3× vs random) must be measured on a held-out conversion sample, not the seed.
+      <strong>Not a recommender, not a classifier — a batch audience-build with a holdout.</strong> Given a small <VIS.Term def="The advertiser's existing-customer or pixel-converter list. Typical size 10K-100K user IDs. Input to the entire pipeline.">seed audience</VIS.Term>, build a lookalike segment of 1M-10M users using a <VIS.Term def="Mean of seed embeddings, optionally trimmed. The variance of this estimator shrinks as 1/sqrt(n_seeds), which is why tiny seeds produce noisy centroids.">centroid</VIS.Term> in <VIS.Term def="Dense vector space where each user is represented by a learned embedding (e.g., 128-D). Similar users sit close under cosine distance.">embedding space</VIS.Term>, retrieve top-K with <VIS.Term def="Hierarchical Navigable Small World — graph-based ANN. Layered proximity graph with log-time greedy descent. RAM-heavy.">HNSW</VIS.Term>, gate on <VIS.Term def="Cosine similarity between the candidate user embedding and the seed centroid. The threshold tau trades precision (closer = more similar) against reach (more users qualify).">cosine similarity</VIS.Term>, then remove existing customers and opt-outs. Quality is measured by <VIS.Term def="Lift = P(convert | lookalike) / P(convert | random). The 3x bar is industry-standard for advertiser ROI. Must be measured on a held-out slice, not the seed.">lift</VIS.Term> on a 5% <VIS.Term def="A randomly held-out 5% slice of the expanded audience, withheld from auction. After 7 days, compare its conversion rate against a same-sized random control.">holdout</VIS.Term> versus a random control. The three subtle decisions: how to handle <VIS.Term def="Mathematically: a 1K-seed centroid has 10x the noise of a 100K-seed centroid because variance scales as 1/sqrt(n). Tiny seeds need Bayesian shrinkage toward platform mean.">seed-size bias</VIS.Term>, when to refresh embeddings (cost vs <VIS.Term def="The gap between when a user's behavior changed and when their embedding reflects it. Daily refresh keeps staleness under 24h for most users.">staleness</VIS.Term>), and the <VIS.Term def="Minimum audience size before identification becomes possible. Bound at k >= 100 means each output user is indistinguishable from at least 99 others.">k-anonymity</VIS.Term> floor for privacy.
     </VIS.TLDR>
 
     <VIS.Section id="sec-brief" title="The brief">
-      <p>"Seed: 1K–500K user IDs. Output: 1M–50M lookalike users. SLA: build &lt;30min, segment usable in 1h. Quality: held-out conversion-rate uplift 3×+ vs random. 600M users, daily-refreshed embeddings, ANN service exists. Dedup against advertiser's CRM. No double-count downstream."</p>
-      <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>Math that forces the shape</h3>
-      <VIS.Equation display={true} tex={String.raw`\\text{centroid} = \\frac{1}{|S'|}\\sum_{u \\in S'} e_u \\quad \\text{where } S' = \\text{trim}_{5\\%}(S); \\quad \\text{lift}@k = \\frac{CR(\\text{expanded})}{CR(\\text{random})} \\geq 3`} />
-      <p>Trim 5% removes outlier seeds (often spam/bot accounts in the upload). The 3× lift bar is the gating quality metric — measured on the advertiser's own pixel-tracked conversions, on a held-out 5% slice of the expanded audience.</p>
+      <p>"Advertiser uploads a <VIS.Term def="Seed audience: the advertiser's existing-customer list or pixel-fired converters. Used to define what 'similar' means.">seed audience</VIS.Term> of 10K-100K user IDs. Build a lookalike segment of 1M-10M users with <VIS.Term def="Conversion-rate lift: ratio of expected conversions on the lookalike audience versus a random-control audience of the same size.">3x conversion lift</VIS.Term> vs random within 30 minutes. 600M-user platform with precomputed daily embeddings. Must exclude existing customers (advertiser CRM) and opted-out users. <VIS.Term def="A minimum audience size below which the audience cannot be released — protects users from being re-identified by intersection with auxiliary data.">k-anonymity</VIS.Term> floor k >= 100. <VIS.Term def="Conversion lift measured on a 5% holdout — randomly drawn from the expanded audience, withheld from auction for 7d, then compared to a random-control of equal size.">Lift</VIS.Term> measured on a 5% holdout after 7 days."</p>
     </VIS.Section>
 
     <VIS.Section id="sec-design" title="Build the design">
       <p style={{margin:"0 0 10px 0", fontSize:14, color:"#64748b"}}>
-        <strong>Shape legend:</strong> sharp rect = stateless service · cylinder = stateful store · solid ellipse = batch source · dashed hachure ellipse = streaming source · dashed hachure rounded rect = queue · cross-hatched diamond = monitor / control.
+        <strong>Shape legend:</strong> sharp rect = stateless service; cylinder = stateful store; solid ellipse = batch source; dashed hachure ellipse = streaming source; dashed hachure rounded rect = queue; cross-hatched diamond = monitor/control.
       </p>
-      <ExcalidrawCanvas pieces={PIECES} expectedPieces={EXPECTED_PIECES} expectedEdges={EXPECTED_EDGES} />
+      <ExcalidrawCanvas
+        pieces={PIECES}
+        expectedPieces={EXPECTED_PIECES}
+        expectedEdges={EXPECTED_EDGES}
+        onReveal={() => setSolutionVisible(true)}
+      />
     </VIS.Section>
 
-    <VIS.Section id="sec-walk" title="Walking the system">
-      <ol>
-        <li><strong>Seed validate.</strong> Minimum size (typically 1K), dedup against the user pool, GDPR consent flags, exclude opted-out users.</li>
-        <li><strong>Seed centroid + covariance.</strong> Trimmed-mean centroid; covariance matrix captures the seed's directional spread.</li>
-        <li><strong>ANN expand.</strong> Query the ANN index with the centroid; pull top-N candidates by similarity (typically 5–20× the target size).</li>
-        <li><strong>Graph walk.</strong> Add coverage by walking the co-engagement graph from the seed (catches users similar by behavior, not just embedding).</li>
-        <li><strong>Class balance sampler.</strong> Reweights candidates so demographics match the platform distribution, not the seed's.</li>
-        <li><strong>CRM dedup.</strong> Remove advertiser's existing customers (uploaded as exclusion list).</li>
-        <li><strong>Segment store.</strong> Write addressable audience ID; auction loader subscribes.</li>
-        <li><strong>Held-out uplift monitor.</strong> 5% sample held out from auction; measure CR after 7d vs random. Below 3× → rebuild or warn.</li>
-        <li><strong>Daily refresh.</strong> Embeddings drift; daily rebuild keeps lookalikes fresh.</li>
-      </ol>
-    </VIS.Section>
+    {solutionVisible && (
+      <React.Fragment>
+        <VIS.Section id="sec-reference" title="The reference design">
+          <p style={{margin:"0 0 10px 0", fontSize:14, color:"#64748b"}}>
+            Compare this against what you built. Two independent loops: the daily embedding refresh runs continuously; the lookalike pipeline runs per advertiser request.
+          </p>
+          <VIS.Mermaid chart={String.raw`
+flowchart TD
+  classDef data    fill:#bae6fd,stroke:#0369a1,color:#0c4a6e
+  classDef model   fill:#ddd6fe,stroke:#6d28d9,color:#312e81
+  classDef infra   fill:#fde68a,stroke:#b45309,color:#78350f
+  classDef monitor fill:#bbf7d0,stroke:#15803d,color:#14532d
 
-    <VIS.Section id="sec-distractors" title="What the distractors teach">
-      <ul>
-        <li><strong>"Include seed IDs in output segment."</strong> Defeats the point — advertiser is already targeting them. Also inflates apparent lift.</li>
-        <li><strong>"Top-N by similarity, no class balance."</strong> Amplifies seed bias. If seed is 90% urban-female, output is 95% urban-female; advertiser pays for the demographic concentration, not the signal.</li>
-        <li><strong>"Expand at auction time."</strong> Per-bid scan of 600M users is impossible at 40ms. Lookalike is batch.</li>
-      </ul>
-    </VIS.Section>
+  seed["Seed audience ingest<br/>10K-100K IDs"]:::data
+  behave[/"Behavioral feature pipeline<br/>clicks views buys"/]:::data
 
-    <VIS.Section id="sec-watch" title="Watch-outs">
-      <ul>
-        <li><strong>Seed size sensitivity.</strong> 1K seeds = noisy centroid. Bayesian shrinkage toward platform-mean stabilizes.</li>
-        <li><strong>Don't leak the seed identity.</strong> Output segment doesn't reveal who the seeds were.</li>
-        <li><strong>Refresh cadence.</strong> Daily for embedded features; weekly for the segment itself.</li>
-        <li><strong>Privacy.</strong> Differential-privacy noise on the centroid for very small seeds.</li>
-        <li><strong>Uplift on a held-out, not on the seed.</strong> Measuring against the seed = data leak.</li>
-      </ul>
-    </VIS.Section>
+  subgraph embedLoop["Embedding refresh loop daily"]
+    direction TB
+    embStore[("User embedding store<br/>600M users")]:::infra
+    embSched{{"Embed refresh scheduler<br/>daily"}}:::monitor
+    drift{{"Drift monitor<br/>PSI alert"}}:::monitor
+  end
+
+  subgraph seedPath["Seed expansion pipeline"]
+    direction TB
+    seedval["Seed validator<br/>min size dedup consent"]:::model
+    centroid["Centroid aggregator<br/>trimmed mean plus covar"]:::model
+    perseed["Per-seed expand<br/>k-NN per seed union"]:::model
+  end
+
+  ann[("ANN index HNSW<br/>over user embeddings")]:::infra
+
+  subgraph gates["Quality and privacy gates"]
+    direction TB
+    sim{{"Similarity gate<br/>cos &gt;= tau"}}:::monitor
+    excl["Exclusion filter<br/>CRM opt-out sanctions"]:::model
+    kanon["k-anonymity filter<br/>k &gt;= 100"]:::model
+  end
+
+  sync[/"Audience sync<br/>to ad platforms hashed IDs"/]:::infra
+
+  subgraph evalLoop["Eval and retrain loop"]
+    direction TB
+    holdout{{"Lift eval<br/>5pct holdout 3x bar"}}:::monitor
+    retrain["Retrain loop<br/>weekly on new conversions"]:::model
+  end
+
+  seed --> seedval
+  seedval --> centroid
+  seedval --> perseed
+  behave --> embStore
+  embSched --> embStore
+  embStore --> ann
+  centroid --> ann
+  perseed --> ann
+  ann --> sim
+  sim --> excl
+  excl --> kanon
+  kanon --> sync
+  sync --> holdout
+  holdout -- "lift &lt; 3x rebuild" --> centroid
+  holdout --> retrain
+  retrain --> embStore
+  embStore --> drift
+  drift --> embSched
+`} />
+        </VIS.Section>
+
+        <VIS.Section id="sec-walk" title="Walking the pipeline">
+          <ol>
+            <li><strong>Seed validate.</strong> Reject seeds below minimum size (n &lt; 1K) — centroid noise dominates signal. Dedup, drop <VIS.Term def="Users who have withdrawn consent for advertising features. Must be excluded from inputs and outputs of any ad-targeting pipeline.">opted-out</VIS.Term> IDs, drop consent-revoked IDs.</li>
+            <li><strong>Centroid aggregation.</strong> Compute <VIS.Term def="Mean computed after dropping the top and bottom 5% of values by some criterion (here: embedding norm). Robust to bot-account outliers in the seed upload.">trimmed-mean</VIS.Term> centroid plus <VIS.Term def="Matrix capturing pairwise variance of embedding dimensions across seed users. Captures directional spread — useful for Mahalanobis-distance gates and per-axis sampling.">covariance</VIS.Term> from the validated seed embeddings. <VIS.Equation tex={String.raw`\mu = \frac{1}{|S'|}\sum_{u \in S'} e_u`} /> where S' drops the top and bottom 5% by norm.</li>
+            <li><strong>Per-seed expand (optional).</strong> For <VIS.Term def="Seed set that contains two or more distinct customer subgroups (e.g., bargain-hunters and luxury-buyers for the same brand). The centroid sits between modes in a region containing neither.">multi-modal seeds</VIS.Term>, the centroid is misleading. Run k-NN from each seed and union — catches both modes. See &sect;3b.</li>
+            <li><strong>ANN retrieval.</strong> Query HNSW index with the centroid. Pull <VIS.Term def="Top-K retrieval: keep the K candidates with highest similarity to the query. For lookalike, K is typically 5-20x the target audience size to leave room for downstream filtering.">top-K</VIS.Term> candidates ordered by <VIS.Term def="Cosine similarity: dot product of two unit vectors. Equivalent to 1 minus cosine distance. Bounded [-1, 1]. Industry-standard similarity for normalized embeddings.">cosine similarity</VIS.Term>. <VIS.Equation tex={String.raw`s_u = \frac{\mu \cdot e_u}{\|\mu\|\,\|e_u\|}`} /></li>
+            <li><strong>Similarity gate.</strong> Drop candidates below threshold tau. tau is calibrated on a <VIS.Term def="Held-out evaluation slice: a randomly drawn subset withheld from training and from the live audience, used to measure quality without contamination.">holdout</VIS.Term> to hit the 3x lift bar. See &sect;3c.</li>
+            <li><strong>Exclusion filter.</strong> Subtract advertiser <VIS.Term def="Customer Relationship Management list: the advertiser's roster of existing customers. Used as a 'do not re-target' exclusion list at audience-build time.">CRM</VIS.Term> (existing customers), platform opt-out list, sanctioned-country IDs. Order matters: exclusion before k-anon so the floor checks the final usable set.</li>
+            <li><strong>k-anonymity gate.</strong> If final audience &lt; 100, reject or pad with random. Adds <VIS.Term def="Differential privacy: a guarantee that the output reveals little about any single input row. Achieved by adding calibrated noise (e.g., Laplace) to aggregates like the centroid.">DP noise</VIS.Term> to the centroid for small seeds. See &sect;3d.</li>
+            <li><strong>Audience sync.</strong> Hash IDs, push to ad-serving system. Batch nightly.</li>
+            <li><strong>Lift evaluation.</strong> Hold out 5% of the audience from auction. After 7d compare <VIS.Term def="Conversion rate: fraction of impressioned users who completed the target action (purchase, signup, etc.) within the attribution window. Bottom-funnel metric.">conversion rate</VIS.Term> vs random-control of equal size. <VIS.Equation tex={String.raw`\text{lift} = \frac{CR_{\text{lookalike}}}{CR_{\text{random}}}`} /> Below 3x -> trigger rebuild. See &sect;3e.</li>
+            <li><strong>Drift monitor.</strong> Tracks <VIS.Term def="Population Stability Index: bin-wise KL-style divergence between two distributions. PSI &lt; 0.1 stable; 0.1-0.2 minor drift; &gt; 0.2 investigate.">PSI</VIS.Term> on the embedding distribution. Alerts on PSI > 0.2 — usually a holiday or product-launch event. See &sect;3i.</li>
+            <li><strong>Retrain loop.</strong> Weekly. Re-fits the <VIS.Term def="Neural network that maps user behavioral features to a dense embedding. 'Tower' usually means a single-leg embedding network in a two-tower retrieval architecture.">embedding tower</VIS.Term> with the latest conversion labels. Decoupled from the daily refresh.</li>
+          </ol>
+        </VIS.Section>
+
+        <VIS.Section id="sec-math" title="Why every stage is the way it is — the math">
+
+          <h3 style={{marginTop:14, marginBottom:6, fontSize:15, color:"#334155"}}>&sect;3a. Centroid quality vs seed size</h3>
+          <p>The seed-centroid estimator's variance scales with seed size:</p>
+          <VIS.Equation display={true} tex={String.raw`\text{Var}(\hat{\mu}) = \frac{\sigma^{2}}{n}, \qquad \|\hat{\mu} - \mu\| \;\propto\; \frac{1}{\sqrt{n}}`} />
+          <p>A 1K-seed centroid is roughly 10x noisier than a 100K-seed centroid. The seed-validator rejects seeds below n=1K; between 1K and 10K we apply <VIS.Term def="Bayesian shrinkage: pull a noisy estimate toward a stable prior, weighted by sample size. Reduces variance at the cost of small bias toward the prior.">Bayesian shrinkage</VIS.Term> toward the <VIS.Term def="Platform-mean embedding: the average embedding across all platform users. Stable, representative — used as the prior in shrinkage estimators for small-seed lookalikes.">platform-mean</VIS.Term>:</p>
+          <VIS.Equation display={true} tex={String.raw`\tilde{\mu} \;=\; \frac{n}{n + n_0}\,\hat{\mu}_{\text{seed}} \;+\; \frac{n_0}{n + n_0}\,\mu_{\text{platform}}`} />
+          <p>Here n_0 is a pseudo-count prior strength (typically 5K). For very small seeds, the platform mean dominates and the lookalike returns a near-random audience — which is the right behavior (refuse to over-claim signal).</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>&sect;3b. When the centroid is wrong: per-seed expansion</h3>
+          <p>If the seed has two distinct customer subgroups (e.g., bargain-hunters and luxury-buyers for the same brand), the centroid sits between them in a region containing neither. The <VIS.Term def="Mahalanobis distance: euclidean distance scaled by the inverse covariance matrix. Accounts for embedding-axis correlation; equivalent to euclidean in whitened space.">Mahalanobis distance</VIS.Term> from each seed cluster to the centroid is large:</p>
+          <VIS.Equation display={true} tex={String.raw`d_{M}(e_u, \mu) = \sqrt{(e_u - \mu)^{\top}\,\Sigma^{-1}\,(e_u - \mu)}`} />
+          <p>A test: cluster the seeds (mini-K-means, K=2..5) and check intra-cluster cosine. If the largest cluster contains less than 60% of seeds, switch to <VIS.Term def="Per-seed retrieval: run k-NN from each seed (or a sampled subset) and union the results. Catches multi-modal seeds where the centroid sits between modes.">per-seed expansion</VIS.Term>: sample 500 seeds, run k-NN on each, union with weighted overlap.</p>
+          <VIS.Equation display={true} tex={String.raw`\text{audience} \;=\; \bigcup_{u \in S_{\text{sample}}} \text{topK}(e_u, K_{\text{per-seed}})`} />
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>&sect;3c. Cosine threshold tau vs reach (calibrated on holdout AUC)</h3>
+          <p>The retrieval gate is a similarity threshold. Tighter tau means higher precision (closer match to seed behavior), smaller reach (fewer users qualify). Express the tradeoff:</p>
+          <VIS.Equation display={true} tex={String.raw`\text{reach}(\tau) = |\{u : \cos(e_u, \mu) \ge \tau\}|, \qquad \text{precision}(\tau) \approx \frac{TP(\tau)}{TP(\tau) + FP(\tau)}`} />
+          <p>Calibrate tau on a holdout slice (10% of last quarter's converted users for similar advertisers). For each candidate tau, measure <VIS.Term def="Area Under the ROC Curve: probability that a random positive scores higher than a random negative. Threshold-free ranking metric.">AUC</VIS.Term> of (cosine score vs conversion outcome). The optimum is the <VIS.Term def="Knee of the curve: the inflection point where marginal gain from loosening a constraint drops sharply. Standard heuristic for picking thresholds along a tradeoff frontier.">knee</VIS.Term> of the precision-reach curve at the smallest audience hitting the 3x lift bar:</p>
+          <VIS.Equation display={true} tex={String.raw`\tau^{*} \;=\; \arg\min_{\tau}\,\{\tau : \text{lift}(\tau) \ge 3.0\}`} />
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>&sect;3d. k-anonymity bound</h3>
+          <p>Re-identification risk depends on audience size. The k-anonymity guarantee:</p>
+          <VIS.Equation display={true} tex={String.raw`\Pr[\text{re-identify}(u) \mid u \in A] \;\le\; \frac{1}{k}`} />
+          <p>With k >= 100, each output user is indistinguishable from at least 99 others. Smaller audiences are dropped or padded; for small-seed lookalikes the centroid is perturbed with <VIS.Term def="Laplace noise: noise drawn from a Laplace distribution, calibrated by sensitivity and privacy budget. Standard primitive for differential privacy on numeric aggregates.">Laplace noise</VIS.Term>:</p>
+          <VIS.Equation display={true} tex={String.raw`\tilde{\mu} = \hat{\mu} + \mathrm{Lap}(0, \Delta/\epsilon)`} />
+          <p>where Delta is the <VIS.Term def="L1 sensitivity: the maximum change in an aggregate caused by adding or removing a single user. Drives the noise scale in differential privacy.">L1 sensitivity</VIS.Term> of the centroid (bounded by 2/n for normalized embeddings) and epsilon is the <VIS.Term def="Privacy budget epsilon: smaller epsilon means stronger privacy and noisier output. epsilon=1 is a common standard for analytics-grade DP applications.">privacy budget</VIS.Term> (typically 1.0).</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>&sect;3e. Lift evaluation on holdout</h3>
+          <p>The 3x lift bar is the gating quality metric. Definition:</p>
+          <VIS.Equation display={true} tex={String.raw`\text{lift} \;=\; \frac{P(\text{convert} \mid u \in \text{lookalike})}{P(\text{convert} \mid u \in \text{random})}`} />
+          <p>Variance of the lift estimator on n holdout users with conversion rate p:</p>
+          <VIS.Equation display={true} tex={String.raw`\text{Var}(\hat{\text{lift}}) \;\approx\; \frac{1 - p}{n\,p} \;\cdot\; \left(\frac{1}{\text{lift}^{2}} + 1\right)`} />
+          <p>For p = 0.02 (typical conversion rate) and target lift = 3.0 with 95% <VIS.Term def="Confidence interval: a frequentist range that contains the true parameter with the stated probability under repeated sampling. 95% CI half-width = 0.3 means +/- 0.3 around the point estimate.">CI</VIS.Term> half-width = 0.3, the required holdout size is roughly</p>
+          <VIS.Equation display={true} tex={String.raw`n_{\text{holdout}} \;\gtrsim\; \frac{1.96^{2}\,(1-p)}{p\,(0.1)^{2}} \;\approx\; 20{,}000`} />
+          <p>A 5% holdout on a 1M-user audience gives 50K — comfortably above the threshold.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>&sect;3f. False-positive vs false-negative cost</h3>
+          <p>For lookalike audiences the cost surface is asymmetric in the opposite direction to fraud detection:</p>
+          <VIS.Equation display={true} tex={String.raw`C_{\text{FP}} \;=\; \text{CPM} \cdot p_{\text{no-convert}}, \qquad C_{\text{FN}} \;=\; \text{opportunity cost of missed conversion}`} />
+          <p>A wasted <VIS.Term def="An ad served to a user. Cost is typically priced per thousand (CPM). For lookalike, a wasted impression is one served to a user who never converts.">impression</VIS.Term> costs &lt; $0.01; a missed high-value buyer can cost $50+. So tau is set on the loose side — the advertiser would rather pay for some non-converters than miss the long tail of buyers. The <VIS.Term def="Opportunity cost: the value of the option not taken. For lookalike, the dollar value of a high-value buyer the audience failed to reach.">opportunity cost</VIS.Term> dominates:</p>
+          <VIS.Equation display={true} tex={String.raw`\tau^{*} \;=\; \arg\min_{\tau}\,\{C_{\text{FP}}(\tau) \cdot \text{FPR}(\tau) + C_{\text{FN}}(\tau) \cdot \text{FNR}(\tau)\}`} />
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>&sect;3g. Jaccard overlap for audience consistency</h3>
+          <p>When the daily-refreshed embedding shifts, the same seed may produce a different audience. Measure stability across two consecutive runs with the <VIS.Term def="Jaccard similarity: intersection over union of two sets. For audiences, J = |A ∩ B| / |A ∪ B|. Bounded [0, 1] — 1 means identical sets.">Jaccard index</VIS.Term>:</p>
+          <VIS.Equation display={true} tex={String.raw`J(A_t, A_{t+1}) \;=\; \frac{|A_t \cap A_{t+1}|}{|A_t \cup A_{t+1}|}`} />
+          <p>For a stable advertiser, J > 0.7 is healthy. Below 0.5 means embeddings shifted enough that yesterday's audience is barely related to today's — usually triggered by a major retrain or a behavior-shift event.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>&sect;3h. Refresh cadence: cost vs staleness</h3>
+          <p>Daily embedding refresh has cost C_refresh = compute + storage write. Skipping a day saves cost but increases staleness, measured as the expected behavioral distance between a user's current state and their cached embedding:</p>
+          <VIS.Equation display={true} tex={String.raw`\text{staleness}(t) \;\approx\; \alpha \cdot t, \qquad \text{lift\_loss}(t) \;\propto\; \text{staleness}(t)`} />
+          <p>where alpha is the per-day <VIS.Term def="Drift rate: how fast a user's true behavior diverges from their cached embedding. Higher in fast-moving categories (e.g., fashion) and lower in stable categories (e.g., financial services).">drift rate</VIS.Term> (empirically 0.5-2% lift loss per day for active categories). The cost-optimal cadence balances:</p>
+          <VIS.Equation display={true} tex={String.raw`T^{*} \;=\; \arg\min_{T}\,\left[\frac{C_{\text{refresh}}}{T} + \kappa\,T\right]`} />
+          <p>Daily refresh (T=1) is the empirical sweet spot for consumer-product advertisers.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>&sect;3i. Drift detection via PSI</h3>
+          <p>Population Stability Index on the embedding distribution between week-over-week:</p>
+          <VIS.Equation display={true} tex={String.raw`\text{PSI} \;=\; \sum_{i} (p_i^{\text{new}} - p_i^{\text{old}})\,\ln\frac{p_i^{\text{new}}}{p_i^{\text{old}}}`} />
+          <p>Bucket users by quantile on a randomly sampled embedding dimension (or by <VIS.Term def="k-means clustering: assign each user embedding to the nearest of K centroids; recompute centroids; repeat until stable. Standard unsupervised bucketing for distribution-shift detection.">k-means cluster</VIS.Term> ID). PSI &lt; 0.1 = stable. 0.1-0.2 = minor drift. > 0.2 = trigger retrain investigation. Above 0.3 = abort daily lookalike rebuild — yesterday's audience is more reliable.</p>
+
+          <h3 style={{marginTop:18, marginBottom:6, fontSize:15, color:"#334155"}}>&sect;3j. Why holdout cannot include seed users</h3>
+          <p>Suppose you accidentally include seed users in the holdout. The seed by construction converts at high rate (they already are customers):</p>
+          <VIS.Equation display={true} tex={String.raw`CR_{\text{seed}} \approx 1.0, \quad CR_{\text{lookalike-true}} \approx 0.05, \quad CR_{\text{random}} \approx 0.01`} />
+          <p>Mixing seeds into the holdout inflates the numerator. With 10% seed contamination:</p>
+          <VIS.Equation display={true} tex={String.raw`CR_{\text{contam}} \;=\; 0.1 \cdot 1.0 + 0.9 \cdot 0.05 \;=\; 0.145 \quad \Rightarrow \quad \text{lift}_{\text{contam}} = 14.5\times`} />
+          <p>vs true lift of 5x. The reported number is meaningless. This is the entire reason the holdout must be drawn from the expanded audience after <VIS.Term def="Seed-removal: subtracting seed users from the candidate audience before sampling the holdout. Prevents seed-contamination of the lift estimator.">seed-removal</VIS.Term>, not before. The same logic applies to any <VIS.Term def="Data leakage: contamination of an evaluation set by information from the training or input set. Inflates reported metrics to numbers the live system cannot reproduce.">data leakage</VIS.Term> from input to evaluation.</p>
+
+        </VIS.Section>
+
+        <VIS.Section id="sec-distractors" title="What the distractors teach">
+          <ul>
+            <li><strong>"Skip holdout — use all seeds for both centroid and eval."</strong> Defeats the entire measurement. Lift becomes a self-fulfilling number with no statistical meaning. Math: &sect;3j.</li>
+          </ul>
+        </VIS.Section>
+
+        <VIS.Section id="sec-traps" title="Trap drills">
+          <p style={{margin:"0 0 14px 0", fontSize:14, color:"#64748b"}}>
+            30 senior-MLE traps across five axes: <strong>business metrics</strong>, <strong>data collection</strong>, <strong>training</strong>, <strong>monitoring</strong>, <strong>gotchas</strong>. Pick one option per problem; reveal explains why the wrong answers are tempting.
+          </p>
+
+          {/* ============================ AXIS A — BUSINESS METRICS ============================ */}
+
+          <VIS.TrapProblem
+            id="la-q1"
+            difficulty="hard"
+            title="Pick the north-star the lookalike pipeline should be tuned against."
+            scenario={<>The PM proposes candidate metrics. One survives perverse-optimization at both extremes.</>}
+            options={[
+              {key:"a", text:"Mean cosine similarity of the expanded audience to the seed centroid, averaged across all advertisers active in the last 7 days.", correct:false},
+              {key:"b", text:"Conversion-rate lift on a 5% holdout slice withheld from auction for 7 days, measured against an equal-size random-control audience.", correct:true},
+              {key:"c", text:"Audience reach: total number of users in the expanded segment across all live advertiser campaigns, summed weekly.", correct:false},
+              {key:"d", text:"Hit-rate at K=10 of the ANN retrieval step, evaluated against the seed itself by holding out 10% of seed users.", correct:false},
+            ]}
+            trap={<>(a) is gameable by tightening tau until only near-duplicate users qualify — the metric soars while reach collapses. (c) is gameable by loosening tau — reach climbs while every advertiser's ROI collapses. (d) measures retrieval quality on the seed, not generalization to unseen converters.</>}
+            lens={<>Lift on a held-out conversion signal is the only metric whose extreme values both correspond to bad outcomes. Math: &sect;3e.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q2"
+            difficulty="hard"
+            title="Advertiser asks for the largest possible audience. Defaults?"
+            scenario={<>A new advertiser uploads a 50K-user seed and asks for "as many lookalikes as possible." Pick the response.</>}
+            options={[
+              {key:"a", text:"Build the largest audience that still clears the 3x lift bar on the holdout, capped at 10M to avoid swamping the auction system.", correct:true},
+              {key:"b", text:"Return all 600M platform users ranked by cosine similarity, letting the advertiser apply their own bid-shading downstream.", correct:false},
+              {key:"c", text:"Build an audience of exactly the requested cap with no lift-bar check, since the advertiser is paying and knows their own ROI target.", correct:false},
+              {key:"d", text:"Build at the platform-wide default tau, regardless of how that interacts with this specific advertiser's seed signal.", correct:false},
+            ]}
+            trap={<>(b) burns advertiser budget on the long-tail of unlikely converters. (c) lets advertisers harm themselves and damages the platform's overall ROI reputation. (d) ignores seed-specific signal strength.</>}
+            lens={<>The lift bar is the platform's contract with the advertiser, not a suggestion. Reach beyond the bar destroys ROI; reach below the bar leaves money on the table.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q3"
+            difficulty="medium"
+            title="Which dashboard does the head of ads-ML actually need?"
+            scenario={<>Pin one chart on the daily lookalike-quality dashboard. Pick the one whose movements correspond to levers the team controls.</>}
+            options={[
+              {key:"a", text:"PSI of the embedding distribution week-over-week, paired with a heatmap of audience-Jaccard between consecutive daily rebuilds.", correct:false},
+              {key:"b", text:"Lift on the most recent 7-day holdout cohort, sliced by advertiser-category, with the 3x bar drawn as a reference line on the chart.", correct:true},
+              {key:"c", text:"Histogram of cosine similarity scores in the expanded audience for the largest advertiser of the past week, refreshed each morning.", correct:false},
+              {key:"d", text:"Mean embedding norm by user-active-recency bucket, refreshed daily, with overlay of the rolling 30-day baseline mean.", correct:false},
+            ]}
+            trap={<>(a), (c), (d) are model-monitoring artefacts. They matter — but for an ML lead deciding where to spend the week, lift-by-advertiser-category is the one chart that tells them whether the system is currently delivering.</>}
+            lens={<>The right dashboard surfaces the contract metric (3x lift) at the slicing dimension the team can act on (category-level rebuilds).</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q4"
+            difficulty="hard"
+            title="A platform-wide tau or per-advertiser tau?"
+            scenario={<>Conversion-rate baselines vary by advertiser category (luxury 0.5%, FMCG 3%). Pick the threshold strategy.</>}
+            options={[
+              {key:"a", text:"Per-advertiser tau, calibrated against each advertiser's own historical conversion data and the category-level prior conversion rate.", correct:true},
+              {key:"b", text:"Single platform-wide tau, tuned against pooled-advertiser lift on the most recent quarter of holdout conversion data.", correct:false},
+              {key:"c", text:"Per-category tau (luxury vs FMCG vs services), fixed for one year and revisited only during the annual model refresh cycle.", correct:false},
+              {key:"d", text:"Probabilistic tau: sample threshold proportional to predicted lift, giving every advertiser a randomized audience composition.", correct:false},
+            ]}
+            trap={<>(b) over-includes for luxury (low baseline conversions inflate apparent lift) and under-includes for FMCG. (c) is closer but freezes against year-over-year shifts. (d) injects controlled randomness but the underlying optimum still varies.</>}
+            lens={<>One model, advertiser-specific thresholds is the smallest change that captures category-level conversion-rate priors. Cost math: &sect;3f.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q5"
+            difficulty="hard"
+            title="Lift dropped from 3.4x to 2.6x after a retrain. CFO asks what to do."
+            scenario={<>You retrained the embedding tower last Sunday. Lift on the post-retrain holdout cohort fell from 3.4x to 2.6x while audience size held flat at 4M. The CFO wants a decision.</>}
+            options={[
+              {key:"a", text:"Roll back to the prior embedding weights and investigate offline before re-deploying — a sub-3x lift breaks the platform's contract with advertisers.", correct:true},
+              {key:"b", text:"Keep the new weights live and wait two more weeks for the holdout signal to stabilize before any rollback decision can be made on the new model.", correct:false},
+              {key:"c", text:"Keep the new weights live and increase audience reach to compensate for the lower lift, since absolute conversions should net out roughly equal.", correct:false},
+              {key:"d", text:"Tighten tau on the new model so the smaller resulting audience clears 3x, accepting the reach reduction as a permanent regression.", correct:false},
+            ]}
+            trap={<>(b) leaves advertisers paying for sub-3x audiences for two weeks. (c) amplifies the regression. (d) papers over a model regression by shrinking the surface — the underlying embedding has degraded and tau won't fix that.</>}
+            lens={<>Sub-3x lift is a contract violation. Rollback first, debug offline, redeploy when the holdout clears the bar.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q6"
+            difficulty="hard"
+            title="A luxury advertiser disputes the lift number. How do you respond?"
+            scenario={<>The luxury advertiser sees 2.1x lift on their pixel-tracked conversions in their own reporting tool. Your platform reports 3.4x lift on the 5% holdout for that advertiser.</>}
+            options={[
+              {key:"a", text:"Reconcile against the advertiser's pixel-tracked conversions on the same holdout users, since differences usually trace to attribution-window mismatch.", correct:true},
+              {key:"b", text:"Trust the platform-side holdout number — the advertiser's pixel tracking has well-known undercount issues and is not the source of truth here.", correct:false},
+              {key:"c", text:"Take the geometric mean of the two numbers as the reported lift, since neither side has full visibility into the joined attribution chain.", correct:false},
+              {key:"d", text:"Drop the lift report for this advertiser entirely and revert to reporting cosine-similarity statistics until the discrepancy is resolved offline.", correct:false},
+            ]}
+            trap={<>(b) discards the source of truth the advertiser actually pays attention to. (c) is statistical cargo-cult — averaging two definitions doesn't yield a meaningful number. (d) hides the signal at the moment the advertiser needs it most.</>}
+            lens={<>Almost every lift-number dispute traces to one of three causes: attribution window mismatch, pixel-undercount on the advertiser side, or holdout contamination. Reconcile, don't replace.</>}
+          />
+
+          {/* ============================ AXIS B — DATA COLLECTION ============================ */}
+
+          <VIS.TrapProblem
+            id="la-q7"
+            difficulty="hard"
+            title="Seed of 800 users uploaded. What do you build?"
+            scenario={<>An advertiser uploads 800 IDs and clicks build. Pick the response.</>}
+            options={[
+              {key:"a", text:"Reject the build with a clear minimum-seed-size message — the centroid noise dominates signal below n approximately 1K under the variance bound in &sect;3a.", correct:true},
+              {key:"b", text:"Build with the small seed and apply DP noise to the centroid — k-anonymity is preserved and the advertiser can interpret the resulting audience appropriately.", correct:false},
+              {key:"c", text:"Build but skip the lift-bar check, since holdout statistics are unreliable for audiences derived from sub-1K seeds anyway.", correct:false},
+              {key:"d", text:"Pad the seed to 1K by sampling random users from the platform — the diluted centroid is acceptable for a first-pass build under tight deadlines.", correct:false},
+            ]}
+            trap={<>(b) ships a noisy audience that misses the lift bar — the advertiser blames the platform. (c) hides the failure signal. (d) is the worst — the resulting centroid is closer to platform mean than to the advertiser's actual customer.</>}
+            lens={<>Refuse to over-claim signal. The minimum-seed-size floor is a feature, not a limitation. Math: &sect;3a.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q8"
+            difficulty="hard"
+            title="Which conversion signal becomes the gold positive label for retrain?"
+            scenario={<>Four candidate signals correlate with the advertiser's idea of a conversion. Pick the cleanest one for the weekly retrain corpus.</>}
+            options={[
+              {key:"a", text:"Pixel-fired purchase event on the advertiser's website, joined with the platform's hashed-user-ID within a 7-day click-attribution window.", correct:true},
+              {key:"b", text:"Ad-click event on the platform itself, treated as a conversion proxy since click intent precedes purchase by a few hours typically.", correct:false},
+              {key:"c", text:"Time-on-page after click-through, with users above the 90th percentile of dwell time treated as engaged-conversion-equivalents.", correct:false},
+              {key:"d", text:"Reaching the advertiser's product-detail-page, since the user has expressed enough interest to navigate past the landing surface.", correct:false},
+            ]}
+            trap={<>(b) measures attention, not purchase. (c) is a soft proxy heavily contaminated by browse-only users. (d) is mid-funnel, not bottom-funnel.</>}
+            lens={<>The cleanest label is the one closest to the dollar event. Trade volume for precision at retrain time; use the proxies as features.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q9"
+            difficulty="hard"
+            title="Seed contamination: pixel mis-fires include bot traffic."
+            scenario={<>The advertiser's pixel fires on bot traffic about 3% of the time. Their seed upload includes those bot rows. Pick the mitigation.</>}
+            options={[
+              {key:"a", text:"Use the trimmed-mean centroid (drop top and bottom 5 percent by embedding norm) plus a bot-likelihood filter on the seed prior to centroid aggregation.", correct:true},
+              {key:"b", text:"Trust the advertiser's seed as-is — they have first-party signal we lack, so filtering would discard relevant information about their customer base.", correct:false},
+              {key:"c", text:"Drop seeds whose embedding cosine to the seed mean falls below the 25th percentile, since outliers are likely bots regardless of source.", correct:false},
+              {key:"d", text:"Subsample the seed to 90% of original size to dilute the bot contribution, then build the centroid on the smaller cleaner sample.", correct:false},
+            ]}
+            trap={<>(b) ships bot-contaminated audiences. (c) discards legitimate niche customers (the trimmed mean already handles outliers; this layers an additional, more aggressive cut). (d) is statistically equivalent to nothing — bots are still 3% of the smaller sample.</>}
+            lens={<>Trimmed mean handles distributional outliers; the bot-likelihood model handles known-pattern outliers. Both are needed; they're solving different problems.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q10"
+            difficulty="hard"
+            title="Seed-to-platform demographic skew."
+            scenario={<>The seed is 85% urban, 70% female, ages 25-34. The platform overall is 50% urban, 52% female, broad age distribution. Pick the handling.</>}
+            options={[
+              {key:"a", text:"Build the lookalike directly on embedding similarity — demographic skew is a feature of the advertiser's signal, not a bias to correct away.", correct:true},
+              {key:"b", text:"Apply a demographic-rebalance sampler that forces the expanded audience to match platform-wide demographics on age gender and geography.", correct:false},
+              {key:"c", text:"Strip demographic features from the user embedding before retrieval, leaving only behavioral signal as the basis for similarity scoring.", correct:false},
+              {key:"d", text:"Run two parallel retrievals — one on the raw centroid and one on a demographically-rebalanced centroid — and take the union with deduplication.", correct:false},
+            ]}
+            trap={<>(b) overrides the advertiser's actual signal — if their customers genuinely are urban-young-female, that's a fact, not a bias. (c) discards demographic signal that may legitimately correlate with the product. (d) doubles cost for unclear benefit.</>}
+            lens={<>"Bias" in lookalike has a specific meaning: ungrounded skew. A skew that reflects the advertiser's real customer base is the entire signal. Demographic rebalance is only correct if the advertiser explicitly requests it (e.g., regulatory reasons).</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q11"
+            difficulty="hard"
+            title="The exclusion list contains 40% of the candidate audience."
+            scenario={<>For a long-tenure advertiser, their CRM exclusion list overlaps with 40% of the post-similarity-gate candidates. Pick the response.</>}
+            options={[
+              {key:"a", text:"Apply the exclusion filter and rebuild the audience with a looser tau if the result falls below the minimum-reach target after exclusion.", correct:true},
+              {key:"b", text:"Skip the exclusion list — 40% overlap shows the lookalike is working too well, and excluding existing customers would damage performance metrics.", correct:false},
+              {key:"c", text:"Apply the exclusion list and report the smaller audience as final, letting the advertiser decide whether to widen the seed or adjust their target reach.", correct:false},
+              {key:"d", text:"Swap exclusion-list members for the next-best ranked candidates by cosine similarity, so the final size matches the pre-exclusion target.", correct:false},
+            ]}
+            trap={<>(b) makes the advertiser pay to re-target their existing customers — defeats the entire point. (c) is partially right but passes the rebuild decision back to the advertiser when the platform should make it. (d) reaches deeper into the tail without the platform owning the lift consequences.</>}
+            lens={<>Exclusion is non-negotiable. The platform owns the loosen-tau-and-rebuild loop because the platform owns the lift contract.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q12"
+            difficulty="hard"
+            title="Seeds with declined GDPR consent — how do they enter the pipeline?"
+            scenario={<>Some seed IDs were uploaded but those users have revoked platform consent for advertising features. Pick the handling.</>}
+            options={[
+              {key:"a", text:"Drop them at the seed-validator stage before centroid aggregation — opted-out users cannot be used as positive examples for any audience-derivation step.", correct:true},
+              {key:"b", text:"Keep them in the centroid computation but exclude them from the output audience, since they only inform the seed representation not the targeting.", correct:false},
+              {key:"c", text:"Hash their IDs before centroid aggregation so the resulting centroid carries no identifiable signal about the opted-out users specifically.", correct:false},
+              {key:"d", text:"Compute the centroid with all seeds including opted-out, then add Laplace noise to make the centroid differentially private with epsilon equals 1.", correct:false},
+            ]}
+            trap={<>(b) is a common mistake — consent applies to the use of the data, not just the output. (c) hashing is not privacy. (d) DP is for a different threat model (re-identification of the audience), not for consent compliance.</>}
+            lens={<>GDPR consent withdrawal means the data cannot be used as input to any advertising-decisioning step. Drop at ingest.</>}
+          />
+
+          {/* ============================ AXIS C — TRAINING ============================ */}
+
+          <VIS.TrapProblem
+            id="la-q13"
+            difficulty="hard"
+            title="The user-embedding tower is retrained weekly. Pick the loss."
+            scenario={<>The user-embedding tower powers lookalike retrieval. Pick the loss function that produces embeddings most useful for centroid-based retrieval.</>}
+            options={[
+              {key:"a", text:"Contrastive InfoNCE loss on co-converted-with-same-advertiser pairs as positives and random user pairs as negatives, with in-batch negative sampling.", correct:true},
+              {key:"b", text:"Cross-entropy classification of which advertiser-category each user has converted on, with one output head per category in the catalogue.", correct:false},
+              {key:"c", text:"Triplet loss using a fixed anchor user, with the positive being the same user a day later and the negative being any other user sampled uniformly.", correct:false},
+              {key:"d", text:"Masked-feature reconstruction: hide one behavioral feature and predict it from the rest, then use the bottleneck layer as the user embedding.", correct:false},
+            ]}
+            trap={<>(b) makes the embedding too coarse — every fashion-converter looks identical. (c) measures temporal stability, not cross-user similarity. (d) is plausible but produces embeddings optimized for feature-imputation, not user-similarity.</>}
+            lens={<>The downstream task is "find users similar to converters." The loss should be: bring co-converters together, push random users apart. InfoNCE with in-batch negatives is the canonical choice.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q14"
+            difficulty="hard"
+            title="HNSW index parameters: M and efConstruction."
+            scenario={<>You're choosing HNSW parameters for the 600M-user index. Pick the configuration that matches the use case.</>}
+            options={[
+              {key:"a", text:"M=32 efConstruction=200 efSearch=100 — moderate graph density, batch retrieval at low QPS, recall above 0.95 against exact ground truth.", correct:true},
+              {key:"b", text:"M=8 efConstruction=40 efSearch=16 — minimum RAM footprint, online retrieval at high QPS, recall around 0.85 acceptable for batch use.", correct:false},
+              {key:"c", text:"M=128 efConstruction=500 efSearch=400 — maximum quality, ignoring the 4x RAM cost since the index is rebuilt only once per day.", correct:false},
+              {key:"d", text:"M=16 efConstruction=100 efSearch=50 — balanced default copied from the FAISS HNSW example, suitable for any indexing problem at any scale.", correct:false},
+            ]}
+            trap={<>(b) optimizes the wrong axis — lookalike is batch (low QPS), so the speed gain doesn't matter and the recall loss costs lift directly. (c) wastes RAM with diminishing recall returns past M=32. (d) is cargo-culted defaults.</>}
+            lens={<>Lookalike is batch, retrieve top-K thousands of times per advertiser run. Quality matters far more than QPS. M=32 sits at the knee of the M-vs-recall curve.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q15"
+            difficulty="hard"
+            title="Embedding-tower retrain frequency."
+            scenario={<>The behavioral feature pipeline produces fresh conversion labels every day. Pick the retrain cadence for the embedding tower itself.</>}
+            options={[
+              {key:"a", text:"Weekly retrain plus daily incremental refresh of user embeddings (apply existing tower to fresh features), with full tower retrain every Sunday.", correct:true},
+              {key:"b", text:"Daily full tower retrain — fresh conversion signal arrives daily, so the model should be refit daily to capture all newly available training data.", correct:false},
+              {key:"c", text:"Monthly retrain — embeddings are stable enough that monthly refit captures meaningful drift, and the cost saving makes the throughput tradeoff worthwhile.", correct:false},
+              {key:"d", text:"Continuous online retrain — stream every fresh conversion event into a per-record SGD update on the embedding tower with a small learning rate.", correct:false},
+            ]}
+            trap={<>(b) over-fits to the past week's noise. (c) under-fits to behavior shifts. (d) is operationally hostile — non-deterministic embeddings break audience-Jaccard stability metrics overnight.</>}
+            lens={<>Two loops at different cadences: daily refresh of vectors (apply existing tower to fresh features) vs weekly full retrain. The split decouples vector freshness from model freshness — cost: &sect;3h.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q16"
+            difficulty="hard"
+            title="In-batch negative sampling — what's the failure mode?"
+            scenario={<>The InfoNCE loss uses in-batch negatives. Pick the most important failure mode to mitigate at training time.</>}
+            options={[
+              {key:"a", text:"False-negatives in the batch — a user truly similar to the anchor ends up sampled as a negative because they happened to share the batch.", correct:true},
+              {key:"b", text:"Batch-size sensitivity — InfoNCE quality degrades as batch size shrinks below 256 because gradient noise dominates the contrastive signal.", correct:false},
+              {key:"c", text:"GPU memory pressure — 600M-user embedding tables exceed single-GPU memory and require sharded all-to-all communication for in-batch sampling.", correct:false},
+              {key:"d", text:"Optimizer instability — Adam's adaptive moments interact poorly with the contrastive objective and require careful warmup to avoid divergence.", correct:false},
+            ]}
+            trap={<>(b) is a real concern but mitigated trivially by gradient-accumulation. (c) is infrastructure not a learning-quality issue. (d) is a fairy tale — Adam handles InfoNCE fine.</>}
+            lens={<>False negatives are the canonical pitfall: in-batch sampling assumes "other users in the batch are negatives" but for a converters-only batch this assumption fails 20-40% of the time. Mitigations: hard-negative mining, similarity-aware batch composition.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q17"
+            difficulty="hard"
+            title="Cosine versus L2 in the embedding space."
+            scenario={<>The retrieval gate uses cosine similarity but the loss was trained with euclidean distance. Pick the response.</>}
+            options={[
+              {key:"a", text:"Train with cosine loss (or L2-normalize embeddings during training and use L2) — the metric used at retrieval should match the metric optimized at train time.", correct:true},
+              {key:"b", text:"Keep euclidean training and cosine retrieval — they're approximately equivalent for normalized vectors, and the small mismatch rarely affects lift in practice.", correct:false},
+              {key:"c", text:"Use euclidean retrieval to match training, since cosine retrieval discards magnitude information that the embedding tower has learned to encode.", correct:false},
+              {key:"d", text:"Compute both metrics at retrieval and take the rank-fusion combination, since each captures a complementary aspect of user similarity.", correct:false},
+            ]}
+            trap={<>(b) is sloppy — they're only equivalent if embeddings are normalized, and that has to be enforced. (c) reintroduces magnitude as a signal that wasn't supposed to be there. (d) is cargo-culting rank fusion.</>}
+            lens={<>Train-serve metric skew is the silent killer. Either L2-normalize embeddings before the loss and retrieval (cleanest) or use cosine loss at training. Don't mix.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q18"
+            difficulty="hard"
+            title="Cross-advertiser knowledge transfer in the embedding tower."
+            scenario={<>The embedding tower is shared across all advertisers. Pick the design choice that maximizes lookalike quality.</>}
+            options={[
+              {key:"a", text:"Single shared tower trained on co-conversion across all advertisers, with the seed-centroid layer providing the per-advertiser personalization signal.", correct:true},
+              {key:"b", text:"Per-advertiser embedding tower trained on only that advertiser's conversion data, since their customer base is the source of truth for that segment.", correct:false},
+              {key:"c", text:"Per-category embedding towers — one for luxury one for FMCG one for services — to capture category-specific similarity-relevant features explicitly.", correct:false},
+              {key:"d", text:"Shared tower plus per-advertiser fine-tune of the final layer, refit each week against that advertiser's freshest conversion labels.", correct:false},
+            ]}
+            trap={<>(b) starves on small advertisers. (c) is plausible but loses cross-category transfer. (d) operationally heavy with marginal lift gain.</>}
+            lens={<>The shared-tower-plus-centroid pattern is the canonical lookalike architecture. The centroid IS the per-advertiser personalization — that's the whole point of the design.</>}
+          />
+
+          {/* ============================ AXIS D — MONITORING ============================ */}
+
+          <VIS.TrapProblem
+            id="la-q19"
+            difficulty="hard"
+            title="PSI on the embedding distribution jumped from 0.08 to 0.31."
+            scenario={<>Embedding-PSI rose overnight from 0.08 to 0.31 — a 4x jump. Pick the response.</>}
+            options={[
+              {key:"a", text:"Halt the daily lookalike rebuild for all advertisers, investigate the upstream behavioral feature pipeline, and keep yesterday's audiences live until root-caused.", correct:true},
+              {key:"b", text:"Continue rebuilds — PSI above 0.3 is a signal that the embedding has captured a real behavior shift and the new audiences will perform better than the old ones.", correct:false},
+              {key:"c", text:"Continue rebuilds for advertisers whose Jaccard between yesterday and today exceeds 0.7, halt only for those whose audience composition changed substantially.", correct:false},
+              {key:"d", text:"Roll back the user-embedding store to last week's snapshot and continue with stale embeddings until the PSI alert resolves on its own through normal drift.", correct:false},
+            ]}
+            trap={<>(b) ships unverified audiences during a known-instability window. (c) is partially right but Jaccard is a downstream symptom — the upstream signal (PSI) is more reliable. (d) loses a week of legitimate behavior drift along with the bad signal.</>}
+            lens={<>PSI > 0.2 = investigate. PSI > 0.3 = halt rebuilds. Yesterday's audience is more reliable than a fresh build off a destabilized embedding. Math: &sect;3i.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q20"
+            difficulty="hard"
+            title="Audience Jaccard between consecutive days fell from 0.8 to 0.35."
+            scenario={<>For one specific advertiser, the day-over-day audience Jaccard fell from 0.8 to 0.35 while platform-wide PSI stayed under 0.1. Pick the root-cause investigation.</>}
+            options={[
+              {key:"a", text:"Investigate that advertiser's seed list — most likely they uploaded a refreshed seed that differs substantially from yesterday's input set.", correct:true},
+              {key:"b", text:"Investigate the platform embedding tower — a local instability for this advertiser's category implies the tower may need a per-category retrain immediately.", correct:false},
+              {key:"c", text:"Investigate the HNSW index — non-determinism in the index-build process can produce different retrieval orderings even with stable inputs.", correct:false},
+              {key:"d", text:"Investigate the auction layer — downstream changes in bid-shading can shift which audience members are actually exposed to ads day over day.", correct:false},
+            ]}
+            trap={<>(b) skips the simpler explanation. (c) is technically possible but HNSW is reproducible with fixed seeds. (d) is a downstream concern that doesn't change the audience composition itself.</>}
+            lens={<>When one advertiser's audience destabilizes but platform metrics are stable, the cause is almost always the seed input. Check the seed before the embedding.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q21"
+            difficulty="medium"
+            title="Lift dropped 15% but cosine-similarity histogram is unchanged."
+            scenario={<>Holdout lift fell from 3.4x to 2.9x while the cosine-distribution of the expanded audience is identical to last week. Pick the next investigation step.</>}
+            options={[
+              {key:"a", text:"Investigate the upstream conversion-attribution chain — pixel changes or attribution-window shifts can move lift without moving the retrieval-side metrics at all.", correct:true},
+              {key:"b", text:"Investigate the embedding tower — declining lift with stable similarity scores implies the embedding semantics have shifted while the geometry has not.", correct:false},
+              {key:"c", text:"Investigate the seed quality — pixel mis-fires can poison the seed without affecting the retrieval distribution downstream of the centroid aggregation.", correct:false},
+              {key:"d", text:"Trigger an emergency full retrain — the divergence between retrieval-quality and lift signals a fundamental model drift requiring fresh embeddings.", correct:false},
+            ]}
+            trap={<>(b) is implausible — semantic-vs-geometric shift in embeddings is rare and would show up in PSI first. (c) would affect the cosine distribution. (d) is a hammer for what's likely an attribution problem.</>}
+            lens={<>Lift moves; similarity doesn't = the cause is downstream of retrieval. Conversion-attribution is the usual culprit.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q22"
+            difficulty="hard"
+            title="A new advertiser-category appeared — what's the monitoring gap?"
+            scenario={<>A novel advertiser category (e.g., cryptocurrency exchanges) onboarded last week with no historical conversion data. Pick the monitoring response.</>}
+            options={[
+              {key:"a", text:"Add a per-category lift-bar override that defaults to 'manual review' until 4 weeks of holdout conversion data accumulate to recalibrate the threshold.", correct:true},
+              {key:"b", text:"Use the platform-wide default lift bar and 3x cosine-similarity floor — the lookalike pipeline is category-agnostic and onboarding doesn't require special handling.", correct:false},
+              {key:"c", text:"Block lookalike builds for the new category entirely until the embedding tower is retrained on at least one full quarter of category-specific conversion data.", correct:false},
+              {key:"d", text:"Use the closest-existing-category's lift bar (e.g., finance for crypto) as a transitional default, switching to the actual lift bar after one billing cycle.", correct:false},
+            ]}
+            trap={<>(b) ignores that conversion-rate priors differ wildly across categories. (c) blocks legitimate revenue with no signal-collection plan. (d) is plausible but couples two categories' calibrations.</>}
+            lens={<>Novel categories need their own measurement window. Manual review during the bootstrap phase is the operationally honest answer.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q23"
+            difficulty="medium"
+            title="Audience reach fell 40% week-over-week, lift held at 3.2x."
+            scenario={<>For the same advertiser, the expanded audience shrank from 6M to 3.6M users; lift on the smaller audience is unchanged at 3.2x. Pick the response.</>}
+            options={[
+              {key:"a", text:"Inspect the exclusion-filter step — a growing CRM list shrinks the post-exclusion audience without affecting the retrieval quality upstream of exclusion.", correct:true},
+              {key:"b", text:"Inspect the embedding tower — a 40 percent reach drop usually traces to embedding-space contraction reducing the count of users above the similarity threshold.", correct:false},
+              {key:"c", text:"Inspect the HNSW index — recent index rebuilds can produce reduced recall on specific query regions, manifesting as smaller retrieved candidate sets.", correct:false},
+              {key:"d", text:"Trigger a tau-loosening to recover the previous reach level, since the advertiser's effective inventory has dropped 40 percent overnight.", correct:false},
+            ]}
+            trap={<>(b) and (c) would also affect lift. (d) papers over the actual cause.</>}
+            lens={<>Reach drops with lift held = something is removing users from the final set without changing the quality of who remains. CRM growth is the canonical answer for long-tenure advertisers.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q24"
+            difficulty="hard"
+            title="The drift monitor is flapping. PSI bounces between 0.15 and 0.25 daily."
+            scenario={<>PSI oscillates day-over-day around the 0.2 threshold. The on-call team gets alerted twice a week. Pick the response.</>}
+            options={[
+              {key:"a", text:"Switch to a rolling 7-day-window PSI and alert only when the 7-day average crosses 0.2, eliminating the daily oscillation while preserving the trend signal.", correct:true},
+              {key:"b", text:"Raise the alert threshold to PSI=0.3, accepting more drift before triggering investigation, since the daily noise is overwhelming the actual drift signal.", correct:false},
+              {key:"c", text:"Add a downstream lift-based alert to confirm each PSI trigger before paging anyone, suppressing PSI alerts that don't have a corresponding lift movement.", correct:false},
+              {key:"d", text:"Remove the PSI alert entirely and rely on the lift-bar holdout check, since PSI without a lift confirmation is a noise signal not a quality signal.", correct:false},
+            ]}
+            trap={<>(b) raises the floor in a way that misses real shifts that stay below 0.3. (c) couples two slow signals (lift requires a 7-day holdout). (d) discards an early-warning signal.</>}
+            lens={<>Smoothing the metric (window-average) is the correct first response to a flapping alert. Don't raise the threshold blindly; reduce the noise.</>}
+          />
+
+          {/* ============================ AXIS E — GOTCHAS ============================ */}
+
+          <VIS.TrapProblem
+            id="la-q25"
+            difficulty="hard"
+            title="The advertiser's CRM list includes deceased users."
+            scenario={<>A long-tenure advertiser's CRM has stale entries — about 0.3% of the list is users who passed away or closed their accounts. Pick the handling.</>}
+            options={[
+              {key:"a", text:"Cross-reference the CRM against the platform's active-user set during exclusion, dropping stale entries that no longer correspond to active platform users.", correct:true},
+              {key:"b", text:"Trust the advertiser's CRM as-is — it is their data, and the exclusion filter is meant to enforce their stated exclusion list verbatim without modification.", correct:false},
+              {key:"c", text:"Drop the entire CRM exclusion step if the staleness rate exceeds 1 percent, falling back to embedding-similarity-based de-duplication of seed-vs-output.", correct:false},
+              {key:"d", text:"Apply the CRM exclusion and accept the resulting reach loss as a customer-controlled hygiene problem the advertiser must clean up themselves.", correct:false},
+            ]}
+            trap={<>(b) wastes audience slots on impossible exclusions. (c) discards the legitimate exclusion signal. (d) is operationally honest but technically wrong — the platform has the active-user signal the advertiser lacks.</>}
+            lens={<>Exclusion lists need to be intersected with the platform's active-user set before being applied. The platform has the freshness signal the advertiser doesn't.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q26"
+            difficulty="hard"
+            title="Multi-advertiser overlap: two advertisers in the same category."
+            scenario={<>Two competing FMCG advertisers both target similar customer profiles. Their lookalike audiences overlap by 65%. Pick the handling.</>}
+            options={[
+              {key:"a", text:"Accept the overlap — each advertiser pays the auction for their impressions, and the platform doesn't enforce mutual exclusion between competing advertisers.", correct:true},
+              {key:"b", text:"Force mutual exclusion across overlapping advertisers in the same category to protect each advertiser's reach from competitor-driven price-bidding inflation.", correct:false},
+              {key:"c", text:"Cap each advertiser's audience at 50 percent of the platform-wide category audience to ensure ROI parity between competing brands in the same vertical.", correct:false},
+              {key:"d", text:"Randomly assign overlapping users to one advertiser or the other at audience-build time to eliminate the redundancy in downstream auction traffic.", correct:false},
+            ]}
+            trap={<>(b) discriminates against advertisers without their consent. (c) imposes a platform-side cap on revenue. (d) introduces non-determinism into the audience composition.</>}
+            lens={<>Overlap is the natural outcome of competitive markets. The auction handles the contention; lookalike just builds the audience.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q27"
+            difficulty="hard"
+            title="Privacy budget exhaustion under repeated lookalike requests."
+            scenario={<>The same advertiser requests rebuilds 5 times in a week with slight seed variations. Each request adds DP noise; the privacy budget epsilon adds up. Pick the response.</>}
+            options={[
+              {key:"a", text:"Track per-seed-overlap cumulative epsilon and refuse new rebuilds when the budget for that seed neighborhood is exhausted within the per-week privacy window.", correct:true},
+              {key:"b", text:"Treat each rebuild as a fresh epsilon=1 invocation, since the advertiser controls when to rebuild and the privacy budget is an operational accounting concern only.", correct:false},
+              {key:"c", text:"Apply the DP noise only on the first build of the week and reuse it for subsequent rebuilds, amortizing the privacy cost across multiple invocations.", correct:false},
+              {key:"d", text:"Raise epsilon to 5 per rebuild, accepting weaker per-build privacy guarantees in exchange for unlimited rebuild frequency for advertiser operational needs.", correct:false},
+            ]}
+            trap={<>(b) leaks privacy via composition. (c) reuses noise — defeats the DP property. (d) weakens the guarantee in the wrong direction.</>}
+            lens={<>DP composition is the gotcha. Privacy budget accounting is a real cost on rebuild frequency and must be enforced at the seed-neighborhood level.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q28"
+            difficulty="hard"
+            title="The seed includes users who joined the platform last week."
+            scenario={<>15% of the seed are users with under 7 days of platform history. Their embeddings are based on sparse behavioral data. Pick the handling.</>}
+            options={[
+              {key:"a", text:"Down-weight new-user seeds in the centroid aggregation (weight by log(days_on_platform)), so the centroid is anchored by users with mature behavioral signal.", correct:true},
+              {key:"b", text:"Drop all new-user seeds from the centroid computation entirely — sparse behavioral data introduces noise that the trimmed-mean cannot adequately mitigate.", correct:false},
+              {key:"c", text:"Include new-user seeds with equal weight to mature seeds — they represent the advertiser's most recent customer acquisition signal and should not be discounted.", correct:false},
+              {key:"d", text:"Embed new-user seeds using a fallback content-based model (using only registration features) and include them in the centroid with equal weight.", correct:false},
+            ]}
+            trap={<>(b) discards a signal the advertiser explicitly provided. (c) over-weights noisy embeddings. (d) introduces a model heterogeneity into the centroid that's hard to reason about.</>}
+            lens={<>Weight seeds by signal quality, not binary include/exclude. Log-weighting by tenure is a smooth way to balance freshness against embedding maturity.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q29"
+            difficulty="hard"
+            title="The advertiser's seed contains 5 users who are platform employees."
+            scenario={<>An audit reveals 5 of 50K seed users are employees of the platform. Pick the handling.</>}
+            options={[
+              {key:"a", text:"Drop platform-employee IDs at the seed-validator stage to avoid leaking employee-behavior signal into advertiser-facing audience-derivation processes.", correct:true},
+              {key:"b", text:"Keep employees in the seed — at 5 of 50K they are a negligible 0.01 percent contribution to the centroid and statistical noise will absorb the signal.", correct:false},
+              {key:"c", text:"Drop employees but only if they belong to the ads-or-trust-and-safety teams whose behavior could plausibly bias the centroid in advertising-relevant directions.", correct:false},
+              {key:"d", text:"Replace employee IDs with hash-of-employee-ID at ingestion so the resulting embedding contribution is anonymized without losing the seed-size signal.", correct:false},
+            ]}
+            trap={<>(b) treats this as a statistics problem when it's a policy problem. (c) is a half-measure. (d) hashing changes the identifier but not the embedding contribution.</>}
+            lens={<>Employee data is policy-restricted regardless of statistical impact. Drop at ingest, document the count for audit, return the dedup'd seed to the advertiser as a courtesy.</>}
+          />
+
+          <VIS.TrapProblem
+            id="la-q30"
+            difficulty="hard"
+            title="An advertiser uses the lookalike audience as a seed for the next lookalike."
+            scenario={<>The advertiser builds Lookalike-1 from their CRM, then uses Lookalike-1 as the seed for Lookalike-2. They want to expand reach 100x. Pick the response.</>}
+            options={[
+              {key:"a", text:"Refuse the chained build — drift accumulates exponentially across hops and Lookalike-2 has effectively no relationship to the original customer signal.", correct:true},
+              {key:"b", text:"Allow the chained build and accept the lift degradation across hops, since the advertiser controls their own ROI calculus and can stop chaining when it stops paying.", correct:false},
+              {key:"c", text:"Allow the chained build but apply a stricter tau at each hop to compensate for the accumulating drift, recovering precision through aggressive thresholding.", correct:false},
+              {key:"d", text:"Allow the chained build only if Lookalike-1 has cleared the 3x lift bar on its own holdout, treating that as evidence the chain is anchored to real conversion signal.", correct:false},
+            ]}
+            trap={<>(b) lets the advertiser harm themselves. (c) tightens tau on garbage signal. (d) the lift bar of Lookalike-1 doesn't protect against drift on the next hop — a 3x audience can still produce a 1x grandchild.</>}
+            lens={<>Lookalike is a one-hop operation by design. The seed must be ground-truth converters, not a derived audience. Refuse chained builds; offer wider tau on the original instead.</>}
+          />
+
+        </VIS.Section>
+
+        <VIS.Section id="sec-watch" title="Watch-outs">
+          <ul>
+            <li><strong>Seed size matters more than seed quality below ~1K.</strong> The centroid variance bound from &sect;3a makes tiny seeds noisy regardless of how clean the rows are. Refuse the build.</li>
+            <li><strong>Holdout must be drawn AFTER seed-removal.</strong> Mixing seeds into the holdout inflates lift to absurdity. Math: &sect;3j.</li>
+            <li><strong>Refresh cadence is daily, not real-time.</strong> Real-time lookalike rebuild is operationally hostile and the lift gain is dominated by embedding-refresh cost. Math: &sect;3h.</li>
+            <li><strong>Cosine threshold tau is per-advertiser, not platform-wide.</strong> Category conversion-rate priors vary 10x; one tau cannot serve them all. Math: &sect;3c, &sect;3f.</li>
+            <li><strong>Chained lookalikes (Lookalike-1 as seed for Lookalike-2) destroy lift.</strong> Refuse them. The signal degrades exponentially across hops.</li>
+            <li><strong>PSI is an early-warning signal, lift is the contract metric.</strong> Both must monitor independently. Math: &sect;3i.</li>
+          </ul>
+        </VIS.Section>
+      </React.Fragment>
+    )}
 
     <VIS.Section id="sec-further" title="Further reading">
       <ul>
-        <li><a href="https://research.facebook.com/publications/lookalike/" target="_blank" rel="noopener"><strong>Meta Research</strong></a> — lookalike audience papers.</li>
-        <li><a href="https://www.snap.com/en-US/news/post/announcing-snap-audience-network" target="_blank" rel="noopener"><strong>Snap Eng</strong></a> — audience platforms.</li>
-        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener"><strong>Eugene Yan</strong></a> — discovery / retrieval systems.</li>
-        <li><a href="https://research.google/pubs/pub45530/" target="_blank" rel="noopener"><strong>Google</strong></a> — Smart Audiences / similar-user expansion.</li>
+        <li><a href="https://research.facebook.com/publications/embedding-based-retrieval-in-facebook-search/" target="_blank" rel="noopener"><strong>Meta — Embedding-Based Retrieval in Facebook Search</strong></a> (paper). The user-embedding tower pattern used here.</li>
+        <li><a href="https://eugeneyan.com/writing/system-design-for-discovery/" target="_blank" rel="noopener"><strong>Eugene Yan — System Design for Discovery</strong></a>. Generalizable framework for retrieval-style systems.</li>
+        <li><a href="https://github.com/nmslib/hnswlib" target="_blank" rel="noopener"><strong>hnswlib</strong></a> — reference HNSW implementation with M / efConstruction / efSearch parameters.</li>
+        <li><a href="https://desfontain.es/privacy/k-anonymity.html" target="_blank" rel="noopener"><strong>Damien Desfontaines — k-anonymity</strong></a>. Privacy-bound math for audience-release problems.</li>
       </ul>
     </VIS.Section>
   </main>
-);
+  );
+};
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 
